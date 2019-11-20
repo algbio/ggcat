@@ -1,11 +1,9 @@
 use bio::io::fastq;
-use flate2::read::{GzDecoder, GzEncoder};
 use std::fs::File;
 use std::io::{Write, copy, BufReader};
 use std::env::args;
 use stopwatch::Stopwatch;
 use std::path::Path;
-use flate2::{GzBuilder, Compression};
 use crate::binary_serializer::BinarySerializer;
 
 #[macro_use]
