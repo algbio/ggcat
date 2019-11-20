@@ -1,11 +1,19 @@
 use bio::io::fastq;
-use flate2::read::GzDecoder;
+use flate2::read::{GzDecoder, GzEncoder};
 use std::fs::File;
 use std::io::{Write, copy, BufReader};
 use std::env::args;
 use stopwatch::Stopwatch;
+use std::path::Path;
+use flate2::{GzBuilder, Compression};
+use crate::binary_serializer::BinarySerializer;
 
-const BUFFER_SIZE: usize = 1024 * 1024 * 128;
+#[macro_use]
+extern crate lazy_static;
+
+mod binary_serializer;
+mod single_dna_read;
+mod utils;
 
 fn main() {
 
@@ -15,22 +23,17 @@ fn main() {
     let mut records = 0u64;
     let mut gb = 0u64;
 
-    for file in args().skip(1) {
-        let compressed = BufReader::with_capacity(BUFFER_SIZE, File::open(file.as_str()).unwrap());
-        let mut decompress = GzDecoder::new(compressed);
-        println!("Reading {}", file);
-//    copy(&mut decompress, &mut File::create("D3_S1_L002_R1_014.fastq").unwrap());
-//    let flat = File::open("D3_S1_L002_R1_014.fastq").unwrap();
+    let mut freqs:[u64; 4] = [0; 4];
 
-        let reader = fastq::Reader::new(decompress);
-        for record in reader.records() {
-//        println!("Hello, world! {:?}",
-            record.unwrap().to_string();//);
-            records += 1;
-        }
+    for file in args().skip(1) {
+        println!("Reading {}", file);
+        records += BinarySerializer::serialize_file(file.clone(), format!("{}.bin", file));
+//        println!("Compressed to {}", file);
         gb += File::open(file.as_str()).unwrap().metadata().unwrap().len();
     }
 
+
+
     stopwatch.stop();
-    println!("Elapsed {} seconds, read {} records and {} gb !", stopwatch.elapsed().as_secs_f64(), records, (gb as f64) / 1024.0 / 1024.0 / 1024.0);
+    println!("Elapsed {} seconds, read {} records and {} gb! => freqs {:?}", stopwatch.elapsed().as_secs_f64(), records, (gb as f64) / 1024.0 / 1024.0 / 1024.0, freqs);
 }
