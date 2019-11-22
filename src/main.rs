@@ -22,8 +22,10 @@ mod bloom_filter;
 mod rolling_hash;
 mod cache_bucket;
 
-pub const TOTAL_MEM_EXP_IN_BYTES: usize = 34;
+pub const TOTAL_BLOOM_COUNTERS_EXP: usize = 37;
 pub const BLOOM_FIELDS_EXP_PER_BYTE: usize = 3;
+
+pub const TOTAL_MEM_EXP_IN_BYTES: usize = TOTAL_BLOOM_COUNTERS_EXP - BLOOM_FIELDS_EXP_PER_BYTE;
 
 
 pub const TOTAL_MEM_EXP_FIRST: usize = TOTAL_MEM_EXP_IN_BYTES + BLOOM_FIELDS_EXP_PER_BYTE;
@@ -141,13 +143,13 @@ fn main() {
             let mut hashes = nthash::NtHashIterator::new(record, k).unwrap();
             for hash in hashes {
                 let address = (hash as usize) % (1 << TOTAL_MEM_EXP_FIRST);
-//                if bloom.increment_cell(address) {
-//                    unsafe { COLLISIONS += 1; }
-//                }
-//                unsafe {
-//                    TOTAL += 1;
-//                }
-//                continue;
+                if bloom.increment_cell(address) {
+                    unsafe { COLLISIONS += 1; }
+                }
+                unsafe {
+                    TOTAL += 1;
+                }
+                continue;
 
                 let (major_first, minor_first, base_first) = CacheBucketsFirst::<BucketValueFirst>::parameters(address);
 
