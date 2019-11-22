@@ -22,24 +22,28 @@ mod bloom_filter;
 mod rolling_hash;
 mod cache_bucket;
 
-pub const TOTAL_MEM_EXP_FIRST: usize = 34;
-pub const MAP_SIZE_EXP_FIRST: usize = 9;//1024 * 1024 * 1024 * 4 * 4 / 4096;
-pub const BULK_SIZE_FIRST: usize = 4096;
+pub const TOTAL_MEM_EXP_IN_BYTES: usize = 34;
+pub const BLOOM_FIELDS_EXP_PER_BYTE: usize = 3;
+
+
+pub const TOTAL_MEM_EXP_FIRST: usize = TOTAL_MEM_EXP_IN_BYTES + BLOOM_FIELDS_EXP_PER_BYTE;
+pub const MAP_SIZE_EXP_FIRST: usize = 11;//1024 * 1024 * 1024 * 4 * 4 / 4096;
+pub const BULK_SIZE_FIRST: usize = 2048;
 pub const LINE_SIZE_EXP_FIRST: usize = TOTAL_MEM_EXP_FIRST - MAP_SIZE_EXP_FIRST;
 
 pub const TOTAL_MEM_EXP_SECOND: usize = LINE_SIZE_EXP_FIRST;
-pub const MAP_SIZE_EXP_SECOND: usize = 9;//1024 * 1024 * 1024 * 4 * 4 / 4096;
-pub const BULK_SIZE_SECOND: usize = 256;
+pub const MAP_SIZE_EXP_SECOND: usize = 10;//1024 * 1024 * 1024 * 4 * 4 / 4096;
+pub const BULK_SIZE_SECOND: usize = 128;
 pub const LINE_SIZE_EXP_SECOND: usize = TOTAL_MEM_EXP_SECOND - MAP_SIZE_EXP_SECOND;
 
 pub const TOTAL_MEM_EXP_THIRD: usize = LINE_SIZE_EXP_SECOND;
 pub const MAP_SIZE_EXP_THIRD: usize = 8;//1024 * 1024 * 1024 * 4 * 4 / 4096;
-pub const BULK_SIZE_THIRD: usize = 64;
+pub const BULK_SIZE_THIRD: usize = 32;
 pub const LINE_SIZE_EXP_THIRD: usize = TOTAL_MEM_EXP_THIRD - MAP_SIZE_EXP_THIRD;
 
 type BucketValueFirst = u32;
 type BucketValueSecond = u32;
-type BucketValueThird = u16;
+type BucketValueThird = u8;
 
 type SecondLevelCacheArray = [CacheBucketsSecond<BucketValueSecond>; 1 << MAP_SIZE_EXP_FIRST];
 type ThirdLevelCacheArray = [[CacheBucketsThird<BucketValueThird>; 1 << MAP_SIZE_EXP_SECOND]; 1 << MAP_SIZE_EXP_FIRST];
@@ -103,6 +107,10 @@ pub fn process_first_cache_flush(bucket_first: usize, addresses_first: &[BucketV
 
 fn main() {
 
+    println!("{} {} {}", LINE_SIZE_EXP_FIRST, LINE_SIZE_EXP_SECOND, LINE_SIZE_EXP_THIRD);
+    assert!(LINE_SIZE_EXP_SECOND <= 16, "Second level address does not fit 16 bit!!");
+    assert!(LINE_SIZE_EXP_THIRD <= 8, "Third level address does not fit 8 bit!!");
+
     let mut stopwatch = Stopwatch::new();
     stopwatch.start();
 
@@ -113,7 +121,7 @@ fn main() {
     let freqs:[u64; 4] = [0; 4];
 
 
-    let mut bloom = BloomFilter::new(1 << TOTAL_MEM_EXP_FIRST);
+    let mut bloom = BloomFilter::new(1 << TOTAL_MEM_EXP_IN_BYTES);
     unsafe { BLOOM = Some(std::mem::transmute(&mut bloom)); }
 
 
@@ -130,7 +138,6 @@ fn main() {
         println!("Reading {}", file);
 
         BinarySerializer::process_file(file, |record| {
-
             let mut hashes = nthash::NtHashIterator::new(record, k).unwrap();
             for hash in hashes {
                 let address = (hash as usize) % (1 << TOTAL_MEM_EXP_FIRST);
@@ -168,14 +175,14 @@ fn main() {
                     }
                 }
 
-                println!("Processed {} records [{}] {}/{} => {:.2}%", (records as f64) / stopwatch.elapsed().as_secs_f64(),
+                println!("Processed {} records [{}] {}/{} => {:.2}% | {:.2}%", (records as f64) / stopwatch.elapsed().as_secs_f64(),
                          records,
                          unsafe { COLLISIONS },
                          unsafe { TOTAL },
-                         unsafe { COLLISIONS as f64 / TOTAL as f64 * 100.0 });
+                         unsafe { COLLISIONS as f64 / TOTAL as f64 * 100.0 },
+                         unsafe { (TOTAL - COLLISIONS) as f64 / ((1u64 << TOTAL_MEM_EXP_FIRST) as f64) * 100.0 });
             }
         });
-
 //        records += BinarySerializer::count_entries(file.clone());//, format!("{}.xbin", file));
 //        BinarySerializer::serialize_file(file.clone(), format!("{}.xbin", file));
 
@@ -185,6 +192,19 @@ fn main() {
 //        gb += File::open(file.as_str()).unwrap().metadata().unwrap().len();
     }
 
+    println!("Final flushing!!");
+
+    for i in 0..(1 << MAP_SIZE_EXP_FIRST) {
+        cache.flush(i, |a, b| process_first_cache_flush(a, b, true));
+    }
+
+
+    println!("Processed {} records [{}] {}/{} => {:.2}% | {:.2}%", (records as f64) / stopwatch.elapsed().as_secs_f64(),
+             records,
+             unsafe { COLLISIONS },
+             unsafe { TOTAL },
+             unsafe { COLLISIONS as f64 / TOTAL as f64 * 100.0 },
+             unsafe { (TOTAL - COLLISIONS) as f64 / ((1u64 << TOTAL_MEM_EXP_FIRST) as f64) * 100.0 });
 
 
     stopwatch.stop();

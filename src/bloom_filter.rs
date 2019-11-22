@@ -14,13 +14,21 @@ impl BloomFilter {
 
     pub fn increment_cell(&mut self, mut cell: usize) -> bool {
 //        println!("{}", cell);
-        let res = self.map[cell] == 1;
-        self.map[cell] = 1;
-        res
-//        cell %= (self.map.len() * 4) as u64;
+//        let res = self.map[cell] == 1;
+//        self.map[cell] = 1;
+//        res
+        let shift = (cell % 8) as u8;
+        let map_cell = &mut self.map[cell / 8];
+        let value = (*map_cell >> shift) & 0b1;
+        if value != 0 {
+            true
+        }
+        else {
+            *map_cell |= 1 << shift;
+            false
+        }
 //        let shift = ((cell % 4) * 2) as u8;
 //        let map_cell = &mut self.map[(cell as usize) / 4];
-//
 //        let value = (*map_cell >> shift) & 0b11;
 //        if value == 0b11 {
 //            false
