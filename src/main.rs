@@ -27,23 +27,23 @@ pub const BLOOM_FIELDS_EXP_PER_BYTE: usize = 3;
 
 
 pub const TOTAL_MEM_EXP_FIRST: usize = TOTAL_MEM_EXP_IN_BYTES + BLOOM_FIELDS_EXP_PER_BYTE;
-pub const MAP_SIZE_EXP_FIRST: usize = 11;//1024 * 1024 * 1024 * 4 * 4 / 4096;
-pub const BULK_SIZE_FIRST: usize = 2048;
+pub const MAP_SIZE_EXP_FIRST: usize = 8;//1024 * 1024 * 1024 * 4 * 4 / 4096;
+pub const BULK_SIZE_FIRST: usize = 8192;
 pub const LINE_SIZE_EXP_FIRST: usize = TOTAL_MEM_EXP_FIRST - MAP_SIZE_EXP_FIRST;
 
 pub const TOTAL_MEM_EXP_SECOND: usize = LINE_SIZE_EXP_FIRST;
-pub const MAP_SIZE_EXP_SECOND: usize = 10;//1024 * 1024 * 1024 * 4 * 4 / 4096;
-pub const BULK_SIZE_SECOND: usize = 128;
+pub const MAP_SIZE_EXP_SECOND: usize = 6;//1024 * 1024 * 1024 * 4 * 4 / 4096;
+pub const BULK_SIZE_SECOND: usize = 1024;
 pub const LINE_SIZE_EXP_SECOND: usize = TOTAL_MEM_EXP_SECOND - MAP_SIZE_EXP_SECOND;
 
 pub const TOTAL_MEM_EXP_THIRD: usize = LINE_SIZE_EXP_SECOND;
 pub const MAP_SIZE_EXP_THIRD: usize = 8;//1024 * 1024 * 1024 * 4 * 4 / 4096;
-pub const BULK_SIZE_THIRD: usize = 32;
+pub const BULK_SIZE_THIRD: usize = 128;
 pub const LINE_SIZE_EXP_THIRD: usize = TOTAL_MEM_EXP_THIRD - MAP_SIZE_EXP_THIRD;
 
 type BucketValueFirst = u32;
 type BucketValueSecond = u32;
-type BucketValueThird = u8;
+type BucketValueThird = u16;
 
 type SecondLevelCacheArray = [CacheBucketsSecond<BucketValueSecond>; 1 << MAP_SIZE_EXP_FIRST];
 type ThirdLevelCacheArray = [[CacheBucketsThird<BucketValueThird>; 1 << MAP_SIZE_EXP_SECOND]; 1 << MAP_SIZE_EXP_FIRST];
@@ -108,8 +108,8 @@ pub fn process_first_cache_flush(bucket_first: usize, addresses_first: &[BucketV
 fn main() {
 
     println!("{} {} {}", LINE_SIZE_EXP_FIRST, LINE_SIZE_EXP_SECOND, LINE_SIZE_EXP_THIRD);
-    assert!(LINE_SIZE_EXP_SECOND <= 16, "Second level address does not fit 16 bit!!");
-    assert!(LINE_SIZE_EXP_THIRD <= 8, "Third level address does not fit 8 bit!!");
+    assert!(LINE_SIZE_EXP_SECOND <= 32, "Second level address does not fit 32 bit!!");
+    assert!(LINE_SIZE_EXP_THIRD <= 16, "Third level address does not fit 16 bit!!");
 
     let mut stopwatch = Stopwatch::new();
     stopwatch.start();
