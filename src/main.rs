@@ -143,13 +143,13 @@ fn main() {
             let mut hashes = nthash::NtHashIterator::new(record, k).unwrap();
             for hash in hashes {
                 let address = (hash as usize) % (1 << TOTAL_MEM_EXP_FIRST);
-                if bloom.increment_cell(address) {
-                    unsafe { COLLISIONS += 1; }
-                }
-                unsafe {
-                    TOTAL += 1;
-                }
-                continue;
+//                if bloom.increment_cell(address) {
+//                    unsafe { COLLISIONS += 1; }
+//                }
+//                unsafe {
+//                    TOTAL += 1;
+//                }
+//                continue;
 
                 let (major_first, minor_first, base_first) = CacheBucketsFirst::<BucketValueFirst>::parameters(address);
 
