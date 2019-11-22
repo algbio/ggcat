@@ -10,7 +10,7 @@ impl Utils {
             'C' => 1,
             'G' => 2,
             'T' => 3,
-            'N' => 0,
+            'N' => 4,
             _ => panic!("Wrong letter {}", letter)
         }
     }

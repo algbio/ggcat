@@ -1,43 +1,59 @@
-use std::io::{BufReader, BufWriter, Write, Error, IoSlice, Read};
+
 use std::fs::File;
 use bio::io::fastq;
-use crate::utils::Utils;
-use crate::single_dna_read::SingleDnaRead;
-use serde::export::fmt::Arguments;
+
+
+use crate::single_dna_read_half::SingleDnaReadHalf;
+
 use serde::Serialize;
-use std::process::{exit, Stdio};
+use std::process::{Stdio};
 use std::process::Command;
+use rand::Rng;
+use std::num::Wrapping;
 
 const BUFFER_SIZE: usize = 1024 * 1024 * 32;
 
 pub struct BinarySerializer;
 impl BinarySerializer {
 
-    pub fn serialize_file(source: String, dest: String) -> u64 {
+    pub fn process_file<F: FnMut(&[u8])>(source: String, mut func: F) {
 
-//        let mut compressed = File::open(source.as_str()).unwrap();
-//        let mut decompress = Decoder::new(&vec[..]).unwrap();
+        // /home/andrea/Desktop/pigz-2.4/unpigz
         let process = Command::new("gzip").args(&["-cd", source.as_str()]).stdout(Stdio::piped()).spawn().unwrap();
-        let mut decompress = process.stdout.unwrap();
-
-//File::open("D1_S1_L001_R1_001.fastq").unwrap();//
-        let mut serialized = flate2::read::GzEncoder::new(
-            File::create(dest).unwrap(),flate2::Compression::best());
-
-
-//    copy(&mut decompress, &mut File::create("D3_S1_L002_R1_014.fastq").unwrap());
-//    let flat = File::open("D3_S1_L002_R1_014.fastq").unwrap();
+        let decompress = process.stdout.unwrap();
 
         let reader = fastq::Reader::new(decompress);
-        let mut records = 0;
+        let _records = 0;
+        let bases = [b'A', b'C', b'G', b'T', b'N'];
+        let mut x = Wrapping(2847386477usize);
         for record in reader.records() {
-//        println!("Hello, world! {:?}",
-            let record = record.unwrap();
-            records += 1;
-            SingleDnaRead::from_ascii(record.seq()).serialize(&mut serialized);
+//            let mut seq = [0; 100];
+//            loop {
+                let record = record.as_ref().unwrap();
+//                for el in seq.iter_mut() {
+//                    *el = bases[x.0 % 5]; //rand::thread_rng().gen_range::<usize, _, _>(0, 5)
+//                    x = (x * Wrapping(6364136223846793005)) + Wrapping(1442695040888963407);
+//                }
+//                println!("{}", std::str::from_utf8(&seq).unwrap());
+                func(record.seq());
+//            }
         }
-        records
     }
 
+    pub fn serialize_file(source: String, dest: String) {
+        let mut serialized = flate2::write::GzEncoder::new(
+            File::create(dest).unwrap(),flate2::Compression::best());
 
+        Self::process_file(source, |record| {
+            SingleDnaReadHalf::from_ascii(record).serialize(&mut serialized);
+        });
+    }
+
+    pub fn count_entries(source: String) -> u64 {
+        let mut records = 0;
+        Self::process_file(source, |_record| {
+            records += 1;
+        });
+        records
+    }
 }
