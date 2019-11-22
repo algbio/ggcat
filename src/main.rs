@@ -117,20 +117,17 @@ fn main() {
     unsafe { BLOOM = Some(std::mem::transmute(&mut bloom)); }
 
 
+    let mut records = 0u64;
+    let cache: &mut CacheBucketsFirst<BucketValueFirst> = unsafe {
+        &mut *(std::alloc::alloc_zeroed(Layout::from_size_align(std::mem::size_of::<CacheBucketsFirst::<BucketValueFirst>>(), 32).unwrap()) as *mut CacheBucketsFirst::<BucketValueFirst>)
+    };
+    unsafe {
+        SECOND_LEVEL_CACHES = Some(&mut *(std::alloc::alloc_zeroed(Layout::from_size_align(std::mem::size_of::<SecondLevelCacheArray>(), 32).unwrap()) as *mut SecondLevelCacheArray));
+        THIRD_LEVEL_CACHES = Some(&mut *(std::alloc::alloc_zeroed(Layout::from_size_align(std::mem::size_of::<ThirdLevelCacheArray>(), 32).unwrap()) as *mut ThirdLevelCacheArray));
+    };
+
     for file in args().skip(1) {
         println!("Reading {}", file);
-
-        let mut records = 0u64;
-
-
-        let cache: &mut CacheBucketsFirst<BucketValueFirst> = unsafe {
-            &mut *(std::alloc::alloc_zeroed(Layout::from_size_align(std::mem::size_of::<CacheBucketsFirst::<BucketValueFirst>>(), 32).unwrap()) as *mut CacheBucketsFirst::<BucketValueFirst>)
-        };
-
-        unsafe {
-            SECOND_LEVEL_CACHES = Some(&mut *(std::alloc::alloc_zeroed(Layout::from_size_align(std::mem::size_of::<SecondLevelCacheArray>(), 32).unwrap()) as *mut SecondLevelCacheArray));
-            THIRD_LEVEL_CACHES = Some(&mut *(std::alloc::alloc_zeroed(Layout::from_size_align(std::mem::size_of::<ThirdLevelCacheArray>(), 32).unwrap()) as *mut ThirdLevelCacheArray));
-        };
 
         BinarySerializer::process_file(file, |record| {
 
