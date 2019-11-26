@@ -60,7 +60,7 @@ fn main() {
         Pipeline::fasta_gzip_to_reads(args.inputs.as_slice())
     }
     else {
-        Pipeline::fasta_gzip_to_reads(args.inputs.as_slice())
+        Pipeline::file_freezers_to_reads(args.inputs.as_slice())
     };
     current = &reads;
 
