@@ -171,17 +171,17 @@ fn main() {
         }
         println!("Reading {}", file);
 
-//        BinarySerializer::process_file(file, |record| {
-        ReadsFreezer::open(file).for_each(|record| {
-//            for subread in record.split(|x| *x == b'N') {
-//                if subread.len() < k {
-//                    continue;
-//                }
+        BinarySerializer::process_file(file, |record1| {
+//        ReadsFreezer::open(file).for_each(|record| {
+            for record in record1.split(|x| *x == b'N') {
+                if record.len() < k {
+                    continue;
+                }
 //                freezer.add_read(subread);
-//            }
+                
 
 //            freezer.add_read(record);
-            real_total += record.len() as u64;
+                real_total += record.len() as u64;
 //            for c in record {
 //                freqs[*c as usize] += 1;
 //            }
@@ -189,20 +189,20 @@ fn main() {
 //            if record.len() <= k {
 //                return;
 //            }
-            let mut hashes = nthash::NtHashIterator::new(record, k).unwrap();
+                let mut hashes = nthash::NtHashIterator::new(record, k).unwrap();
 
-            let mut minv = (std::u64::MAX, 0);
+                let mut minv = (std::u64::MAX, 0);
 
-            for (idx, hash) in record[k..].iter().map(|x| hashes.optim()).enumerate() {
-                if  minv > (hash, idx) { // hash < std::u64::MAX / 4 && 
-                    minv = (hash, idx);
+                for (idx, hash) in record[k..].iter().map(|x| hashes.optim()).enumerate() {
+                    if minv > (hash, idx) { // hash < std::u64::MAX / 4 &&
+                        minv = (hash, idx);
+                    }
                 }
-            }
 
 //            result.push(Vec::from(&record[minv.1..minv.1+k]));
 
-            let crt_hash = minv.0;
-            freezers[(crt_hash % 256) as usize].as_mut().unwrap().add_read(record);
+                let crt_hash = minv.0;
+                freezers[(crt_hash % 256) as usize].as_mut().unwrap().add_read(record);
 //            for hash_seed in record[k..].iter().map(|x| hashes.optim()) {
 //                freqs[(hash_seed % 256) as usize] += 1;
 //
@@ -230,8 +230,8 @@ fn main() {
 //////                    println!("{}", address);
 //                }
 //            }
-            records += 1;
-            if records % 1000000 == 0 {
+                records += 1;
+                if records % 1000000 == 0 {
 //                collisions += aaa.iter().sum::<i32>() as i32;
 //                for (major, bucket) in cache.iter_mut().enumerate() {
 //
@@ -242,38 +242,38 @@ fn main() {
 //                        }
 //                    });
 //                }
-                if records % 50000000 == 0 {
-                    println!("Flushing!!");
+                    if records % 50000000 == 0 {
+                        println!("Flushing!!");
 
-                    for i in 0..(1 << MAP_SIZE_EXP_FIRST) {
-                        cache.flush(i, |a, b| process_first_cache_flush(a, b, true));
+                        for i in 0..(1 << MAP_SIZE_EXP_FIRST) {
+                            cache.flush(i, |a, b| process_first_cache_flush(a, b, true));
+                        }
                     }
+                    println!("Rate {:.1}M bases/sec {{{}, {}, {}, {}}} F{{{:.2}, {:.2}, {:.2}}} records [{}] {}/{} => {:.2}% | {:.2}%",
+                             real_total as f64 / stopwatch.elapsed().as_secs_f64() / 1000000.0,
+                             unsafe { FIRST_LEVEL_FLUSHES },
+                             unsafe { SECOND_LEVEL_FLUSHES },
+                             unsafe { THIRD_LEVEL_FLUSHES },
+                             unsafe { THIRD_LEVEL_FLUSHES * (BULK_SIZE_THIRD as u64) },
+                             unsafe { TOTAL_FILL_FIRST as f64 / ((1 << MAP_SIZE_EXP_FIRST) * BULK_SIZE_FIRST) as f64 * 100.0 },
+                             unsafe { TOTAL_FILL_SECOND as f64 / ((1 << MAP_SIZE_EXP_FIRST) * (1 << MAP_SIZE_EXP_SECOND) * BULK_SIZE_SECOND) as f64 * 100.0 },
+                             unsafe {
+                                 TOTAL_FILL_THIRD as f64 /
+                                     ((1 << MAP_SIZE_EXP_FIRST) * (1 << MAP_SIZE_EXP_SECOND) * (1 << MAP_SIZE_EXP_THIRD) * BULK_SIZE_THIRD) as f64 * 100.0
+                             },
+                             records,
+                             unsafe { COLLISIONS },
+                             unsafe { TOTAL },
+                             unsafe { COLLISIONS as f64 / TOTAL as f64 * 100.0 },
+                             unsafe { (TOTAL - COLLISIONS) as f64 / ((1u64 << TOTAL_MEM_EXP_FIRST) as f64) * 100.0 });
+                    unsafe {
+                        FIRST_LEVEL_FLUSHES = 0;
+                        SECOND_LEVEL_FLUSHES = 0;
+                        THIRD_LEVEL_FLUSHES = 0;
+                    }
+                    real_total = 0;
+                    stopwatch.restart();
                 }
-                println!("Rate {:.1}M bases/sec {{{}, {}, {}, {}}} F{{{:.2}, {:.2}, {:.2}}} records [{}] {}/{} => {:.2}% | {:.2}%",
-                         real_total as f64 / stopwatch.elapsed().as_secs_f64() / 1000000.0,
-                         unsafe { FIRST_LEVEL_FLUSHES },
-                         unsafe { SECOND_LEVEL_FLUSHES },
-                         unsafe { THIRD_LEVEL_FLUSHES },
-                         unsafe { THIRD_LEVEL_FLUSHES * (BULK_SIZE_THIRD as u64) },
-
-                         unsafe { TOTAL_FILL_FIRST as f64 / ((1 << MAP_SIZE_EXP_FIRST) * BULK_SIZE_FIRST) as f64 * 100.0 },
-                         unsafe { TOTAL_FILL_SECOND as f64 / ((1 << MAP_SIZE_EXP_FIRST) * (1 << MAP_SIZE_EXP_SECOND) * BULK_SIZE_SECOND) as f64 * 100.0 },
-                         unsafe {
-                             TOTAL_FILL_THIRD as f64 /
-                                 ((1 << MAP_SIZE_EXP_FIRST) * (1 << MAP_SIZE_EXP_SECOND) * (1 << MAP_SIZE_EXP_THIRD)* BULK_SIZE_THIRD) as f64 * 100.0 },
-
-                         records,
-                         unsafe { COLLISIONS },
-                         unsafe { TOTAL },
-                         unsafe { COLLISIONS as f64 / TOTAL as f64 * 100.0 },
-                         unsafe { (TOTAL - COLLISIONS) as f64 / ((1u64 << TOTAL_MEM_EXP_FIRST) as f64) * 100.0 });
-                unsafe {
-                    FIRST_LEVEL_FLUSHES = 0;
-                    SECOND_LEVEL_FLUSHES = 0;
-                    THIRD_LEVEL_FLUSHES = 0;
-                }
-                real_total = 0;
-                stopwatch.restart();
             }
         });
 //        records += BinarySerializer::count_entries(file.clone());//, format!("{}.xbin", file));

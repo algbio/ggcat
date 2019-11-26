@@ -32,10 +32,10 @@ impl BinarySerializer {
     pub fn process_file<F: FnMut(&[u8])>(source: String, mut func: F) {
 
         // /home/andrea/Desktop/pigz-2.4/unpigz
-//        let mut process = Command::new("gzip").args(&["-cd", source.as_str()]).stdout(Stdio::piped()).spawn().unwrap();
-//        let pid = process.id() as i32;
-        let decompress = File::open(source).unwrap();//process.stdout.unwrap();
-
+        let mut process = Command::new("gzip").args(&["-cd", source.as_str()]).stdout(Stdio::piped()).spawn().unwrap();
+        let pid = process.id() as i32;
+        let decompress = process.stdout.unwrap();
+//File::open(source).unwrap();//
         let reader = fastq::Reader::new(decompress);
         let _records = 0;
         let bases = [b'A', b'C', b'G', b'T', b'N'];
