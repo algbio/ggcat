@@ -20,3 +20,4 @@ nthash = { path = "nthash" }
 rand = "0.7.2"
 nix = "0.15.0"
 lz4 = "1.23.1"
+os_pipe = "0.9.1"

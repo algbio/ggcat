@@ -55,6 +55,6 @@ macro_rules! declare_bucket {
     }
 }
 
-declare_bucket!(CacheBucketsFirst, MAP_SIZE_EXP_FIRST, BULK_SIZE_FIRST, LINE_SIZE_EXP_FIRST, u32);
-declare_bucket!(CacheBucketsSecond, MAP_SIZE_EXP_SECOND, BULK_SIZE_SECOND, LINE_SIZE_EXP_SECOND, u16);
-declare_bucket!(CacheBucketsThird, MAP_SIZE_EXP_THIRD, BULK_SIZE_THIRD, LINE_SIZE_EXP_THIRD, u8);
+//declare_bucket!(CacheBucketsFirst, MAP_SIZE_EXP_FIRST, BULK_SIZE_FIRST, LINE_SIZE_EXP_FIRST, u32);
+//declare_bucket!(CacheBucketsSecond, MAP_SIZE_EXP_SECOND, BULK_SIZE_SECOND, LINE_SIZE_EXP_SECOND, u16);
+//declare_bucket!(CacheBucketsThird, MAP_SIZE_EXP_THIRD, BULK_SIZE_THIRD, LINE_SIZE_EXP_THIRD, u8);
