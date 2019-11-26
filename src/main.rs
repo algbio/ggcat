@@ -160,15 +160,15 @@ fn main() {
 //    };
 
     let mut freqs = [0u64; 256];
-
+    let mut freezers: [Option<ReadsFreezer>; 256] = unsafe { MaybeUninit::uninit().assume_init() };//
+    for (idx, freezer) in freezers.iter_mut().enumerate() {
+        let mut tmp = Some(ReadsFreezer::create(format!("bucket-{}.freeze", idx)));
+        std::mem::swap(freezer, &mut tmp);
+        std::mem::forget(tmp);
+    }
 //    let mut result = vec![];
     for file in args().skip(1) {
-        let mut freezers: [Option<ReadsFreezer>; 256] = unsafe { MaybeUninit::uninit().assume_init() };//
-        for (idx, freezer) in freezers.iter_mut().enumerate() {
-            let mut tmp = Some(ReadsFreezer::create(format!("bucket-{}.freeze", idx)));
-            std::mem::swap(freezer, &mut tmp);
-            std::mem::forget(tmp);
-        }
+
         println!("Reading {}", file);
 
         BinarySerializer::process_file(file, |record1| {
@@ -178,7 +178,7 @@ fn main() {
                     continue;
                 }
 //                freezer.add_read(subread);
-                
+
 
 //            freezer.add_read(record);
                 real_total += record.len() as u64;
