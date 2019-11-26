@@ -18,3 +18,5 @@ flate2 = "1.0.13"
 #rolling-crc = { path = "rolling-crc-rs" }
 nthash = { path = "nthash" }
 rand = "0.7.2"
+nix = "0.15.0"
+lz4 = "1.23.1"
