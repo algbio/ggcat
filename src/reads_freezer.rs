@@ -7,6 +7,7 @@ use std::hash::Hasher;
 use std::cell::{Cell, UnsafeCell};
 use std::thread;
 
+
 pub struct ReadsFreezer {
     reader: UnsafeCell<Option<Box<dyn Read>>>,
 }
@@ -35,11 +36,11 @@ pub struct ReadsWriter {
 }
 impl ReadsWriter {
     pub fn add_read(&mut self, read: &[u8]) {
-        self.writer.write_all(read);
-        self.writer.write_u8(b'\n');
+        self.writer.write_all(read).unwrap();
+        self.writer.write_u8(b'\n').unwrap();
     }
     pub fn pipe_freezer(&mut self, freezer: ReadsFreezer) {
-        std::io::copy(freezer.reader.uget().as_mut().unwrap(), &mut self.writer);
+        std::io::copy(freezer.reader.uget().as_mut().unwrap(), &mut self.writer).unwrap();
     }
 }
 
@@ -98,9 +99,9 @@ impl ReadsFreezer {
             };
 
 
-        std::io::copy(self.reader.uget().as_mut().unwrap(), freezer);
+        std::io::copy(self.reader.uget().as_mut().unwrap(), freezer).unwrap();
         if let Some(mut stream) = compressed {
-            stream.finish();
+            let (file, result) = stream.finish();
         }
     }
 

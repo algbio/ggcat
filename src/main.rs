@@ -1,7 +1,10 @@
+#![allow(warnings)]
+
+
 use crate::progress::Progress;
-use std::env::args;
 use crate::pipeline::Pipeline;
 use crate::reads_freezer::ReadsFreezer;
+use structopt::StructOpt;
 
 mod gzip_fasta_reader;
 mod utils;
@@ -11,17 +14,68 @@ mod cache_bucket;
 mod progress;
 mod pipeline;
 
-fn preprocess(files: &Vec<String>, outfile: &str) {
-    let reads: ReadsFreezer = Pipeline::fasta_gzip_to_reads(files.as_slice());
-    let cut_n = Pipeline::cut_n(reads, 31);
-    cut_n.freeze(outfile.to_string(), true);
+#[derive(StructOpt)]
+enum Mode {
+    Flat,
+    Preprocess
+}
+
+#[derive(StructOpt)]
+struct Cli {
+    /// The input files
+    inputs: Vec<String>,
+
+    /// The output file
+    #[structopt(short, long)]
+    output: String,
+
+    /// Enables processing from gzipped fasta
+    #[structopt(short)]
+    gzip_fasta: bool,
+
+    /// Removes N and splits reads accordingly
+    #[structopt(short)]
+    nsplit: bool,
+
+    /// Specifies the k-mers length, mandatory with -n
+    #[structopt(short)]
+    klen: Option<usize>,
+
+    /// Enables buckets processing
+    #[structopt(short)]
+    bucketing: bool,
 }
 
 fn main() {
     let mut progress = Progress::new();
-    let files: Vec<_> = args().skip(1).collect();
 
-    preprocess(&files, "without-n");
+    let args = Cli::from_args();
+
+    let mut current: &ReadsFreezer;
+
+    let reads;
+    let cut_n;
+
+    reads = if args.gzip_fasta {
+        Pipeline::fasta_gzip_to_reads(args.inputs.as_slice())
+    }
+    else {
+        Pipeline::fasta_gzip_to_reads(args.inputs.as_slice())
+    };
+    current = &reads;
+
+    if args.nsplit {
+
+        if args.klen.is_none() {
+            println!("-k is mandatory with -n");
+            return;
+        }
+
+        cut_n = Pipeline::cut_n(reads, args.klen.unwrap());
+        current = &cut_n;
+    }
+
+    current.freeze(args.output, true);
 
     println!("Finished elab, elapsed {:.2} seconds", progress.elapsed());
 }
