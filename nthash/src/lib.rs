@@ -148,11 +148,9 @@ pub fn nthash(seq: &[u8], ksize: usize) -> Vec<u64> {
 #[derive(Debug)]
 pub struct NtHashIterator<'a> {
     seq: &'a [u8],
-    k: usize,
+    k_minus1: usize,
     fh: u64,
-    rh: u64,
     current_idx: usize,
-    max_idx: usize,
 }
 
 impl<'a> NtHashIterator<'a> {
@@ -165,32 +163,26 @@ impl<'a> NtHashIterator<'a> {
             bail!(ErrorKind::KSizeTooBig(k));
         }
         let mut fh = 0;
-        for (i, v) in seq[0..k].iter().enumerate() {
+        for (i, v) in seq[0..k-1].iter().enumerate() {
             fh ^= h(*v).rotate_left((k - i - 1) as u32);
         }
 
-        let mut rh = 0;
-//        for (i, v) in seq[0..k].iter().rev().enumerate() {
-//            rh ^= rc(*v).rotate_left((k - i - 1) as u32);
-//        }
-
         Ok(NtHashIterator {
             seq,
-            k,
+            k_minus1: k-1,
             fh,
-            rh,
             current_idx: 0,
-            max_idx: seq.len() - k + 1,
         })
     }
 
     #[inline(always)]
     pub fn optim(&mut self) -> u64 {
-        let res = self.fh;
         let i = self.current_idx;
         let seqi = self.seq[i];
-        let seqk = self.seq[i + self.k]; // FIXME: WRONG VALUES!!
-        self.fh = self.fh.rotate_left(1) ^ h(seqi).rotate_left(self.k as u32) ^ h(seqk);
+        let seqk = self.seq[i + self.k_minus1];
+
+        let res = self.fh.rotate_left(1) ^ h(seqk);
+        self.fh =  res ^ h(seqi).rotate_left((self.k_minus1) as u32);
         self.current_idx += 1;
         res
     }
@@ -220,10 +212,6 @@ impl<'a> Iterator for NtHashIterator<'a> {
 //        self.current_idx += 1;
 //        Some(u64::min(self.rh, self.fh))
         Some(0)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.max_idx, Some(self.max_idx))
     }
 }
 

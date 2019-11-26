@@ -5,6 +5,9 @@ use crate::progress::Progress;
 use crate::pipeline::Pipeline;
 use crate::reads_freezer::ReadsFreezer;
 use structopt::StructOpt;
+use nix::unistd::PathconfVar::PIPE_BUF;
+use crate::utils::{cast_static, Utils};
+use std::time::Duration;
 
 mod gzip_fasta_reader;
 mod utils;
@@ -41,9 +44,9 @@ struct Cli {
     #[structopt(short)]
     klen: Option<usize>,
 
-    /// Enables buckets processing
+    /// Enables buckets processing with the specified number of buckets
     #[structopt(short)]
-    bucketing: bool,
+    bucketing: Option<usize>,
 
     /// Enables output compression
     #[structopt(short)]
@@ -52,6 +55,10 @@ struct Cli {
 
 fn main() {
     let mut progress = Progress::new();
+
+//    ctrlc::set_handler(move || {
+//        println!("received Ctrl+C!");
+//    });
 
     let args = Cli::from_args();
 
@@ -66,7 +73,7 @@ fn main() {
     else {
         Pipeline::file_freezers_to_reads(args.inputs.as_slice())
     };
-    current = &reads;
+    current = cast_static(&reads);
 
     if args.nsplit {
 
@@ -75,11 +82,22 @@ fn main() {
             return;
         }
 
-        cut_n = Pipeline::cut_n(reads, args.klen.unwrap());
-        current = &cut_n;
+        cut_n = Pipeline::cut_n(current, args.klen.unwrap());
+        current = cast_static(&cut_n);
     }
 
-    current.freeze(args.output, args.compress);
+    if let Some(bnum) = args.bucketing {
+        if args.klen.is_none() {
+            println!("-k is mandatory with -b");
+            return;
+        }
 
+        Pipeline::make_buckets(current, args.klen.unwrap(), bnum, "buckets/bucket-");
+    }
+    else {
+        current.freeze(args.output, args.compress);
+    }
+
+    Utils::join_all();
     println!("Finished elab, elapsed {:.2} seconds", progress.elapsed());
 }

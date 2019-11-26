@@ -4,6 +4,7 @@ use std::thread;
 use std::io::Read;
 use crate::progress::Progress;
 use std::path::Path;
+use crate::utils::Utils;
 
 pub struct Pipeline;
 
@@ -49,7 +50,7 @@ impl Pipeline {
         })
     }
 
-    pub fn cut_n(freezer: ReadsFreezer, k: usize) -> ReadsFreezer {
+    pub fn cut_n(freezer: &'static ReadsFreezer, k: usize) -> ReadsFreezer {
         ReadsFreezer::from_generator(move |writer| {
 
             let mut progress = Progress::new();
@@ -66,6 +67,29 @@ impl Pipeline {
                                |a, c, r| println!("Read {} rate: {:.1}M/s", a, r / 1024.0 / 1024.0))
             })
         })
+    }
+
+    pub fn make_buckets(freezer: &'static ReadsFreezer, k: usize, numbuckets: usize, base_name: &str) {
+        let mut writers = vec![];
+
+        for i in 0..numbuckets {
+            let writer = ReadsFreezer::optifile_splitted(format!("{}{:03}", base_name, i));
+            writers.push(writer);
+        }
+
+        Utils::thread_safespawn(move || {
+            let mut progress = Progress::new();
+
+            freezer.for_each(|read| {
+                let mut hashes = nthash::NtHashIterator::new(read, k).unwrap();
+                if let Some(minimum_hash) = (k..read.len()).map(|_| hashes.optim()).min() {
+                    writers[minimum_hash as usize % numbuckets].add_read(read);
+                }
+                progress.incr(read.len() as u64);
+                progress.event(|a, c| c >= 100000000,
+                               |a, c, r| println!("Read {} rate: {:.1}M/s", a, r / 1024.0 / 1024.0))
+            })
+        });
     }
 }
 
