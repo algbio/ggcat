@@ -44,6 +44,10 @@ struct Cli {
     /// Enables buckets processing
     #[structopt(short)]
     bucketing: bool,
+
+    /// Enables output compression
+    #[structopt(short)]
+    compress: bool,
 }
 
 fn main() {
@@ -75,7 +79,7 @@ fn main() {
         current = &cut_n;
     }
 
-    current.freeze(args.output, true);
+    current.freeze(args.output, args.compress);
 
     println!("Finished elab, elapsed {:.2} seconds", progress.elapsed());
 }
