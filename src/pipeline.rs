@@ -44,10 +44,10 @@ impl Pipeline {
                         continue;
                     }
                     writer.add_read(record);
-                    progress.incr(read.len() as u64);
-                    progress.event(|a, c| c >= 10000000,
-                                   |a, c, r| println!("Read {} rate: {:.1}M/s", a, r / 1024.0 / 1024.0))
                 }
+                progress.incr(read.len() as u64);
+                progress.event(|a, c| c >= 10000000,
+                               |a, c, r| println!("Read {} rate: {:.1}M/s", a, r / 1024.0 / 1024.0))
             })
         })
     }
