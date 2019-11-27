@@ -73,6 +73,7 @@ struct Cli {
 }
 
 fn main() {
+
     let mut progress = Progress::new();
 
 //    ctrlc::set_handler(move || {

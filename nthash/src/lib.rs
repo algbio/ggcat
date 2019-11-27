@@ -166,7 +166,7 @@ impl<'a> NtHashIterator<'a> {
         }
         let mut fh = 0;
         for (i, v) in seq[0..k-1].iter().enumerate() {
-            fh ^= h(*v).rotate_left((k - i - 1) as u32);
+            fh ^= h(*v).rotate_left((k - i - 2) as u32);
         }
 
         Ok(NtHashIterator {
@@ -191,13 +191,13 @@ impl<'a> NtHashIterator<'a> {
 
     #[inline(always)]
     pub fn iter(&'a mut self) -> Map<Range<usize>, impl FnMut(usize) -> u64 + 'a>{
-        (self.k_minus1+1..self.seq.len())
+        (self.k_minus1..self.seq.len())
             .map(move |idx| self.optim())
     }
 
     #[inline(always)]
     pub fn iter_enumerate(&'a mut self) -> Map<Range<usize>, impl FnMut(usize) -> (u64, usize) + 'a>{
-        (self.k_minus1+1..self.seq.len())
+        (0..self.seq.len()-self.k_minus1)
             .map(move |idx| (self.optim(), idx))
     }
 }

@@ -138,7 +138,7 @@ pub fn bloom(freezer: &'static ReadsFreezer, k: usize) {
 
         let mut hashes = nthash::NtHashIterator::new(record, k).unwrap();
 
-        for hash_seed in hashes.iter() {
+        for (hash_seed, idx) in hashes.iter_enumerate() {
             for hash in &[hash_seed] {
 
                 if *hash > MINIMIZER_THRESHOLD_VALUE {

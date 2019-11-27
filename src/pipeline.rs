@@ -11,7 +11,7 @@ use rand::RngCore;
 
 pub struct Pipeline;
 
-pub const MINIMIZER_THRESHOLD_PERC: f64 = 3.0;
+pub const MINIMIZER_THRESHOLD_PERC: f64 = 6.0;
 pub const MINIMIZER_THRESHOLD_VALUE: u64 = (std::u64::MAX as f64 * MINIMIZER_THRESHOLD_PERC / 100.0) as u64;
 
 
