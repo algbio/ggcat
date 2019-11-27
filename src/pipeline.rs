@@ -5,6 +5,8 @@ use std::io::Read;
 use crate::progress::Progress;
 use std::path::Path;
 use crate::utils::Utils;
+use rand::seq::IteratorRandom;
+use rand::prelude::{StdRng, ThreadRng};
 
 pub struct Pipeline;
 
@@ -66,6 +68,19 @@ impl Pipeline {
         })
     }
 
+    #[inline(always)]
+    fn compute_chosen_bucket(read: &[u8], k: usize, nbuckets: usize) -> Option<(usize, &[u8])> {
+        let mut hashes = nthash::NtHashIterator::new(read, k).unwrap();
+
+        const THRESHOLD_PERC: f64 = 1.0;
+        const THRESHOLD_VALUE: u64 = (std::u64::MAX as f64 * THRESHOLD_PERC / 100.0) as u64;
+
+        let res = (k..read.len())
+            .map(|idx| (hashes.optim(), idx))
+            .filter(|v| v.0 < THRESHOLD_VALUE).map(|bucket| ((bucket.0 as usize) % nbuckets, bucket.1)).min()?;
+        Some((res.0, &read[res.1-k..res.1]))
+    }
+
     pub fn make_buckets(freezer: &'static ReadsFreezer, k: usize, numbuckets: usize, base_name: &str) {
         let mut writers = vec![];
 
@@ -78,9 +93,8 @@ impl Pipeline {
             let mut progress = Progress::new();
 
             freezer.for_each(|read| {
-                let mut hashes = nthash::NtHashIterator::new(read, k).unwrap();
-                if let Some(minimum_hash) = (k..read.len()).map(|_| hashes.optim()).min() {
-                    writers[minimum_hash as usize % numbuckets].add_read(read);
+                if let Some(chosen) = Self::compute_chosen_bucket(read, k, numbuckets) {
+                    writers[chosen.0].add_read(read);
                 }
                 progress.incr(read.len() as u64);
                 progress.event(|a, c| c >= 100000000,
@@ -89,23 +103,12 @@ impl Pipeline {
         });
     }
 
-    #[inline(always)]
-    fn compute_chosen_bucket(read: &[u8], k: usize) -> Option<(u64, &[u8])> {
-        let mut hashes = nthash::NtHashIterator::new(read, k).unwrap();
-
-        const THRESHOLD_PERC: f64 = 1.0;
-        const THRESHOLD_VALUE: u64 = (std::u64::MAX as f64 * THRESHOLD_PERC / 100.0) as u64;
-//.filter(|v| v.0 < THRESHOLD_VALUE)
-        let res = (k..read.len()).map(|idx| (hashes.optim(), idx)).min()?;
-        Some((res.0, &read[res.1-k..res.1]))
-    }
-
     pub fn save_minimals(freezer: &'static ReadsFreezer, k: usize) -> ReadsFreezer {
         ReadsFreezer::from_generator(move |writer| {
             let mut progress = Progress::new();
 
             freezer.for_each(|read| {
-                if let Some(chosen) = Self::compute_chosen_bucket(read, k) {
+                if let Some(chosen) = Self::compute_chosen_bucket(read, k, 256) {
                     writer.add_read(chosen.1);
                 }
                 progress.incr(read.len() as u64);
