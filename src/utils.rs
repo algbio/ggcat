@@ -20,8 +20,8 @@ impl Utils {
     }
 
     pub fn thread_safespawn<F: FnOnce() + Send + 'static>(func: F) {
+        THREADS_COUNTER.fetch_add(1, Ordering::Relaxed);
         std::thread::spawn(|| {
-            THREADS_COUNTER.fetch_add(1, Ordering::Relaxed);
             func();
             THREADS_COUNTER.fetch_sub(1, Ordering::Relaxed);
         });
@@ -29,7 +29,7 @@ impl Utils {
 
     pub fn join_all() {
         while THREADS_COUNTER.load(Ordering::Relaxed) != 0 {
-            std::thread::sleep(Duration::from_secs(5));
+            std::thread::sleep(Duration::from_secs(1));
         }
     }
 }

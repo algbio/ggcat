@@ -94,7 +94,7 @@ impl ReadsFreezer {
     pub fn optifile_splitted(name: String) -> ReadsWriter {
         let file = name + ".freeze";
         ReadsWriter {
-            writer: WriterChannels::File(BufWriter::with_capacity(1024 * 1024 * 4, File::create(file).unwrap()))
+            writer: WriterChannels::File(BufWriter::with_capacity(1024 * 1024 * 16, File::create(file).unwrap()))
         }
     }
 

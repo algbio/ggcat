@@ -48,6 +48,10 @@ struct Cli {
     #[structopt(short)]
     bucketing: Option<usize>,
 
+    /// Writes out all minimizer k-mers
+    #[structopt(short)]
+    minimizers: bool,
+
     /// Enables output compression
     #[structopt(short)]
     compress: bool,
@@ -66,6 +70,7 @@ fn main() {
 
     let reads;
     let cut_n;
+    let minim;
 
     reads = if args.gzip_fasta {
         Pipeline::fasta_gzip_to_reads(args.inputs.as_slice())
@@ -86,6 +91,11 @@ fn main() {
         current = cast_static(&cut_n);
     }
 
+    if args.minimizers {
+        minim = Pipeline::save_minimals(current, args.klen.unwrap());
+        current = cast_static(&minim);
+    }
+
     if let Some(bnum) = args.bucketing {
         if args.klen.is_none() {
             println!("-k is mandatory with -b");
@@ -99,5 +109,5 @@ fn main() {
     }
 
     Utils::join_all();
-    println!("Finished elab, elapsed {:.2} seconds", progress.elapsed());
+    println!("Finished elab {}, elapsed {:.2} seconds", args.klen.unwrap_or_else(|| 0), progress.elapsed());
 }

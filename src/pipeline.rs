@@ -9,7 +9,6 @@ use crate::utils::Utils;
 pub struct Pipeline;
 
 impl Pipeline {
-
     pub fn file_freezers_to_reads(files: &[String]) -> ReadsFreezer {
         let files_ref = Vec::from(files);
         ReadsFreezer::from_generator(|writer| {
@@ -25,7 +24,6 @@ impl Pipeline {
     pub fn fasta_gzip_to_reads(files: &[String]) -> ReadsFreezer {
         let files_ref = Vec::from(files);
         ReadsFreezer::from_generator(move |writer| {
-
             let mut computed_size = 0u64;
             let total_size: u64 = files_ref.iter().map(|file| Path::new(file).metadata().unwrap().len()).sum();
 
@@ -52,7 +50,6 @@ impl Pipeline {
 
     pub fn cut_n(freezer: &'static ReadsFreezer, k: usize) -> ReadsFreezer {
         ReadsFreezer::from_generator(move |writer| {
-
             let mut progress = Progress::new();
 
             freezer.for_each(|read| {
@@ -90,6 +87,32 @@ impl Pipeline {
                                |a, c, r| println!("Read {} rate: {:.1}M/s", a, r / 1024.0 / 1024.0))
             })
         });
+    }
+
+    #[inline(always)]
+    fn compute_chosen_bucket(read: &[u8], k: usize) -> Option<(u64, &[u8])> {
+        let mut hashes = nthash::NtHashIterator::new(read, k).unwrap();
+
+        const THRESHOLD_PERC: f64 = 1.0;
+        const THRESHOLD_VALUE: u64 = (std::u64::MAX as f64 * THRESHOLD_PERC / 100.0) as u64;
+//.filter(|v| v.0 < THRESHOLD_VALUE)
+        let res = (k..read.len()).map(|idx| (hashes.optim(), idx)).min()?;
+        Some((res.0, &read[res.1-k..res.1]))
+    }
+
+    pub fn save_minimals(freezer: &'static ReadsFreezer, k: usize) -> ReadsFreezer {
+        ReadsFreezer::from_generator(move |writer| {
+            let mut progress = Progress::new();
+
+            freezer.for_each(|read| {
+                if let Some(chosen) = Self::compute_chosen_bucket(read, k) {
+                    writer.add_read(chosen.1);
+                }
+                progress.incr(read.len() as u64);
+                progress.event(|a, c| c >= 100000000,
+                               |a, c, r| println!("Read {} rate: {:.1}M/s", a, r / 1024.0 / 1024.0))
+            })
+        })
     }
 }
 
