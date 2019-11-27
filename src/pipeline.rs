@@ -7,6 +7,7 @@ use std::path::Path;
 use crate::utils::Utils;
 use rand::seq::IteratorRandom;
 use rand::prelude::{StdRng, ThreadRng};
+use rand::RngCore;
 
 pub struct Pipeline;
 
@@ -70,15 +71,16 @@ impl Pipeline {
 
     #[inline(always)]
     fn compute_chosen_bucket(read: &[u8], k: usize, nbuckets: usize) -> Option<(usize, &[u8])> {
-        let mut hashes = nthash::NtHashIterator::new(read, k).unwrap();
-
-        const THRESHOLD_PERC: f64 = 1.0;
-        const THRESHOLD_VALUE: u64 = (std::u64::MAX as f64 * THRESHOLD_PERC / 100.0) as u64;
-
-        let res = (k..read.len())
-            .map(|idx| (hashes.optim(), idx))
-            .filter(|v| v.0 < THRESHOLD_VALUE).map(|bucket| ((bucket.0 as usize) % nbuckets, bucket.1)).min()?;
-        Some((res.0, &read[res.1-k..res.1]))
+//        let mut hashes = nthash::NtHashIterator::new(read, k).unwrap();
+//
+//        const THRESHOLD_PERC: f64 = 1.0;
+//        const THRESHOLD_VALUE: u64 = (std::u64::MAX as f64 * THRESHOLD_PERC / 100.0) as u64;
+//
+//        let res = (k..read.len())
+//            .map(|idx| (hashes.optim(), idx))
+//            .filter(|v| v.0 < THRESHOLD_VALUE).map(|bucket| ((bucket.0 as usize) % nbuckets, bucket.1)).min()?;
+//        Some((res.0, &read[res.1-k..res.1]))
+        Some((ThreadRng::default().next_u32() as usize % nbuckets, &read[0..k]))
     }
 
     pub fn make_buckets(freezer: &'static ReadsFreezer, k: usize, numbuckets: usize, base_name: &str) {
