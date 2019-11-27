@@ -18,6 +18,8 @@ pub mod result;
 
 use crate::result::{ErrorKind, Result};
 use std::hint::unreachable_unchecked;
+use std::iter::Map;
+use std::ops::Range;
 
 pub(crate) const MAXIMUM_K_SIZE: usize = u32::max_value() as usize;
 
@@ -176,7 +178,7 @@ impl<'a> NtHashIterator<'a> {
     }
 
     #[inline(always)]
-    pub fn optim(&mut self) -> u64 {
+    fn optim(&mut self) -> u64 {
         let i = self.current_idx;
         let seqi = self.seq[i];
         let seqk = self.seq[i + self.k_minus1];
@@ -187,6 +189,17 @@ impl<'a> NtHashIterator<'a> {
         res
     }
 
+    #[inline(always)]
+    pub fn iter(&'a mut self) -> Map<Range<usize>, impl FnMut(usize) -> u64 + 'a>{
+        (self.k_minus1+1..self.seq.len())
+            .map(move |idx| self.optim())
+    }
+
+    #[inline(always)]
+    pub fn iter_enumerate(&'a mut self) -> Map<Range<usize>, impl FnMut(usize) -> (u64, usize) + 'a>{
+        (self.k_minus1+1..self.seq.len())
+            .map(move |idx| (self.optim(), idx))
+    }
 }
 
 impl<'a> Iterator for NtHashIterator<'a> {
