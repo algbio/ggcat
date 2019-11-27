@@ -64,9 +64,13 @@ impl Pipeline {
                 }
                 progress.incr(read.len() as u64);
                 progress.event(|a, c| c >= 100000000,
-                               |a, c, r| println!("Read {} rate: {:.1}M/s", a, r / 1024.0 / 1024.0))
+                               |a, c, r, _| println!("Read {} rate: {:.1}M/s", a, r / 1024.0 / 1024.0))
             })
         })
+    }
+
+    pub fn bloom_filter(freezer: &'static ReadsFreezer, k: usize) {
+        crate::bloom_processing::bloom(freezer, k);
     }
 
     #[inline(always)]
@@ -100,7 +104,7 @@ impl Pipeline {
                 }
                 progress.incr(read.len() as u64);
                 progress.event(|a, c| c >= 100000000,
-                               |a, c, r| println!("Read {} rate: {:.1}M/s", a, r / 1024.0 / 1024.0))
+                               |a, c, r, _| println!("Read {} rate: {:.1}M/s", a, r / 1024.0 / 1024.0))
             })
         });
     }
@@ -115,7 +119,7 @@ impl Pipeline {
                 }
                 progress.incr(read.len() as u64);
                 progress.event(|a, c| c >= 100000000,
-                               |a, c, r| println!("Read {} rate: {:.1}M/s", a, r / 1024.0 / 1024.0))
+                               |a, c, r, _| println!("Read {} rate: {:.1}M/s", a, r / 1024.0 / 1024.0))
             })
         })
     }

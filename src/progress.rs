@@ -23,9 +23,9 @@ impl Progress {
     }
 
     #[inline(always)]
-    pub fn event<C: FnOnce(u64, u64) -> bool, F: FnOnce(u64, u64, f64)>(&mut self, condition: C, printing: F) {
+    pub fn event<C: FnOnce(u64, u64) -> bool, F: FnOnce(u64, u64, f64, f64)>(&mut self, condition: C, printing: F) {
         if condition(self.tcounter, self.pcounter) {
-            printing(self.tcounter, self.pcounter, self.pcounter as f64 / self.stopwatch.elapsed().as_secs_f64());
+            printing(self.tcounter, self.pcounter, self.pcounter as f64 / self.stopwatch.elapsed().as_secs_f64(), self.stopwatch.elapsed().as_secs_f64());
             self.stopwatch.reset();
             self.stopwatch.start();
             self.pcounter = 0;
