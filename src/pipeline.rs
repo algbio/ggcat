@@ -11,7 +11,7 @@ use rand::RngCore;
 
 pub struct Pipeline;
 
-pub const MINIMIZER_THRESHOLD_PERC: f64 = 6.0;
+pub const MINIMIZER_THRESHOLD_PERC: f64 = 1.0;
 pub const MINIMIZER_THRESHOLD_VALUE: u64 = (std::u64::MAX as f64 * MINIMIZER_THRESHOLD_PERC / 100.0) as u64;
 
 
@@ -96,7 +96,6 @@ impl Pipeline {
 
         Utils::thread_safespawn(move || {
             let mut progress = Progress::new();
-
             freezer.for_each(|read| {
                 if let Some(chosen) = Self::compute_chosen_bucket(read, k, numbuckets) {
                     writers[chosen.0].add_read(read);
