@@ -11,6 +11,10 @@ use rand::RngCore;
 
 pub struct Pipeline;
 
+pub const MINIMIZER_THRESHOLD_PERC: f64 = 3.0;
+pub const MINIMIZER_THRESHOLD_VALUE: u64 = (std::u64::MAX as f64 * MINIMIZER_THRESHOLD_PERC / 100.0) as u64;
+
+
 impl Pipeline {
     pub fn file_freezers_to_reads(files: &[String]) -> ReadsFreezer {
         let files_ref = Vec::from(files);
@@ -75,16 +79,11 @@ impl Pipeline {
 
     #[inline(always)]
     fn compute_chosen_bucket(read: &[u8], k: usize, nbuckets: usize) -> Option<(usize, &[u8])> {
-//        let mut hashes = nthash::NtHashIterator::new(read, k).unwrap();
-//
-//        const THRESHOLD_PERC: f64 = 1.0;
-//        const THRESHOLD_VALUE: u64 = (std::u64::MAX as f64 * THRESHOLD_PERC / 100.0) as u64;
-//
-//        let res = (k..read.len())
-//            .map(|idx| (hashes.optim(), idx))
-//            .filter(|v| v.0 < THRESHOLD_VALUE).map(|bucket| ((bucket.0 as usize) % nbuckets, bucket.1)).min()?;
-//        Some((res.0, &read[res.1-k..res.1]))
-        Some((ThreadRng::default().next_u32() as usize % nbuckets, &read[0..k]))
+        let mut hashes = nthash::NtHashIterator::new(read, k).unwrap();
+        let res = hashes.iter_enumerate()
+            .filter(|v| v.0 < MINIMIZER_THRESHOLD_VALUE).map(|bucket| ((bucket.0 as usize) % nbuckets, bucket.1)).min()?;
+        Some((res.0, &read[res.1-k..res.1]))
+//        Some((ThreadRng::default().next_u32() as usize % nbuckets, &read[0..k]))
     }
 
     pub fn make_buckets(freezer: &'static ReadsFreezer, k: usize, numbuckets: usize, base_name: &str) {

@@ -3,6 +3,7 @@ use crate::progress::Progress;
 use crate::bloom_filter::BloomFilter;
 use std::alloc::Layout;
 use crate::reads_freezer::ReadsFreezer;
+use crate::pipeline::MINIMIZER_THRESHOLD_VALUE;
 
 pub const TOTAL_BLOOM_COUNTERS_EXP: usize = 37;
 pub const BLOOM_FIELDS_EXP_PER_BYTE: usize = 3;
@@ -139,6 +140,11 @@ pub fn bloom(freezer: &'static ReadsFreezer, k: usize) {
 
         for hash_seed in hashes.iter() {
             for hash in &[hash_seed] {
+
+                if *hash > MINIMIZER_THRESHOLD_VALUE {
+                    continue;
+                }
+
                 let address = (*hash as usize) % (1 << TOTAL_MEM_EXP_FIRST);
 //                if bloom.increment_cell(address) {
 //                    unsafe { COLLISIONS += 1; }
