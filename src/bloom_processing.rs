@@ -153,7 +153,7 @@ pub fn bloom(freezer: &'static ReadsFreezer, k: usize) {
             }
         }
         progress.event(|t, p| p >= 1000000, |t, p, r, e| {
-            if t % 50000000 == 0 {
+            if p % 50000000 == 0 {
                 println!("Flushing!!");
                 for i in 0..(1 << MAP_SIZE_EXP_FIRST) {
                     cache.flush(i, |a, b| process_first_cache_flush(a, b, true));
