@@ -82,7 +82,7 @@ impl Pipeline {
         let mut hashes = nthash::NtHashIterator::new(read, k).unwrap();
         let res = hashes.iter_enumerate()
             .filter(|v| v.0 < MINIMIZER_THRESHOLD_VALUE).map(|bucket| ((bucket.0 as usize) % nbuckets, bucket.1)).min()?;
-        Some((res.0, &read[res.1-k..res.1]))
+        Some((res.0, &read[res.1..res.1+k]))
 //        Some((ThreadRng::default().next_u32() as usize % nbuckets, &read[0..k]))
     }
 
