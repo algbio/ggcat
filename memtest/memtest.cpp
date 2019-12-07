@@ -5,11 +5,9 @@
 #include <stdint.h>
 #include <algorithm>
 #include <chrono>
-
+#include <unistd.h>
 
 using namespace std;
-
-
 
 // Because I'm lazy and I used a C++11 syntax to initialise a vector, you have to use G++ to compile this,
 // Compile with something like g++ -pedantic -std=c++0x RadixSort.cpp
@@ -62,14 +60,14 @@ template <typename InputIterator, typename OutputIterator> void radixSort(InputI
 
 typedef uint8_t mem_type_t;
 
-#define MEMORY_SIZE_EXP ((30 + 0) - __builtin_ctz(sizeof(mem_type_t)))
+#define MEMORY_SIZE_EXP ((30 + 1) - __builtin_ctz(sizeof(mem_type_t)))
 #define MEMORY_SIZE (1ULL << MEMORY_SIZE_EXP)
 #define LINE_SIZE  (1024ULL * 16ULL)
 
-#define ITERATIONS_NUMBER (640000000ULL*8)
+#define ITERATIONS_NUMBER (640000000ULL*2)
 
-#define BSIZE 200000
-#define BSIZE2 4096
+#define BSIZE (65536/4)
+#define BSIZE2 2048
 #define BEXP 8
 
 
@@ -78,8 +76,8 @@ typedef uint8_t mem_type_t;
 
 
 #define BNUM (1 << BEXP)
-uint64_t (&buffer)[BNUM][BSIZE] = *(uint64_t (*)[BNUM][BSIZE])calloc(1, sizeof(buffer));
-uint64_t (&bufferv2)[BNUM][BNUM][BSIZE2] = *(uint64_t (*)[BNUM][BNUM][BSIZE2])calloc(1, sizeof(bufferv2));
+uint32_t (&buffer)[BNUM][BSIZE] = *(uint32_t (*)[BNUM][BSIZE])calloc(1, sizeof(buffer));
+uint32_t (&bufferv2)[BNUM][BNUM][BSIZE2] = *(uint32_t (*)[BNUM][BNUM][BSIZE2])calloc(1, sizeof(bufferv2));
 uint32_t counters[BNUM];
 uint16_t countersv2[BNUM][BNUM];
 
@@ -125,92 +123,113 @@ int main() {
   auto start = chrono::high_resolution_clock::now();
   uint32_t hash = 0;
   double test = 0.0;
-  for (uint64_t i = 0; i < ITERATIONS_NUMBER; i++) {
-    uint64_t val = lehmer64();
-    // uint8_t cnt = val % 2 != 0;
-    // mem[val % MEMORY_SIZE] = 1;
-    // continue;
-    // mem_type_t *ptrs[2] = { &val, &mem[i % MEMORY_SIZE] };
-    // __builtin_prefetch(ptrs[cnt]);
+  char tbuffer[8192];
+  char sbuffer[8192];
+  size_t read;
+  size_t rsize;
+  for (uint64_t i = 0; i < ITERATIONS_NUMBER;) {
+    rsize = 0;
+    // Read quality
+    do {
+      read = 8192;
+      char *buf = tbuffer;
+      read = getline(&buf, &read, stdin);
+    } while (tbuffer[0] != '@');
+    for(;;) {
+      read = 8192;
+      char *buf = tbuffer;
+      read = getline(&buf, &read, stdin);
+      if (tbuffer[read-1] == '\n') read--;
+      if (tbuffer[0] == '+') break;
+      memcpy(sbuffer + rsize, tbuffer, read);
+      rsize += read;
+    }
+    for (int j = 0; j < rsize && i < ITERATIONS_NUMBER; i++, j++) {
+      uint64_t val = lehmer64();
 
-    // for (int j = 0; j < 1; j++) {
-    //   test = test * (j ^ i);
-    // }
+      // uint8_t cnt = val % 2 != 0;
+      // mem[val % MEMORY_SIZE] = 1;
+      // continue;
+      // mem_type_t *ptrs[2] = { &val, &mem[i % MEMORY_SIZE] };
+      // __builtin_prefetch(ptrs[cnt]);
 
-    // *ptrs[cnt] = val;
+      // for (int j = 0; j < 1; j++) {
+      //   test = test * (j ^ i);
+      // }
 
-    uint32_t b1idx = val % BNUM;
+      // *ptrs[cnt] = val;
 
-    if (counters[b1idx] == BSIZE) {
-      for (int j = 0; j < BSIZE; j++) {
-        uint32_t b2idx = buffer[b1idx][j] % BNUM;
-        if (countersv2[b1idx][b2idx] == BSIZE2) {
-          for (int k = 0; k < BSIZE2; k++) {
-            uint64_t addr = b1idx * (1ULL << (BEXP + BUCKET_EXP)) + b2idx * (1 << BUCKET_EXP) + bufferv2[b1idx][b2idx][k] % BUCKET_SIZE;
-            // cout << hex << "0x" << addr << endl;
-            mem_type_t &val = mem[addr];
+      uint32_t b1idx = val % BNUM;
 
-            struct tmp {
-              union {
-                mem_type_t v1;
-                uint8_t v2[1];
-              };
-            } tmp;
-            tmp.v1 = val;
+      if (counters[b1idx] == BSIZE) {
+        for (int j = 0; j < BSIZE; j++) {
+          uint32_t b2idx = buffer[b1idx][j] % BNUM;
+          if (countersv2[b1idx][b2idx] == BSIZE2) {
+            for (int k = 0; k < BSIZE2; k++) {
+              uint64_t addr = b1idx * (1ULL << (BEXP + BUCKET_EXP)) + b2idx * (1 << BUCKET_EXP) + bufferv2[b1idx][b2idx][k] % BUCKET_SIZE;
+              // cout << hex << "0x" << addr << endl;
+              mem_type_t &val = mem[addr];
 
-            tmp.v1++;
-            // tmp.v2[2]+=tmp.v2[1];
-            // tmp.v2[3]++;
+              struct tmp {
+                union {
+                  mem_type_t v1;
+                  uint8_t v2[1];
+                };
+              } tmp;
+              tmp.v1 = val;
 
-            val = tmp.v1;
+              tmp.v1++;
+              // tmp.v2[2]+=tmp.v2[1];
+              // tmp.v2[3]++;
 
+              val = tmp.v1;
+
+            }
+            countersv2[b1idx][b2idx] = 0;
           }
-          countersv2[b1idx][b2idx] = 0;
+          else {
+            bufferv2[b1idx][b2idx][countersv2[b1idx][b2idx]++] = buffer[b1idx][j] / BNUM;
+          }
         }
-        else {
-          bufferv2[b1idx][b2idx][countersv2[b1idx][b2idx]++] = buffer[b1idx][j] / BNUM;
-        }
+        counters[b1idx] = 0;
       }
-      counters[b1idx] = 0;
+      else {
+        buffer[b1idx][counters[b1idx]++] = val / BNUM;
+      }
+      // hash ^= vals[i%256];
     }
-    else {
-      buffer[b1idx][counters[b1idx]++] = val / BNUM;
-    }
-    // hash ^= vals[i%256];
-  }
+}
+    auto end = chrono::high_resolution_clock::now();
 
-  auto end = chrono::high_resolution_clock::now();
-  cout << test << endl;
-
-  // uint32_t hash = 0;
-  // uint32_t counter = 0;
-  // for (uint64_t i = 0; i < ITERATIONS_NUMBER; i++) {
-  //   // uint32_t bucket = (counter/(8192) * 1000000007) % (MEMORY_SIZE / BUCKET_SIZE) * BUCKET_SIZE;
-  //   // mem_type_t *val = &mem[(bucket + (hash % BUCKET_SIZE)) % MEMORY_SIZE];//++;//rand() % MEMORY_SIZE;//;
-  //   // val += 1;
-  //   // struct aaa {
-  //   //   union {
-  //   //     mem_type_t v1;
-  //   //     uint16_t v2[sizeof(mem_type_t)/2];
-  //   //   };
-  //   // } test = *(aaa*)val;
-  //   // for (int k = 0; k < sizeof(mem_type_t)/2; k++) {
-  //   //   if (test.v2[k] == 0xFF) {
-  //   //     hash++;
-  //   //     test.v2[k] = 44;
-  //   //     break;
-  //   //   }
-  //   // }
-  //   hash = (hash + 377) * 10000000007;
-  //   counter += 1;
-  //   // *val = test.v1;
-  //   // if () {
-  //     // uint32_t bucket = hash % BNUM;
-  //     // buffer[bucket][counters[bucket]++ % 1000000] = hash;
-  //     buffer[0][0] = (hash * (hash % 12 == 4));
-  //   // }
-  //
-  // }
+    // uint32_t hash = 0;
+    // uint32_t counter = 0;
+    // for (uint64_t i = 0; i < ITERATIONS_NUMBER; i++) {
+    //   // uint32_t bucket = (counter/(8192) * 1000000007) % (MEMORY_SIZE / BUCKET_SIZE) * BUCKET_SIZE;
+    //   // mem_type_t *val = &mem[(bucket + (hash % BUCKET_SIZE)) % MEMORY_SIZE];//++;//rand() % MEMORY_SIZE;//;
+    //   // val += 1;
+    //   // struct aaa {
+    //   //   union {
+    //   //     mem_type_t v1;
+    //   //     uint16_t v2[sizeof(mem_type_t)/2];
+    //   //   };
+    //   // } test = *(aaa*)val;
+    //   // for (int k = 0; k < sizeof(mem_type_t)/2; k++) {
+    //   //   if (test.v2[k] == 0xFF) {
+    //   //     hash++;
+    //   //     test.v2[k] = 44;
+    //   //     break;
+    //   //   }
+    //   // }
+    //   hash = (hash + 377) * 10000000007;
+    //   counter += 1;
+    //   // *val = test.v1;
+    //   // if () {
+    //     // uint32_t bucket = hash % BNUM;
+    //     // buffer[bucket][counters[bucket]++ % 1000000] = hash;
+    //     buffer[0][0] = (hash * (hash % 12 == 4));
+    //   // }
+    //
+    // }
 
 
   uint64_t sum = 0;

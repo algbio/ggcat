@@ -1,0 +1,3 @@
+/home/andrea/genome-assembly/memtest/cmake-build-debug/CMakeFiles/rebuild_cache.dir
+/home/andrea/genome-assembly/memtest/cmake-build-debug/CMakeFiles/memtest.dir
+/home/andrea/genome-assembly/memtest/cmake-build-debug/CMakeFiles/edit_cache.dir

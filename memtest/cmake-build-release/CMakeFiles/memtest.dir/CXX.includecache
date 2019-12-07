@@ -1,0 +1,34 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/andrea/genome-assembly/memtest/memtest.cpp
+iostream
+-
+stdlib.h
+-
+memory.h
+-
+stdint.h
+-
+algorithm
+-
+chrono
+-
+unistd.h
+-
+iostream
+-
+vector
+-
+algorithm
+-
+iterator
+-
+queue
+-
+
