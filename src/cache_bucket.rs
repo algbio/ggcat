@@ -38,7 +38,6 @@ macro_rules! declare_bucket {
 
             #[inline(always)]
             pub fn flush<F: FnMut(usize, &[T])>(&mut self, bucket: usize, mut lambda: F) {
-
 //                self.data[bucket][0..(self.sizes[bucket] as usize)].sort();
                 lambda(bucket, &self.data[bucket][0..(self.sizes[bucket] as usize)]);
                 self.sizes[bucket] = 0;

@@ -1,2 +1,2 @@
 CXX=clang++
-CXXFLAGS=-O3 -march=native
+CXXFLAGS=-O3 -march=native -pthreads

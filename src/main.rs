@@ -9,6 +9,7 @@ use nix::unistd::PathconfVar::PIPE_BUF;
 use crate::utils::{cast_static, Utils};
 use std::time::Duration;
 use structopt::clap::ArgGroup;
+use std::net::Shutdown::Read;
 
 
 mod gzip_fasta_reader;
@@ -57,11 +58,19 @@ struct Cli {
 
     /// Bloom filter elaboration
     #[structopt(short, group = "outputs", requires = "klen")]
-    elab_bloom: bool,
+    elabbloom: bool,
 
     /// Enables buckets processing with the specified number of buckets
     #[structopt(short, group = "outputs", requires = "klen")]
     bucketing: Option<usize>,
+
+    /// Tests built bloom filter against this file for coverage tests
+    #[structopt(short = "f", requires = "elabbloom")]
+    coverage: Option<String>,
+
+    /// Decimate bloom filter
+    #[structopt(short, requires = "elabbloom")]
+    decimated: bool,
 
     /// Writes out all minimizer k-mers
     #[structopt(short, requires = "klen")]
@@ -70,6 +79,12 @@ struct Cli {
     /// Enables output compression
     #[structopt(short, requires = "output")]
     compress: bool,
+
+    /// Processes a bucket
+    #[structopt(short, requires = "output", requires = "klen")]
+    process_bucket: bool,
+
+
 }
 
 fn main() {
@@ -87,6 +102,7 @@ fn main() {
     let reads;
     let cut_n;
     let minim;
+    let mut merge: Vec<Box<ReadsFreezer>> = Vec::new();
 
     reads = if args.gzip_fasta {
         Pipeline::fasta_gzip_to_reads(args.inputs.as_slice())
@@ -101,13 +117,25 @@ fn main() {
         current = cast_static(&cut_n);
     }
 
+    if args.process_bucket {
+        let kvalue = args.klen.unwrap();
+//        for i in 1..1 {
+            merge.push(Box::new(Pipeline::merge_bucket(current, kvalue, 256, 0)));
+            current = cast_static(&merge.last().unwrap());
+//        }
+    }
+
     if args.minimizers {
         minim = Pipeline::save_minimals(current, args.klen.unwrap());
         current = cast_static(&minim);
     }
 
-    if args.elab_bloom {
-        Pipeline::bloom_filter(current, args.klen.unwrap());
+    if args.elabbloom {
+        let mut filter = Pipeline::bloom_filter(current, args.klen.unwrap(), args.decimated);
+        if let Some(ctest) = args.coverage {
+//            Pipeline::bloom_check_coverage(ReadsFreezer::from_file(ctest.clone()), &mut filter);
+            Pipeline::bloom_check_coverage(ReadsFreezer::from_file(ctest), &mut filter);
+        }
     }
     else if let Some(bnum) = args.bucketing {
         Pipeline::make_buckets(current, args.klen.unwrap(), bnum, "buckets/bucket-");

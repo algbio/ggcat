@@ -1,1 +1,0 @@
-/usr/bin/c++  -O3 -DNDEBUG   CMakeFiles/memtest.dir/memtest.cpp.o  -o memtest 

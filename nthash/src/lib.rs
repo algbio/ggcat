@@ -190,13 +190,13 @@ impl<'a> NtHashIterator<'a> {
     }
 
     #[inline(always)]
-    pub fn iter(&'a mut self) -> Map<Range<usize>, impl FnMut(usize) -> u64 + 'a>{
+    pub fn iter(mut self) -> Map<Range<usize>, impl FnMut(usize) -> u64 + 'a>{
         (self.k_minus1..self.seq.len())
             .map(move |idx| self.optim())
     }
 
     #[inline(always)]
-    pub fn iter_enumerate(&'a mut self) -> Map<Range<usize>, impl FnMut(usize) -> (u64, usize) + 'a>{
+    pub fn iter_enumerate(mut self) -> Map<Range<usize>, impl FnMut(usize) -> (u64, usize) + 'a>{
         (0..self.seq.len()-self.k_minus1)
             .map(move |idx| (self.optim(), idx))
     }

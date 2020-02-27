@@ -4,6 +4,8 @@ use crate::bloom_filter::BloomFilter;
 use std::alloc::Layout;
 use crate::reads_freezer::ReadsFreezer;
 use crate::pipeline::MINIMIZER_THRESHOLD_VALUE;
+use std::mem::MaybeUninit;
+use std::io::Write;
 
 pub const TOTAL_BLOOM_COUNTERS_EXP: usize = 37;
 pub const BLOOM_FIELDS_EXP_PER_BYTE: usize = 3;
@@ -38,8 +40,8 @@ type SecondLevelCacheArray = [CacheBucketsSecond<BucketValueSecond>; 1 << MAP_SI
 type ThirdLevelCacheArray = [[CacheBucketsThird<BucketValueThird>; 1 << MAP_SIZE_EXP_SECOND]; 1 << MAP_SIZE_EXP_FIRST];
 
 static mut BLOOM: Option<&mut BloomFilter> = None;
-static mut SECOND_LEVEL_CACHES: Option<&mut SecondLevelCacheArray> = None;
-static mut THIRD_LEVEL_CACHES: Option<&mut ThirdLevelCacheArray> = None;
+static mut SECOND_LEVEL_CACHES: Option<Box<SecondLevelCacheArray>> = None;
+static mut THIRD_LEVEL_CACHES: Option<Box<ThirdLevelCacheArray>> = None;
 static mut COLLISIONS: u64 = 0;
 static mut TOTAL: u64 = 0;
 static mut FIRST_LEVEL_FLUSHES: u64 = 0;
@@ -106,7 +108,7 @@ pub fn process_first_cache_flush(bucket_first: usize, addresses_first: &[BucketV
 }
 
 
-pub fn bloom(freezer: &'static ReadsFreezer, k: usize) {
+pub fn bloom(freezer: &'static ReadsFreezer, k: usize, decimation: bool, use_cache: bool) -> BloomFilter {
 
     println!("{} {} {}", LINE_SIZE_EXP_FIRST, LINE_SIZE_EXP_SECOND, LINE_SIZE_EXP_THIRD);
     assert!(LINE_SIZE_EXP_SECOND <= 32, "Second level address does not fit 32 bit!!");
@@ -115,18 +117,30 @@ pub fn bloom(freezer: &'static ReadsFreezer, k: usize) {
     let mut progress = Progress::new();
     let mut total_progress = Progress::new();
     let mut real_total = 0u64;
+    let mut global_total = 0u64;
     let gb = 0u64;
 
-    let mut bloom = BloomFilter::new(1 << TOTAL_MEM_EXP_IN_BYTES);
+    let mut bloom = BloomFilter::new(1 << TOTAL_MEM_EXP_IN_BYTES, k);
     unsafe { BLOOM = Some(std::mem::transmute(&mut bloom)); }
 
-    let cache: &mut CacheBucketsFirst<BucketValueFirst> = unsafe {
-        &mut *(std::alloc::alloc_zeroed(Layout::from_size_align(std::mem::size_of::<CacheBucketsFirst::<BucketValueFirst>>(), 32).unwrap()) as *mut CacheBucketsFirst::<BucketValueFirst>)
+    let mut cache: Box<CacheBucketsFirst<BucketValueFirst>> =
+        unsafe {
+        Box::from_raw(
+            (std::alloc::alloc(
+                    Layout::from_size_align(
+                        std::mem::size_of::<CacheBucketsFirst::<BucketValueFirst>>(), 32).unwrap()) as *mut CacheBucketsFirst::<BucketValueFirst>)
+            )
     };
 
     unsafe {
-        SECOND_LEVEL_CACHES = Some(&mut *(std::alloc::alloc_zeroed(Layout::from_size_align(std::mem::size_of::<SecondLevelCacheArray>(), 32).unwrap()) as *mut SecondLevelCacheArray));
-        THIRD_LEVEL_CACHES = Some(&mut *(std::alloc::alloc_zeroed(Layout::from_size_align(std::mem::size_of::<ThirdLevelCacheArray>(), 32).unwrap()) as *mut ThirdLevelCacheArray));
+        SECOND_LEVEL_CACHES = Some(Box::from_raw(
+            std::alloc::alloc(
+                Layout::from_size_align(
+                    std::mem::size_of::<SecondLevelCacheArray>(), 32).unwrap()) as *mut _));
+        THIRD_LEVEL_CACHES = Some(Box::from_raw(
+            std::alloc::alloc(
+                Layout::from_size_align(
+                    std::mem::size_of::<ThirdLevelCacheArray>(), 32).unwrap()) as *mut _));
     };
     println!("Allocated bloom filter structures");
 
@@ -134,32 +148,35 @@ pub fn bloom(freezer: &'static ReadsFreezer, k: usize) {
     freezer.for_each(|record| {
         real_total += record.len() as u64;
 
-        if record.len() <= k { return; }
+        if record.len() < k { return; }
 
         let mut hashes = nthash::NtHashIterator::new(record, k).unwrap();
 
         for (hash_seed, idx) in hashes.iter_enumerate() {
             for hash in &[hash_seed] {
-
-                if *hash > MINIMIZER_THRESHOLD_VALUE {
+                if decimation && *hash > MINIMIZER_THRESHOLD_VALUE {
                     continue;
                 }
 
                 let address = (*hash as usize) % (1 << TOTAL_MEM_EXP_FIRST);
-//                if bloom.increment_cell(address) {
-//                    unsafe { COLLISIONS += 1; }
-//                }
-//                unsafe {
-//                    TOTAL += 1;
-//                }
-//                continue;
-                let (major_first, minor_first, base_first) = CacheBucketsFirst::<BucketValueFirst>::parameters(address);
-                unsafe { TOTAL_FILL_FIRST += 1; }
-                cache.push(major_first, minor_first as BucketValueFirst, |a, b| process_first_cache_flush(a, b, false));
+
+                if use_cache {
+                    let (major_first, minor_first, base_first) = CacheBucketsFirst::<BucketValueFirst>::parameters(address);
+                    unsafe { TOTAL_FILL_FIRST += 1; }
+                    cache.push(major_first, minor_first as BucketValueFirst, |a, b| process_first_cache_flush(a, b, false));
+                } else {
+                    if bloom.increment_cell(address) {
+                        unsafe { COLLISIONS += 1; }
+                    }
+                    unsafe {
+                        TOTAL += 1;
+                    }
+                    continue;
+                }
             }
         }
         progress.event(|t, p| p >= 1000000, |t, p, r, e| {
-            if t % 500000000 == 0 {
+            if use_cache && t % 500000000 == 0 {
                 println!("Flushing!!");
                 for i in 0..(1 << MAP_SIZE_EXP_FIRST) {
                     cache.flush(i, |a, b| process_first_cache_flush(a, b, true));
@@ -181,12 +198,13 @@ pub fn bloom(freezer: &'static ReadsFreezer, k: usize) {
                      unsafe { COLLISIONS },
                      unsafe { TOTAL },
                      unsafe { COLLISIONS as f64 / TOTAL as f64 * 100.0 },
-                     unsafe { (TOTAL - COLLISIONS) as f64 / ((1u64 << TOTAL_MEM_EXP_FIRST) as f64) * 100.0 });
+                     unsafe { (TOTAL - COLLISIONS) as f64 / ((1usize << TOTAL_MEM_EXP_FIRST) as f64) * 100.0 });
             unsafe {
                 FIRST_LEVEL_FLUSHES = 0;
                 SECOND_LEVEL_FLUSHES = 0;
                 THIRD_LEVEL_FLUSHES = 0;
             }
+            global_total += real_total;
             real_total = 0;
 //            progress.restart();
         });
@@ -205,14 +223,25 @@ pub fn bloom(freezer: &'static ReadsFreezer, k: usize) {
 //        println!("{}", std::str::from_utf8(r.as_slice()).unwrap());
 //    }
 
-    println!("Final flushing!!");
-    for i in 0..(1 << MAP_SIZE_EXP_FIRST) {
-        cache.flush(i, |a, b| process_first_cache_flush(a, b, true));
+    if use_cache {
+        println!("Final flushing!!");
+        for i in 0..(1 << MAP_SIZE_EXP_FIRST) {
+            cache.flush(i, |a, b| process_first_cache_flush(a, b, true));
+        }
+    }
+
+    // Free all memory
+    unsafe {
+        BLOOM.take();
+        SECOND_LEVEL_CACHES.take();
+        THIRD_LEVEL_CACHES.take();
     }
 
     progress.event(|_,_| true, |t, p, r, e| {
-        println!("Rate {}M bases/sec records [{}] {}/{} => {:.2}% | {:.2}%",
-                 real_total as f64 / e / 1000000.0,
+        global_total += real_total;
+
+        println!("Rate {:.2}M bases/sec records [{}] {}/{} => {:.2}% | {:.2}%",
+                 global_total as f64 / total_progress.elapsed() / 1000000.0,
                  t,
                  unsafe { COLLISIONS },
                  unsafe { TOTAL },
@@ -220,4 +249,5 @@ pub fn bloom(freezer: &'static ReadsFreezer, k: usize) {
                  unsafe { (TOTAL - COLLISIONS) as f64 / ((1u64 << TOTAL_MEM_EXP_FIRST) as f64) * 100.0 });
         println!("Elapsed {} seconds, read {} records and {} gb!", total_progress.elapsed(), t, (gb as f64) / 1024.0 / 1024.0 / 1024.0);
     });
+    bloom
 }
