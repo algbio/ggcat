@@ -17,7 +17,9 @@ use crate::nthash::RollingNtHashIterator;
 use ::nthash::NtHashIterator;
 use crate::rolling_quality_check::RollingQualityCheck;
 use std::cmp::{max, min};
-
+use rayon::iter::*;
+use std::sync::atomic::Ordering;
+use std::sync::atomic::*;
 
 mod gzip_fasta_reader;
 mod utils;
@@ -107,14 +109,17 @@ fn main() {
 
     let args = Cli2::from_args();
 
+    let mut total_at = AtomicU64::new(0);
+    let mut correct_at = AtomicU64::new(0);
 
-    let mut total = 0;
-    let mut correct = 0;
-    let mut nthash = RollingNtHashIterator::new();
-    let mut qcheck = RollingQualityCheck::new();
+    args.input.par_iter().for_each(|input| {
 
-    for input in args.input {
-        GzipFastaReader::process_file_extended(input, |x| {
+        let mut total = 0;
+        let mut correct = 0;
+
+        let mut nthash = RollingNtHashIterator::new();
+        let mut qcheck = RollingQualityCheck::new();
+        GzipFastaReader::process_file_extended(input.to_string(), |x| {
             let qual = x.qual;
 //
 //        let mut prob_log = 0;
@@ -151,7 +156,13 @@ fn main() {
                 }
             }
         });
-    }
+        total_at.fetch_add(total as u64, Ordering::Relaxed);
+        correct_at.fetch_add(correct as u64, Ordering::Relaxed);
+    });
+
+    let correct = correct_at.load(Ordering::Relaxed);
+    let total = total_at.load(Ordering::Relaxed);
+
     println!("Correct/Total = {}/{} ===> {:.2}%", correct, total, (correct as f64) / (total as f64) * 100.0);
 
     return;
