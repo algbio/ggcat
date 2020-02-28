@@ -99,7 +99,7 @@ struct Cli {
 #[derive(StructOpt, Debug)]
 struct Cli2 {
     /// The input files
-    input: String
+    input: Vec<String>
 }
 
 
@@ -113,43 +113,45 @@ fn main() {
     let mut nthash = RollingNtHashIterator::new();
     let mut qcheck = RollingQualityCheck::new();
 
-    GzipFastaReader::process_file_extended(args.input, |x| {
-        let qual = x.qual;
+    for input in args.input {
+        GzipFastaReader::process_file_extended(input, |x| {
+            let qual = x.qual;
 //
 //        let mut prob_log = 0;
 
 
-        let mut rolling_iter = RollingKmersIterator::new(x.seq, 32);
-        let mut rolling_qiter = RollingKmersIterator::new(x.qual, x.qual.len());
+            let mut rolling_iter = RollingKmersIterator::new(x.seq, 32);
+            let mut rolling_qiter = RollingKmersIterator::new(x.qual, x.qual.len());
 //        let mut ntiter = NtHashIterator::new(x.seq, 32);
 
-        let mut r = 0;
-        for x in rolling_iter.iter(&mut nthash) {//.zip(ntiter.unwrap().iter()) {
-            r ^= x;
-        }
+            let mut r = 0;
+            for x in rolling_iter.iter(&mut nthash) {//.zip(ntiter.unwrap().iter()) {
+                r ^= x;
+            }
 
-        let mut prob_log = rolling_qiter.iter(&mut qcheck).min().unwrap_or(std::u32::MAX);
+            let mut prob_log = rolling_qiter.iter(&mut qcheck).min().unwrap_or(std::u32::MAX);
 
 //        for qb in qual {
 ////            println!("{}", -(0.1 * ((*qb as f32) - 33.0)));
 //        }
-        total += 1;
+            total += 1;
 
-        let threshold: f64 = 0.95;
-        let threshold_log = (-threshold.log10() * 1048576.0) as u32;
+            let threshold: f64 = 0.95;
+            let threshold_log = (-threshold.log10() * 1048576.0) as u32;
 
 //        println!("{} < {}", prob_log, threshold_log);
 
-        if prob_log < threshold_log {
-            correct += 1;
-            if correct % 100000 == 0 {
-                println!("Prob: {:.2}% correct => LEN: {} {}", (10.0 as f64).powf(-(prob_log as f64) / 1048576.0), x.seq.len(), r);
-                println!("{}", String::from_utf8_lossy(x.seq));
-                println!("{}", String::from_utf8_lossy(x.qual));
-                println!("Correct/Total = {}/{} ===> {:.2}%", correct, total, (correct as f64) / (total as f64) * 100.0);
+            if prob_log < threshold_log {
+                correct += 1;
+                if correct % 100000 == 0 {
+                    println!("Prob: {:.2}% correct => LEN: {} {}", (10.0 as f64).powf(-(prob_log as f64) / 1048576.0), x.seq.len(), r);
+                    println!("{}", String::from_utf8_lossy(x.seq));
+                    println!("{}", String::from_utf8_lossy(x.qual));
+                    println!("Correct/Total = {}/{} ===> {:.2}%", correct, total, (correct as f64) / (total as f64) * 100.0);
+                }
             }
-        }
-    });
+        });
+    }
     println!("Correct/Total = {}/{} ===> {:.2}%", correct, total, (correct as f64) / (total as f64) * 100.0);
 
     return;
