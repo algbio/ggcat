@@ -19,6 +19,7 @@ enum ParsingState {
     Quality
 }
 
+#[derive(Copy, Clone)]
 pub struct FastaSequence<'a> {
     pub seq: &'a [u8],
     pub qual: &'a [u8]
@@ -27,7 +28,7 @@ pub struct FastaSequence<'a> {
 pub struct GzipFastaReader;
 impl GzipFastaReader {
     pub fn process_file<F: FnMut(&[u8])>(source: String, mut func: F) {
-        let mut process = Command::new("gzip").args(&["-cd", source.as_str()]).stdout(Stdio::piped()).spawn().unwrap();
+        let mut process = Command::new("./libdeflate/gzip").args(&["-cd", source.as_str()]).stdout(Stdio::piped()).spawn().unwrap();
         let pid = process.id() as i32;
         let decompress = process.stdout.unwrap();
         let reader = fastq::Reader::new(decompress);

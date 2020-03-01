@@ -1,4 +1,4 @@
-use crate::rolling_kmers_iterator::RollingKmerImpl;
+use crate::rolling_kseq_iterator::RollingKseqImpl;
 
 pub struct RollingQualityCheck {
     scores_index: [u32; 256],
@@ -26,7 +26,7 @@ impl RollingQualityCheck {
     }
 }
 
-impl RollingKmerImpl<u32> for RollingQualityCheck {
+impl RollingKseqImpl<u8, u32> for RollingQualityCheck {
 
     #[inline(always)]
     fn clear(&mut self, ksize: usize) {

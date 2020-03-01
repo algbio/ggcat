@@ -1,4 +1,4 @@
-use crate::rolling_kmers_iterator::RollingKmerImpl;
+use crate::rolling_kseq_iterator::RollingKseqImpl;
 use std::hint::unreachable_unchecked;
 
 const H_LOOKUP: [u64; 256] = {
@@ -35,7 +35,7 @@ impl RollingNtHashIterator {
     }
 }
 
-impl RollingKmerImpl<u64> for RollingNtHashIterator {
+impl RollingKseqImpl<u8, u64> for RollingNtHashIterator {
 
     #[inline(always)]
     fn clear(&mut self, ksize: usize) {

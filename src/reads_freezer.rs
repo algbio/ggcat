@@ -8,7 +8,10 @@ use std::cell::{Cell, UnsafeCell};
 use std::thread;
 use crate::utils::{cast_static, cast_static_mut, Utils};
 use std::ops::DerefMut;
-
+use crate::gzip_fasta_reader::FastaSequence;
+use std::process::{Command, Stdio, ChildStdin};
+use flate2::Compression;
+use flate2::write::GzEncoder;
 
 pub struct ReadsFreezer {
     reader: UnsafeCell<Box<dyn Read>>,
@@ -39,34 +42,37 @@ unsafe impl<'a, T: ?Sized> Send for RefThreadWrapper<'a, T> {}
 
 pub enum WriterChannels {
     Pipe(PipeWriter),
-    File(BufWriter<File>)
+    File(BufWriter<File>),
+    CompressedFile(BufWriter<GzEncoder<BufWriter<File>>>)
 }
+
+impl WriterChannels {
+    fn get_writer(&mut self) -> &mut dyn Write {
+        match self {
+            WriterChannels::Pipe(x) => { x },
+            WriterChannels::File(x) => { x },
+            WriterChannels::CompressedFile(x) => { x }
+        }
+    }
+}
+
 
 pub struct ReadsWriter {
     writer: WriterChannels
 }
+
 impl ReadsWriter {
-    pub fn add_read(&mut self, read: &[u8]) {
-        match self.writer {
-            WriterChannels::Pipe(ref mut writer) => {
-                writer.write_all(read).unwrap();
-                writer.write_u8(b'\n').unwrap();
-            },
-            WriterChannels::File(ref mut writer) => {
-                writer.write_all(read).unwrap();
-                writer.write_u8(b'\n').unwrap();
-            },
-        }
+    pub fn add_read(&mut self, read: FastaSequence) {
+        let writer = self.writer.get_writer();
+        writer.write_all(b"@SeqId\n");
+        writer.write_all(read.seq).unwrap();
+        writer.write_all(b"\n+\n").unwrap();
+        writer.write_all(read.qual).unwrap();
+        writer.write_u8(b'\n').unwrap();
     }
     pub fn pipe_freezer(&mut self, mut freezer: ReadsFreezer) {
-        match self.writer {
-            WriterChannels::Pipe(ref mut writer) => {
-                std::io::copy(&mut freezer.reader.uget(), writer).unwrap();
-            },
-            WriterChannels::File(ref mut writer) => {
-                std::io::copy(&mut freezer.reader.uget(), writer).unwrap();
-            }
-        }
+        let writer = self.writer.get_writer();
+        std::io::copy(&mut freezer.reader.uget(), writer).unwrap();
     }
 }
 
@@ -91,10 +97,25 @@ impl ReadsFreezer {
         }, ReadsWriter { writer: WriterChannels::Pipe(writer) })
     }
 
+    pub fn optfile_splitted_compressed(name: String) -> ReadsWriter {
+        let file = name + ".freeze.gz";
+
+//        let mut process = Command::new("./libdeflate/gzip").args(&["-c2"])
+//            .stdin(Stdio::piped())
+//            .stdout(Stdio::from(File::create(file).unwrap())).spawn().unwrap();
+//
+//        let compress_stream = process.stdin.unwrap();
+        let mut compress_stream = GzEncoder::new(BufWriter::with_capacity(1024 * 1024 * 16, File::create(file).unwrap()), Compression::new(2));
+
+        ReadsWriter {
+            writer: WriterChannels::CompressedFile(BufWriter::with_capacity(1024 * 1024, compress_stream))
+        }
+    }
+
     pub fn optifile_splitted(name: String) -> ReadsWriter {
         let file = name + ".freeze";
         ReadsWriter {
-            writer: WriterChannels::File(BufWriter::with_capacity(1024 * 1024 * 16, File::create(file).unwrap()))
+            writer: WriterChannels::File(BufWriter::with_capacity(1024 * 128, File::create(file).unwrap()))
         }
     }
 
