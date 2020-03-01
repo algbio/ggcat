@@ -21,6 +21,7 @@ enum ParsingState {
 
 #[derive(Copy, Clone)]
 pub struct FastaSequence<'a> {
+    pub ident: &'a [u8],
     pub seq: &'a [u8],
     pub qual: &'a [u8]
 }
@@ -104,6 +105,7 @@ impl GzipFastaReader {
 
                             // Process sequence
                             func(FastaSequence {
+                                ident: &[],
                                 seq: seq.as_slice(),
                                 qual: qual.as_slice()
                             });

@@ -11,7 +11,7 @@ use std::time::Duration;
 use structopt::clap::ArgGroup;
 use std::net::Shutdown::Read;
 use std::fs::File;
-use crate::gzip_fasta_reader::GzipFastaReader;
+use crate::gzip_fasta_reader::{GzipFastaReader, FastaSequence};
 use crate::rolling_kseq_iterator::RollingKseqIterator;
 use crate::nthash::RollingNtHashIterator;
 use ::nthash::NtHashIterator;
@@ -179,7 +179,13 @@ fn main() {
             let bucket = if minmax_value == 0 { 0 } else { (minmax_value >> 1) % (BUCKETS_COUNT as u64) + 1 };
             vec[bucket as usize] += 1;
 
-            buckets[bucket as usize].lock().unwrap().add_read(x);
+            let ident = format!("@SeqId {}", minmax_value);
+
+            buckets[bucket as usize].lock().unwrap().add_read(FastaSequence {
+                ident: ident.as_bytes(),
+                seq: x.seq,
+                qual: x.qual
+            });
 
             let mut rolling_qiter1 = RollingKseqIterator::new(x.qual, x.qual.len());
             let mut prob_log = rolling_qiter1.iter(&mut qcheck).min().unwrap_or(std::u32::MAX);
