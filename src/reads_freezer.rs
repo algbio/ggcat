@@ -64,7 +64,8 @@ pub struct ReadsWriter {
 impl ReadsWriter {
     pub fn add_read(&mut self, read: FastaSequence) {
         let writer = self.writer.get_writer();
-        writer.write_all(b"@SeqId\n");
+        writer.write_all(read.ident);
+        writer.write_all(b"\n");
         writer.write_all(read.seq).unwrap();
         writer.write_all(b"\n+\n").unwrap();
         writer.write_all(read.qual).unwrap();
