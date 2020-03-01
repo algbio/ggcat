@@ -14,7 +14,7 @@ bincode = "1.2.0"
 lazy_static = "1.4.0"
 postcard = "0.4.2"
 byteorder = "1.3.2"
-flate2 = "1.0.13"
+flate2 = { path = "flate2-rs", features = ["cloudflare_zlib"], default-features = false }
 #rolling-crc = { path = "rolling-crc-rs" }
 nthash = { path = "nthash" }
 rand = "0.7.2"
