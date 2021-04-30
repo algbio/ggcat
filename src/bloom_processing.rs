@@ -1,253 +1,346 @@
-use crate::cache_bucket::{CacheBucketsFirst, CacheBucketsSecond, CacheBucketsThird};
-use crate::progress::Progress;
-use crate::bloom_filter::BloomFilter;
-use std::alloc::Layout;
-use crate::reads_freezer::ReadsFreezer;
+use crate::bloom_filter::{BloomFilter, SET_BIT};
+use crate::cache_bucket::CacheBucket;
+use crate::gzip_fasta_reader::FastaSequence;
 use crate::pipeline::MINIMIZER_THRESHOLD_VALUE;
-use std::mem::MaybeUninit;
+use crate::progress::Progress;
+use crate::reads_freezer::{ReadsFreezer, ReadsWriter};
+use itertools::all;
+use std::alloc::Layout;
 use std::io::Write;
+use std::mem::MaybeUninit;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-pub const TOTAL_BLOOM_COUNTERS_EXP: usize = 37;
+pub const TOTAL_BLOOM_COUNTERS_EXP: usize = 35;
+/// 38;
 pub const BLOOM_FIELDS_EXP_PER_BYTE: usize = 3;
 
 pub const TOTAL_MEM_EXP_IN_BYTES: usize = TOTAL_BLOOM_COUNTERS_EXP - BLOOM_FIELDS_EXP_PER_BYTE;
 
-
 pub const TOTAL_MEM_EXP_FIRST: usize = TOTAL_MEM_EXP_IN_BYTES + BLOOM_FIELDS_EXP_PER_BYTE;
-pub const MAP_SIZE_EXP_FIRST: usize = 9;//1024 * 1024 * 1024 * 4 * 4 / 4096;
-pub const BULK_SIZE_FIRST: usize = 1048576*2;
+pub const MAP_SIZE_EXP_FIRST: usize = 8; //1024 * 1024 * 1024 * 4 * 4 / 4096;
+pub const BULK_SIZE_FIRST: usize = 524288;
 pub const LINE_SIZE_EXP_FIRST: usize = TOTAL_MEM_EXP_FIRST - MAP_SIZE_EXP_FIRST;
 
 pub const TOTAL_MEM_EXP_SECOND: usize = LINE_SIZE_EXP_FIRST;
-pub const MAP_SIZE_EXP_SECOND: usize = 8;//1024 * 1024 * 1024 * 4 * 4 / 4096;
+pub const MAP_SIZE_EXP_SECOND: usize = 8; //1024 * 1024 * 1024 * 4 * 4 / 4096;
 pub const BULK_SIZE_SECOND: usize = 8192;
 pub const LINE_SIZE_EXP_SECOND: usize = TOTAL_MEM_EXP_SECOND - MAP_SIZE_EXP_SECOND;
 
 pub const TOTAL_MEM_EXP_THIRD: usize = LINE_SIZE_EXP_SECOND;
-pub const MAP_SIZE_EXP_THIRD: usize = 8;//1024 * 1024 * 1024 * 4 * 4 / 4096;
-pub const BULK_SIZE_THIRD: usize = 64;
+pub const MAP_SIZE_EXP_THIRD: usize = 7; //1024 * 1024 * 1024 * 4 * 4 / 4096;
+pub const BULK_SIZE_THIRD: usize = 2048;
 pub const LINE_SIZE_EXP_THIRD: usize = TOTAL_MEM_EXP_THIRD - MAP_SIZE_EXP_THIRD;
 
-static mut TOTAL_FILL_FIRST: usize = 0;
-static mut TOTAL_FILL_SECOND: usize = 0;
-static mut TOTAL_FILL_THIRD: usize = 0;
+const L1_BUCKETS_COUNT: usize = (1 << MAP_SIZE_EXP_FIRST);
+const L2_BUCKETS_COUNT: usize = (1 << MAP_SIZE_EXP_SECOND);
+const L3_BUCKETS_COUNT: usize = (1 << MAP_SIZE_EXP_THIRD);
 
 type BucketValueFirst = u32;
 type BucketValueSecond = u32;
 type BucketValueThird = u16;
 
-type SecondLevelCacheArray = [CacheBucketsSecond<BucketValueSecond>; 1 << MAP_SIZE_EXP_FIRST];
-type ThirdLevelCacheArray = [[CacheBucketsThird<BucketValueThird>; 1 << MAP_SIZE_EXP_SECOND]; 1 << MAP_SIZE_EXP_FIRST];
+pub trait FlushableBucket<T> {
+    fn initialize(&mut self, parent_value: usize);
+    fn add_element(&mut self, val: T);
+    fn finalize(&mut self);
+}
 
-static mut BLOOM: Option<&mut BloomFilter> = None;
-static mut SECOND_LEVEL_CACHES: Option<Box<SecondLevelCacheArray>> = None;
-static mut THIRD_LEVEL_CACHES: Option<Box<ThirdLevelCacheArray>> = None;
-static mut COLLISIONS: u64 = 0;
-static mut TOTAL: u64 = 0;
-static mut FIRST_LEVEL_FLUSHES: u64 = 0;
-static mut SECOND_LEVEL_FLUSHES: u64 = 0;
-static mut THIRD_LEVEL_FLUSHES: u64 = 0;
+struct BucketsCache {}
 
+pub struct HierarchicalBloomFilter<
+    F1: FnMut(usize, usize, &mut [u32]),
+    F2: FnMut(usize, usize, &mut [u32]),
+    F3: FnMut(usize, usize, &mut [u32]),
+    const USE_CACHE: bool,
+> {
+    // filter: Box<BloomFilter>,
+    l1_cache: Box<CacheBucket<F1, BULK_SIZE_FIRST, L1_BUCKETS_COUNT, LINE_SIZE_EXP_FIRST>>,
+    l2_cache: Box<[CacheBucket<F2, BULK_SIZE_SECOND, L2_BUCKETS_COUNT, LINE_SIZE_EXP_SECOND>]>,
+    l3_cache: Box<CacheBucket<F3, BULK_SIZE_THIRD, L3_BUCKETS_COUNT, LINE_SIZE_EXP_THIRD>>,
+    collisions: u64,
+    total: u64,
+    l1_flushes: u64,
+    l2_flushes: u64,
+    l3_flushes: u64,
 
-pub fn process_first_cache_flush(bucket_first: usize, addresses_first: &[BucketValueFirst], full: bool) {
+    progress: Progress,
+    total_progress: Progress,
+    real_total: u64,
+    global_total: u64,
+    gb: u64,
+    k: usize,
 
-    unsafe { FIRST_LEVEL_FLUSHES += 1; }
-//    return;
-    let second_cache = unsafe { SECOND_LEVEL_CACHES.as_mut().unwrap().get_unchecked_mut(bucket_first) };
+    freeze: ReadsWriter,
+}
 
+pub struct HierarcicalBloomFilterFactory {}
 
-    let second_lambda_process = |bucket_second: usize, addresses_second: &[BucketValueSecond]| {
-        unsafe { SECOND_LEVEL_FLUSHES += 1; }
-        let third_cache = unsafe { THIRD_LEVEL_CACHES.as_mut().unwrap().get_unchecked_mut(bucket_first).get_unchecked_mut(bucket_second) };
+pub unsafe fn lifetime_extend_mut<'a, 'b, T: ?Sized>(value: &'a mut T) -> &'b mut T {
+    core::mem::transmute(value)
+}
 
+impl HierarcicalBloomFilterFactory {
+    pub fn new<const USE_CACHE: bool>(
+        k: usize,
+    ) -> HierarchicalBloomFilter<
+        impl FnMut(usize, usize, &mut [u32]),
+        impl FnMut(usize, usize, &mut [u32]),
+        impl FnMut(usize, usize, &mut [u32]),
+        USE_CACHE,
+    > {
+        println!(
+            "{} {} {}",
+            LINE_SIZE_EXP_FIRST, LINE_SIZE_EXP_SECOND, LINE_SIZE_EXP_THIRD
+        );
+        assert!(
+            LINE_SIZE_EXP_SECOND <= 32,
+            "Second level address does not fit 32 bit!!"
+        );
+        assert!(
+            LINE_SIZE_EXP_THIRD <= 32,
+            "Third level address does not fit 32 bit!!"
+        );
 
-        let third_lambda_process = |bucket_third: usize, addresses_third: &[BucketValueThird]| {
-            unsafe { THIRD_LEVEL_FLUSHES += 1; }
-            let base_first = bucket_first << LINE_SIZE_EXP_FIRST;
-            let base_second = bucket_second << LINE_SIZE_EXP_SECOND;
-            let base_third = bucket_third << LINE_SIZE_EXP_THIRD;
-            unsafe { TOTAL_FILL_THIRD -= addresses_third.len(); }
-            for addr in addresses_third {
-                unsafe {
-                    let final_address = base_first | base_second | base_third | *addr as usize;
-//                println!("Base address: {}", base_first | base_second | base_third);
-                    if BLOOM.as_mut().unwrap().increment_cell(final_address) {
-                        COLLISIONS += 1;// * ((hash != 0) as u64);
+        // let mut filter: Box<BloomFilter> =
+        // Box::new(BloomFilter::new(1 << TOTAL_MEM_EXP_IN_BYTES, k));
+
+        // let test = AtomicU64::new(0);
+        // let inc = AtomicU64::new(0);
+
+        // let filter_ref = unsafe { lifetime_extend_mut(filter.as_mut()) };
+        let mut l3_cache =
+            CacheBucket::<_, BULK_SIZE_THIRD, L3_BUCKETS_COUNT, LINE_SIZE_EXP_THIRD>::new(
+                move |addr, bucket, data| {
+                    // test.fetch_add(data.len() as u64, Ordering::Relaxed);
+                    // inc.fetch_add(1, Ordering::Relaxed);
+                    // println!(
+                    //     "Size {} {} / {}bytes",
+                    //     data.len(),
+                    //     test.load(Ordering::Relaxed) as f32 / inc.load(Ordering::Relaxed) as f32,
+                    //     (1 << LINE_SIZE_EXP_THIRD)
+                    // );
+                    // for el in data {
+                    //     filter_ref
+                    //         .increment_cell(addr + (bucket << LINE_SIZE_EXP_THIRD) + *el as usize);
+                    // }
+                },
+            );
+
+        // let l3_cache_ref = unsafe { lifetime_extend_mut(l3_cache.as_mut()) };
+        let mut l2_cache =
+            CacheBucket::<_, BULK_SIZE_SECOND, L2_BUCKETS_COUNT, LINE_SIZE_EXP_SECOND>::new_slice(
+                move |addr, bucket, data| {
+                    data.sort_unstable();
+
+                    let mut diffs = 1;
+
+                    for i in 0..data.len() - 1 {
+                        diffs += (data[i] != data[i + 1]) as u64;
                     }
-                    TOTAL += 1
-                }
-            }
-        };
 
-        unsafe { TOTAL_FILL_SECOND -= addresses_second.len(); }
-        for address in addresses_second {
-            let (major_third, minor_third, base_third) = CacheBucketsThird::<BucketValueThird>::parameters(*address as usize);
-            unsafe { TOTAL_FILL_THIRD += 1; }
-            third_cache.push(major_third, minor_third as BucketValueThird, third_lambda_process);
+                    SET_BIT.fetch_add(diffs, Ordering::Relaxed);
+                    //     l3_cache_ref.initialize(addr + (bucket << LINE_SIZE_EXP_SECOND));
+                    //     for el in data {
+                    //         l3_cache_ref.add_element(*el as usize);
+                    //     }
+                    //     l3_cache_ref.finalize();
+                },
+                L1_BUCKETS_COUNT,
+            );
+
+        for (bucket, cache) in l2_cache.iter_mut().enumerate() {
+            cache.initialize((bucket << LINE_SIZE_EXP_FIRST));
         }
 
-        if full {
-            for i in 0..(1 << MAP_SIZE_EXP_THIRD) {
-                third_cache.flush(i, third_lambda_process);
-            }
-        }
-    };
+        let l2_cache_ref = unsafe { lifetime_extend_mut(l2_cache.as_mut()) };
+        let mut l1_cache =
+            CacheBucket::<_, BULK_SIZE_FIRST, L1_BUCKETS_COUNT, LINE_SIZE_EXP_FIRST>::new(
+                move |addr, bucket, data| {
+                    // println!("Flush bucket {} {}", bucket, LINE_SIZE_EXP_FIRST);
+                    // l2_cache_ref.initialize(addr + (bucket << LINE_SIZE_EXP_FIRST));
+                    for el in data {
+                        // println!(
+                        //     "Add element {} + {:b}",
+                        //     addr + (bucket << LINE_SIZE_EXP_FIRST),
+                        //     *el
+                        // );
+                        l2_cache_ref[bucket].add_element(*el as usize);
+                    }
+                    // l2_cache_ref.finalize();
+                },
+            );
 
-    unsafe { TOTAL_FILL_FIRST -= addresses_first.len(); }
-    for address in addresses_first {
-        let (major_second, minor_second, base_second) = CacheBucketsSecond::<BucketValueSecond>::parameters(*address as usize);
-        unsafe { TOTAL_FILL_SECOND += 1; }
-        second_cache.push(major_second, minor_second as BucketValueSecond, second_lambda_process);
-    }
+        l1_cache.initialize(0);
 
-    if full {
-        for i in 0..(1 << MAP_SIZE_EXP_SECOND) {
-            second_cache.flush(i, second_lambda_process);
+        static INDEX: AtomicU32 = AtomicU32::new(0);
+
+        HierarchicalBloomFilter {
+            // filter,
+            l1_cache,
+            l2_cache,
+            l3_cache,
+            collisions: 0,
+            total: 0,
+            l1_flushes: 0,
+            l2_flushes: 0,
+            l3_flushes: 0,
+
+            progress: Progress::new(),
+            total_progress: Progress::new(),
+            real_total: 0u64,
+            global_total: 0u64,
+            gb: 0u64,
+            k,
+            freeze: ReadsFreezer::optfile_splitted_compressed(format!(
+                "test{}",
+                INDEX.fetch_add(1, Ordering::Relaxed)
+            )),
         }
     }
 }
 
+impl<
+        F1: FnMut(usize, usize, &mut [u32]),
+        F2: FnMut(usize, usize, &mut [u32]),
+        F3: FnMut(usize, usize, &mut [u32]),
+        const USE_CACHE: bool,
+    > HierarchicalBloomFilter<F1, F2, F3, USE_CACHE>
+{
+    pub fn add_sequence(&mut self, record: &[u8]) {
+        self.real_total += record.len() as u64;
 
-pub fn bloom(freezer: &'static ReadsFreezer, k: usize, decimation: bool, use_cache: bool) -> BloomFilter {
+        if record.len() < self.k {
+            return;
+        }
 
-    println!("{} {} {}", LINE_SIZE_EXP_FIRST, LINE_SIZE_EXP_SECOND, LINE_SIZE_EXP_THIRD);
-    assert!(LINE_SIZE_EXP_SECOND <= 32, "Second level address does not fit 32 bit!!");
-    assert!(LINE_SIZE_EXP_THIRD <= 16, "Third level address does not fit 16 bit!!");
+        let mut hashes = nthash::NtHashIterator::new(record, self.k).unwrap();
 
-    let mut progress = Progress::new();
-    let mut total_progress = Progress::new();
-    let mut real_total = 0u64;
-    let mut global_total = 0u64;
-    let gb = 0u64;
+        for (idx, hash_seed) in hashes.iter_enumerate() {
+            if hash_seed % (self.k as u64) == 0 {
+                self.freeze.add_read(FastaSequence {
+                    ident: &[],
+                    seq: &record[idx..idx + self.k],
+                    qual: &[],
+                });
+            }
 
-    let mut bloom = BloomFilter::new(1 << TOTAL_MEM_EXP_IN_BYTES, k);
-    unsafe { BLOOM = Some(std::mem::transmute(&mut bloom)); }
-
-    let mut cache: Box<CacheBucketsFirst<BucketValueFirst>> =
-        unsafe {
-        Box::from_raw(
-            (std::alloc::alloc(
-                    Layout::from_size_align(
-                        std::mem::size_of::<CacheBucketsFirst::<BucketValueFirst>>(), 32).unwrap()) as *mut CacheBucketsFirst::<BucketValueFirst>)
-            )
-    };
-
-    unsafe {
-        SECOND_LEVEL_CACHES = Some(Box::from_raw(
-            std::alloc::alloc(
-                Layout::from_size_align(
-                    std::mem::size_of::<SecondLevelCacheArray>(), 32).unwrap()) as *mut _));
-        THIRD_LEVEL_CACHES = Some(Box::from_raw(
-            std::alloc::alloc(
-                Layout::from_size_align(
-                    std::mem::size_of::<ThirdLevelCacheArray>(), 32).unwrap()) as *mut _));
-    };
-    println!("Allocated bloom filter structures");
-
-
-    freezer.for_each(|record| {
-        real_total += record.len() as u64;
-
-        if record.len() < k { return; }
-
-        let mut hashes = nthash::NtHashIterator::new(record, k).unwrap();
-
-        for (hash_seed, idx) in hashes.iter_enumerate() {
             for hash in &[hash_seed] {
-                if decimation && *hash > MINIMIZER_THRESHOLD_VALUE {
-                    continue;
-                }
+                // if self.decimation && *hash > MINIMIZER_THRESHOLD_VALUE {
+                //     continue;
+                // }
 
-                let address = (*hash as usize) % (1 << TOTAL_MEM_EXP_FIRST);
+                // let address = (*hash as usize) % (1 << TOTAL_MEM_EXP_FIRST);
+                // let address2 = (hash.rotate_left(32) as usize) % (1 << TOTAL_MEM_EXP_FIRST);
 
-                if use_cache {
-                    let (major_first, minor_first, base_first) = CacheBucketsFirst::<BucketValueFirst>::parameters(address);
-                    unsafe { TOTAL_FILL_FIRST += 1; }
-                    cache.push(major_first, minor_first as BucketValueFirst, |a, b| process_first_cache_flush(a, b, false));
+                if USE_CACHE {
+                    // let (major_first, minor_first, base_first) =
+                    //     CacheBucketsFirst::<BucketValueFirst>::parameters(address);
+                    // l1_cache.push(major_first, minor_first as BucketValueFirst, |a, b| {
+                    //     self_.process_first_cache_flush(a, b, false)
+                    // });
+                    // self.l1_cache.add_element(address);
+                    // self.l1_cache.add_element(address2);
                 } else {
-                    if bloom.increment_cell(address) {
-                        unsafe { COLLISIONS += 1; }
-                    }
-                    unsafe {
-                        TOTAL += 1;
-                    }
+                    // self.filter.increment_cell(address);
+                    // self.filter.increment_cell(address2);
+                    // if  {
+                    //     unsafe {
+                    //         self.collisions += 1;
+                    //     }
+                    // }
+                    // unsafe {
+                    //     self.total += 1;
+                    // }
                     continue;
                 }
             }
         }
-        progress.event(|t, p| p >= 1000000, |t, p, r, e| {
-            if use_cache && t % 500000000 == 0 {
-                println!("Flushing!!");
-                for i in 0..(1 << MAP_SIZE_EXP_FIRST) {
-                    cache.flush(i, |a, b| process_first_cache_flush(a, b, true));
-                }
+        // self.progress.event(|t, p| p >= 1000000, |t, p, r, e| {
+        //                 if self.use_cache && t % 500000000 == 0 {
+        //                     println!("Flushing!!");
+        //                     for i in 0..(1 << MAP_SIZE_EXP_FIRST) {
+        //                         self.l1_cache.flush(i, |a, b| self_.process_first_cache_flush(a, b, true));
+        //                     }
+        //                 }
+        //                 println!("Rate {:.1}M bases/sec {{{}, {}, {}, {}}} F{{{:.2}, {:.2}, {:.2}}} records [{}] {}/{} => {:.2}% | {:.2}%",
+        //                          self.real_total as f64 / e / 1000000.0,
+        //                          self.l1_flushes,
+        //                          self.l2_flushes,
+        //                          self.l3_flushes,
+        //                          self.l3_flushes * (BULK_SIZE_THIRD as u64),
+        //                          unsafe { TOTAL_FILL_FIRST as f64 / ((1 << MAP_SIZE_EXP_FIRST) * BULK_SIZE_FIRST) as f64 * 100.0 },
+        //                          unsafe { TOTAL_FILL_SECOND as f64 / ((1 << MAP_SIZE_EXP_FIRST) * (1 << MAP_SIZE_EXP_SECOND) * BULK_SIZE_SECOND) as f64 * 100.0 },
+        //                          unsafe {
+        //                              TOTAL_FILL_THIRD as f64 /
+        //                                  ((1 << MAP_SIZE_EXP_FIRST) * (1 << MAP_SIZE_EXP_SECOND) * (1 << MAP_SIZE_EXP_THIRD) * BULK_SIZE_THIRD) as f64 * 100.0
+        //                          },
+        //                          t,
+        //
+        //                          *collisions,
+        //
+        //                          *total,
+        //
+        //                          *collisions as f64 / *total as f64 * 100.0,
+        //
+        //                          (*total - *collisions) as f64 / ((1usize << TOTAL_MEM_EXP_FIRST) as f64) * 100.0);
+        //
+        //             self.l1_flushes = 0;
+        //             self.l2_flushes = 0;
+        //             self.l3_flushes = 0;
+        //             self.global_total += self.real_total;
+        //             self.real_total = 0;
+        // //            progress.restart();
+        //             });
+    }
+
+    pub fn finalize(&mut self) -> Option<&mut BloomFilter> {
+        if USE_CACHE {
+            println!("Final flushing!!");
+            self.l1_cache.finalize();
+
+            for cache in self.l2_cache.iter_mut() {
+                cache.finalize();
             }
-            println!("Rate {:.1}M bases/sec {{{}, {}, {}, {}}} F{{{:.2}, {:.2}, {:.2}}} records [{}] {}/{} => {:.2}% | {:.2}%",
-                     real_total as f64 / e / 1000000.0,
-                     unsafe { FIRST_LEVEL_FLUSHES },
-                     unsafe { SECOND_LEVEL_FLUSHES },
-                     unsafe { THIRD_LEVEL_FLUSHES },
-                     unsafe { THIRD_LEVEL_FLUSHES * (BULK_SIZE_THIRD as u64) },
-                     unsafe { TOTAL_FILL_FIRST as f64 / ((1 << MAP_SIZE_EXP_FIRST) * BULK_SIZE_FIRST) as f64 * 100.0 },
-                     unsafe { TOTAL_FILL_SECOND as f64 / ((1 << MAP_SIZE_EXP_FIRST) * (1 << MAP_SIZE_EXP_SECOND) * BULK_SIZE_SECOND) as f64 * 100.0 },
-                     unsafe {
-                         TOTAL_FILL_THIRD as f64 /
-                             ((1 << MAP_SIZE_EXP_FIRST) * (1 << MAP_SIZE_EXP_SECOND) * (1 << MAP_SIZE_EXP_THIRD) * BULK_SIZE_THIRD) as f64 * 100.0
-                     },
-                     t,
-                     unsafe { COLLISIONS },
-                     unsafe { TOTAL },
-                     unsafe { COLLISIONS as f64 / TOTAL as f64 * 100.0 },
-                     unsafe { (TOTAL - COLLISIONS) as f64 / ((1usize << TOTAL_MEM_EXP_FIRST) as f64) * 100.0 });
-            unsafe {
-                FIRST_LEVEL_FLUSHES = 0;
-                SECOND_LEVEL_FLUSHES = 0;
-                THIRD_LEVEL_FLUSHES = 0;
-            }
-            global_total += real_total;
-            real_total = 0;
-//            progress.restart();
-        });
-    });
-//        records += BinarySerializer::count_entries(file.clone());//, format!("{}.xbin", file));
-//        BinarySerializer::serialize_file(file.clone(), format!("{}.xbin", file));
-
-//        let dna = BinarySerializer::deserialize_file(format!("{}.bin", file));
-
-//        println!("Compressed to {}", file);
-//        gb += File::open(file.as_str()).unwrap().metadata().unwrap().len();
-
-
-//    result.sort();
-//    for r in result {
-//        println!("{}", std::str::from_utf8(r.as_slice()).unwrap());
-//    }
-
-    if use_cache {
-        println!("Final flushing!!");
-        for i in 0..(1 << MAP_SIZE_EXP_FIRST) {
-            cache.flush(i, |a, b| process_first_cache_flush(a, b, true));
         }
+
+        //        records += BinarySerializer::count_entries(file.clone());//, format!("{}.xbin", file));
+        //        BinarySerializer::serialize_file(file.clone(), format!("{}.xbin", file));
+
+        //        let dna = BinarySerializer::deserialize_file(format!("{}.bin", file));
+
+        //        println!("Compressed to {}", file);
+        //        gb += File::open(file.as_str()).unwrap().metadata().unwrap().len();
+
+        //    result.sort();
+        //    for r in result {
+        //        println!("{}", std::str::from_utf8(r.as_slice()).unwrap());
+        //    }
+
+        // progress.event(
+        //     |_, _| true,
+        //     |t, p, r, e| {
+        //         global_total += real_total;
+        //
+        //         println!(
+        //             "Rate {:.2}M bases/sec records [{}] {}/{} => {:.2}% | {:.2}%",
+        //             global_total as f64 / total_progress.elapsed() / 1000000.0,
+        //             t,
+        //             collisions,
+        //             total,
+        //             collisions as f64 / total as f64 * 100.0,
+        //             unsafe {
+        //                 (total - collisions) as f64 / ((1u64 << TOTAL_MEM_EXP_FIRST) as f64) * 100.0
+        //             }
+        //         );
+        //         println!(
+        //             "Elapsed {} seconds, read {} records and {} gb!",
+        //             total_progress.elapsed(),
+        //             t,
+        //             (gb as f64) / 1024.0 / 1024.0 / 1024.0
+        //         );
+        //     },
+        // );
+        // self.filter.as_mut()
+        None
     }
-
-    // Free all memory
-    unsafe {
-        BLOOM.take();
-        SECOND_LEVEL_CACHES.take();
-        THIRD_LEVEL_CACHES.take();
-    }
-
-    progress.event(|_,_| true, |t, p, r, e| {
-        global_total += real_total;
-
-        println!("Rate {:.2}M bases/sec records [{}] {}/{} => {:.2}% | {:.2}%",
-                 global_total as f64 / total_progress.elapsed() / 1000000.0,
-                 t,
-                 unsafe { COLLISIONS },
-                 unsafe { TOTAL },
-                 unsafe { COLLISIONS as f64 / TOTAL as f64 * 100.0 },
-                 unsafe { (TOTAL - COLLISIONS) as f64 / ((1u64 << TOTAL_MEM_EXP_FIRST) as f64) * 100.0 });
-        println!("Elapsed {} seconds, read {} records and {} gb!", total_progress.elapsed(), t, (gb as f64) / 1024.0 / 1024.0 / 1024.0);
-    });
-    bloom
 }

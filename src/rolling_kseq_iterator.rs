@@ -1,4 +1,3 @@
-
 pub trait RollingKseqImpl<T: Copy, U: Copy> {
     fn clear(&mut self, ksize: usize);
     fn init(&mut self, index: usize, base: T);
@@ -6,38 +5,30 @@ pub trait RollingKseqImpl<T: Copy, U: Copy> {
 }
 
 #[derive(Debug)]
-pub struct RollingKseqIterator<'a, T: Copy> {
-    seq: &'a [T],
-    k_minus1: usize,
-}
+pub struct RollingKseqIterator {}
 
-impl<'a, T: Copy> RollingKseqIterator<'a, T> {
-    pub fn new(seq: &'a [T], k: usize) -> RollingKseqIterator<'a, T> {
-        RollingKseqIterator {
-            seq,
-            k_minus1: k - 1
-        }
-    }
+impl RollingKseqIterator {
+    pub fn iter_seq<'a, T: Copy, U: Copy>(
+        seq: &'a [T],
+        k: usize,
+        iter_impl: &'a mut (impl RollingKseqImpl<T, U> + 'a),
+    ) -> impl Iterator<Item = U> + 'a {
+        let k_minus1 = k - 1;
 
-    pub fn iter<U: Copy>(mut self, iter_impl: &'a mut (impl RollingKseqImpl<T, U> + 'a)) -> impl Iterator<Item = U> + 'a {
-
-        let maxv;
-
-        if self.seq.len() > self.k_minus1 {
-            iter_impl.clear(self.k_minus1 + 1);
-            for (i, v) in self.seq[0..self.k_minus1].iter().enumerate() {
+        let maxv = if seq.len() > k_minus1 {
+            iter_impl.clear(k);
+            for (i, v) in seq[0..k_minus1].iter().enumerate() {
                 iter_impl.init(i, *v);
             }
-            maxv = self.seq.len();
-        }
-        else {
-            maxv = 0;
-        }
+            seq.len()
+        } else {
+            0
+        };
 
-        (self.k_minus1..maxv)
-            .map(move |idx| iter_impl.iter(idx,
-                                           unsafe { *self.seq.get_unchecked(idx - self.k_minus1) },
-                                           unsafe { *self.seq.get_unchecked(idx) }
-            ))
+        (k_minus1..maxv).map(move |idx| {
+            iter_impl.iter(idx, unsafe { *seq.get_unchecked(idx - k_minus1) }, unsafe {
+                *seq.get_unchecked(idx)
+            })
+        })
     }
 }

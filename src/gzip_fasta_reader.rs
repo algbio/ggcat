@@ -58,6 +58,7 @@ impl GzipFastaReader {
 
 
         let mut buffer = [0; 32768];
+        let mut ident: Vec<u8> = Vec::new();
         let mut seq: Vec<u8> = Vec::new();
         let mut qual: Vec<u8> = Vec::new();
 
@@ -76,6 +77,7 @@ impl GzipFastaReader {
                 match state {
                     ParsingState::Ident => {
                         while read < count && buffer[read as usize] != b'\n' {
+                            ident.push(buffer[read as usize]);
                             read += 1;
                             continue
                         }
@@ -105,12 +107,13 @@ impl GzipFastaReader {
 
                             // Process sequence
                             func(FastaSequence {
-                                ident: &[],
+                                ident: ident.as_slice(),
                                 seq: seq.as_slice(),
                                 qual: qual.as_slice()
                             });
 //                            println!("{}", String::from_utf8_lossy(&seq.as_slice()));
 //                            println!("{}", String::from_utf8_lossy(&qual.as_slice()));
+                            ident.clear();
                             seq.clear();
                             qual.clear();
                             read += 1;
