@@ -2,12 +2,13 @@
 #![feature(is_sorted)]
 #![feature(slice_group_by)]
 #![feature(llvm_asm)]
+#![feature(option_result_unwrap_unchecked)]
 #![allow(warnings)]
 
 use crate::bloom_filter::SET_BIT;
 use crate::bloom_processing::{HierarchicalBloomFilter, HierarcicalBloomFilterFactory};
 use crate::cache_bucket::CacheBucket;
-use crate::compressed_read::{CompressedRead, H_LOOKUP};
+use crate::compressed_read::{CompressedRead, H_INV_LETTERS, H_LOOKUP};
 use crate::gzip_fasta_reader::{FastaSequence, GzipFastaReader};
 use crate::intermediate_storage::{
     IntermediateReadsReader, IntermediateReadsWriter, IntermediateStorage,
@@ -22,6 +23,8 @@ use crate::rolling_minqueue::{GenericsFunctional, RollingMinQueue};
 use crate::rolling_quality_check::RollingQualityCheck;
 use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
 use crate::utils::{cast_static, Utils};
+use ::nthash::nt_manual_roll;
+use ::nthash::nt_manual_roll_rev;
 use ::nthash::NtHashIterator;
 use ::nthash::NtSequence;
 use bio::alphabets::SymbolRanks;
@@ -152,6 +155,10 @@ struct Cli2 {
     /// Process the sequence to find bucket alignments
     #[structopt(short)]
     alignment: bool,
+
+    /// Minimum molteplicity required to keep a kmer
+    #[structopt(short = "s", long = "min-molteplicity")]
+    min_molteplicity: Option<usize>,
 }
 
 struct NtHashMinTransform;
@@ -256,8 +263,6 @@ fn main() {
             //
             // let mut address = 0;
 
-            let mut temp_hashes = Vec::new();
-
             const VEC: Vec<u8> = Vec::new();
             const VEC_USZ: Vec<usize> = Vec::new();
             const ALLOWED_LEN: usize = 1024 * 1024;
@@ -288,7 +293,8 @@ fn main() {
                 temp_buffers[bucket].clear();
                 temp_indexes[bucket].clear();
             };
-            let mut minimizer_queue = RollingMinQueue::<u64, u32, NtHashMinTransform>::new();
+            let mut minimizer_queue =
+                RollingMinQueue::<u64, u32, NtHashMinTransform>::new(k - m + 1);
 
             GzipFastaReader::process_file_extended(input.to_string(), |x| {
                 //                 let qual = x.qual;
@@ -303,38 +309,29 @@ fn main() {
                 let mut end = 0;
 
                 let mut get_sequence = || {
-                    start = end;
-                    while start < x.seq.len() && x.seq[start] == b'N' {
-                        start += 1
+                    while end < x.seq.len() {
+                        start = end;
+                        // Skip all not recognized characters
+                        while start < x.seq.len() && x.seq[start] == b'N' {
+                            start += 1;
+                        }
+                        end = start;
+                        // Find the last valid character in this sequence
+                        while end < x.seq.len() && x.seq[end] != b'N' {
+                            end += 1;
+                        }
+                        // If the length of the read is long enough, return it
+                        if end - start >= k {
+                            return Some(&x.seq[start..end]);
+                        }
                     }
-                    end = start;
-                    while end < x.seq.len() && x.seq[end] != b'N' {
-                        end += 1;
-                    }
-                    if end - start >= k {
-                        Some(&x.seq[start..end])
-                    } else {
-                        None
-                    }
+                    None
                 };
 
                 while let Some(seq) = get_sequence() {
-                    temp_hashes.clear();
-                    minimizer_queue.clear(k);
-
                     let hashes = NtHashIterator::new(seq, m).unwrap();
 
-                    temp_hashes.extend(hashes.iter());
-
-                    // if temp_hashes.iter().filter(|x| **x == 0).count() > 5 {
-                    //     println!("Error: {}", std::str::from_utf8(seq).unwrap());
-                    // }
-
-                    let mut rolling_iter = RollingKseqIterator::iter_seq(
-                        temp_hashes.as_slice(),
-                        k - m + 1,
-                        &mut minimizer_queue,
-                    );
+                    let mut rolling_iter = minimizer_queue.make_iter(hashes.iter());
 
                     let mut last_index = 0;
 
@@ -454,6 +451,8 @@ fn main() {
     } else {
         static CURRENT_BUCKETS_COUNT: AtomicU64 = AtomicU64::new(0);
 
+        let min_molteplicity = args.min_molteplicity.unwrap_or(4);
+
         args.input.par_iter().enumerate().for_each(|(index, input)| {
             let mut kmers_cnt = 0;
             let mut kmers_unique = 0;
@@ -551,8 +550,12 @@ fn main() {
                         }
                     }
 
-                    let mut rcorrect_reads: Vec<usize> = Vec::new();
+                    let mut rcorrect_reads: Vec<(u64, usize)> = Vec::new();
                     let mut rhash_map = hashbrown::HashMap::with_capacity_and_hasher(4096, TestHash { value: 0 });
+
+                    let mut backward_seq = Vec::new();
+                    let mut forward_seq = Vec::new();
+                    forward_seq.reserve(k);
 
                     // cmp_reads[b].sort_unstable_by_key(|x| x.3);
 
@@ -589,20 +592,16 @@ fn main() {
 
                             let hashes = NtHashIterator::new(read, k).unwrap();
 
-                            // let hlen = counters.len();
-
                             for (idx, hash) in hashes.iter().enumerate() {
                                 // kmers_cnt += hash as usize;
                                 // counters[hash as usize % hlen] = min(254, counters[hash as usize % hlen] + 1);
                                 let entry = rhash_map.entry(hash).or_insert((read_idx * 4 + idx, 0));
                                 entry.1 += 1;
-                                if entry.1 == 5 {
-                                    rcorrect_reads.push(entry.0);
+                                if entry.1 == min_molteplicity {
+                                    rcorrect_reads.push((hash, entry.0));
                                 }
                                 // hmap[hash as usize % hlen] += 1;
                                 // *hmap.entry(hash).or_insert(0) += 1;
-                                // debug_AAA += 1;
-                                // assert!(rhash_map.len() <= debug_AAA);
                             }
 
                             // println!("Read {}", read.to_string().pad_to_width_with_alignment(read.bases_count() + 32 - *pos, Alignment::Right));
@@ -640,34 +639,67 @@ fn main() {
                             // reads.extend(hashes.iter());
                         }
 
-                        let mut ref_slice = [0; 32];
-                        for read_start in rcorrect_reads.iter() {
+                        for (hash, read_start) in rcorrect_reads.iter() {
 
-                            let byte_start = *read_start / 4;
-                            let byte_offset = *read_start % 4;
+                            if rhash_map.remove_entry(hash).is_none() {
+                                continue;
+                            }
 
-                            let read = CompressedRead::new(
-                                &buckets[b][byte_start..byte_start + ((byte_offset + k + 3) / 4)],
+                            backward_seq.clear();
+                            unsafe {
+                                forward_seq.set_len(k);
+                            }
+
+                            let mut read = CompressedRead::from_compressed_reads(
+                                &buckets[b][..],
+                                *read_start,
                                 k,
                             );
 
-                            read.sub_slice(byte_offset..byte_offset+k).write_to_slice(&mut ref_slice[..]);
+                            read.write_to_slice(&mut forward_seq[..]);
+
+                            let mut try_extend_function = |
+                                output: &mut Vec<u8>,
+                                compute_hash: fn(hash: u64, klen: usize, out_h: u64, in_h: u64) -> u64,
+                                out_base_index: usize
+                            | {
+                                let mut start_index = (*hash, 0, 0);
+                                loop {
+                                    let mut count = 0;
+                                    for idx in 0..4 {
+                                        let new_hash = compute_hash(start_index.0, k, unsafe { read.get_h_unchecked(0) }, H_LOOKUP[idx]);
+                                        if let Some(hash) = rhash_map.remove(&new_hash) {
+                                            if hash.1 >= min_molteplicity {
+                                                count += 1;
+                                                start_index = (new_hash, idx, hash.0);
+                                            }
+                                        }
+                                    }
+                                    if count == 1 {
+                                        read = CompressedRead::from_compressed_reads(
+                                            &buckets[b][..],
+                                            start_index.2,
+                                            k,
+                                        );
+                                        output.push(H_INV_LETTERS[start_index.1]);
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            };
+
+                            try_extend_function(&mut forward_seq, nt_manual_roll, 0);
+                            try_extend_function(&mut backward_seq, nt_manual_roll_rev, k - 1);
+
+                            backward_seq.reverse();
+                            backward_seq.extend_from_slice(&forward_seq[..]);
 
                             writer.add_read(FastaSequence {
                                 ident: &[],
-                                seq: &ref_slice[..],
+                                seq: &backward_seq[..],
                                 qual: &[]
-                            })
+                            });
                         }
-
-                        // for (key, (start, count)) in rhash_map.iter() {
-                        //     if *count >= 5 {
-                        // 
-
-                        // 
-
-                        //     }
-                        // }
 
                         // for (read_idx, count, pos, minimizer) in slice {
                         // 
@@ -766,7 +798,7 @@ fn main() {
                     buckets.iter().map(|x| x.len()).sum::<usize>() / 256, // set
                     start_time.elapsed()
                 );
-
+            writer.finalize();
         });
     }
 

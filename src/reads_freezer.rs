@@ -74,6 +74,24 @@ impl ReadsWriter {
         let writer = self.writer.get_writer();
         std::io::copy(&mut freezer.reader.uget(), writer).unwrap();
     }
+
+    pub fn finalize(mut self) {
+        match self.writer {
+            WriterChannels::Pipe(mut writer) => {}
+            WriterChannels::File(mut writer) => {}
+            WriterChannels::CompressedFile(mut writer) => {}
+            WriterChannels::CompressedFileLZ4(mut writer) => {
+                writer.flush();
+                writer
+                    .into_inner()
+                    .unwrap_or_else(|_| panic!("Cannot unwrap!"))
+                    .finish()
+                    .0
+                    .flush()
+                    .unwrap();
+            }
+        }
+    }
 }
 
 impl ReadsFreezer {

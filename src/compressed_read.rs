@@ -18,6 +18,7 @@ pub const H_LOOKUP: [u64; 4] = [
     /*b'T'*/ 0x2955_49f5_4be2_4456,
     /*b'G'*/ 0x2032_3ed0_8257_2324,
 ];
+pub const H_INV_LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
 
 impl<'a> CompressedRead<'a> {
     #[inline]
@@ -32,6 +33,31 @@ impl<'a> CompressedRead<'a> {
             data: data.as_ptr(),
             _phantom: PhantomData,
         }
+    }
+
+    #[inline]
+    pub fn new_offset(data: &'a [u8], offset: usize, bases_count: usize) -> Self {
+        if (data.len() * 4) < bases_count {
+            panic!("Compressed read overflow!");
+        }
+
+        CompressedRead {
+            size: bases_count,
+            start: offset as u8,
+            data: data.as_ptr(),
+            _phantom: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn from_compressed_reads(reads: &'a [u8], reads_offset: usize, bases_count: usize) -> Self {
+        let byte_start = reads_offset / 4;
+        let byte_offset = reads_offset % 4;
+        Self::new_offset(
+            &reads[byte_start..byte_start + ((byte_offset + bases_count + 3) / 4)],
+            byte_offset,
+            bases_count,
+        )
     }
 
     pub fn cmp_slice(&self) -> &[u8] {
@@ -59,21 +85,17 @@ impl<'a> CompressedRead<'a> {
     }
 
     pub fn write_to_slice(&self, slice: &mut [u8]) {
-        const LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
-
-        for (val, letter) in slice
-            .iter_mut()
-            .zip((0..self.size).map(|i| unsafe { LETTERS[self.get_base_unchecked(i) as usize] }))
-        {
+        for (val, letter) in slice.iter_mut().zip(
+            (0..self.size).map(|i| unsafe { H_INV_LETTERS[self.get_base_unchecked(i) as usize] }),
+        ) {
             *val = letter;
         }
     }
 
     pub fn to_string(&self) -> String {
-        const LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
-
         String::from_iter(
-            (0..self.size).map(|i| unsafe { LETTERS[self.get_base_unchecked(i) as usize] as char }),
+            (0..self.size)
+                .map(|i| unsafe { H_INV_LETTERS[self.get_base_unchecked(i) as usize] as char }),
         )
     }
 }
