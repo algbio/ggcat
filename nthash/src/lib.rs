@@ -47,7 +47,9 @@ const RC_LOOKUP: [u64; 256] = {
 fn h(c: u8) -> u64 {
     let val = H_LOOKUP[c as usize];
     if val == 1 {
-        unsafe { unreachable_unchecked(); }
+        unsafe {
+            unreachable_unchecked();
+        }
         panic!("Non-ACGTN nucleotide encountered!")
     }
     val
@@ -57,7 +59,9 @@ fn h(c: u8) -> u64 {
 fn rc(nt: u8) -> u64 {
     let val = RC_LOOKUP[nt as usize];
     if val == 1 {
-        unsafe { unreachable_unchecked(); }
+        unsafe {
+            unreachable_unchecked();
+        }
         panic!("Non-ACGTN nucleotide encountered!")
     }
     val
@@ -118,6 +122,35 @@ pub fn nthash(seq: &[u8], ksize: usize) -> Vec<u64> {
     seq.windows(ksize).map(|x| ntc64(x, 0, ksize)).collect()
 }
 
+pub trait NtSequence {
+    unsafe fn get_h_unchecked(&self, index: usize) -> u64;
+    fn bases_count(&self) -> usize;
+}
+
+impl NtSequence for &[u8] {
+    #[inline(always)]
+    unsafe fn get_h_unchecked(&self, index: usize) -> u64 {
+        H_LOOKUP[*self.get_unchecked(index) as usize]
+    }
+
+    #[inline(always)]
+    fn bases_count(&self) -> usize {
+        self.len()
+    }
+}
+
+#[inline(always)]
+pub fn nt_manual_roll(hash: u64, klen: usize, out_h: u64, in_h: u64) -> u64 {
+    let res = hash.rotate_left(1) ^ in_h;
+    return res ^ out_h.rotate_left(klen as u32);
+}
+
+#[inline(always)]
+pub fn nt_manual_roll_rev(hash: u64, klen: usize, out_h: u64, in_h: u64) -> u64 {
+    let res = hash ^ in_h.rotate_left(klen as u32);
+    (res ^ out_h).rotate_right(1)
+}
+
 /// An efficient iterator for calculating hashes for genomic sequences.
 ///
 /// Since it implements the `Iterator` trait it also
@@ -148,87 +181,55 @@ pub fn nthash(seq: &[u8], ksize: usize) -> Vec<u64> {
 ///     # }
 /// ```
 #[derive(Debug)]
-pub struct NtHashIterator<'a> {
-    seq: &'a [u8],
+pub struct NtHashIterator<N: NtSequence> {
+    seq: N,
     k_minus1: usize,
     fh: u64,
-    current_idx: usize,
 }
 
-impl<'a> NtHashIterator<'a> {
+impl<N: NtSequence> NtHashIterator<N> {
     /// Creates a new NtHashIterator with internal state properly initialized.
-    pub fn new(seq: &'a [u8], k: usize) -> Result<NtHashIterator<'a>> {
-        if k > seq.len() {
-            bail!(ErrorKind::KSizeOutOfRange(k, seq.len()));
+    pub fn new(seq: N, k: usize) -> Result<NtHashIterator<N>> {
+        if k > seq.bases_count() {
+            bail!(ErrorKind::KSizeOutOfRange(k, seq.bases_count()));
         }
         if k > MAXIMUM_K_SIZE {
             bail!(ErrorKind::KSizeTooBig(k));
         }
         let mut fh = 0;
-        for (i, v) in seq[0..k-1].iter().enumerate() {
-            fh ^= h(*v).rotate_left((k - i - 2) as u32);
+        for i in 0..(k - 1) {
+            fh ^= unsafe { seq.get_h_unchecked(i) }.rotate_left((k - i - 2) as u32);
         }
 
         Ok(NtHashIterator {
             seq,
-            k_minus1: k-1,
+            k_minus1: k - 1,
             fh,
-            current_idx: 0,
         })
     }
 
     #[inline(always)]
-    fn optim(&mut self) -> u64 {
-        let i = self.current_idx;
-        let seqi = self.seq[i];
-        let seqk = self.seq[i + self.k_minus1];
+    fn roll_hash(&mut self, i: usize) -> u64 {
+        let seqi_h = unsafe { self.seq.get_h_unchecked(i) };
+        let seqk_h = unsafe { self.seq.get_h_unchecked(i + self.k_minus1) };
 
-        let res = self.fh.rotate_left(1) ^ h(seqk);
-        self.fh =  res ^ h(seqi).rotate_left((self.k_minus1) as u32);
-        self.current_idx += 1;
+        let res = self.fh.rotate_left(1) ^ seqk_h;
+        self.fh = res ^ seqi_h.rotate_left((self.k_minus1) as u32);
         res
     }
 
     #[inline(always)]
-    pub fn iter(mut self) -> Map<Range<usize>, impl FnMut(usize) -> u64 + 'a>{
-        (self.k_minus1..self.seq.len())
-            .map(move |idx| self.optim())
+    pub fn iter(mut self) -> impl Iterator<Item = u64> {
+        (0..self.seq.bases_count() - self.k_minus1).map(move |idx| self.roll_hash(idx))
     }
 
     #[inline(always)]
-    pub fn iter_enumerate(mut self) -> Map<Range<usize>, impl FnMut(usize) -> (u64, usize) + 'a>{
-        (0..self.seq.len()-self.k_minus1)
-            .map(move |idx| (self.optim(), idx))
+    pub fn iter_enumerate(mut self) -> impl Iterator<Item = (usize, u64)> {
+        (0..self.seq.bases_count() - self.k_minus1).map(move |idx| (idx, self.roll_hash(idx)))
     }
 }
 
-impl<'a> Iterator for NtHashIterator<'a> {
-    type Item = u64;
-
-    fn next(&mut self) -> Option<u64> {
-//        if self.current_idx == self.max_idx {
-//            return None;
-//        };
-
-//        if self.current_idx != 0 {
-//            let i = self.current_idx - 1;
-//            let seqi = self.seq[i];
-//            let seqk = self.seq[i + self.k];
-//
-//            self.fh = self.fh.rotate_left(1) ^ h(seqi).rotate_left(self.k as u32) ^ h(seqk);
-//
-//            self.rh = self.rh.rotate_right(1)
-//                ^ rc(seqi).rotate_right(1)
-//                ^ rc(seqk).rotate_left(self.k as u32 - 1);
-//        }
-
-//        self.current_idx += 1;
-//        Some(u64::min(self.rh, self.fh))
-        Some(0)
-    }
-}
-
-impl<'a> ExactSizeIterator for NtHashIterator<'a> {}
+// impl<'a> ExactSizeIterator for NtHashIterator<'a> {}
 
 /// An efficient iterator for calculating hashes for genomic sequences. This
 /// returns the forward hashes, not the canonical hashes.

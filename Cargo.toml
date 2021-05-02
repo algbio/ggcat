@@ -25,6 +25,9 @@ bitvec = "0.22.3"
 hashbrown = "0.11.2"
 rand_pcg = "0.3.0"
 rand = "0.8.3"
+libdeflater = "0.7.1"
+libc = "0.2.94"
+threadpool = "1.8.1"
 
 [dependencies.flate2]
 default-features = false

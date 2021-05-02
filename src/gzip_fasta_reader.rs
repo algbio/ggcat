@@ -1,16 +1,24 @@
 use bio::io::fastq;
 use std::fs::File;
 
+use crate::libdeflate::{
+    libdeflate_alloc_decompressor, libdeflate_deflate_compress, libdeflate_deflate_decompress_ex,
+    libdeflate_free_decompressor, libdeflate_gzip_decompress, libdeflate_gzip_decompress_ex,
+};
 use bio::io::fastq::Record;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use rand::Rng;
 use serde::Serialize;
+use std::ffi::{c_void, CString};
 use std::hint::unreachable_unchecked;
 use std::io::Read;
 use std::num::Wrapping;
+use std::os::raw::c_int;
 use std::process::Command;
 use std::process::Stdio;
+use std::ptr::null_mut;
+use std::slice::from_raw_parts;
 
 enum ParsingState {
     Ident,
@@ -47,6 +55,88 @@ impl GzipFastaReader {
         let mut decompress: &mut dyn Read;
 
         if source.ends_with(".gz") {
+            let decompressor = unsafe { libdeflate_alloc_decompressor() };
+
+            let mut buffer = Vec::with_capacity(1024 * 1024);
+            unsafe {
+                buffer.set_len(1024 * 1024);
+
+                let path = CString::new(source.as_str()).unwrap();
+                let fd = libc::open(path.as_ptr(), libc::O_RDONLY);
+
+                // FIXME: Better error handling!
+                assert!(fd >= 0);
+
+                let len = libc::lseek(fd, 0, libc::SEEK_END);
+
+                assert!(len >= 0);
+
+                let mmapped = libc::mmap64(
+                    null_mut(),
+                    len as usize,
+                    libc::PROT_READ,
+                    libc::MAP_SHARED,
+                    fd,
+                    0,
+                );
+                libc::madvise(mmapped, len as usize, libc::MADV_SEQUENTIAL);
+
+                assert_ne!(mmapped, null_mut());
+
+                let mut input_bytes = 0;
+                let mut output_bytes = 0;
+
+                let mut total_reads = 0;
+
+                let mut in_ptr = mmapped as *const u8;
+                let mut rem_len = len;
+                loop {
+                    input_bytes = 0;
+                    output_bytes = 0;
+
+                    extern "C" fn flush_function(
+                        data: *mut c_void,
+                        buffer: *mut c_void,
+                        len: u64,
+                    ) -> c_int {
+                        return 0;
+                    }
+
+                    let result = libdeflate_gzip_decompress_ex(
+                        decompressor,
+                        in_ptr as *const c_void,
+                        rem_len as u64,
+                        buffer.as_mut_ptr() as *mut c_void,
+                        buffer.len() as u64,
+                        &mut input_bytes,
+                        &mut output_bytes,
+                        Some(flush_function),
+                        null_mut(),
+                    );
+                    rem_len -= input_bytes as i64;
+                    in_ptr = in_ptr.add(input_bytes as usize);
+                    total_reads += output_bytes;
+                    if result != 0 {
+                        println!("Result failed {}!", result);
+                        break;
+                    }
+                    if rem_len <= 0 {
+                        break;
+                    }
+                }
+
+                println!(
+                    "File: {} Size: {} IO[{}/{}] Reads: {}",
+                    &source, rem_len, input_bytes, output_bytes, total_reads
+                );
+                libdeflate_free_decompressor(decompressor);
+
+                libc::munmap(mmapped, len as usize);
+                libc::close(fd);
+
+                return;
+            }
+
             let mut process = Command::new("./libdeflate/gzip")
                 .args(&["-cd", source.as_str()])
                 .stdout(Stdio::piped())
@@ -70,6 +160,7 @@ impl GzipFastaReader {
         let mut read: isize = 0;
 
         while let Ok(count) = decompress.read(&mut buffer) {
+            continue;
             let count: isize = count as isize;
             if count == 0 {
                 break;

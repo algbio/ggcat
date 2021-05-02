@@ -64,6 +64,7 @@ mod compressed_read;
 mod gzip_fasta_reader;
 mod intermediate_storage;
 mod kmer_paths;
+pub mod libdeflate;
 mod nthash;
 mod pipeline;
 mod progress;
@@ -244,7 +245,7 @@ fn main() {
         input.sort_by_cached_key(|file| std::fs::metadata(file).unwrap().len());
         input.reverse();
 
-        input.iter().par_bridge().for_each(|input| {
+        input.par_iter().for_each(|input| {
             // let mut vec: [u64; BUCKETS_COUNT + 1] = [0; BUCKETS_COUNT + 1];
 
             // let mut bfilter = pool.try_pull().unwrap();
