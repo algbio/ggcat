@@ -141,7 +141,7 @@ impl KmerPaths {
                 writer.add_read(FastaSequence {
                     ident: &[],
                     seq: &read[1..],
-                    qual: &[],
+                    qual: None,
                 });
                 count += 1;
                 // println!(

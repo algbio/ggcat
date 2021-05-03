@@ -1,36 +1,36 @@
+use crate::libdeflate::decompress_file;
 use bio::io::fastq;
-use std::fs::File;
-
-use crate::libdeflate::{
-    libdeflate_alloc_decompressor, libdeflate_deflate_compress, libdeflate_deflate_decompress_ex,
-    libdeflate_free_decompressor, libdeflate_gzip_decompress, libdeflate_gzip_decompress_ex,
-};
 use bio::io::fastq::Record;
+use bstr::ByteSlice;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use rand::Rng;
 use serde::Serialize;
-use std::ffi::{c_void, CString};
+use std::fs::File;
 use std::hint::unreachable_unchecked;
-use std::io::Read;
+use std::intrinsics::unlikely;
+use std::io::{BufRead, BufReader, Read};
 use std::num::Wrapping;
-use std::os::raw::c_int;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
 use std::ptr::null_mut;
 use std::slice::from_raw_parts;
 
-enum ParsingState {
-    Ident,
-    Sequence,
-    Quality,
+const IDENT_STATE: usize = 0;
+const SEQ_STATE: usize = 1;
+const QUAL_STATE: usize = 2;
+
+enum FileType {
+    Fasta,
+    Fastq,
 }
 
 #[derive(Copy, Clone)]
 pub struct FastaSequence<'a> {
     pub ident: &'a [u8],
     pub seq: &'a [u8],
-    pub qual: &'a [u8],
+    pub qual: Option<&'a [u8]>,
 }
 
 pub struct GzipFastaReader;
@@ -48,178 +48,243 @@ impl GzipFastaReader {
             func(record.unwrap().seq());
         }
     }
-    pub fn process_file_extended<F: FnMut(FastaSequence)>(source: String, mut func: F) {
-        let mut decompress_cmp = None;
-        let mut decompress_ucmp = None;
 
-        let mut decompress: &mut dyn Read;
+    #[inline]
+    fn process_line<'a, 'b>(buffer: &'b mut &'a [u8]) -> (bool, &'a [u8]) {
+        match buffer.find(&[b'\n']) {
+            None => {
+                // No newline
 
-        if source.ends_with(".gz") {
-            let decompressor = unsafe { libdeflate_alloc_decompressor() };
+                let buflen = if buffer.len() > 0 && buffer[buffer.len() - 1] == b'\r' {
+                    buffer.len() - 1
+                } else {
+                    buffer.len()
+                };
 
-            let mut buffer = Vec::with_capacity(1024 * 1024);
-            unsafe {
-                buffer.set_len(1024 * 1024);
+                let obuffer = &buffer[..buflen];
 
-                let path = CString::new(source.as_str()).unwrap();
-                let fd = libc::open(path.as_ptr(), libc::O_RDONLY);
-
-                // FIXME: Better error handling!
-                assert!(fd >= 0);
-
-                let len = libc::lseek(fd, 0, libc::SEEK_END);
-
-                assert!(len >= 0);
-
-                let mmapped = libc::mmap64(
-                    null_mut(),
-                    len as usize,
-                    libc::PROT_READ,
-                    libc::MAP_SHARED,
-                    fd,
-                    0,
-                );
-                libc::madvise(mmapped, len as usize, libc::MADV_SEQUENTIAL);
-
-                assert_ne!(mmapped, null_mut());
-
-                let mut input_bytes = 0;
-                let mut output_bytes = 0;
-
-                let mut total_reads = 0;
-
-                let mut in_ptr = mmapped as *const u8;
-                let mut rem_len = len;
-                loop {
-                    input_bytes = 0;
-                    output_bytes = 0;
-
-                    extern "C" fn flush_function(
-                        data: *mut c_void,
-                        buffer: *mut c_void,
-                        len: u64,
-                    ) -> c_int {
-                        return 0;
-                    }
-
-                    let result = libdeflate_gzip_decompress_ex(
-                        decompressor,
-                        in_ptr as *const c_void,
-                        rem_len as u64,
-                        buffer.as_mut_ptr() as *mut c_void,
-                        buffer.len() as u64,
-                        &mut input_bytes,
-                        &mut output_bytes,
-                        Some(flush_function),
-                        null_mut(),
-                    );
-                    rem_len -= input_bytes as i64;
-                    in_ptr = in_ptr.add(input_bytes as usize);
-                    total_reads += output_bytes;
-                    if result != 0 {
-                        println!("Result failed {}!", result);
-                        break;
-                    }
-                    if rem_len <= 0 {
-                        break;
-                    }
-                }
-
-                println!(
-                    "File: {} Size: {} IO[{}/{}] Reads: {}",
-                    &source, rem_len, input_bytes, output_bytes, total_reads
-                );
-                libdeflate_free_decompressor(decompressor);
-
-                libc::munmap(mmapped, len as usize);
-                libc::close(fd);
-
-                return;
+                *buffer = &[];
+                (false, obuffer)
             }
+            Some(pos) => {
+                let mut bpos = pos;
+                if bpos != 0 && buffer[bpos - 1] == b'\r' {
+                    bpos -= 1;
+                }
+                let obuffer = &buffer[..bpos];
 
-            let mut process = Command::new("./libdeflate/gzip")
-                .args(&["-cd", source.as_str()])
-                .stdout(Stdio::piped())
-                .spawn()
-                .unwrap();
-            let pid = process.id() as i32;
-            decompress_cmp = Some(process.stdout.unwrap());
-            decompress = decompress_cmp.as_mut().unwrap();
-        } else {
-            decompress_ucmp = Some(File::open(source).unwrap());
-            decompress = decompress_ucmp.as_mut().unwrap();
+                *buffer = &buffer[pos + 1..];
+                (true, obuffer)
+            }
         }
+    }
 
-        let mut buffer = [0; 32768];
-        let mut ident: Vec<u8> = Vec::new();
-        let mut seq: Vec<u8> = Vec::new();
-        let mut qual: Vec<u8> = Vec::new();
+    pub fn process_file_extended<F: FnMut(FastaSequence)>(source: String, mut func: F) {
+        const FASTQ_EXTS: &[&str] = &["fq", "fastq"];
+        const FASTA_EXTS: &[&str] = &["fa", "fasta", "fna", "ffn"];
 
-        let mut state = ParsingState::Ident;
+        let mut file_type = None;
+        let mut tmp = &source[..];
+        let mut path: &Path = tmp.as_ref();
 
-        let mut read: isize = 0;
-
-        while let Ok(count) = decompress.read(&mut buffer) {
-            continue;
-            let count: isize = count as isize;
-            if count == 0 {
+        while let Some(ext) = path.extension() {
+            if FASTQ_EXTS.contains(&ext.to_str().unwrap()) {
+                file_type = Some(FileType::Fastq);
                 break;
             }
-
-            while read < count {
-                match state {
-                    ParsingState::Ident => {
-                        while read < count && buffer[read as usize] != b'\n' {
-                            ident.push(buffer[read as usize]);
-                            read += 1;
-                            continue;
-                        }
-                        if read < count {
-                            read += 1;
-                            state = ParsingState::Sequence
-                        }
-                    }
-                    ParsingState::Sequence => {
-                        while read < count && buffer[read as usize] != b'\n' {
-                            seq.push(buffer[read as usize]);
-                            read += 1;
-                            continue;
-                        }
-                        if read < count {
-                            read += 3; // Skip newline, + and another newline
-                            state = ParsingState::Quality
-                        }
-                    }
-                    ParsingState::Quality => {
-                        while read < count && buffer[read as usize] != b'\n' {
-                            qual.push(buffer[read as usize]);
-                            read += 1;
-                            continue;
-                        }
-                        if read < count {
-                            // Process sequence
-                            func(FastaSequence {
-                                ident: ident.as_slice(),
-                                seq: seq.as_slice(),
-                                qual: qual.as_slice(),
-                            });
-                            //                            println!("{}", String::from_utf8_lossy(&seq.as_slice()));
-                            //                            println!("{}", String::from_utf8_lossy(&qual.as_slice()));
-                            ident.clear();
-                            seq.clear();
-                            qual.clear();
-                            read += 1;
-                            state = ParsingState::Ident
-                        }
-                    }
-                }
+            if FASTA_EXTS.contains(&ext.to_str().unwrap()) {
+                file_type = Some(FileType::Fasta);
+                break;
             }
-            read -= count;
+            tmp = &tmp[0..tmp.len() - ext.len() - 1];
+            path = tmp.as_ref()
         }
 
-        //        let reader = fastq::Reader::new(decompress);
-        //        for record in reader.records() {
-        //            func(&record.unwrap());
-        //        }
+        match file_type {
+            None => panic!("Cannot recognize file type of '{}'", source),
+            Some(ftype) => match ftype {
+                FileType::Fasta => {
+                    Self::process_fasta(source, func);
+                }
+                FileType::Fastq => {
+                    Self::process_fastq(source, func);
+                }
+            },
+        }
+    }
+
+    fn read_binary_file(file: impl AsRef<Path>, mut callback: impl FnMut(&[u8])) {
+        if file.as_ref().extension().filter(|x| *x == "gz").is_some() {
+            decompress_file(
+                file,
+                |data| {
+                    callback(data);
+                },
+                1024 * 512,
+            );
+        } else {
+            let mut file = File::open(file).unwrap();
+            let mut buffer = [0; 1024 * 512];
+            while let Ok(count) = file.read(&mut buffer) {
+                if count == 0 {
+                    break;
+                }
+                callback(&buffer[0..count]);
+            }
+        }
+    }
+
+    fn process_fasta(source: String, mut func: impl FnMut(FastaSequence)) {
+        // Ident, seq
+        let mut intermediate = [Vec::new(), Vec::new()];
+        let mut state = IDENT_STATE;
+
+        let mut process_function = |mut buffer: &[u8]| {
+            let mut sequence_info = [&[][..], &[][..]];
+
+            if state != IDENT_STATE {
+                let (complete, line) = Self::process_line(&mut buffer);
+                intermediate[state].extend_from_slice(line);
+                if !complete {
+                    return;
+                }
+                if state == SEQ_STATE {
+                    func(FastaSequence {
+                        ident: &intermediate[IDENT_STATE][..],
+                        seq: &intermediate[SEQ_STATE][..],
+                        qual: None,
+                    });
+                    intermediate.iter_mut().for_each(|vec| vec.clear());
+                    state = IDENT_STATE;
+                } else {
+                    state = (state + 1) % 2;
+                }
+            }
+
+            while buffer.len() > 0 {
+                let (complete, line) = Self::process_line(&mut buffer);
+
+                sequence_info[state] = line;
+                if !complete {
+                    break;
+                }
+
+                if state == SEQ_STATE {
+                    let [int_ident, int_seq] = &mut intermediate;
+
+                    func(FastaSequence {
+                        ident: if int_ident.len() > 0 {
+                            int_ident.extend_from_slice(&sequence_info[IDENT_STATE]);
+                            &int_ident[..]
+                        } else {
+                            &sequence_info[IDENT_STATE]
+                        },
+                        seq: if int_seq.len() > 0 {
+                            int_seq.extend_from_slice(&sequence_info[SEQ_STATE]);
+                            &int_seq[..]
+                        } else {
+                            &sequence_info[SEQ_STATE]
+                        },
+                        qual: None,
+                    });
+                    intermediate.iter_mut().for_each(|vec| vec.clear());
+                    sequence_info.iter_mut().for_each(|slice| *slice = &[]);
+                }
+                state = (state + 1) % 2;
+            }
+            sequence_info
+                .iter()
+                .zip(intermediate.iter_mut())
+                .for_each(|(slice, vec)| vec.extend_from_slice(slice));
+        };
+
+        Self::read_binary_file(&source, process_function);
+    }
+
+    fn process_fastq(source: String, mut func: impl FnMut(FastaSequence)) {
+        // Ident, seq, qual
+        let mut intermediate = [Vec::new(), Vec::new(), Vec::new()];
+        let mut state = IDENT_STATE;
+        let mut skipped_plus = false;
+
+        let mut process_function = |mut buffer: &[u8]| {
+            let mut sequence_info = [&[][..], &[][..], &[][..]];
+
+            if state != IDENT_STATE {
+                let (complete, line) = Self::process_line(&mut buffer);
+                intermediate[state].extend_from_slice(line);
+                if !complete {
+                    return;
+                }
+                if state == QUAL_STATE {
+                    if !skipped_plus {
+                        intermediate[QUAL_STATE].clear();
+                        skipped_plus = true;
+                    } else {
+                        func(FastaSequence {
+                            ident: &intermediate[IDENT_STATE][..],
+                            seq: &intermediate[SEQ_STATE][..],
+                            qual: Some(&intermediate[QUAL_STATE][..]),
+                        });
+                        intermediate.iter_mut().for_each(|vec| vec.clear());
+                        state = IDENT_STATE;
+                        skipped_plus = false;
+                    }
+                } else {
+                    state = (state + 1) % 3;
+                }
+            }
+
+            while buffer.len() > 0 {
+                let (complete, line) = Self::process_line(&mut buffer);
+
+                sequence_info[state] = line;
+                if !complete {
+                    break;
+                }
+
+                if state == QUAL_STATE {
+                    if !skipped_plus {
+                        intermediate[QUAL_STATE].clear();
+                        sequence_info[QUAL_STATE] = &[];
+                        skipped_plus = true;
+                        continue;
+                    }
+
+                    let [int_ident, int_seq, int_qual] = &mut intermediate;
+
+                    func(FastaSequence {
+                        ident: if int_ident.len() > 0 {
+                            int_ident.extend_from_slice(&sequence_info[IDENT_STATE]);
+                            &int_ident[..]
+                        } else {
+                            &sequence_info[IDENT_STATE]
+                        },
+                        seq: if int_seq.len() > 0 {
+                            int_seq.extend_from_slice(&sequence_info[SEQ_STATE]);
+                            &int_seq[..]
+                        } else {
+                            &sequence_info[SEQ_STATE]
+                        },
+                        qual: Some(if int_qual.len() > 0 {
+                            int_qual.extend_from_slice(&sequence_info[QUAL_STATE]);
+                            &int_qual[..]
+                        } else {
+                            &sequence_info[QUAL_STATE]
+                        }),
+                    });
+                    intermediate.iter_mut().for_each(|vec| vec.clear());
+                    sequence_info.iter_mut().for_each(|slice| *slice = &[]);
+                    skipped_plus = false;
+                }
+                state = (state + 1) % 3;
+            }
+            sequence_info
+                .iter()
+                .zip(intermediate.iter_mut())
+                .for_each(|(slice, vec)| vec.extend_from_slice(slice));
+        };
+
+        Self::read_binary_file(&source, process_function);
     }
 }

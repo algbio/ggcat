@@ -66,8 +66,10 @@ impl ReadsWriter {
         writer.write_all(read.ident);
         writer.write_all(b"\n");
         writer.write_all(read.seq).unwrap();
-        writer.write_all(b"\n+\n").unwrap();
-        writer.write_all(read.qual).unwrap();
+        if let Some(qual) = read.qual {
+            writer.write_all(b"\n+\n").unwrap();
+            writer.write_all(qual).unwrap();
+        }
         writer.write_u8(b'\n').unwrap();
     }
     pub fn pipe_freezer(&mut self, mut freezer: ReadsFreezer) {

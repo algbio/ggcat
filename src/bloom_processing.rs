@@ -220,7 +220,7 @@ impl<
                 self.freeze.add_read(FastaSequence {
                     ident: &[],
                     seq: &record[idx..idx + self.k],
-                    qual: &[],
+                    qual: None,
                 });
             }
 

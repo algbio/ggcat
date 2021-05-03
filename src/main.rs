@@ -43,7 +43,7 @@ use std::convert::TryInto;
 use std::fs::File;
 use std::hash::{BuildHasher, Hasher};
 use std::intrinsics::unlikely;
-use std::io::{stdin, BufRead};
+use std::io::{stdin, BufRead, Write};
 use std::mem::MaybeUninit;
 use std::net::Shutdown::Read;
 use std::ops::{Index, Range};
@@ -298,10 +298,6 @@ fn main() {
                 RollingMinQueue::<u64, u32, NtHashMinTransform>::new(k - m + 1);
 
             GzipFastaReader::process_file_extended(input.to_string(), |x| {
-                //                 let qual = x.qual;
-                // //
-                // //        let mut prob_log = 0;
-
                 if x.seq.len() < k {
                     return;
                 }
@@ -478,8 +474,6 @@ fn main() {
                 }
             }
 
-            // let mut vec = vec![];
-
             const CVEC: Vec<u8> = Vec::new();
             const CREAD: Vec<(usize, usize, usize, u64)> = Vec::new();
             let mut buckets = [CVEC; 256];
@@ -558,8 +552,6 @@ fn main() {
                     let mut forward_seq = Vec::new();
                     forward_seq.reserve(k);
 
-                    // cmp_reads[b].sort_unstable_by_key(|x| x.3);
-
                     struct Compare {}
                     impl SortKey<(usize, usize, usize, u64)> for Compare {
                         fn get(value: &(usize, usize, usize, u64)) -> u64 {
@@ -568,9 +560,6 @@ fn main() {
                     }
 
                     smart_radix_sort::<_, Compare, false>(&mut cmp_reads[b], 64 - 8);
-                    // reads.clear();
-                    // let mut counters: Vec<u8> = Vec::new();
-                    // hmap.resize(1024 * 1024, 0);
 
                     for slice in cmp_reads[b].group_by(|a, b| a.3 == b.3) {
 
@@ -698,7 +687,7 @@ fn main() {
                             writer.add_read(FastaSequence {
                                 ident: &[],
                                 seq: &backward_seq[..],
-                                qual: &[]
+                                qual: None
                             });
                         }
 
