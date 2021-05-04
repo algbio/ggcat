@@ -37,7 +37,7 @@ use pad::{Alignment, PadStr};
 use rayon::iter::*;
 use rayon::ThreadPoolBuilder;
 use std::cell::UnsafeCell;
-use std::cmp::{max, min};
+use std::cmp::{max, min, min_by_key};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fs::File;
@@ -334,9 +334,7 @@ fn main() {
 
                     let mut add_buffer = |index: usize, bucket: usize| {
                         temp_indexes[bucket].push(temp_buffers[bucket].len());
-                        temp_buffers[bucket].extend_from_slice(
-                            &seq[(max(1, last_index) - 1)..min(seq.len(), index + k + 1)],
-                        );
+                        temp_buffers[bucket].extend_from_slice(&seq[last_index..(index + k)]);
                         // assert_reads(
                         //     &seq[(max(1, last_index) - 1)..min(seq.len(), index + k + 1)],
                         //     bucket as u64,
@@ -490,30 +488,14 @@ fn main() {
 
             IntermediateStorage::new_reader(input.clone()).for_each(|x| {
 
-                let hashes = NtHashIterator::new(x.sub_slice(0..min(x.bases_count(), k + 1)), m).unwrap();
+                let hashes = NtHashIterator::new(x.sub_slice(0..min(x.bases_count(), k)), m).unwrap();
 
-                let mut iter = hashes.iter();
-                let first_el = (iter.next().unwrap(), 0);
-                let min_val = (&mut iter).take(k - m).enumerate().min_by_key(|(_, k)| *k).map(|(i, k)| (k, i)).unwrap();
-                let last_val = iter.next().map(|x| (x, k - m + 2)).unwrap_or(min_val);
-
-                let first = min(first_el, min_val);
-                let second = min(last_val, min_val);
-
-                let (minimizer, minpos) = if first.0 % (BUCKETS_COUNT as u64) != bucket_index {
-                    second
-                } else if second.0 % (BUCKETS_COUNT as u64) != bucket_index {
-                    first
-                }
-                else {
-                    min(first, second)
-                };
+                let (minpos, minimizer) = hashes.iter_enumerate().min_by_key(|(i, k)| *k).unwrap();
 
                 let bucket = (minimizer >> 12) % 256;
 
                 let slen = buckets[bucket as usize].len();
                 buckets[bucket as usize].extend_from_slice(x.cmp_slice());
-
 
                 let mut sort_key: u64 = minimizer;
                 cmp_reads[bucket as usize].push((slen, x.bases_count(), minpos, sort_key))
@@ -631,6 +613,12 @@ fn main() {
 
                         for (hash, read_start) in rcorrect_reads.iter() {
 
+                            let mut read = CompressedRead::from_compressed_reads(
+                                &buckets[b][..],
+                                *read_start,
+                                k,
+                            );
+
                             if rhash_map.remove_entry(hash).is_none() {
                                 continue;
                             }
@@ -639,12 +627,6 @@ fn main() {
                             unsafe {
                                 forward_seq.set_len(k);
                             }
-
-                            let mut read = CompressedRead::from_compressed_reads(
-                                &buckets[b][..],
-                                *read_start,
-                                k,
-                            );
 
                             read.write_to_slice(&mut forward_seq[..]);
 

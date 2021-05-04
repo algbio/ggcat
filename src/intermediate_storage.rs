@@ -123,7 +123,7 @@ impl<'a, R: Read> VecReader<'a, R> {
         return value;
     }
 
-    fn read_bytes(&mut self, slice: &mut [u8]) {
+    fn read_bytes(&mut self, slice: &mut [u8]) -> usize {
         let mut offset = 0;
 
         while offset < slice.len() {
@@ -131,7 +131,7 @@ impl<'a, R: Read> VecReader<'a, R> {
                 self.update_buffer();
 
                 if self.fill == self.pos {
-                    return;
+                    return offset;
                 }
             }
 
@@ -148,6 +148,7 @@ impl<'a, R: Read> VecReader<'a, R> {
             self.pos += amount;
             offset += amount;
         }
+        offset
     }
 }
 
