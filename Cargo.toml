@@ -28,6 +28,7 @@ rand = "0.8.3"
 libdeflater = "0.7.1"
 libc = "0.2.94"
 threadpool = "1.8.1"
+filebuffer = "0.4.0"
 
 [dependencies.flate2]
 default-features = false
