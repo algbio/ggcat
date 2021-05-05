@@ -1,4 +1,4 @@
-use crate::gzip_fasta_reader::FastaSequence;
+use crate::sequences_reader::FastaSequence;
 use crate::utils::{cast_static, cast_static_mut, Utils};
 use byteorder::WriteBytesExt;
 use flate2::write::GzEncoder;
@@ -125,7 +125,7 @@ impl ReadsFreezer {
     }
 
     pub fn optfile_splitted_compressed(name: String) -> ReadsWriter {
-        let file = name + ".freeze.gz";
+        let file = name + ".freeze.fa.gz";
 
         //        let mut process = Command::new("./libdeflate/gzip").args(&["-c2"])
         //            .stdin(Stdio::piped())
@@ -146,7 +146,7 @@ impl ReadsFreezer {
     }
 
     pub fn optfile_splitted_compressed_lz4(name: String) -> ReadsWriter {
-        let file = name + ".freeze.lz4";
+        let file = name + ".freeze.fa.lz4";
 
         //        let mut process = Command::new("./libdeflate/gzip").args(&["-c2"])
         //            .stdin(Stdio::piped())
@@ -173,7 +173,7 @@ impl ReadsFreezer {
     }
 
     pub fn optifile_splitted(name: String) -> ReadsWriter {
-        let file = name + ".freeze";
+        let file = name + ".freeze.fa";
         ReadsWriter {
             writer: WriterChannels::File(BufWriter::with_capacity(
                 1024 * 128,
@@ -199,9 +199,9 @@ impl ReadsFreezer {
 
     pub fn freeze(&self, name: String, compress: bool) {
         let file = File::create(if compress {
-            name + ".freeze.lz4"
+            name + ".freeze.fa.lz4"
         } else {
-            name + ".freeze"
+            name + ".freeze.fa"
         })
         .unwrap();
 

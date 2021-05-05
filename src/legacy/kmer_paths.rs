@@ -1,6 +1,6 @@
 use crate::compressed_read::CompressedRead;
-use crate::gzip_fasta_reader::FastaSequence;
 use crate::reads_freezer::ReadsWriter;
+use crate::sequences_reader::FastaSequence;
 use nthash::NtSequence;
 use std::collections::HashMap;
 use std::num::NonZeroU32;

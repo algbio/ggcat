@@ -1,7 +1,6 @@
 use crate::bloom_filter::{BloomFilter, SET_BIT};
 use crate::cache_bucket::CacheBucket;
 use crate::gzip_fasta_reader::FastaSequence;
-use crate::pipeline::MINIMIZER_THRESHOLD_VALUE;
 use crate::progress::Progress;
 use crate::reads_freezer::{ReadsFreezer, ReadsWriter};
 use itertools::all;

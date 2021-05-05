@@ -1,5 +1,6 @@
 use crate::compressed_read::CompressedRead;
-use crate::gzip_fasta_reader::FastaSequence;
+use crate::multi_thread_buckets::BucketType;
+use crate::sequences_reader::FastaSequence;
 use crate::utils::{cast_static, cast_static_mut, Utils};
 use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use flate2::write::GzEncoder;
@@ -26,7 +27,7 @@ pub struct IntermediateReadsReader {
 }
 
 #[inline(always)]
-fn encode_varint(writer: &mut impl Write, mut value: u32) {
+pub fn encode_varint(writer: &mut impl Write, mut value: u64) {
     loop {
         let rem = ((value > 127) as u8) << 7;
         writer.write_u8(((value as u8) & 0b1111111) | rem);
@@ -37,24 +38,24 @@ fn encode_varint(writer: &mut impl Write, mut value: u32) {
     }
 }
 
-fn decode_varint(reader: &mut VecReader<impl Read>) -> u32 {
+pub fn decode_varint(mut reader: impl Read) -> Option<u64> {
     let mut result = 0;
     let mut offset = 0u32;
     loop {
-        let mut value = reader.read_byte();
+        let mut value = reader.read_u8().ok()?;
         let next = (value & 0b10000000) != 0;
-        result |= ((value & 0b1111111) as u32) << offset;
+        result |= ((value & 0b1111111) as u64) << offset;
         if !next {
             break;
         }
         offset += 7;
     }
-    result
+    Some(result)
 }
 
 impl IntermediateReadsWriter {
     pub fn add_acgt_read(&mut self, read: &[u8]) {
-        encode_varint(&mut self.writer, read.len() as u32);
+        encode_varint(&mut self.writer, read.len() as u64);
         for chunk in read.chunks(16) {
             let mut value = 0;
             for aa in chunk.iter().rev() {
@@ -66,8 +67,31 @@ impl IntermediateReadsWriter {
                 .write(&value.to_le_bytes()[..(chunk.len() + 3) / 4]);
         }
     }
+}
 
-    pub fn finalize(mut self) {
+impl BucketType for IntermediateReadsWriter {
+    type InitType = str;
+
+    fn new(init_data: &str, index: usize) -> Self {
+        let file = format!("{}.{}.tmp.lz4", init_data, index);
+
+        let mut compress_stream = lz4::EncoderBuilder::new()
+            .level(0)
+            .checksum(ContentChecksum::NoChecksum)
+            .block_mode(BlockMode::Independent)
+            .block_size(BlockSize::Default)
+            .build(BufWriter::with_capacity(
+                1024 * 1024 * 4,
+                File::create(file).unwrap(),
+            ))
+            .unwrap();
+
+        IntermediateReadsWriter {
+            writer: BufWriter::with_capacity(1024 * 1024 * 4, compress_stream),
+        }
+    }
+
+    fn finalize(mut self) {
         self.writer.flush();
         self.writer
             .into_inner()
@@ -79,7 +103,7 @@ impl IntermediateReadsWriter {
     }
 }
 
-struct VecReader<'a, R: Read> {
+pub struct VecReader<'a, R: Read> {
     vec: Vec<u8>,
     fill: usize,
     pos: usize,
@@ -88,7 +112,7 @@ struct VecReader<'a, R: Read> {
 }
 
 impl<'a, R: Read> VecReader<'a, R> {
-    fn new(capacity: usize, reader: &'a mut R) -> VecReader<'a, R> {
+    pub fn new(capacity: usize, reader: &'a mut R) -> VecReader<'a, R> {
         let mut vec = vec![];
         vec.resize(capacity, 0);
         VecReader {
@@ -109,7 +133,7 @@ impl<'a, R: Read> VecReader<'a, R> {
         self.pos = 0;
     }
 
-    fn read_byte(&mut self) -> u8 {
+    pub fn read_byte(&mut self) -> u8 {
         if self.fill == self.pos {
             self.update_buffer();
 
@@ -123,7 +147,7 @@ impl<'a, R: Read> VecReader<'a, R> {
         return value;
     }
 
-    fn read_bytes(&mut self, slice: &mut [u8]) -> usize {
+    pub fn read_bytes(&mut self, slice: &mut [u8]) -> usize {
         let mut offset = 0;
 
         while offset < slice.len() {
@@ -152,6 +176,11 @@ impl<'a, R: Read> VecReader<'a, R> {
     }
 }
 
+impl<'a, R: Read> Read for VecReader<'a, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        Ok(self.read_bytes(buf))
+    }
+}
 impl IntermediateReadsReader {
     pub fn for_each(&mut self, mut lambda: impl FnMut(CompressedRead)) {
         let mut vec_reader = VecReader::new(1024 * 1024, &mut self.reader);
@@ -159,8 +188,8 @@ impl IntermediateReadsReader {
         // const LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
         let mut read = vec![];
 
-        loop {
-            let size = decode_varint(&mut vec_reader) as usize;
+        while let Some(size) = decode_varint(&mut vec_reader) {
+            let size = size as usize;
 
             if size == 0 && vec_reader.stream_ended {
                 break;
@@ -224,28 +253,9 @@ impl IntermediateReadsReader {
     }
 }
 
-pub struct IntermediateStorage {}
+pub struct IntermediateStorage;
 
 impl IntermediateStorage {
-    pub fn new_writer(name: String) -> IntermediateReadsWriter {
-        let file = name + ".freeze.lz4";
-
-        let mut compress_stream = lz4::EncoderBuilder::new()
-            .level(0)
-            .checksum(ContentChecksum::NoChecksum)
-            .block_mode(BlockMode::Independent)
-            .block_size(BlockSize::Default)
-            .build(BufWriter::with_capacity(
-                1024 * 1024 * 4,
-                File::create(file).unwrap(),
-            ))
-            .unwrap();
-
-        IntermediateReadsWriter {
-            writer: BufWriter::with_capacity(1024 * 1024 * 4, compress_stream),
-        }
-    }
-
     pub fn new_reader(name: String) -> IntermediateReadsReader {
         IntermediateReadsReader {
             reader: lz4::Decoder::new(BufReader::with_capacity(
@@ -283,8 +293,9 @@ impl IntermediateStorage {
 // #[cfg(feature = "test")]
 mod tests {
     use crate::intermediate_storage::{
-        decode_varint, encode_varint, IntermediateStorage, VecReader,
+        decode_varint, encode_varint, IntermediateReadsWriter, IntermediateStorage, VecReader,
     };
+    use crate::multi_thread_buckets::BucketType;
     use byteorder::WriteBytesExt;
     use rand::RngCore;
     use std::io::Cursor;
@@ -300,7 +311,7 @@ mod tests {
             encode_varint(&mut result, i);
             let mut cursor = Cursor::new(&result);
             let mut vecreader = VecReader::new(4096, &mut cursor);
-            assert_eq!(i, decode_varint(&mut vecreader));
+            assert_eq!(i, decode_varint(&mut vecreader).unwrap());
         }
     }
 
@@ -322,7 +333,7 @@ mod tests {
             ));
         }
 
-        let mut writer = IntermediateStorage::new_writer("/tmp/test-encoding".to_string());
+        let mut writer = IntermediateReadsWriter::new(&"/tmp/test-encoding".to_string(), 0);
         for read in sequences.iter() {
             writer.add_acgt_read(read.as_bytes());
         }

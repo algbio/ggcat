@@ -33,8 +33,8 @@ pub struct FastaSequence<'a> {
     pub qual: Option<&'a [u8]>,
 }
 
-pub struct GzipFastaReader;
-impl GzipFastaReader {
+pub struct SequencesReader;
+impl SequencesReader {
     pub fn process_file<F: FnMut(&[u8])>(source: String, mut func: F) {
         let mut process = Command::new("./libdeflate/gzip")
             .args(&["-cd", source.as_str()])
@@ -113,7 +113,7 @@ impl GzipFastaReader {
         }
     }
 
-    fn read_binary_file(file: impl AsRef<Path>, mut callback: impl FnMut(&[u8])) {
+    pub fn read_binary_file(file: impl AsRef<Path>, mut callback: impl FnMut(&[u8])) {
         if file.as_ref().extension().filter(|x| *x == "gz").is_some() {
             decompress_file(
                 file,

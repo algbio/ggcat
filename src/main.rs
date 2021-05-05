@@ -4,23 +4,23 @@
 #![feature(llvm_asm)]
 #![feature(option_result_unwrap_unchecked)]
 #![allow(warnings)]
+#![feature(test)]
 
-use crate::bloom_filter::SET_BIT;
-use crate::bloom_processing::{HierarchicalBloomFilter, HierarcicalBloomFilterFactory};
-use crate::cache_bucket::CacheBucket;
+extern crate test;
+
+use crate::binary_writer::{BinaryWriter, StorageMode};
 use crate::compressed_read::{CompressedRead, H_INV_LETTERS, H_LOOKUP};
-use crate::gzip_fasta_reader::{FastaSequence, GzipFastaReader};
 use crate::intermediate_storage::{
-    IntermediateReadsReader, IntermediateReadsWriter, IntermediateStorage,
+    decode_varint, IntermediateReadsReader, IntermediateReadsWriter, IntermediateStorage,
 };
-use crate::kmer_paths::KmerPaths;
-use crate::nthash::RollingNtHashIterator;
-use crate::pipeline::Pipeline;
+use crate::merge::{Direction, HashEntry};
+use crate::multi_thread_buckets::MultiThreadBuckets;
 use crate::progress::Progress;
 use crate::reads_freezer::{ReadsFreezer, ReadsWriter};
 use crate::rolling_kseq_iterator::{RollingKseqImpl, RollingKseqIterator};
 use crate::rolling_minqueue::{GenericsFunctional, RollingMinQueue};
 use crate::rolling_quality_check::RollingQualityCheck;
+use crate::sequences_reader::{FastaSequence, SequencesReader};
 use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
 use crate::utils::{cast_static, Utils};
 use ::nthash::nt_manual_roll;
@@ -31,22 +31,23 @@ use bio::alphabets::SymbolRanks;
 use bitvec::vec::BitVec;
 use bstr::ByteSlice;
 use itertools::Itertools;
+use nix::dir::Type::Directory;
 use nix::unistd::PathconfVar::PIPE_BUF;
 use object_pool::Pool;
 use pad::{Alignment, PadStr};
 use rayon::iter::*;
 use rayon::ThreadPoolBuilder;
+use serde::Serialize;
 use std::cell::UnsafeCell;
 use std::cmp::{max, min, min_by_key};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::convert::TryInto;
 use std::fs::File;
 use std::hash::{BuildHasher, Hasher};
 use std::intrinsics::unlikely;
-use std::io::{stdin, BufRead, Write};
-use std::mem::MaybeUninit;
-use std::net::Shutdown::Read;
-use std::ops::{Index, Range};
+use std::io::{stdin, BufRead, BufWriter, Cursor, Read, Write};
+use std::mem::{size_of, MaybeUninit};
+use std::ops::{Deref, Index, Range};
 use std::path::Path;
 use std::ptr;
 use std::slice::from_raw_parts;
@@ -57,22 +58,19 @@ use std::time::{Duration, Instant};
 use structopt::clap::ArgGroup;
 use structopt::StructOpt;
 
-mod bloom_filter;
-mod bloom_processing;
-mod cache_bucket;
+mod benckmarks;
+mod binary_writer;
 mod compressed_read;
-mod gzip_fasta_reader;
 mod intermediate_storage;
-mod kmer_paths;
 pub mod libdeflate;
-mod nthash;
-mod pipeline;
+pub mod merge;
+mod multi_thread_buckets;
 mod progress;
 mod reads_freezer;
 mod rolling_kseq_iterator;
 mod rolling_minqueue;
 mod rolling_quality_check;
-mod seq_aligner;
+mod sequences_reader;
 mod smart_bucket_sort;
 mod utils;
 
@@ -157,6 +155,10 @@ struct Cli2 {
     #[structopt(short)]
     alignment: bool,
 
+    /// Process the sequence to sort hashes
+    #[structopt(short)]
+    hashes: bool,
+
     /// Minimum molteplicity required to keep a kmer
     #[structopt(short = "s", long = "min-molteplicity")]
     min_molteplicity: Option<usize>,
@@ -231,14 +233,8 @@ fn main() {
 
     if !args.alignment {
         const NONE: Option<Mutex<IntermediateReadsWriter>> = None;
-        let mut buckets = [NONE; BUCKETS_COUNT];
-
-        for i in 0..BUCKETS_COUNT {
-            buckets[i] = Some(Mutex::new(IntermediateStorage::new_writer(format!(
-                "buckets/bucket{}",
-                i
-            ))));
-        }
+        let mut buckets =
+            MultiThreadBuckets::<IntermediateReadsWriter>::new(BUCKETS_COUNT, "buckets/bucket");
 
         let mut input: Vec<String> = args.input.into();
 
@@ -273,31 +269,25 @@ fn main() {
             let mut flush_buffer = |temp_indexes: &mut [Vec<usize>; BUCKETS_COUNT],
                                     temp_buffers: &mut [Vec<u8>; BUCKETS_COUNT],
                                     bucket: usize| {
-                // println!(
-                //     "Flush buffer {} {:?}",
-                //     temp_buffers[bucket].len(),
-                //     temp_indexes[bucket][0]
-                // );
-
-                let mut reader = buckets[bucket].as_ref().unwrap().lock().unwrap();
-
                 if temp_indexes.len() == 0 {
                     return;
                 }
 
                 temp_indexes[bucket].push(temp_buffers[bucket].len());
                 let mut last_index = 0;
-                for index in temp_indexes[bucket].iter().skip(1) {
-                    reader.add_acgt_read(&temp_buffers[bucket][last_index..*index]);
-                    last_index = *index;
-                }
+                buckets.flush(bucket, |reader| {
+                    for index in temp_indexes[bucket].iter().skip(1) {
+                        reader.add_acgt_read(&temp_buffers[bucket][last_index..*index]);
+                        last_index = *index;
+                    }
+                });
                 temp_buffers[bucket].clear();
                 temp_indexes[bucket].clear();
             };
             let mut minimizer_queue =
                 RollingMinQueue::<u64, u32, NtHashMinTransform>::new(k - m + 1);
 
-            GzipFastaReader::process_file_extended(input.to_string(), |x| {
+            SequencesReader::process_file_extended(input.to_string(), |x| {
                 if x.seq.len() < k {
                     return;
                 }
@@ -384,9 +374,8 @@ fn main() {
 
                 if SEQ_COUNT.fetch_add(1, Ordering::Relaxed) % 10000000 == 0 {
                     println!(
-                        "Elaborated {} sequences! Set bits: {} [{:?}]",
+                        "Elaborated {} sequences! Time: [{:?}]",
                         SEQ_COUNT.load(Ordering::Relaxed),
-                        SET_BIT.load(Ordering::Relaxed),
                         start_time.elapsed()
                     );
                 }
@@ -438,21 +427,85 @@ fn main() {
                 flush_buffer(&mut temp_indexes, &mut temp_buffers, i);
             }
         });
+        buckets.finalize();
+    } else if args.hashes {
+        args.input
+            .par_iter()
+            .enumerate()
+            .for_each(|(index, input)| {
+                let file = filebuffer::FileBuffer::open(input).unwrap();
+                let mut vec = Vec::new();
 
-        for bucket in buckets.iter_mut() {
-            let bucket = bucket.take().unwrap().into_inner().unwrap();
-            bucket.finalize()
-        }
+                let mut reader = Cursor::new(file.deref());
+
+                while reader.position() as usize != file.len() {
+                    let entry = HashEntry::deserialize_from_file(&mut reader);
+                    vec.push(entry);
+                }
+
+                struct Compare {}
+                impl SortKey<HashEntry> for Compare {
+                    fn get(value: &HashEntry) -> u64 {
+                        value.hash
+                    }
+                }
+
+                // vec.sort_unstable_by_key(|e| e.hash);
+                smart_radix_sort::<_, Compare, false>(&mut vec[..], 64 - 8);
+
+                for x in vec.group_by(|a, b| a.hash == b.hash) {
+                    let a = x.iter().any(|h| h.direction == Direction::Backward);
+                    let b = x.iter().any(|h| h.direction == Direction::Forward);
+
+                    if a && b {
+                        println!("Found!");
+                    }
+
+                    if x.len() >= 5 {
+                        // && x[0].direction != x[1].direction {
+                        println!(
+                            "A: [{}]/{} B: [{}]{}",
+                            x[0].bucket, x[0].entry, x[1].bucket, x[1].entry
+                        );
+                    }
+                }
+
+                println!("Done {}!", index);
+            });
     } else {
         static CURRENT_BUCKETS_COUNT: AtomicU64 = AtomicU64::new(0);
 
         let min_molteplicity = args.min_molteplicity.unwrap_or(4);
 
-        args.input.par_iter().enumerate().for_each(|(index, input)| {
+        const NONE: Option<Mutex<BufWriter<File>>> = None;
+        let mut hashes_buckets = MultiThreadBuckets::<BinaryWriter>::new(
+            BUCKETS_COUNT,
+            &("output/hashes".to_string(), StorageMode::Plain),
+        );
+
+        // BufWriter::with_capacity(
+
+        args.input.par_iter().for_each(|input| {
+
+            const VEC: Vec<HashEntry> = Vec::new();
+            const MAX_HASHES_FOR_FLUSH: usize = 1024 * 64;
+            let mut hashes_tmp = [VEC; BUCKETS_COUNT];
+
+            // FIXME: Embed in file!
+            let file_name = Path::new(&input).file_name().unwrap().to_string_lossy().to_string();
+            let bucket_string: Vec<u8> = (&file_name[0..file_name.rfind(".").unwrap()]).as_bytes().iter()
+                .map(|x| *x)
+                .filter(|x| (*x as char).is_digit(10)).collect();
+
+            let bucket_index: u64 = String::from_utf8(bucket_string).unwrap().parse().unwrap();
+            println!("Processing bucket {}...", bucket_index);
+
+
             let mut kmers_cnt = 0;
             let mut kmers_unique = 0;
 
-            let mut writer = ReadsFreezer::optfile_splitted_compressed_lz4(format!("output/result{}", index));
+            let mut writer = ReadsFreezer::optfile_splitted_compressed_lz4(format!("output/result{}", bucket_index));
+            let mut read_index = 0;
 
             struct X {}
 
@@ -477,14 +530,16 @@ fn main() {
             let mut buckets = [CVEC; 256];
             let mut cmp_reads = [CREAD; 256];
 
-            // FIXME: Embed in file!
-            let file_name = Path::new(&input).file_name().unwrap().to_string_lossy().to_string();
-            let bucket_string: Vec<u8> = (&file_name[0..file_name.rfind(".").unwrap()]).as_bytes().iter()
-                .map(|x| *x)
-                .filter(|x| (*x as char).is_digit(10)).collect();
+            let flush_bucket = |index: usize, bucket: &mut Vec<HashEntry>| {
+                hashes_buckets.flush(index, |writer| {
+                    let mut writer = writer.get_writer();
 
-            let bucket_index: u64 = String::from_utf8(bucket_string).unwrap().parse().unwrap();
-            println!("Processing bucket {}...", bucket_index);
+                    for el in bucket.iter() {
+                        el.serialize_to_file(&mut writer);
+                    }
+                    bucket.clear();
+                })
+            };
 
             IntermediateStorage::new_reader(input.clone()).for_each(|x| {
 
@@ -533,6 +588,8 @@ fn main() {
                     let mut backward_seq = Vec::new();
                     let mut forward_seq = Vec::new();
                     forward_seq.reserve(k);
+
+                    let mut idx_str: Vec<u8> = Vec::new();
 
                     struct Compare {}
                     impl SortKey<(usize, usize, usize, u64)> for Compare {
@@ -658,19 +715,59 @@ fn main() {
                                         break;
                                     }
                                 }
+                                start_index.0
                             };
 
-                            try_extend_function(&mut forward_seq, nt_manual_roll, 0);
-                            try_extend_function(&mut backward_seq, nt_manual_roll_rev, k - 1);
+                            let mut fw_hash = try_extend_function(&mut forward_seq, nt_manual_roll, 0);
+                            let mut bw_hash = try_extend_function(&mut backward_seq, nt_manual_roll_rev, k - 1);
 
-                            backward_seq.reverse();
-                            backward_seq.extend_from_slice(&forward_seq[..]);
+                            let out_seq = if backward_seq.len() > 0 {
+                                backward_seq.reverse();
+                                backward_seq.extend_from_slice(&forward_seq[..]);
+                                &backward_seq[..]
+                            }
+                            else {
+                                &forward_seq[..]
+                            };
+
+                            fw_hash = nt_manual_roll(fw_hash, k, H_LOOKUP[((out_seq[out_seq.len() - k] >> 1) & 0x3) as usize], 0).rotate_right(1);
+                            bw_hash = nt_manual_roll_rev(bw_hash, k, H_LOOKUP[((out_seq[k - 1] >> 1) & 0x3) as usize], 0);
+
+                            idx_str.clear();
+                            idx_str.write_fmt(format_args!("{}", read_index));
 
                             writer.add_read(FastaSequence {
-                                ident: &[],
-                                seq: &backward_seq[..],
+                                ident: &idx_str[..],
+                                seq: out_seq,
                                 qual: None
                             });
+
+                            let fw_hash_sr = HashEntry {
+                                hash: fw_hash,
+                                bucket: bucket_index as u32,
+                                entry: read_index,
+                                direction: Direction::Forward
+                            };
+                            let fw_bucket_index = fw_hash as usize % BUCKETS_COUNT;
+                            hashes_tmp[fw_bucket_index].push(fw_hash_sr);
+                            if hashes_tmp[fw_bucket_index].len() >= MAX_HASHES_FOR_FLUSH {
+                                flush_bucket(fw_bucket_index, &mut hashes_tmp[fw_bucket_index]);
+                            }
+                            // fw_hash_sr.serialize_to_file(&mut hashes_buckets[]);
+
+                            let bw_hash_sr = HashEntry {
+                                hash: bw_hash,
+                                bucket: bucket_index as u32,
+                                entry: read_index,
+                                direction: Direction::Backward
+                            };
+                            let bw_bucket_index = bw_hash as usize % BUCKETS_COUNT;
+                            hashes_tmp[bw_bucket_index].push(bw_hash_sr);
+                            if hashes_tmp[bw_bucket_index].len() >= MAX_HASHES_FOR_FLUSH {
+                                flush_bucket(bw_bucket_index, &mut hashes_tmp[bw_bucket_index]);
+                            }
+
+                            read_index += 1;
                         }
 
                         // for (read_idx, count, pos, minimizer) in slice {
@@ -771,6 +868,9 @@ fn main() {
                     start_time.elapsed()
                 );
             writer.finalize();
+            for bucket in 0..BUCKETS_COUNT {
+                flush_bucket(bucket, &mut hashes_tmp[bucket]);
+            }
         });
     }
 

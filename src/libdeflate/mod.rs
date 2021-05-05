@@ -20,34 +20,13 @@ pub fn decompress_file(
         let mut buffer = Vec::with_capacity(buf_size);
         buffer.set_len(buf_size);
 
-        let path = CString::new(file.as_ref().as_os_str().to_str().unwrap()).unwrap();
-        let fd = libc::open(path.as_ptr(), libc::O_RDONLY);
+        let mut file_map = filebuffer::FileBuffer::open(&file).unwrap();
 
-        // FIXME: Better error handling!
-        if fd < 0 {
-            return Err(ErrorKind::NotFound);
-        }
-
-        let len = libc::lseek(fd, 0, libc::SEEK_END);
-
-        if len < 0 {
-            return Err(ErrorKind::PermissionDenied);
-        }
-
-        let mmapped = libc::mmap64(
-            null_mut(),
-            len as usize,
-            libc::PROT_READ,
-            libc::MAP_SHARED,
-            fd,
-            0,
+        libc::madvise(
+            file_map.as_ptr() as *mut c_void,
+            file_map.len(),
+            libc::MADV_SEQUENTIAL,
         );
-
-        if mmapped == null_mut() {
-            return Err(ErrorKind::PermissionDenied);
-        }
-
-        libc::madvise(mmapped, len as usize, libc::MADV_SEQUENTIAL);
 
         struct FuncWrapper<'a> {
             func: &'a mut dyn FnMut(&[u8]),
@@ -72,8 +51,8 @@ pub fn decompress_file(
 
         let mut total_reads = 0;
 
-        let mut in_ptr = mmapped as *const u8;
-        let mut rem_len = len;
+        let mut in_ptr = file_map.as_ptr();
+        let mut rem_len = file_map.len();
         loop {
             input_bytes = 0;
             output_bytes = 0;
@@ -89,13 +68,13 @@ pub fn decompress_file(
                 Some(flush_function),
                 &mut wrapper as *mut FuncWrapper as *mut c_void,
             );
-            rem_len -= input_bytes as i64;
+            rem_len -= input_bytes as usize;
             in_ptr = in_ptr.add(input_bytes as usize);
             total_reads += output_bytes;
             if result != 0 {
                 return Err(ErrorKind::InvalidData);
             }
-            if rem_len <= 0 {
+            if rem_len == 0 {
                 break;
             }
         }
@@ -110,8 +89,7 @@ pub fn decompress_file(
         );
         libdeflate_free_decompressor(decompressor);
 
-        libc::munmap(mmapped, len as usize);
-        libc::close(fd);
+        drop(file_map);
 
         return Ok(());
     }

@@ -40,18 +40,6 @@ impl<T: Copy, U: Ord + Copy, F: GenericsFunctional<T, U>> RollingMinQueue<T, U, 
         }
     }
 
-    // #[inline(always)]
-    // fn add_element(&mut self, value: T) {
-    //     // let tvalue = F::func(value);
-    //     self.queue.push_back(value);
-    // }
-    //
-    // #[inline(always)]
-    // fn remove_element(&mut self, value: T) {
-    //     //     if F::func(*val) == value {
-    //     self.queue.pop_front();
-    // }
-
     fn rebuild_minimums(&mut self, size: usize) {
         let mut i = self.index.wrapping_sub(2) & self.capacity_mask;
 
