@@ -13,8 +13,8 @@ use crate::compressed_read::{CompressedRead, H_INV_LETTERS, H_LOOKUP};
 use crate::intermediate_storage::{
     decode_varint, IntermediateReadsReader, IntermediateReadsWriter, IntermediateStorage,
 };
-use crate::merge::{Direction, HashEntry};
-use crate::multi_thread_buckets::MultiThreadBuckets;
+use crate::merge::{Direction, HashEntry, UnitigLink};
+use crate::multi_thread_buckets::{BucketType, MultiThreadBuckets};
 use crate::progress::Progress;
 use crate::reads_freezer::{ReadsFreezer, ReadsWriter};
 use crate::rolling_kseq_iterator::{RollingKseqImpl, RollingKseqIterator};
@@ -433,6 +433,9 @@ fn main() {
             .par_iter()
             .enumerate()
             .for_each(|(index, input)| {
+                let mut output =
+                    BinaryWriter::new(&("output/links".to_string(), StorageMode::Plain), index);
+
                 let file = filebuffer::FileBuffer::open(input).unwrap();
                 let mut vec = Vec::new();
                 let mut result = Vec::new();
@@ -456,12 +459,26 @@ fn main() {
 
                 for x in vec.group_by(|a, b| a.hash == b.hash) {
                     if x.len() == 2 && x[0].direction != x[1].direction {
-                        result.push((x[0].entry, x[1].entry));
+                        let (fw, bw) = match x[0].direction {
+                            Direction::Forward => (0, 1),
+                            Direction::Backward => (1, 0),
+                        };
+
+                        result.push(UnitigLink {
+                            bucket1: x[fw].bucket,
+                            entry1: x[fw].entry,
+                            bucket2: x[bw].bucket,
+                            entry2: x[bw].entry,
+                        });
                         // println!(
                         //     "A: [{}]/{} B: [{}]{}",
                         //     x[0].bucket, x[0].entry, x[1].bucket, x[1].entry
                         // );
                     }
+                }
+
+                for entry in result.iter() {
+                    entry.serialize_to_file(output.get_writer());
                 }
 
                 println!("Done {} / {}!", index, result.len());

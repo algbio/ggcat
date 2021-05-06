@@ -47,3 +47,41 @@ impl HashEntry {
         }
     }
 }
+
+#[derive(Copy, Clone)]
+pub struct UnitigLink {
+    pub bucket1: u32,
+    pub entry1: u64,
+    pub bucket2: u32,
+    pub entry2: u64,
+}
+
+impl UnitigLink {
+    // pub fn new()
+
+    pub fn serialize_to_file<'a>(&self, mut writer: impl Write + 'a) {
+        encode_varint(&mut writer, self.bucket1 as u64);
+        encode_varint(&mut writer, self.entry1);
+        encode_varint(&mut writer, self.bucket2 as u64);
+        encode_varint(&mut writer, self.entry2);
+
+        // writer.write_fmt(format_args!(
+        //     "{} {} > {} {}\n",
+        //     self.bucket1, self.entry1, self.bucket2, self.entry2
+        // ));
+    }
+
+    pub fn deserialize_from_file(mut reader: impl Read) -> UnitigLink {
+        let bucket1 = decode_varint(&mut reader).unwrap() as u32;
+        let entry1 = decode_varint(&mut reader).unwrap();
+        let bucket2 = decode_varint(&mut reader).unwrap() as u32;
+        let entry2 = decode_varint(&mut reader).unwrap();
+
+        UnitigLink {
+            bucket1,
+            entry1,
+            bucket2,
+            entry2,
+        }
+    }
+}
