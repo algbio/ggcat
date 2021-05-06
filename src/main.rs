@@ -435,6 +435,7 @@ fn main() {
             .for_each(|(index, input)| {
                 let file = filebuffer::FileBuffer::open(input).unwrap();
                 let mut vec = Vec::new();
+                let mut result = Vec::new();
 
                 let mut reader = Cursor::new(file.deref());
 
@@ -454,23 +455,16 @@ fn main() {
                 smart_radix_sort::<_, Compare, false>(&mut vec[..], 64 - 8);
 
                 for x in vec.group_by(|a, b| a.hash == b.hash) {
-                    let a = x.iter().any(|h| h.direction == Direction::Backward);
-                    let b = x.iter().any(|h| h.direction == Direction::Forward);
-
-                    if a && b {
-                        println!("Found!");
-                    }
-
-                    if x.len() >= 5 {
-                        // && x[0].direction != x[1].direction {
-                        println!(
-                            "A: [{}]/{} B: [{}]{}",
-                            x[0].bucket, x[0].entry, x[1].bucket, x[1].entry
-                        );
+                    if x.len() == 2 && x[0].direction != x[1].direction {
+                        result.push((x[0].entry, x[1].entry));
+                        // println!(
+                        //     "A: [{}]/{} B: [{}]{}",
+                        //     x[0].bucket, x[0].entry, x[1].bucket, x[1].entry
+                        // );
                     }
                 }
 
-                println!("Done {}!", index);
+                println!("Done {} / {}!", index, result.len());
             });
     } else {
         static CURRENT_BUCKETS_COUNT: AtomicU64 = AtomicU64::new(0);
