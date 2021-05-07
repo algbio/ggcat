@@ -9,36 +9,6 @@
 
 extern crate test;
 
-use crate::binary_writer::{BinaryWriter, StorageMode};
-use crate::compressed_read::{CompressedRead, H_INV_LETTERS, H_LOOKUP};
-use crate::intermediate_storage::{
-    IntermediateReadsReader, IntermediateReadsWriter, IntermediateStorage,
-};
-use crate::merge::{Direction, HashEntry, UnitigLink, VecSlice, TRASH_SIZE};
-use crate::multi_thread_buckets::{BucketType, BucketsThreadDispatcher, MultiThreadBuckets};
-use crate::progress::Progress;
-use crate::reads_freezer::{ReadsFreezer, ReadsWriter};
-use crate::rolling_kseq_iterator::{RollingKseqImpl, RollingKseqIterator};
-use crate::rolling_minqueue::{GenericsFunctional, RollingMinQueue};
-use crate::rolling_quality_check::RollingQualityCheck;
-use crate::sequences_reader::{FastaSequence, SequencesReader};
-use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
-use crate::utils::{cast_static, Utils};
-use ::nthash::nt_manual_roll;
-use ::nthash::nt_manual_roll_rev;
-use ::nthash::NtHashIterator;
-use ::nthash::NtSequence;
-use bio::alphabets::SymbolRanks;
-use bitvec::vec::BitVec;
-use bstr::ByteSlice;
-use itertools::Itertools;
-use nix::dir::Type::Directory;
-use nix::unistd::PathconfVar::PIPE_BUF;
-use object_pool::Pool;
-use pad::{Alignment, PadStr};
-use rayon::iter::*;
-use rayon::ThreadPoolBuilder;
-use serde::Serialize;
 use std::cell::UnsafeCell;
 use std::cmp::{max, min, min_by_key};
 use std::collections::{HashMap, VecDeque};
@@ -56,8 +26,42 @@ use std::sync::atomic::Ordering;
 use std::sync::atomic::*;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use ::nthash::nt_manual_roll;
+use ::nthash::nt_manual_roll_rev;
+use ::nthash::NtHashIterator;
+use ::nthash::NtSequence;
+use bio::alphabets::SymbolRanks;
+use bitvec::vec::BitVec;
+use bstr::ByteSlice;
+use itertools::Itertools;
+use nix::dir::Type::Directory;
+use nix::unistd::PathconfVar::PIPE_BUF;
+use object_pool::Pool;
+use pad::{Alignment, PadStr};
+use rayon::iter::*;
+use rayon::ThreadPoolBuilder;
+use serde::Serialize;
 use structopt::clap::ArgGroup;
 use structopt::StructOpt;
+
+use vec_slice::VecSlice;
+
+use crate::binary_writer::{BinaryWriter, StorageMode};
+use crate::compressed_read::{CompressedRead, H_INV_LETTERS, H_LOOKUP};
+use crate::intermediate_storage::{
+    IntermediateReadsReader, IntermediateReadsWriter, IntermediateStorage,
+};
+use crate::merge::{Direction, HashEntry, UnitigLink, TRASH_SIZE};
+use crate::multi_thread_buckets::{BucketType, BucketsThreadDispatcher, MultiThreadBuckets};
+use crate::progress::Progress;
+use crate::reads_freezer::{ReadsFreezer, ReadsWriter};
+use crate::rolling_kseq_iterator::{RollingKseqImpl, RollingKseqIterator};
+use crate::rolling_minqueue::{GenericsFunctional, RollingMinQueue};
+use crate::rolling_quality_check::RollingQualityCheck;
+use crate::sequences_reader::{FastaSequence, SequencesReader};
+use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
+use crate::utils::{cast_static, Utils};
 
 mod benchmarks;
 mod binary_writer;
@@ -75,6 +79,7 @@ mod sequences_reader;
 mod smart_bucket_sort;
 mod utils;
 mod varint;
+mod vec_slice;
 
 #[derive(StructOpt)]
 enum Mode {
