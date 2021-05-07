@@ -1,14 +1,19 @@
-use crate::intermediate_storage::{decode_varint, encode_varint, VecReader};
+use crate::binary_writer::BinaryWriter;
+use crate::intermediate_storage::VecReader;
+use crate::multi_thread_buckets::BucketWriter;
+use crate::varint::{decode_varint, encode_varint};
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
+use serde::{Deserialize, Serialize, Serializer};
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Direction {
     Forward,
     Backward,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct HashEntry {
     pub hash: u64,
     pub bucket: u32,
@@ -16,72 +21,89 @@ pub struct HashEntry {
     pub direction: Direction,
 }
 
-impl HashEntry {
-    // pub fn new()
+impl BucketWriter for HashEntry {
+    type BucketType = BinaryWriter;
 
-    pub fn serialize_to_file<'a>(&self, mut writer: impl Write + 'a) {
-        writer.write_u64::<LittleEndian>(self.hash);
-        encode_varint(&mut writer, self.bucket as u64);
-        encode_varint(&mut writer, self.entry);
-        writer.write_u8(self.direction as u8);
-    }
-
-    pub fn deserialize_from_file(mut reader: impl Read) -> HashEntry {
-        let mut buffer = [0; 8];
-
-        reader.read(&mut buffer[..]);
-        let hash = LittleEndian::read_u64(&buffer[..]);
-
-        let bucket = decode_varint(&mut reader).unwrap() as u32;
-        let entry = decode_varint(&mut reader).unwrap();
-        let direction = reader.read_u8().unwrap();
-
-        HashEntry {
-            hash,
-            bucket,
-            entry,
-            direction: match direction {
-                0 => Direction::Forward,
-                _ => Direction::Backward,
-            },
-        }
+    #[inline(always)]
+    fn write_to(&self, bucket: &mut Self::BucketType) {
+        bincode::serialize_into(bucket.get_writer(), self);
     }
 }
+
+pub const TRASH_SIZE: usize = 7;
 
 #[derive(Copy, Clone)]
-pub struct UnitigLink {
-    pub bucket1: u32,
-    pub entry1: u64,
-    pub bucket2: u32,
-    pub entry2: u64,
+pub struct VecSlice<T> {
+    pos: usize,
+    len: usize,
+    _phantom: PhantomData<T>,
 }
 
-impl UnitigLink {
-    // pub fn new()
-
-    pub fn serialize_to_file<'a>(&self, mut writer: impl Write + 'a) {
-        encode_varint(&mut writer, self.bucket1 as u64);
-        encode_varint(&mut writer, self.entry1);
-        encode_varint(&mut writer, self.bucket2 as u64);
-        encode_varint(&mut writer, self.entry2);
-
-        // writer.write_fmt(format_args!(
-        //     "{} {} > {} {}\n",
-        //     self.bucket1, self.entry1, self.bucket2, self.entry2
-        // ));
-    }
-
-    pub fn deserialize_from_file(mut reader: impl Read) -> UnitigLink {
-        let bucket1 = decode_varint(&mut reader).unwrap() as u32;
-        let entry1 = decode_varint(&mut reader).unwrap();
-        let bucket2 = decode_varint(&mut reader).unwrap() as u32;
-        let entry2 = decode_varint(&mut reader).unwrap();
-
-        UnitigLink {
-            bucket1,
-            entry1,
-            bucket2,
-            entry2,
+impl<T> VecSlice<T> {
+    pub fn new(pos: usize, len: usize) -> Self {
+        Self {
+            pos,
+            len,
+            _phantom: Default::default(),
         }
     }
+    fn get_slice<'a>(&self, vec: &'a Vec<T>) -> &'a [T] {
+        &vec[self.pos..self.pos + self.len]
+    }
+    fn get_slice_mut<'a>(&self, vec: &'a mut Vec<T>) -> &'a mut [T] {
+        &mut vec[self.pos..self.pos + self.len]
+    }
+}
+
+// impl<T: Serialize> Serialize for VecSlice<T> {
+//     fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
+//     where
+//         S: Serializer,
+//     {
+//         self.get_slice().serialize(serializer)
+//     }
+// }
+
+#[derive(Copy, Clone)]
+pub struct UnitigIndex {
+    index: usize,
+}
+
+impl UnitigIndex {
+    const INDEX_MASK: usize = !((1 << 48) - 1);
+
+    #[inline]
+    pub fn new(bucket: usize, index: usize) -> Self {
+        Self {
+            index: (bucket << 48) | (index & Self::INDEX_MASK),
+        }
+    }
+    #[inline]
+    pub fn bucket(&self) -> usize {
+        self.index >> 48
+    }
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.index & Self::INDEX_MASK
+    }
+}
+
+#[derive(Clone)]
+pub struct UnitigLink {
+    pub entry: u64,
+    pub is_forward: bool,
+    pub entries: VecSlice<UnitigIndex>,
+}
+
+#[derive(Copy, Clone, Serialize, Deserialize)]
+pub struct UnitigPointer {
+    pub entry: u64,
+    pub link_index: u64,
+}
+
+impl BucketWriter for UnitigLink {
+    type BucketType = BinaryWriter;
+
+    #[inline(always)]
+    fn write_to(&self, bucket: &mut Self::BucketType) {}
 }

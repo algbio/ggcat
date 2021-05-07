@@ -2,6 +2,7 @@
 #![feature(is_sorted)]
 #![feature(slice_group_by)]
 #![feature(llvm_asm)]
+#![feature(min_type_alias_impl_trait)]
 #![feature(option_result_unwrap_unchecked)]
 #![allow(warnings)]
 #![feature(test)]
@@ -11,10 +12,10 @@ extern crate test;
 use crate::binary_writer::{BinaryWriter, StorageMode};
 use crate::compressed_read::{CompressedRead, H_INV_LETTERS, H_LOOKUP};
 use crate::intermediate_storage::{
-    decode_varint, IntermediateReadsReader, IntermediateReadsWriter, IntermediateStorage,
+    IntermediateReadsReader, IntermediateReadsWriter, IntermediateStorage,
 };
-use crate::merge::{Direction, HashEntry, UnitigLink};
-use crate::multi_thread_buckets::{BucketType, MultiThreadBuckets};
+use crate::merge::{Direction, HashEntry, UnitigLink, VecSlice, TRASH_SIZE};
+use crate::multi_thread_buckets::{BucketType, BucketsThreadDispatcher, MultiThreadBuckets};
 use crate::progress::Progress;
 use crate::reads_freezer::{ReadsFreezer, ReadsWriter};
 use crate::rolling_kseq_iterator::{RollingKseqImpl, RollingKseqIterator};
@@ -58,7 +59,7 @@ use std::time::{Duration, Instant};
 use structopt::clap::ArgGroup;
 use structopt::StructOpt;
 
-mod benckmarks;
+mod benchmarks;
 mod binary_writer;
 mod compressed_read;
 mod intermediate_storage;
@@ -73,6 +74,7 @@ mod rolling_quality_check;
 mod sequences_reader;
 mod smart_bucket_sort;
 mod utils;
+mod varint;
 
 #[derive(StructOpt)]
 enum Mode {
@@ -159,6 +161,14 @@ struct Cli2 {
     #[structopt(short)]
     hashes: bool,
 
+    /// Process the sequence to sort links
+    #[structopt(short)]
+    links: bool,
+
+    /// Links run number
+    #[structopt(short)]
+    number: Option<usize>,
+
     /// Minimum molteplicity required to keep a kmer
     #[structopt(short = "s", long = "min-molteplicity")]
     min_molteplicity: Option<usize>,
@@ -231,7 +241,7 @@ fn main() {
 
     let start_time = Instant::now();
 
-    if !args.alignment {
+    if !args.alignment && !args.hashes && !args.links {
         const NONE: Option<Mutex<IntermediateReadsWriter>> = None;
         let mut buckets =
             MultiThreadBuckets::<IntermediateReadsWriter>::new(BUCKETS_COUNT, "buckets/bucket");
@@ -429,22 +439,24 @@ fn main() {
         });
         buckets.finalize();
     } else if args.hashes {
+        let mut links_buckets = MultiThreadBuckets::<BinaryWriter>::new(
+            BUCKETS_COUNT,
+            &("output/links".to_string(), StorageMode::Plain),
+        );
+
         args.input
             .par_iter()
             .enumerate()
             .for_each(|(index, input)| {
-                let mut output =
-                    BinaryWriter::new(&("output/links".to_string(), StorageMode::Plain), index);
+                let mut links_tmp = BucketsThreadDispatcher::new(65536, &links_buckets);
 
                 let file = filebuffer::FileBuffer::open(input).unwrap();
-                let mut vec = Vec::new();
-                let mut result = Vec::new();
 
                 let mut reader = Cursor::new(file.deref());
+                let mut vec: Vec<HashEntry> = Vec::new();
 
-                while reader.position() as usize != file.len() {
-                    let entry = HashEntry::deserialize_from_file(&mut reader);
-                    vec.push(entry);
+                while let Ok(value) = bincode::deserialize_from(&mut reader) {
+                    vec.push(value);
                 }
 
                 struct Compare {}
@@ -464,25 +476,112 @@ fn main() {
                             Direction::Backward => (1, 0),
                         };
 
-                        result.push(UnitigLink {
-                            bucket1: x[fw].bucket,
-                            entry1: x[fw].entry,
-                            bucket2: x[bw].bucket,
-                            entry2: x[bw].entry,
-                        });
+                        links_tmp.add_element(
+                            x[fw].bucket as usize,
+                            UnitigLink {
+                                entry: 0,
+                                is_forward: true,
+                                // entry1: x[fw].entry,
+                                // bucket2: x[bw].bucket,
+                                // entry2: x[bw].entry,
+                                // trash: Default::default(),
+                                entries: VecSlice::new(0, 0),
+                            },
+                        );
+                        //
+                        // links_tmp.add_element(
+                        //     x[bw].bucket as usize,
+                        //     UnitigLink {
+                        //         is_forward: false,
+                        //         entry1: x[bw].entry,
+                        //         bucket2: x[fw].bucket,
+                        //         entry2: x[fw].entry,
+                        //         trash: Default::default(),
+                        //     },
+                        // );
                         // println!(
                         //     "A: [{}]/{} B: [{}]{}",
                         //     x[0].bucket, x[0].entry, x[1].bucket, x[1].entry
                         // );
                     }
                 }
+                println!("Done {}!", index);
+            });
+    } else if args.links {
+        let totsum = AtomicU64::new(0);
+        // let mut links_buckets = MultiThreadBuckets::<BinaryWriter>::new(
+        //     BUCKETS_COUNT,
+        //     &("output/links".to_string(), StorageMode::Plain),
+        // );
+        let mut links_buckets = MultiThreadBuckets::<BinaryWriter>::new(
+            BUCKETS_COUNT,
+            &(
+                format!("output/linksi{}", args.number.unwrap()),
+                StorageMode::Plain,
+            ),
+        );
 
-                for entry in result.iter() {
-                    entry.serialize_to_file(output.get_writer());
+        args.input
+            .par_iter()
+            .enumerate()
+            .for_each(|(index, input)| {
+                // let mut links_tmp = BucketsThreadDispatcher::new(65536, &links_buckets);
+
+                let file = filebuffer::FileBuffer::open(input).unwrap();
+                // let mut vec = Vec::new();
+
+                let mut reader = Cursor::new(file.deref());
+
+                while reader.position() as usize != file.len() {
+                    // let entry = UnitigLink::deserialize_from_file(&mut reader);
+                    // vec.push(entry);
                 }
 
-                println!("Done {} / {}!", index, result.len());
+                // struct Compare {}
+                // impl SortKey<UnitigLink> for Compare {
+                //     fn get(value: &UnitigLink) -> u64 {
+                //         value.entry1
+                //     }
+                // }
+
+                // vec.sort_unstable_by_key(|e| e.hash);
+                // smart_radix_sort::<_, Compare, false>(&mut vec[..], 64 - 8);
+
+                let mut links = 0;
+                let mut not_links = 0;
+
+                // for x in vec.group_by(|a, b| a.entry1 == b.entry1) {
+                //     if x.len() == 2 {
+                //         links += 1;
+                //         // links_tmp.add_element(
+                //         //     x[0].bucket2 as usize,
+                //         //     UnitigLink {
+                //         //         is_forward: true,
+                //         //         entry1: x[0].entry2,
+                //         //         bucket2: x[1].bucket2,
+                //         //         entry2: x[1].entry2,
+                //         //         trash: Default::default(),
+                //         //     },
+                //         // );
+                //         // links_tmp.add_element(
+                //         //     x[1].bucket2 as usize,
+                //         //     UnitigLink {
+                //         //         is_forward: true,
+                //         //         entry1: x[1].entry2,
+                //         //         bucket2: x[0].bucket2,
+                //         //         entry2: x[0].entry2,
+                //         //         trash: Default::default(),
+                //         //     },
+                //         // );
+                //     } else {
+                //         not_links += 1;
+                //     }
+                //     assert!(x.len() <= 2);
+                // }
+                println!("Done {} {}/{}!", index, links, not_links);
+                totsum.fetch_add(links, Ordering::Relaxed);
             });
+        println!("Remaining: {}", totsum.load(Ordering::Relaxed));
     } else {
         static CURRENT_BUCKETS_COUNT: AtomicU64 = AtomicU64::new(0);
 
@@ -500,7 +599,7 @@ fn main() {
 
             const VEC: Vec<HashEntry> = Vec::new();
             const MAX_HASHES_FOR_FLUSH: usize = 1024 * 64;
-            let mut hashes_tmp = [VEC; BUCKETS_COUNT];
+            let mut hashes_tmp = BucketsThreadDispatcher::new(MAX_HASHES_FOR_FLUSH, &hashes_buckets);
 
             // FIXME: Embed in file!
             let file_name = Path::new(&input).file_name().unwrap().to_string_lossy().to_string();
@@ -540,17 +639,6 @@ fn main() {
             const CREAD: Vec<(usize, usize, usize, u64)> = Vec::new();
             let mut buckets = [CVEC; 256];
             let mut cmp_reads = [CREAD; 256];
-
-            let flush_bucket = |index: usize, bucket: &mut Vec<HashEntry>| {
-                hashes_buckets.flush(index, |writer| {
-                    let mut writer = writer.get_writer();
-
-                    for el in bucket.iter() {
-                        el.serialize_to_file(&mut writer);
-                    }
-                    bucket.clear();
-                })
-            };
 
             IntermediateStorage::new_reader(input.clone()).for_each(|x| {
 
@@ -760,10 +848,7 @@ fn main() {
                                 direction: Direction::Forward
                             };
                             let fw_bucket_index = fw_hash as usize % BUCKETS_COUNT;
-                            hashes_tmp[fw_bucket_index].push(fw_hash_sr);
-                            if hashes_tmp[fw_bucket_index].len() >= MAX_HASHES_FOR_FLUSH {
-                                flush_bucket(fw_bucket_index, &mut hashes_tmp[fw_bucket_index]);
-                            }
+                            hashes_tmp.add_element(fw_bucket_index, fw_hash_sr);
                             // fw_hash_sr.serialize_to_file(&mut hashes_buckets[]);
 
                             let bw_hash_sr = HashEntry {
@@ -773,11 +858,7 @@ fn main() {
                                 direction: Direction::Backward
                             };
                             let bw_bucket_index = bw_hash as usize % BUCKETS_COUNT;
-                            hashes_tmp[bw_bucket_index].push(bw_hash_sr);
-                            if hashes_tmp[bw_bucket_index].len() >= MAX_HASHES_FOR_FLUSH {
-                                flush_bucket(bw_bucket_index, &mut hashes_tmp[bw_bucket_index]);
-                            }
-
+                            hashes_tmp.add_element(fw_bucket_index, bw_hash_sr);
                             read_index += 1;
                         }
 
@@ -879,9 +960,6 @@ fn main() {
                     start_time.elapsed()
                 );
             writer.finalize();
-            for bucket in 0..BUCKETS_COUNT {
-                flush_bucket(bucket, &mut hashes_tmp[bucket]);
-            }
         });
     }
 

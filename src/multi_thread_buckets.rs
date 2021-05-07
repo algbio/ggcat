@@ -40,3 +40,59 @@ impl<B: BucketType> Drop for MultiThreadBuckets<B> {
 
 unsafe impl<B: BucketType> Send for MultiThreadBuckets<B> {}
 unsafe impl<B: BucketType> Sync for MultiThreadBuckets<B> {}
+
+pub trait BucketWriter {
+    type BucketType;
+    fn write_to(&self, bucket: &mut Self::BucketType);
+}
+
+pub struct BucketsThreadDispatcher<'a, B: BucketType, T: BucketWriter<BucketType = B> + Clone> {
+    mtb: &'a MultiThreadBuckets<B>,
+    thread_data: Vec<Vec<T>>,
+    max_bucket_size: usize,
+}
+
+impl<'a, B: BucketType, T: BucketWriter<BucketType = B> + Clone> BucketsThreadDispatcher<'a, B, T> {
+    pub fn new(
+        max_bucket_size: usize,
+        mtb: &'a MultiThreadBuckets<B>,
+    ) -> BucketsThreadDispatcher<'a, B, T> {
+        let mut thread_data = Vec::new();
+        thread_data.resize(mtb.buckets.len(), Vec::with_capacity(max_bucket_size));
+
+        Self {
+            mtb,
+            thread_data,
+            max_bucket_size,
+        }
+    }
+    #[inline]
+    pub fn add_element(&mut self, bucket: usize, element: T) {
+        self.thread_data[bucket].push(element);
+        if self.thread_data[bucket].len() >= self.max_bucket_size {
+            self.mtb.flush(bucket, |mtb_bucket| {
+                for el in self.thread_data[bucket].iter() {
+                    el.write_to(mtb_bucket);
+                }
+                self.thread_data[bucket].clear();
+            })
+        }
+    }
+}
+
+impl<'a, B: BucketType, T: BucketWriter<BucketType = B> + Clone> Drop
+    for BucketsThreadDispatcher<'a, B, T>
+{
+    fn drop(&mut self) {
+        for (index, vec) in self.thread_data.iter().enumerate() {
+            if vec.len() == 0 {
+                continue;
+            }
+            self.mtb.flush(index, |mtb_bucket| {
+                for el in vec.iter() {
+                    el.write_to(mtb_bucket);
+                }
+            })
+        }
+    }
+}
