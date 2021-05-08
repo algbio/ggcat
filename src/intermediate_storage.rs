@@ -15,12 +15,13 @@ use std::fs::{File, OpenOptions};
 use std::hash::Hasher;
 use std::io::{stdin, stdout, BufRead, BufReader, BufWriter, Read, Write};
 use std::ops::DerefMut;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
 use std::slice::from_raw_parts;
 
 pub struct IntermediateReadsWriter {
     writer: BufWriter<lz4::Encoder<BufWriter<File>>>,
+    path: PathBuf,
 }
 
 pub struct IntermediateReadsReader {
@@ -44,10 +45,14 @@ impl IntermediateReadsWriter {
 }
 
 impl BucketType for IntermediateReadsWriter {
-    type InitType = str;
+    type InitType = Path;
 
-    fn new(init_data: &str, index: usize) -> Self {
-        let file = format!("{}.{}.tmp.lz4", init_data, index);
+    fn new(init_data: &Path, index: usize) -> Self {
+        let path = init_data.parent().unwrap().join(format!(
+            "{}.{}",
+            init_data.file_name().unwrap().to_str().unwrap(),
+            index
+        ));
 
         let mut compress_stream = lz4::EncoderBuilder::new()
             .level(0)
@@ -56,13 +61,18 @@ impl BucketType for IntermediateReadsWriter {
             .block_size(BlockSize::Default)
             .build(BufWriter::with_capacity(
                 1024 * 1024 * 4,
-                File::create(file).unwrap(),
+                File::create(&path).unwrap(),
             ))
             .unwrap();
 
         IntermediateReadsWriter {
             writer: BufWriter::with_capacity(1024 * 1024 * 4, compress_stream),
+            path,
         }
+    }
+
+    fn get_path(&self) -> PathBuf {
+        todo!()
     }
 
     fn finalize(mut self) {
@@ -230,7 +240,7 @@ impl IntermediateReadsReader {
 pub struct IntermediateStorage;
 
 impl IntermediateStorage {
-    pub fn new_reader(name: String) -> IntermediateReadsReader {
+    pub fn new_reader(name: impl AsRef<Path>) -> IntermediateReadsReader {
         IntermediateReadsReader {
             reader: lz4::Decoder::new(BufReader::with_capacity(
                 1024 * 1024 * 4,

@@ -9,6 +9,7 @@ use crate::intermediate_storage::VecReader;
 use crate::multi_thread_buckets::BucketWriter;
 use crate::varint::{decode_varint, encode_varint};
 use crate::vec_slice::VecSlice;
+use serde::ser::SerializeTuple;
 
 #[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Direction {
@@ -17,25 +18,6 @@ pub enum Direction {
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
-pub struct HashEntry {
-    pub hash: u64,
-    pub bucket: u32,
-    pub entry: u64,
-    pub direction: Direction,
-}
-
-impl BucketWriter for HashEntry {
-    type BucketType = BinaryWriter;
-
-    #[inline(always)]
-    fn write_to(&self, bucket: &mut Self::BucketType) {
-        bincode::serialize_into(bucket.get_writer(), self);
-    }
-}
-
-pub const TRASH_SIZE: usize = 7;
-
-#[derive(Copy, Clone)]
 pub struct UnitigIndex {
     index: usize,
 }
@@ -62,22 +44,25 @@ impl UnitigIndex {
 #[derive(Clone)]
 pub struct UnitigLink {
     pub entry: u64,
-    pub is_forward: bool,
+    pub direction: Direction,
     pub entries: VecSlice<UnitigIndex>,
 }
 
-struct UnitigLinksSerializer {
-    links: Vec<UnitigLink>,
+struct UnitigLinkSerializer {
+    link: UnitigLink,
     indexes: Vec<UnitigIndex>,
 }
 
-impl Serialize for UnitigLinksSerializer {
+impl Serialize for UnitigLinkSerializer {
     fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
     where
         S: Serializer,
     {
-        todo!()
-        // serializer
+        let mut serializer = serializer.serialize_tuple(3)?;
+        serializer.serialize_element(&self.link.entry);
+        serializer.serialize_element(&self.link.direction);
+        serializer.serialize_element(&self.link.entries.get_slice(&self.indexes));
+        serializer.end()
     }
 }
 
@@ -89,7 +74,8 @@ pub struct UnitigPointer {
 
 impl BucketWriter for UnitigLink {
     type BucketType = BinaryWriter;
+    type ExtraData = Vec<UnitigIndex>;
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Self::BucketType) {}
+    fn write_to(&self, bucket: &mut Self::BucketType, extra_data: &Self::ExtraData) {}
 }

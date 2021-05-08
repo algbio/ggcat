@@ -10,7 +10,7 @@ use std::fs::{File, OpenOptions};
 use std::hash::Hasher;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::ops::DerefMut;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
 use std::thread;
 
@@ -58,6 +58,7 @@ impl WriterChannels {
 
 pub struct ReadsWriter {
     writer: WriterChannels,
+    path: PathBuf,
 }
 
 impl ReadsWriter {
@@ -75,6 +76,10 @@ impl ReadsWriter {
     pub fn pipe_freezer(&mut self, mut freezer: ReadsFreezer) {
         let writer = self.writer.get_writer();
         std::io::copy(&mut freezer.reader.uget(), writer).unwrap();
+    }
+
+    pub fn get_path(&self) -> PathBuf {
+        self.path.clone()
     }
 
     pub fn finalize(mut self) {
@@ -103,6 +108,7 @@ impl ReadsFreezer {
         Utils::thread_safespawn(move || {
             func(&mut ReadsWriter {
                 writer: WriterChannels::Pipe(writer),
+                path: PathBuf::new(),
             });
         });
 
@@ -120,20 +126,16 @@ impl ReadsFreezer {
             },
             ReadsWriter {
                 writer: WriterChannels::Pipe(writer),
+                path: PathBuf::new(),
             },
         )
     }
 
     pub fn optfile_splitted_compressed(name: String) -> ReadsWriter {
-        let file = name + ".freeze.fa.gz";
+        let path = PathBuf::from(name + ".freeze.fa.gz");
 
-        //        let mut process = Command::new("./libdeflate/gzip").args(&["-c2"])
-        //            .stdin(Stdio::piped())
-        //            .stdout(Stdio::from(File::create(file).unwrap())).spawn().unwrap();
-        //
-        //        let compress_stream = process.stdin.unwrap();
         let mut compress_stream = GzEncoder::new(
-            BufWriter::with_capacity(1024 * 1024 * 16, File::create(file).unwrap()),
+            BufWriter::with_capacity(1024 * 1024 * 16, File::create(&path).unwrap()),
             Compression::new(2),
         );
 
@@ -142,11 +144,20 @@ impl ReadsFreezer {
                 1024 * 1024,
                 compress_stream,
             )),
+            path,
         }
     }
 
-    pub fn optfile_splitted_compressed_lz4(name: String) -> ReadsWriter {
-        let file = name + ".freeze.fa.lz4";
+    pub fn optfile_splitted_compressed_lz4(name: impl AsRef<Path>) -> ReadsWriter {
+        let path = PathBuf::from(name.as_ref().parent().unwrap()).join(
+            name.as_ref()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+                + ".freeze.fa.lz4",
+        );
 
         //        let mut process = Command::new("./libdeflate/gzip").args(&["-c2"])
         //            .stdin(Stdio::piped())
@@ -160,7 +171,7 @@ impl ReadsFreezer {
             .block_size(BlockSize::Max1MB)
             .build(BufWriter::with_capacity(
                 1024 * 1024 * 8,
-                File::create(file).unwrap(),
+                File::create(&path).unwrap(),
             ))
             .unwrap();
 
@@ -169,16 +180,18 @@ impl ReadsFreezer {
                 1024 * 1024 * 8,
                 compress_stream,
             )),
+            path,
         }
     }
 
     pub fn optifile_splitted(name: String) -> ReadsWriter {
-        let file = name + ".freeze.fa";
+        let path = PathBuf::from(name + ".freeze.fa");
         ReadsWriter {
             writer: WriterChannels::File(BufWriter::with_capacity(
                 1024 * 128,
-                File::create(file).unwrap(),
+                File::create(&path).unwrap(),
             )),
+            path,
         }
     }
 

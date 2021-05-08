@@ -2,6 +2,7 @@ use crate::multi_thread_buckets::BucketType;
 use byteorder::WriteBytesExt;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 
 pub enum StorageMode {
     Plain,
@@ -11,6 +12,7 @@ pub enum StorageMode {
 
 pub struct BinaryWriter {
     writer: Box<dyn Write>,
+    path: PathBuf,
 }
 
 impl BinaryWriter {
@@ -21,27 +23,35 @@ impl BinaryWriter {
 }
 
 impl BucketType for BinaryWriter {
-    type InitType = (String, StorageMode);
+    type InitType = (PathBuf, StorageMode);
 
-    fn new((name, mode): &(String, StorageMode), index: usize) -> Self {
-        let name = format!("{}.{}", name, index);
+    fn new((name, mode): &(PathBuf, StorageMode), index: usize) -> Self {
+        let path = name.parent().unwrap().join(format!(
+            "{}.{}",
+            name.file_name().unwrap().to_str().unwrap(),
+            index
+        ));
 
         let writer = match mode {
             StorageMode::Plain => Box::new(BufWriter::with_capacity(
                 1024 * 256,
-                File::create(name).unwrap(),
+                File::create(&path).unwrap(),
             )),
             StorageMode::LZ4Compression { .. } => Box::new(BufWriter::with_capacity(
                 1024 * 256,
-                File::create(name).unwrap(),
+                File::create(&path).unwrap(),
             )),
             StorageMode::GZIPCompression { .. } => Box::new(BufWriter::with_capacity(
                 1024 * 256,
-                File::create(name).unwrap(),
+                File::create(&path).unwrap(),
             )),
         };
 
-        Self { writer }
+        Self { writer, path }
+    }
+
+    fn get_path(&self) -> PathBuf {
+        self.path.clone()
     }
 
     fn finalize(self) {}

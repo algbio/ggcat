@@ -1,9 +1,11 @@
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 pub trait BucketType {
     type InitType: ?Sized;
 
     fn new(init_data: &Self::InitType, index: usize) -> Self;
+    fn get_path(&self) -> PathBuf;
     fn finalize(self);
 }
 
@@ -27,7 +29,12 @@ impl<B: BucketType> MultiThreadBuckets<B> {
         flush_fn(&mut bucket);
     }
 
-    pub fn finalize(self) {}
+    pub fn finalize(self) -> Vec<PathBuf> {
+        self.buckets
+            .iter()
+            .map(|b| b.lock().unwrap().get_path())
+            .collect()
+    }
 }
 
 impl<B: BucketType> Drop for MultiThreadBuckets<B> {
@@ -43,7 +50,8 @@ unsafe impl<B: BucketType> Sync for MultiThreadBuckets<B> {}
 
 pub trait BucketWriter {
     type BucketType;
-    fn write_to(&self, bucket: &mut Self::BucketType);
+    type ExtraData;
+    fn write_to(&self, bucket: &mut Self::BucketType, extra_data: &Self::ExtraData);
 }
 
 pub struct BucketsThreadDispatcher<'a, B: BucketType, T: BucketWriter<BucketType = B> + Clone> {
@@ -67,16 +75,30 @@ impl<'a, B: BucketType, T: BucketWriter<BucketType = B> + Clone> BucketsThreadDi
         }
     }
     #[inline]
-    pub fn add_element(&mut self, bucket: usize, element: T) {
+    pub fn add_element(&mut self, bucket: usize, extra_data: &T::ExtraData, element: T) {
         self.thread_data[bucket].push(element);
         if self.thread_data[bucket].len() >= self.max_bucket_size {
             self.mtb.flush(bucket, |mtb_bucket| {
                 for el in self.thread_data[bucket].iter() {
-                    el.write_to(mtb_bucket);
+                    el.write_to(mtb_bucket, extra_data);
                 }
                 self.thread_data[bucket].clear();
             })
         }
+    }
+
+    pub fn finalize(mut self, extra_data: &T::ExtraData) {
+        for (index, vec) in self.thread_data.iter_mut().enumerate() {
+            if vec.len() == 0 {
+                continue;
+            }
+            self.mtb.flush(index, |mtb_bucket| {
+                for el in vec.iter() {
+                    el.write_to(mtb_bucket, extra_data);
+                }
+            })
+        }
+        self.thread_data.clear();
     }
 }
 
@@ -84,15 +106,6 @@ impl<'a, B: BucketType, T: BucketWriter<BucketType = B> + Clone> Drop
     for BucketsThreadDispatcher<'a, B, T>
 {
     fn drop(&mut self) {
-        for (index, vec) in self.thread_data.iter().enumerate() {
-            if vec.len() == 0 {
-                continue;
-            }
-            self.mtb.flush(index, |mtb_bucket| {
-                for el in vec.iter() {
-                    el.write_to(mtb_bucket);
-                }
-            })
-        }
+        assert_eq!(self.thread_data.len(), 0);
     }
 }
