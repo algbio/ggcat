@@ -52,7 +52,8 @@ impl Pipeline {
 
             // FIXME: Embed in file!
             let file_name = input.file_name().unwrap().to_string_lossy().to_string();
-            let bucket_string: Vec<u8> = (&file_name[0..file_name.rfind(".").unwrap()]).as_bytes().iter()
+            println!("Processing file {}", file_name);
+            let bucket_string: Vec<u8> = (&file_name[file_name.rfind(".").unwrap()+1..]).as_bytes().iter()
                 .map(|x| *x)
                 .filter(|x| (*x as char).is_digit(10)).collect();
 
@@ -269,6 +270,7 @@ impl Pipeline {
                 start_time.elapsed()
             );
             writer.finalize();
+            hashes_tmp.finalize(&())
         });
 
         RetType {

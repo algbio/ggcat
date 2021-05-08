@@ -16,6 +16,7 @@ use rayon::ThreadPoolBuilder;
 use std::cmp::min;
 use std::path::PathBuf;
 use structopt::{clap::ArgGroup, StructOpt};
+use std::fs::create_dir_all;
 
 mod benchmarks;
 mod binary_writer;
@@ -89,6 +90,8 @@ fn main() {
     ThreadPoolBuilder::new().num_threads(16).build_global();
 
     let temp_dir = args.temp_dir.unwrap_or(PathBuf::from(".temp_files"));
+
+    create_dir_all(&temp_dir);
 
     let k: usize = args.klen;
     let m: usize = args.mlen.unwrap_or(min(12, (k + 2) / 3));

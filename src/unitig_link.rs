@@ -17,7 +17,7 @@ pub enum Direction {
     Backward,
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone)]
 pub struct UnitigIndex {
     index: usize,
 }
@@ -53,23 +53,36 @@ struct UnitigLinkSerializer {
     indexes: Vec<UnitigIndex>,
 }
 
-impl Serialize for UnitigLinkSerializer {
-    fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
-    where
-        S: Serializer,
-    {
-        let mut serializer = serializer.serialize_tuple(3)?;
-        serializer.serialize_element(&self.link.entry);
-        serializer.serialize_element(&self.link.direction);
-        serializer.serialize_element(&self.link.entries.get_slice(&self.indexes));
-        serializer.end()
-    }
-}
-
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone)]
 pub struct UnitigPointer {
     pub entry: u64,
     pub link_index: u64,
+}
+
+impl UnitigLink {
+    pub fn read_from(mut reader: impl Read, out_vec: &mut Vec<UnitigIndex>) -> Option<Self> {
+        let entry = decode_varint(|| reader.read_u8().ok())?;
+        let direction = match reader.read_u8().ok()? {
+            0 => Direction::Forward,
+            1 => Direction::Backward,
+            _ => return None
+        };
+
+        let len = decode_varint(|| reader.read_u8().ok())? as usize;
+
+        let start = out_vec.len();
+        for i in 0..len {
+            let bucket = decode_varint(|| reader.read_u8().ok())?;
+            let index = decode_varint(|| reader.read_u8().ok())?;
+            out_vec.push(UnitigIndex::new(bucket as usize, index as usize))
+        }
+
+        Some(Self {
+            entry,
+            direction,
+            entries: VecSlice::new(start, len)
+        })
+    }
 }
 
 impl BucketWriter for UnitigLink {
@@ -77,5 +90,18 @@ impl BucketWriter for UnitigLink {
     type ExtraData = Vec<UnitigIndex>;
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Self::BucketType, extra_data: &Self::ExtraData) {}
+    fn write_to(&self, bucket: &mut Self::BucketType, extra_data: &Self::ExtraData) {
+        let writer = bucket.get_writer();
+        encode_varint(|b| writer.write(b), self.entry);
+        writer.write(&[self.direction as u8]);
+
+        let entries = self.entries.get_slice(extra_data);
+
+        encode_varint(|b| writer.write(b), entries.len() as u64);
+
+        for entry in entries {
+            encode_varint(|b| writer.write(b), entry.bucket() as u64);
+            encode_varint(|b| writer.write(b), entry.index() as u64);
+        }
+    }
 }

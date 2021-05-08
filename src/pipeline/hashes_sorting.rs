@@ -108,6 +108,7 @@ impl Pipeline {
                         // );
                     }
                 }
+                links_tmp.finalize(&unitigs_vec);
                 println!("Done {}!", index);
             });
         links_buckets.finalize()

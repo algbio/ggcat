@@ -26,7 +26,7 @@ impl Pipeline {
 
         const NONE: Option<Mutex<IntermediateReadsWriter>> = None;
         let mut buckets =
-            MultiThreadBuckets::<IntermediateReadsWriter>::new(buckets_count, output_path);
+            MultiThreadBuckets::<IntermediateReadsWriter>::new(buckets_count, &output_path.join("bucket"));
 
         input_files.sort_by_cached_key(|file| std::fs::metadata(file).unwrap().len());
         input_files.reverse();

@@ -14,7 +14,7 @@ pub trait SortKey<T> {
     fn get(value: &T) -> DataType;
 }
 
-pub fn smart_radix_sort<T: Copy + Clone, F: SortKey<T>, const PARALLEL: bool>(
+pub fn smart_radix_sort<T, F: SortKey<T>, const PARALLEL: bool>(
     data: &mut [T],
     shift: u8,
 ) {
@@ -49,9 +49,7 @@ pub fn smart_radix_sort<T: Copy + Clone, F: SortKey<T>, const PARALLEL: bool>(
                 val += 1;
             }
         } else {
-            let tmp = data[i];
-            data[i] = data[sums[val] as usize];
-            data[sums[val] as usize] = tmp;
+            data.swap(i, sums[val]);
 
             sorted[val] &= (counts[val] == sums[val])
                 || (F::get(&data[sums[val] as usize]) >= F::get(&data[sums[val] as usize - 1]));

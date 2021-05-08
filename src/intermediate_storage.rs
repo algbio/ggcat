@@ -72,7 +72,7 @@ impl BucketType for IntermediateReadsWriter {
     }
 
     fn get_path(&self) -> PathBuf {
-        todo!()
+        self.path.clone()
     }
 
     fn finalize(mut self) {
