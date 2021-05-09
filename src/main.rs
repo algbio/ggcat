@@ -103,18 +103,18 @@ fn main() {
     let m: usize = args.mlen.unwrap_or(min(12, (k + 2) / 3));
     let min_multiplicity: usize = args.min_multiplicity.unwrap_or(2);
 
-    // let buckets = Pipeline::minimizer_bucketing(args.input, temp_dir.as_path(), BUCKETS_COUNT, k, m);
+    let buckets = Pipeline::minimizer_bucketing(args.input, temp_dir.as_path(), BUCKETS_COUNT, k, m);
 
-    // let RetType { sequences, hashes } = Pipeline::kmers_merge(
-    //     buckets,
-    //     BUCKETS_COUNT,
-    //     min_multiplicity,
-    //     temp_dir.as_path(),
-    //     k,
-    //     m,
-    // );
+    let RetType { sequences, hashes } = Pipeline::kmers_merge(
+        buckets,
+        BUCKETS_COUNT,
+        min_multiplicity,
+        temp_dir.as_path(),
+        k,
+        m,
+    );
 
-    let hashes = args.input;
+    // let hashes = args.input;
 
     let mut links = Pipeline::hashes_sorting(hashes, temp_dir.as_path(), BUCKETS_COUNT);
 
