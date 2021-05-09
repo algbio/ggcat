@@ -35,20 +35,6 @@ pub struct FastaSequence<'a> {
 
 pub struct SequencesReader;
 impl SequencesReader {
-    pub fn process_file<F: FnMut(&[u8])>(source: String, mut func: F) {
-        let mut process = Command::new("./libdeflate/gzip")
-            .args(&["-cd", source.as_str()])
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let pid = process.id() as i32;
-        let decompress = process.stdout.unwrap();
-        let reader = fastq::Reader::new(decompress);
-        for record in reader.records() {
-            func(record.unwrap().seq());
-        }
-    }
-
     #[inline]
     fn process_line<'a, 'b>(buffer: &'b mut &'a [u8]) -> (bool, &'a [u8]) {
         match buffer.find(&[b'\n']) {
@@ -79,12 +65,12 @@ impl SequencesReader {
         }
     }
 
-    pub fn process_file_extended<F: FnMut(FastaSequence)>(source: String, mut func: F) {
+    pub fn process_file_extended<F: FnMut(FastaSequence)>(source: impl AsRef<Path>, mut func: F) {
         const FASTQ_EXTS: &[&str] = &["fq", "fastq"];
         const FASTA_EXTS: &[&str] = &["fa", "fasta", "fna", "ffn"];
 
         let mut file_type = None;
-        let mut tmp = &source[..];
+        let mut tmp = source.as_ref().file_name().unwrap().to_str().unwrap();
         let mut path: &Path = tmp.as_ref();
 
         while let Some(ext) = path.extension() {
@@ -101,7 +87,10 @@ impl SequencesReader {
         }
 
         match file_type {
-            None => panic!("Cannot recognize file type of '{}'", source),
+            None => panic!(
+                "Cannot recognize file type of '{}'",
+                source.as_ref().display()
+            ),
             Some(ftype) => match ftype {
                 FileType::Fasta => {
                     Self::process_fasta(source, func);
@@ -134,7 +123,7 @@ impl SequencesReader {
         }
     }
 
-    fn process_fasta(source: String, mut func: impl FnMut(FastaSequence)) {
+    fn process_fasta(source: impl AsRef<Path>, mut func: impl FnMut(FastaSequence)) {
         // Ident, seq
         let mut intermediate = [Vec::new(), Vec::new()];
         let mut state = IDENT_STATE;
@@ -201,7 +190,7 @@ impl SequencesReader {
         Self::read_binary_file(&source, process_function);
     }
 
-    fn process_fastq(source: String, mut func: impl FnMut(FastaSequence)) {
+    fn process_fastq(source: impl AsRef<Path>, mut func: impl FnMut(FastaSequence)) {
         // Ident, seq, qual
         let mut intermediate = [Vec::new(), Vec::new(), Vec::new()];
         let mut state = IDENT_STATE;

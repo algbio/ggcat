@@ -60,13 +60,13 @@ impl BucketType for IntermediateReadsWriter {
             .block_mode(BlockMode::Independent)
             .block_size(BlockSize::Default)
             .build(BufWriter::with_capacity(
-                1024 * 1024 * 4,
+                1024 * 512,
                 File::create(&path).unwrap(),
             ))
             .unwrap();
 
         IntermediateReadsWriter {
-            writer: BufWriter::with_capacity(1024 * 1024 * 4, compress_stream),
+            writer: BufWriter::with_capacity(1024 * 512, compress_stream),
             path,
         }
     }

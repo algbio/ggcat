@@ -2,28 +2,121 @@ use std::io::{Read, Write};
 use std::marker::PhantomData;
 
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
+use serde::ser::SerializeTuple;
 use serde::{Deserialize, Serialize, Serializer};
 
 use crate::binary_writer::BinaryWriter;
+use crate::hash_entry::Direction;
 use crate::intermediate_storage::VecReader;
 use crate::multi_thread_buckets::BucketWriter;
 use crate::varint::{decode_varint, encode_varint};
 use crate::vec_slice::VecSlice;
-use serde::ser::SerializeTuple;
+use std::fmt::{Debug, Formatter};
 
-#[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub enum Direction {
-    Forward,
-    Backward,
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug)]
+pub struct UnitigFlags(u8);
+
+impl UnitigFlags {
+    const DIRECTION_FLAG: usize = 0;
+    const BEGIN_SEALED_FLAG: usize = 1;
+    const END_SEALED_FLAG: usize = 2;
+
+    pub fn combine(a: UnitigFlags, b: UnitigFlags) -> UnitigFlags {
+        assert_ne!(a.is_forward(), b.is_forward());
+
+        UnitigFlags(
+            ((a.is_forward() as u8) << Self::DIRECTION_FLAG)
+                | ((a.end_sealed() as u8) << Self::END_SEALED_FLAG)
+                | ((b.end_sealed() as u8) << Self::BEGIN_SEALED_FLAG),
+        )
+    }
+
+    pub fn reversed(&self) -> UnitigFlags {
+        UnitigFlags(
+            ((!self.is_forward() as u8) << Self::DIRECTION_FLAG)
+                | ((self.begin_sealed() as u8) << Self::END_SEALED_FLAG)
+                | ((self.end_sealed() as u8) << Self::BEGIN_SEALED_FLAG),
+        )
+    }
+
+    #[inline(always)]
+    fn set_bit(&mut self, pos: usize) {
+        self.0 |= (1 << pos);
+    }
+
+    #[inline(always)]
+    fn clr_bit(&mut self, pos: usize) {
+        self.0 &= !(1 << pos);
+    }
+
+    #[inline(always)]
+    fn get_bit(&self, pos: usize) -> bool {
+        (self.0 & (1 << pos)) != 0
+    }
+
+    #[inline(always)]
+    pub const fn new_direction(forward: bool) -> UnitigFlags {
+        UnitigFlags(((forward as u8) << Self::DIRECTION_FLAG))
+    }
+
+    #[inline(always)]
+    pub const fn new_backward() -> UnitigFlags {
+        UnitigFlags(0)
+    }
+
+    #[inline(always)]
+    pub fn set_forward(&mut self, value: bool) {
+        if value {
+            self.set_bit(Self::DIRECTION_FLAG);
+        } else {
+            self.clr_bit(Self::DIRECTION_FLAG);
+        }
+    }
+
+    #[inline(always)]
+    pub fn is_forward(&self) -> bool {
+        self.get_bit(Self::DIRECTION_FLAG)
+    }
+
+    #[inline(always)]
+    pub fn seal_beginning(&mut self) {
+        self.set_bit(Self::BEGIN_SEALED_FLAG)
+    }
+
+    #[inline(always)]
+    pub fn begin_sealed(&self) -> bool {
+        self.get_bit(Self::BEGIN_SEALED_FLAG)
+    }
+
+    #[inline(always)]
+    pub fn seal_ending(&mut self) {
+        self.set_bit(Self::END_SEALED_FLAG)
+    }
+
+    #[inline(always)]
+    pub fn end_sealed(&self) -> bool {
+        self.get_bit(Self::END_SEALED_FLAG)
+    }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct UnitigIndex {
     index: usize,
 }
 
+impl Debug for UnitigIndex {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "UnitigIndex {{ bucket: {}, index: {} }}",
+            self.bucket(),
+            self.index()
+        ))
+    }
+}
+
 impl UnitigIndex {
-    const INDEX_MASK: usize = !((1 << 48) - 1);
+    const INDEX_MASK: usize = (1 << 48) - 1;
 
     #[inline]
     pub fn new(bucket: usize, index: usize) -> Self {
@@ -41,10 +134,10 @@ impl UnitigIndex {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UnitigLink {
     pub entry: u64,
-    pub direction: Direction,
+    pub flags: UnitigFlags,
     pub entries: VecSlice<UnitigIndex>,
 }
 
@@ -62,25 +155,21 @@ pub struct UnitigPointer {
 impl UnitigLink {
     pub fn read_from(mut reader: impl Read, out_vec: &mut Vec<UnitigIndex>) -> Option<Self> {
         let entry = decode_varint(|| reader.read_u8().ok())?;
-        let direction = match reader.read_u8().ok()? {
-            0 => Direction::Forward,
-            1 => Direction::Backward,
-            _ => return None
-        };
+        let flags = reader.read_u8().ok()?;
 
         let len = decode_varint(|| reader.read_u8().ok())? as usize;
 
         let start = out_vec.len();
-        for i in 0..len {
+        for _i in 0..len {
             let bucket = decode_varint(|| reader.read_u8().ok())?;
             let index = decode_varint(|| reader.read_u8().ok())?;
-            out_vec.push(UnitigIndex::new(bucket as usize, index as usize))
+            out_vec.push(UnitigIndex::new(bucket as usize, index as usize));
         }
 
         Some(Self {
             entry,
-            direction,
-            entries: VecSlice::new(start, len)
+            flags: UnitigFlags(flags),
+            entries: VecSlice::new(start, len),
         })
     }
 }
@@ -93,10 +182,9 @@ impl BucketWriter for UnitigLink {
     fn write_to(&self, bucket: &mut Self::BucketType, extra_data: &Self::ExtraData) {
         let writer = bucket.get_writer();
         encode_varint(|b| writer.write(b), self.entry);
-        writer.write(&[self.direction as u8]);
+        writer.write(&[self.flags.0]);
 
         let entries = self.entries.get_slice(extra_data);
-
         encode_varint(|b| writer.write(b), entries.len() as u64);
 
         for entry in entries {

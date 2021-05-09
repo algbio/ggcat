@@ -1,3 +1,5 @@
+use crate::binary_writer::BinaryWriter;
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 

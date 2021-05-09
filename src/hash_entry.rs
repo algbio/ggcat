@@ -7,9 +7,14 @@ use serde::{Deserialize, Serialize, Serializer};
 use crate::binary_writer::BinaryWriter;
 use crate::intermediate_storage::VecReader;
 use crate::multi_thread_buckets::BucketWriter;
-use crate::unitig_link::Direction;
 use crate::varint::{decode_varint, encode_varint};
 use crate::vec_slice::VecSlice;
+
+#[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum Direction {
+    Forward,
+    Backward,
+}
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct HashEntry {

@@ -4,6 +4,7 @@
 #![feature(llvm_asm)]
 #![feature(min_type_alias_impl_trait)]
 #![feature(option_result_unwrap_unchecked)]
+#![feature(specialization)]
 #![allow(warnings)]
 #![feature(test)]
 
@@ -11,17 +12,20 @@ extern crate test;
 
 use crate::pipeline::kmers_merge::RetType;
 use crate::pipeline::Pipeline;
+use crate::reads_freezer::WriterChannels::Pipe;
 use crate::rolling_minqueue::GenericsFunctional;
+use crate::utils::Utils;
 use rayon::ThreadPoolBuilder;
 use std::cmp::min;
+use std::fs::create_dir_all;
 use std::path::PathBuf;
 use structopt::{clap::ArgGroup, StructOpt};
-use std::fs::create_dir_all;
 
 mod benchmarks;
 mod binary_writer;
 mod compressed_read;
 mod debug_functions;
+mod fast_rand_bool;
 pub mod hash_entry;
 mod intermediate_storage;
 pub mod libdeflate;
@@ -49,7 +53,7 @@ fn outputs_arg_group() -> ArgGroup<'static> {
 #[derive(StructOpt, Debug)]
 struct Cli {
     /// The input files
-    input: Vec<String>,
+    input: Vec<PathBuf>,
 
     /// Specifies the k-mers length
     #[structopt(short)]
@@ -66,13 +70,15 @@ struct Cli {
     /// Directory for temporary files (default .temp_files)
     #[structopt(short = "t", long = "temp-dir")]
     temp_dir: Option<PathBuf>,
-    // Tests built bloom filter against this file for coverage tests
-    // #[structopt(short = "f", requires = "elabbloom")]
-    // coverage: Option<String>,
 
-    // Enables output compression
-    // #[structopt(short, requires = "output")]
-    // compress: bool,
+    #[structopt(short = "n", long)]
+    number: usize, // Tests built bloom filter against this file for coverage tests
+                   // #[structopt(short = "f", requires = "elabbloom")]
+                   // coverage: Option<String>,
+
+                   // Enables output compression
+                   // #[structopt(short, requires = "output")]
+                   // compress: bool
 }
 
 struct NtHashMinTransform;
@@ -97,19 +103,51 @@ fn main() {
     let m: usize = args.mlen.unwrap_or(min(12, (k + 2) / 3));
     let min_multiplicity: usize = args.min_multiplicity.unwrap_or(2);
 
-    let buckets =
-        Pipeline::minimizer_bucketing(args.input, temp_dir.as_path(), BUCKETS_COUNT, k, m);
+    // let buckets = Pipeline::minimizer_bucketing(args.input, temp_dir.as_path(), BUCKETS_COUNT, k, m);
 
-    let RetType { sequences, hashes } = Pipeline::kmers_merge(
-        buckets,
-        BUCKETS_COUNT,
-        min_multiplicity,
-        temp_dir.as_path(),
-        k,
-        m,
-    );
+    // let RetType { sequences, hashes } = Pipeline::kmers_merge(
+    //     buckets,
+    //     BUCKETS_COUNT,
+    //     min_multiplicity,
+    //     temp_dir.as_path(),
+    //     k,
+    //     m,
+    // );
 
-    let links = Pipeline::hashes_sorting(hashes, temp_dir.as_path(), BUCKETS_COUNT);
+    let hashes = args.input;
 
-    let _comp_links = Pipeline::links_compaction(links, temp_dir.as_path(), BUCKETS_COUNT, 0);
+    let mut links = Pipeline::hashes_sorting(hashes, temp_dir.as_path(), BUCKETS_COUNT);
+
+    let mut loop_iteration = args.number;
+
+    let links_result;
+
+    loop {
+        let (new_links, result) =
+            Pipeline::links_compaction(links, temp_dir.as_path(), BUCKETS_COUNT, loop_iteration);
+        links = new_links;
+        match result {
+            None => {}
+            Some(result) => {
+                links_result = result;
+                break;
+            }
+        }
+        loop_iteration += 1;
+    }
+    println!("Completed compaction with {} iters", loop_iteration);
+
+    let (unitig_map, reads_map) = links_result;
+
+    // let sequences = args.input;
+    // // let reads_map = Utils::generate_bucket_names(".temp_files/results_map", BUCKETS_COUNT);
+    //
+    // let reorganized_reads = Pipeline::reorganize_reads(
+    //     sequences,
+    //     reads_map,
+    //     temp_dir.as_path(),
+    //     BUCKETS_COUNT,
+    //     k,
+    //     m,
+    // );
 }

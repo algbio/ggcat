@@ -1,17 +1,20 @@
-use crate::binary_writer::{BinaryWriter, StorageMode};
-use crate::hash_entry::HashEntry;
-use crate::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
-use crate::pipeline::Pipeline;
-use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
-use crate::unitig_link::{Direction, UnitigIndex, UnitigLink};
-use crate::vec_slice::VecSlice;
+use std::io::Cursor;
+use std::ops::Deref;
+use std::path::{Path, PathBuf};
+
 use rand::{thread_rng, RngCore};
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use std::io::Cursor;
-use std::ops::Deref;
-use std::path::{Path, PathBuf};
+
+use crate::binary_writer::{BinaryWriter, StorageMode};
+use crate::fast_rand_bool::FastRandBool;
+use crate::hash_entry::{Direction, HashEntry};
+use crate::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
+use crate::pipeline::Pipeline;
+use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
+use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
+use crate::vec_slice::VecSlice;
 
 impl Pipeline {
     pub fn hashes_sorting(
@@ -28,22 +31,9 @@ impl Pipeline {
             .par_iter()
             .enumerate()
             .for_each(|(index, input)| {
-                let mut random = thread_rng();
-                let mut randidx = 64;
-                let mut randval = random.next_u64();
-
-                let mut get_randbool = || {
-                    if randidx == 0 {
-                        randval = random.next_u64();
-                        randidx = 64;
-                    }
-                    randidx -= 1;
-                    let result = (randval & 0x1) == 1;
-                    randval >>= 1;
-                    result
-                };
-
                 let mut links_tmp = BucketsThreadDispatcher::new(65536, &links_buckets);
+
+                let mut rand_bool = FastRandBool::new();
 
                 let file = filebuffer::FileBuffer::open(input).unwrap();
 
@@ -73,35 +63,40 @@ impl Pipeline {
                             Direction::Backward => (1, 0),
                         };
 
-                        if get_randbool() {
+                        let (slice_fw, slice_bw) = if rand_bool.get_randbool() {
                             unitigs_vec.push(UnitigIndex::new(
                                 x[bw].bucket as usize,
                                 x[bw].entry as usize,
                             ));
-                            links_tmp.add_element(
-                                x[fw].bucket as usize,
-                                &unitigs_vec,
-                                UnitigLink {
-                                    entry: 0,
-                                    direction: Direction::Forward,
-                                    entries: VecSlice::new(unitigs_vec.len() - 1, 1),
-                                },
-                            );
+                            (VecSlice::new(unitigs_vec.len() - 1, 1), VecSlice::EMPTY)
                         } else {
                             unitigs_vec.push(UnitigIndex::new(
                                 x[fw].bucket as usize,
                                 x[fw].entry as usize,
                             ));
-                            links_tmp.add_element(
-                                x[bw].bucket as usize,
-                                &unitigs_vec,
-                                UnitigLink {
-                                    entry: 0,
-                                    direction: Direction::Backward,
-                                    entries: VecSlice::new(unitigs_vec.len() - 1, 1),
-                                },
-                            );
-                        }
+                            (VecSlice::EMPTY, VecSlice::new(unitigs_vec.len() - 1, 1))
+                        };
+
+                        links_tmp.add_element(
+                            x[fw].bucket as usize,
+                            &unitigs_vec,
+                            UnitigLink {
+                                entry: x[fw].entry,
+                                flags: UnitigFlags::new_direction(true),
+                                entries: slice_fw,
+                            },
+                        );
+
+                        links_tmp.add_element(
+                            x[bw].bucket as usize,
+                            &unitigs_vec,
+                            UnitigLink {
+                                entry: x[bw].entry,
+                                flags: UnitigFlags::new_direction(false),
+                                entries: slice_bw,
+                            },
+                        );
+
                         // println!(
                         //     "A: [{}]/{} B: [{}]{}",
                         //     x[0].bucket, x[0].entry, x[1].bucket, x[1].entry

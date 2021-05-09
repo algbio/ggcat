@@ -1,10 +1,11 @@
 use crate::multi_thread_buckets::BucketType;
 use byteorder::WriteBytesExt;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
 pub enum StorageMode {
+    AppendOrCreate,
     Plain,
     LZ4Compression { level: u8 },
     GZIPCompression { level: u8 },
@@ -33,6 +34,14 @@ impl BucketType for BinaryWriter {
         ));
 
         let writer = match mode {
+            StorageMode::AppendOrCreate => Box::new(BufWriter::with_capacity(
+                1024 * 256,
+                OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(&path)
+                    .unwrap(),
+            )),
             StorageMode::Plain => Box::new(BufWriter::with_capacity(
                 1024 * 256,
                 File::create(&path).unwrap(),

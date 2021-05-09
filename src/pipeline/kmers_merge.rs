@@ -1,5 +1,6 @@
 use crate::binary_writer::{BinaryWriter, StorageMode};
 use crate::compressed_read::{CompressedRead, H_INV_LETTERS, H_LOOKUP};
+use crate::hash_entry::Direction;
 use crate::hash_entry::HashEntry;
 use crate::intermediate_storage::IntermediateStorage;
 use crate::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
@@ -7,7 +8,7 @@ use crate::pipeline::Pipeline;
 use crate::reads_freezer::ReadsFreezer;
 use crate::sequences_reader::FastaSequence;
 use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
-use crate::unitig_link::Direction;
+use crate::utils::Utils;
 use nthash::{nt_manual_roll, nt_manual_roll_rev, NtHashIterator, NtSequence};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::cmp::min;
@@ -51,13 +52,9 @@ impl Pipeline {
             let mut hashes_tmp = BucketsThreadDispatcher::new(MAX_HASHES_FOR_FLUSH, &hashes_buckets);
 
             // FIXME: Embed in file!
-            let file_name = input.file_name().unwrap().to_string_lossy().to_string();
-            println!("Processing file {}", file_name);
-            let bucket_string: Vec<u8> = (&file_name[file_name.rfind(".").unwrap()+1..]).as_bytes().iter()
-                .map(|x| *x)
-                .filter(|x| (*x as char).is_digit(10)).collect();
+            println!("Processing file {:?}", input.file_name().unwrap());
 
-            let bucket_index: u64 = String::from_utf8(bucket_string).unwrap().parse().unwrap();
+            let bucket_index = Utils::get_bucket_index(&input);
             println!("Processing bucket {}...", bucket_index);
 
 
