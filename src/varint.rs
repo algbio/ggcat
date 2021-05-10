@@ -50,7 +50,10 @@ where
 }
 
 mod tests {
-    use crate::intermediate_storage::{IntermediateReadsWriter, IntermediateStorage, VecReader};
+    use crate::compressed_read::{CompressedRead, CompressedReadIndipendent};
+    use crate::intermediate_storage::{
+        IntermediateReadsReader, IntermediateReadsWriter, VecReader,
+    };
     use crate::multi_thread_buckets::BucketType;
     use crate::varint::{decode_varint, encode_varint};
     use byteorder::WriteBytesExt;
@@ -90,17 +93,21 @@ mod tests {
             ));
         }
 
-        let mut writer = IntermediateReadsWriter::new(&"/tmp/test-encoding".to_string(), 0);
+        let mut tmp = Vec::new();
+
+        let mut writer = IntermediateReadsWriter::<()>::new("/tmp/test-encoding".as_ref(), 0);
         for read in sequences.iter() {
-            writer.add_acgt_read(read.as_bytes());
+            tmp.clear();
+            let read = CompressedRead::new_from_plain(read.as_bytes(), &mut tmp);
+
+            writer.add_acgt_read(&(), read.as_reference(&tmp));
         }
         writer.finalize();
 
-        let mut reader =
-            IntermediateStorage::new_reader("/tmp/test-encoding.freeze.lz4".to_string());
+        let mut reader = IntermediateReadsReader::<()>::new("/tmp/test-encoding.0.lz4".to_string());
 
         let mut index = 0;
-        reader.for_each(|x| {
+        reader.for_each(|(_, x)| {
             let val = x.to_string();
             // println!("SQ: {} / {}", val, sequences[index]);
             if val != sequences[index].as_str() {

@@ -1,3 +1,4 @@
+use crate::varint::encode_varint;
 use nthash::NtSequence;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
@@ -7,9 +8,26 @@ use std::slice::from_raw_parts;
 #[derive(Copy, Clone)]
 pub struct CompressedRead<'a> {
     size: usize,
-    start: u8,
+    pub start: u8,
     data: *const u8,
     _phantom: PhantomData<&'a ()>,
+}
+
+#[derive(Copy, Clone)]
+pub struct CompressedReadIndipendent {
+    start: usize,
+    size: usize,
+}
+
+impl CompressedReadIndipendent {
+    pub fn as_reference(&self, storage: &Vec<u8>) -> CompressedRead {
+        CompressedRead {
+            size: self.size,
+            start: (self.start % 4) as u8,
+            data: unsafe { storage.as_ptr().add(self.start / 4) },
+            _phantom: Default::default(),
+        }
+    }
 }
 
 pub const H_LOOKUP: [u64; 4] = [
@@ -21,22 +39,29 @@ pub const H_LOOKUP: [u64; 4] = [
 pub const H_INV_LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
 
 impl<'a> CompressedRead<'a> {
-    #[inline]
-    pub fn new(data: &'a [u8], bases_count: usize) -> Self {
-        if (data.len() * 4) < bases_count {
-            panic!("Compressed read overflow!");
+    pub fn new_from_plain(seq: &'a [u8], storage: &mut Vec<u8>) -> CompressedReadIndipendent {
+        let start = storage.len() * 4;
+        for chunk in seq.chunks(16) {
+            let mut value = 0;
+            for aa in chunk.iter().rev() {
+                value = (value << 2) | (((*aa >> 1) & 0x3) as u32);
+            }
+            storage.extend_from_slice(&value.to_le_bytes()[..(chunk.len() + 3) / 4]);
         }
 
-        CompressedRead {
-            size: bases_count,
-            start: 0,
-            data: data.as_ptr(),
-            _phantom: PhantomData,
+        CompressedReadIndipendent {
+            start,
+            size: seq.len(),
         }
     }
 
     #[inline]
-    pub fn new_offset(data: &'a [u8], offset: usize, bases_count: usize) -> Self {
+    pub fn new_from_compressed(data: &'a [u8], bases_count: usize) -> Self {
+        Self::new_offset(data, 0, bases_count)
+    }
+
+    #[inline]
+    fn new_offset(data: &'a [u8], offset: usize, bases_count: usize) -> Self {
         if (data.len() * 4) < bases_count {
             panic!("Compressed read overflow!");
         }
@@ -60,7 +85,7 @@ impl<'a> CompressedRead<'a> {
         )
     }
 
-    pub fn cmp_slice(&self) -> &[u8] {
+    pub fn get_compr_slice(&self) -> &[u8] {
         unsafe { from_raw_parts(self.data, (self.size + self.start as usize + 3) / 4) }
     }
 
@@ -97,6 +122,10 @@ impl<'a> CompressedRead<'a> {
             (0..self.size)
                 .map(|i| unsafe { H_INV_LETTERS[self.get_base_unchecked(i) as usize] as char }),
         )
+    }
+
+    pub fn len(&self) -> usize {
+        self.size
     }
 }
 

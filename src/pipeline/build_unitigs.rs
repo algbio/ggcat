@@ -2,7 +2,6 @@ use crate::intermediate_storage::{IntermediateReadsWriter, IntermediateSequences
 use crate::multi_thread_buckets::MultiThreadBuckets;
 use crate::pipeline::links_compaction::LinkMapping;
 use crate::pipeline::Pipeline;
-use crate::reads_freezer::ReadsFreezer;
 use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
 use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
@@ -29,7 +28,7 @@ use std::thread::{sleep, Thread};
 use std::time::{Duration, Instant};
 
 impl Pipeline {
-    pub fn reorganize_reads(
+    pub fn build_unitigs(
         mut reads: Vec<PathBuf>,
         mut mapping_files: Vec<PathBuf>,
         output_path: &Path,
@@ -39,13 +38,9 @@ impl Pipeline {
     ) -> Vec<PathBuf> {
         let start_time = Instant::now();
         let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<UnitigIndex>>::new(
-            buckets_count,
+            buckets_count + 1,
             &output_path.join("reads_bucket"),
         );
-
-        let mut final_unitigs_file = Mutex::new(ReadsFreezer::optfile_splitted_compressed_lz4(
-            format!("{}", output_path.join("output.fa").display()),
-        ));
 
         reads.sort();
         mapping_files.sort();
@@ -53,7 +48,8 @@ impl Pipeline {
         let inputs: Vec<_> = reads.iter().zip(mapping_files.iter()).collect();
 
         inputs.par_iter().for_each(|(read_file, mapping_file)| {
-            let mut tmp_reads_buffer = IntermediateSequencesStorage::new(buckets_count, &buckets);
+            let mut tmp_reads_buffer =
+                IntermediateSequencesStorage::new(buckets_count + 1, &buckets);
 
             let mut mappings = Vec::new();
 
@@ -88,14 +84,18 @@ impl Pipeline {
                     tmp_reads_buffer.add_read(
                         UnitigIndex::new(bucket_index, index as usize),
                         seq.seq,
-                        mappings[map_index].bucket as usize,
+                        (mappings[map_index].bucket + 1) as usize,
                     );
                     map_index += 1;
                 } else {
-                    // TODO: Optimize lock!
-                    final_unitigs_file.lock().unwrap().add_read(seq);
+                    tmp_reads_buffer.add_read(
+                        UnitigIndex::new(bucket_index, index as usize),
+                        seq.seq,
+                        0,
+                    );
                     // No mapping, write unitig to file
                 }
+
                 index += 1;
             });
             println!("Total reads: {}/{:?}", index, mappings.last().unwrap());

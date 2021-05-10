@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use crate::binary_writer::BinaryWriter;
 use crate::hash_entry::Direction;
-use crate::intermediate_storage::VecReader;
+use crate::intermediate_storage::{SequenceExtraData, VecReader};
 use crate::multi_thread_buckets::BucketWriter;
 use crate::varint::{decode_varint, encode_varint};
 use crate::vec_slice::VecSlice;
@@ -56,6 +56,11 @@ impl UnitigFlags {
     }
 
     #[inline(always)]
+    pub const fn new_empty() -> UnitigFlags {
+        UnitigFlags(0)
+    }
+
+    #[inline(always)]
     pub const fn new_direction(forward: bool) -> UnitigFlags {
         UnitigFlags(((forward as u8) << Self::DIRECTION_FLAG))
     }
@@ -89,10 +94,10 @@ impl UnitigFlags {
         self.get_bit(Self::BEGIN_SEALED_FLAG)
     }
 
-    #[inline(always)]
-    pub fn seal_ending(&mut self) {
-        self.set_bit(Self::END_SEALED_FLAG)
-    }
+    // #[inline(always)]
+    // pub fn seal_ending(&mut self) {
+    //     self.set_bit(Self::END_SEALED_FLAG)
+    // }
 
     #[inline(always)]
     pub fn end_sealed(&self) -> bool {
@@ -100,9 +105,22 @@ impl UnitigFlags {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct UnitigIndex {
     index: usize,
+}
+
+impl SequenceExtraData for UnitigIndex {
+    fn decode(mut reader: impl Read) -> Option<Self> {
+        let bucket = decode_varint(|| reader.read_u8().ok())?;
+        let index = decode_varint(|| reader.read_u8().ok())?;
+        Some(UnitigIndex::new(bucket as usize, index as usize))
+    }
+
+    fn encode(&self, mut writer: impl Write) {
+        encode_varint(|b| writer.write(b).ok(), self.bucket() as u64);
+        encode_varint(|b| writer.write(b).ok(), self.index() as u64);
+    }
 }
 
 impl Debug for UnitigIndex {

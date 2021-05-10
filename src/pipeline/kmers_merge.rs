@@ -2,7 +2,7 @@ use crate::binary_writer::{BinaryWriter, StorageMode};
 use crate::compressed_read::{CompressedRead, H_INV_LETTERS, H_LOOKUP};
 use crate::hash_entry::Direction;
 use crate::hash_entry::HashEntry;
-use crate::intermediate_storage::IntermediateStorage;
+use crate::intermediate_storage::IntermediateReadsReader;
 use crate::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use crate::pipeline::Pipeline;
 use crate::reads_freezer::ReadsFreezer;
@@ -61,7 +61,7 @@ impl Pipeline {
             let mut kmers_cnt = 0;
             let mut kmers_unique = 0;
 
-            let mut writer = ReadsFreezer::optfile_splitted_compressed_lz4(format!("{}/result{}", out_directory.as_ref().display(), bucket_index));
+            let mut writer = ReadsFreezer::optfile_splitted_compressed_lz4(format!("{}/result.{}", out_directory.as_ref().display(), bucket_index));
             sequences.lock().unwrap().push(writer.get_path());
 
             let mut read_index = 0;
@@ -71,7 +71,7 @@ impl Pipeline {
             let mut buckets = [CVEC; 256];
             let mut cmp_reads = [CREAD; 256];
 
-            IntermediateStorage::new_reader(input.clone()).for_each(|x| {
+            IntermediateReadsReader::<()>::new(input.clone()).for_each(|(_, x)| {
 
                 let hashes = NtHashIterator::new(x.sub_slice(0..min(x.bases_count(), k)), m).unwrap();
 
@@ -80,7 +80,7 @@ impl Pipeline {
                 let bucket = (minimizer >> 12) % 256;
 
                 let slen = buckets[bucket as usize].len();
-                buckets[bucket as usize].extend_from_slice(x.cmp_slice());
+                buckets[bucket as usize].extend_from_slice(x.get_compr_slice());
 
                 let mut sort_key: u64 = minimizer;
                 cmp_reads[bucket as usize].push((slen, x.bases_count(), minpos, sort_key))
@@ -139,7 +139,7 @@ impl Pipeline {
                     for (read_idx, count, pos, minimizer) in slice {
                         kmers_cnt += count - k + 1;
 
-                        let read = CompressedRead::new(
+                        let read = CompressedRead::new_from_compressed(
                             &buckets[b][*read_idx..*read_idx + ((*count + 3) / 4)],
                             *count,
                         );

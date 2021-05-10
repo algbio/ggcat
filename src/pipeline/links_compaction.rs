@@ -19,7 +19,9 @@ use crate::utils::Utils;
 use crate::varint::{decode_varint, encode_varint};
 use crate::vec_slice::VecSlice;
 use byteorder::ReadBytesExt;
+use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::process::exit;
 
 #[derive(Clone, Debug)]
@@ -128,12 +130,18 @@ impl Pipeline {
 
                         let flags = UnitigFlags::combine(x[0].flags, x[1].flags);
 
+                        assert_eq!(x[0].flags.end_sealed(), flags.end_sealed());
+
                         let should_swap = x[0].flags.end_sealed() || rand_bool.get_randbool();
                         let (fw, bw, flags) = if should_swap {
                             (1, 0, flags.reversed())
                         } else {
                             (0, 1, flags)
                         };
+
+                        assert_eq!(x[fw].flags.end_sealed(), flags.end_sealed());
+                        assert_eq!(x[bw].flags.end_sealed(), flags.begin_sealed());
+                        assert!(!x[fw].flags.begin_sealed() && !x[bw].flags.begin_sealed());
 
                         let fw_slice = x[fw].entries.get_slice(&last_unitigs_vec);
                         let bw_slice = x[bw].entries.get_slice(&last_unitigs_vec);
@@ -169,7 +177,7 @@ impl Pipeline {
                                 other_entry.bucket(),
                                 UnitigLink {
                                     entry: other_entry.index() as u64,
-                                    flags: flags.reversed(),
+                                    flags: UnitigFlags::new_empty(),
                                     entries: VecSlice::EMPTY,
                                 },
                             )),
@@ -186,6 +194,11 @@ impl Pipeline {
                         let mut flags = entry.flags;
 
                         let is_lonely = x.len() == 1;
+
+                        assert!(is_lonely || x[0].entries.len() == 0 || x[1].entries.len() == 0);
+
+                        assert!(!flags.begin_sealed() || is_lonely);
+
                         if is_lonely {
                             not_links += 1;
                             flags.seal_beginning();
@@ -215,7 +228,7 @@ impl Pipeline {
                                     },
                                 );
 
-                                for link in linked {
+                                for (index, link) in linked.iter().enumerate() {
                                     results_tmp.add_element(
                                         link.bucket(),
                                         &(),
@@ -225,7 +238,6 @@ impl Pipeline {
                                         },
                                     );
                                 }
-
                                 continue;
                             }
                         }
@@ -233,18 +245,15 @@ impl Pipeline {
                         let entries = entry.entries.get_slice(&last_unitigs_vec);
 
                         let first_entry = UnitigIndex::new(bucket_index, entry.entry as usize);
-                        let last_entry = *entries.first().unwrap();
+                        let last_entry = *entries.last().unwrap();
 
                         // Circular unitig detected, output it
                         if first_entry == last_entry {
                             // Write to disk, full unitig!
                             let unitig_entries = entry.entries.get_slice(&last_unitigs_vec);
 
-                            let entries = VecSlice::new_extend(
-                                &mut final_unitigs_vec,
-                                // FIXME: Restore full unitigs
-                                &unitig_entries[..unitig_entries.len() - 1],
-                            );
+                            let entries =
+                                VecSlice::new_extend(&mut final_unitigs_vec, unitig_entries);
 
                             final_links_tmp.add_element(
                                 0,
@@ -255,6 +264,17 @@ impl Pipeline {
                                     entries,
                                 },
                             );
+
+                            for (index, link) in unitig_entries.iter().enumerate() {
+                                results_tmp.add_element(
+                                    link.bucket(),
+                                    &(),
+                                    LinkMapping {
+                                        entry: link.index() as u64,
+                                        bucket: bucket_index as u64,
+                                    },
+                                );
+                            }
                             continue;
                         }
 
@@ -283,6 +303,8 @@ impl Pipeline {
                                 )
                             };
 
+                        assert!(!flags.begin_sealed() || !flags.end_sealed());
+
                         (
                             (
                                 new_entry.bucket(),
@@ -296,13 +318,26 @@ impl Pipeline {
                                 oth_entry.bucket(),
                                 UnitigLink {
                                     entry: oth_entry.index() as u64,
-                                    flags: flags.reversed(),
+                                    flags: UnitigFlags::new_empty(),
                                     entries: VecSlice::EMPTY,
                                 },
                             )),
                         )
                     };
                     rem_links += 1;
+
+                    if link1.1.entries.get_slice(&current_unitigs_vec)[0].bucket() == link1.0
+                        && link1.1.entries.get_slice(&current_unitigs_vec)[0].index()
+                            == link1.1.entry as usize
+                    {
+                        println!("ERROR {:?}!!!!!", link1.1);
+                        println!(
+                            "ERROR {:?}!!!!!",
+                            link1.1.entries.get_slice(&current_unitigs_vec)
+                        );
+                        exit(0);
+                    }
+
                     links_tmp.add_element(link1.0, &current_unitigs_vec, link1.1);
                     if let Some(link2) = link2 {
                         links_tmp.add_element(link2.0, &current_unitigs_vec, link2.1);

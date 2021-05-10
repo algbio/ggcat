@@ -1,5 +1,5 @@
-use crate::compressed_read::CompressedRead;
-use crate::multi_thread_buckets::BucketType;
+use crate::compressed_read::{CompressedRead, CompressedReadIndipendent};
+use crate::multi_thread_buckets::{BucketType, MultiThreadBuckets};
 use crate::sequences_reader::FastaSequence;
 use crate::utils::{cast_static, cast_static_mut, Utils};
 use crate::varint::{decode_varint, encode_varint};
@@ -14,42 +14,121 @@ use std::cmp::{max, min};
 use std::fs::{File, OpenOptions};
 use std::hash::Hasher;
 use std::io::{stdin, stdout, BufRead, BufReader, BufWriter, Read, Write};
+use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
 use std::slice::from_raw_parts;
 
-pub struct IntermediateReadsWriter {
+pub trait SequenceExtraData: Sized {
+    fn decode(reader: impl Read) -> Option<Self>;
+    fn encode(&self, writer: impl Write);
+}
+
+impl SequenceExtraData for () {
+    #[inline(always)]
+    fn decode(reader: impl Read) -> Option<Self> {
+        Some(())
+    }
+
+    #[inline(always)]
+    fn encode(&self, writer: impl Write) {}
+}
+
+pub struct IntermediateReadsWriter<T> {
     writer: BufWriter<lz4::Encoder<BufWriter<File>>>,
     path: PathBuf,
+    _phantom: PhantomData<T>,
 }
 
-pub struct IntermediateReadsReader {
+pub struct IntermediateReadsReader<T: SequenceExtraData> {
     reader: lz4::Decoder<BufReader<File>>,
+    _phantom: PhantomData<T>,
 }
 
-impl IntermediateReadsWriter {
-    pub fn add_acgt_read(&mut self, read: &[u8]) {
-        encode_varint(|b| self.writer.write(b), read.len() as u64);
-        for chunk in read.chunks(16) {
-            let mut value = 0;
-            for aa in chunk.iter().rev() {
-                value = (value << 2) | (((*aa >> 1) & 0x3) as u32);
-            }
-            // values[idx / 4] = (values[idx / 4] << 2) | ((*aa >> 1) & 0x3);
+pub struct IntermediateSequencesStorage<'a, T: SequenceExtraData> {
+    buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T>>,
+    buffers: Vec<Vec<u8>>,
+    reads: Vec<Vec<(T, CompressedReadIndipendent)>>,
+}
+impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
+    const ALLOWED_LEN: usize = 1024 * 64;
 
-            self.writer
-                .write(&value.to_le_bytes()[..(chunk.len() + 3) / 4]);
+    pub fn new(
+        buckets_count: usize,
+        buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T>>,
+    ) -> Self {
+        let mut buffers = Vec::with_capacity(buckets_count);
+        let mut reads = Vec::with_capacity(buckets_count);
+        for i in 0..buckets_count {
+            buffers.push(Vec::with_capacity(Self::ALLOWED_LEN));
+            reads.push(Vec::with_capacity(Self::ALLOWED_LEN / 256))
+        }
+
+        Self {
+            buckets,
+            buffers,
+            reads,
+        }
+    }
+
+    fn flush_buffers(&mut self, bucket: usize) {
+        if self.reads.len() == 0 {
+            return;
+        }
+
+        self.buckets.flush(bucket, |writer| {
+            for (extra, read) in self.reads[bucket].iter() {
+                writer.add_acgt_read(extra, read.as_reference(&self.buffers[bucket]));
+            }
+        });
+        self.buffers[bucket].clear();
+        self.reads[bucket].clear();
+    }
+
+    pub fn add_read(&mut self, el: T, seq: &[u8], bucket: usize) {
+        assert!(seq.len() >= 32);
+        if self.buffers[bucket].len() > 0
+            && self.buffers[bucket].len() + seq.len() > self.buffers[bucket].capacity()
+        {
+            self.flush_buffers(bucket);
+        }
+
+        let read = CompressedRead::new_from_plain(seq, &mut self.buffers[bucket]);
+        self.reads[bucket].push((el, read));
+        // assert_reads(
+        //     &seq[(max(1, last_index) - 1)..min(seq.len(), index + k + 1)],
+        //     bucket as u64,
+        // );
+    }
+
+    pub fn finalize(self) {}
+}
+
+impl<'a, T: SequenceExtraData> Drop for IntermediateSequencesStorage<'a, T> {
+    fn drop(&mut self) {
+        for bucket in 0..self.buffers.len() {
+            if self.buffers[bucket].len() > 0 {
+                self.flush_buffers(bucket);
+            }
         }
     }
 }
 
-impl BucketType for IntermediateReadsWriter {
+impl<T: SequenceExtraData> IntermediateReadsWriter<T> {
+    pub fn add_acgt_read(&mut self, el: &T, read: CompressedRead) {
+        el.encode(&mut self.writer);
+        encode_varint(|b| self.writer.write(b), read.len() as u64);
+        self.writer.write(read.get_compr_slice());
+    }
+}
+
+impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
     type InitType = Path;
 
     fn new(init_data: &Path, index: usize) -> Self {
         let path = init_data.parent().unwrap().join(format!(
-            "{}.{}",
+            "{}.{}.lz4",
             init_data.file_name().unwrap().to_str().unwrap(),
             index
         ));
@@ -68,6 +147,7 @@ impl BucketType for IntermediateReadsWriter {
         IntermediateReadsWriter {
             writer: BufWriter::with_capacity(1024 * 512, compress_stream),
             path,
+            _phantom: PhantomData,
         }
     }
 
@@ -165,15 +245,29 @@ impl<'a, R: Read> Read for VecReader<'a, R> {
         Ok(self.read_bytes(buf))
     }
 }
-impl IntermediateReadsReader {
-    pub fn for_each(&mut self, mut lambda: impl FnMut(CompressedRead)) {
+impl<T: SequenceExtraData> IntermediateReadsReader<T> {
+    pub fn new(name: impl AsRef<Path>) -> Self {
+        Self {
+            reader: lz4::Decoder::new(BufReader::with_capacity(
+                1024 * 1024 * 4,
+                File::open(name).unwrap(),
+            ))
+            .unwrap(),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn for_each(&mut self, mut lambda: impl FnMut((T, CompressedRead))) {
         let mut vec_reader = VecReader::new(1024 * 1024, &mut self.reader);
 
         // const LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
         let mut read = vec![];
 
-        while let Some(size) = decode_varint(|| Some(vec_reader.read_byte())) {
-            let size = size as usize;
+        while let Some(el) = T::decode(&mut vec_reader) {
+            let size = match decode_varint(|| Some(vec_reader.read_byte())) {
+                None => break,
+                Some(x) => x,
+            } as usize;
 
             if size == 0 && vec_reader.stream_ended {
                 break;
@@ -183,7 +277,10 @@ impl IntermediateReadsReader {
 
             vec_reader.read_bytes(&mut read[..bytes]);
 
-            lambda(CompressedRead::new(&read[..bytes], size));
+            lambda((
+                el,
+                CompressedRead::new_from_compressed(&read[..bytes], size),
+            ));
 
             // read.resize(max(read.len(), size + 32), 0);
             //
@@ -236,42 +333,3 @@ impl IntermediateReadsReader {
         //         }
     }
 }
-
-pub struct IntermediateStorage;
-
-impl IntermediateStorage {
-    pub fn new_reader(name: impl AsRef<Path>) -> IntermediateReadsReader {
-        IntermediateReadsReader {
-            reader: lz4::Decoder::new(BufReader::with_capacity(
-                1024 * 1024 * 4,
-                File::open(name).unwrap(),
-            ))
-            .unwrap(),
-        }
-    }
-
-    // pub fn from_file(name: String) -> IntermediateStorage {
-    //     let is_compressed = name.ends_with(".lz4");
-    //     let file = File::open(name).unwrap();
-    //
-    //     let reader: Box<dyn Read> = if is_compressed {
-    //         let decoder = lz4::Decoder::new(file).unwrap();
-    //         Box::new(decoder)
-    //     } else {
-    //         Box::new(file)
-    //     };
-    //     IntermediateStorage {
-    //         reader: UnsafeCell::new(reader),
-    //     }
-    // }
-
-    // pub fn for_each<F: FnMut(&[u8])>(&self, mut func: F) {
-    //     let mut reader_cell = self.reader.uget();
-    //     let reader = BufReader::new(reader_cell);
-    //     for line in reader.lines() {
-    //         func(line.unwrap().as_bytes());
-    //     }
-    // }
-}
-
-// #[cfg(feature = "test")]

@@ -156,7 +156,7 @@ impl ReadsFreezer {
                 .to_str()
                 .unwrap()
                 .to_string()
-                + ".freeze.fa.lz4",
+                + ".fa.lz4",
         );
 
         //        let mut process = Command::new("./libdeflate/gzip").args(&["-c2"])

@@ -111,6 +111,15 @@ impl SequencesReader {
                 },
                 1024 * 512,
             );
+        } else if file.as_ref().extension().filter(|x| *x == "lz4").is_some() {
+            let mut file = lz4::Decoder::new(File::open(file).unwrap()).unwrap();
+            let mut buffer = [0; 1024 * 512];
+            while let Ok(count) = file.read(&mut buffer) {
+                if count == 0 {
+                    break;
+                }
+                callback(&buffer[0..count]);
+            }
         } else {
             let mut file = File::open(file).unwrap();
             let mut buffer = [0; 1024 * 512];

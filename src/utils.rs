@@ -21,26 +21,41 @@ impl Utils {
     }
 
     pub fn get_bucket_index(bucket_file: impl AsRef<Path>) -> usize {
-        let file_name = bucket_file
-            .as_ref()
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        let bucket_string: Vec<u8> = (&file_name[file_name.rfind(".").unwrap() + 1..])
-            .as_bytes()
-            .iter()
-            .map(|x| *x)
-            .filter(|x| (*x as char).is_digit(10))
-            .collect();
+        let mut file_path = bucket_file.as_ref().to_path_buf();
 
-        let bucket_index: usize = String::from_utf8(bucket_string).unwrap().parse().unwrap();
-        bucket_index
+        while let Some(extension) = file_path.extension() {
+            if extension != "lz4" {
+                if let Some(extension) = extension.to_str() {
+                    match extension.parse() {
+                        Ok(bucket_index) => return bucket_index,
+                        Err(_) => {}
+                    };
+                }
+            }
+            file_path = file_path.with_extension("");
+        }
+        panic!(
+            "Cannot find bucket index for file {:?}",
+            bucket_file.as_ref()
+        );
     }
 
-    pub fn generate_bucket_names(root: &str, count: usize) -> Vec<PathBuf> {
+    pub fn generate_bucket_names(
+        root: impl AsRef<Path>,
+        count: usize,
+        suffix: Option<&str>,
+    ) -> Vec<PathBuf> {
         (0..count)
-            .map(|i| PathBuf::from(format!("{}.{}", root, i)))
+            .map(|i| {
+                root.as_ref().with_extension(format!(
+                    "{}{}",
+                    i,
+                    match suffix {
+                        None => String::from(""),
+                        Some(s) => format!(".{}", s),
+                    }
+                ))
+            })
             .collect()
     }
 
