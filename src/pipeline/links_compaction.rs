@@ -242,6 +242,7 @@ impl Pipeline {
 
                             let entries = VecSlice::new_extend(
                                 &mut final_unitigs_vec,
+                                // FIXME: Restore full unitigs
                                 &unitig_entries[..unitig_entries.len() - 1],
                             );
 
