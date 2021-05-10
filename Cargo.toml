@@ -30,6 +30,7 @@ libc = "0.2.94"
 threadpool = "1.8.1"
 filebuffer = "0.4.0"
 crossbeam = "0.8.0"
+clap = "2.33.3"
 
 [dependencies.flate2]
 default-features = false

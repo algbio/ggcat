@@ -102,12 +102,10 @@ dependencies = [
 
 [[package]]
 name = "bincode"
-version = "1.2.0"
+version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8ab639324e3ee8774d296864fbc0dbbb256cf1a41c490b94cba90c082915f92"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
 dependencies = [
- "autocfg 0.1.7",
- "byteorder",
  "serde",
 ]
 
@@ -267,9 +265,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "clap"
-version = "2.33.0"
+version = "2.33.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5067f5bb2d80ef5d68b4c87db81601f0b75bca627bc2ef76b141d7b846a3c6d9"
+checksum = "37e58ac78573c40708d45522f0d80fa2f01cc4f9b4e2bf749807255454312002"
 dependencies = [
  "ansi_term",
  "atty",
@@ -570,6 +568,7 @@ dependencies = [
  "bitvec",
  "bstr",
  "byteorder",
+ "clap",
  "crossbeam",
  "ctrlc",
  "filebuffer",
