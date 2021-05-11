@@ -21,24 +21,29 @@ use std::hint::unreachable_unchecked;
 use std::iter::Map;
 use std::ops::Range;
 
+pub const HASH_A: u64 = 0x3c8b_fbb3_95c6_0474;
+pub const HASH_C: u64 = 0x3193_c185_62a0_2b4c;
+pub const HASH_G: u64 = 0x2032_3ed0_8257_2324;
+pub const HASH_T: u64 = 0x2955_49f5_4be2_4456;
+
 pub(crate) const MAXIMUM_K_SIZE: usize = u32::max_value() as usize;
 
 const H_LOOKUP: [u64; 256] = {
     let mut lookup = [1; 256];
-    lookup[b'A' as usize] = 0x3c8b_fbb3_95c6_0474;
-    lookup[b'C' as usize] = 0x3193_c185_62a0_2b4c;
-    lookup[b'G' as usize] = 0x2032_3ed0_8257_2324;
-    lookup[b'T' as usize] = 0x2955_49f5_4be2_4456;
+    lookup[b'A' as usize] = HASH_A;
+    lookup[b'C' as usize] = HASH_C;
+    lookup[b'G' as usize] = HASH_G;
+    lookup[b'T' as usize] = HASH_T;
     lookup[b'N' as usize] = 0;
     lookup
 };
 
 const RC_LOOKUP: [u64; 256] = {
     let mut lookup = [1; 256];
-    lookup[b'A' as usize] = 0x2955_49f5_4be2_4456;
-    lookup[b'C' as usize] = 0x2032_3ed0_8257_2324;
-    lookup[b'G' as usize] = 0x3193_c185_62a0_2b4c;
-    lookup[b'T' as usize] = 0x3c8b_fbb3_95c6_0474;
+    lookup[b'A' as usize] = HASH_T;
+    lookup[b'C' as usize] = HASH_G;
+    lookup[b'G' as usize] = HASH_C;
+    lookup[b'T' as usize] = HASH_A;
     lookup[b'N' as usize] = 0;
     lookup
 };
