@@ -77,6 +77,20 @@ impl Pipeline {
                             (VecSlice::EMPTY, VecSlice::new(unitigs_vec.len() - 1, 1))
                         };
 
+                        if (x[fw].bucket == 0 && x[fw].entry == 394310)
+                            || (x[bw].bucket == 0 && x[bw].entry == 394310)
+                        {
+                            println!(
+                                "Found while hashing! {:?}/{:?} {:?}/{:?} [{}/{}]",
+                                x[fw].bucket,
+                                x[fw].entry,
+                                x[bw].bucket,
+                                x[bw].entry,
+                                x[fw].hash,
+                                x[bw].hash
+                            );
+                        }
+
                         links_tmp.add_element(
                             x[fw].bucket as usize,
                             &unitigs_vec,

@@ -182,8 +182,11 @@ impl Pipeline {
                             out_base_index: usize
                         | {
                             let mut start_index = (*hash, 0, 0);
+                            let mut current_hash;
                             loop {
                                 let mut count = 0;
+                                current_hash = start_index.0;
+
                                 for idx in 0..4 {
                                     let new_hash = compute_hash(start_index.0, k, unsafe { read.get_h_unchecked(0) }, H_LOOKUP[idx]);
                                     if let Some(hash) = rhash_map.remove(&new_hash) {
@@ -204,7 +207,7 @@ impl Pipeline {
                                     break;
                                 }
                             }
-                            start_index.0
+                            current_hash
                         };
 
                         let mut fw_hash = try_extend_function(&mut forward_seq, nt_manual_roll, 0);

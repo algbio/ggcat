@@ -132,7 +132,8 @@ impl Pipeline {
 
                         assert_eq!(x[0].flags.end_sealed(), flags.end_sealed());
 
-                        let should_swap = x[0].flags.end_sealed() || rand_bool.get_randbool();
+                        let should_swap = x[1].flags.end_sealed()
+                            || (!x[0].flags.end_sealed() && rand_bool.get_randbool());
                         let (fw, bw, flags) = if should_swap {
                             (1, 0, flags.reversed())
                         } else {
@@ -163,6 +164,7 @@ impl Pipeline {
                         );
 
                         join_links += 1;
+                        assert!(flags.end_sealed() || !flags.begin_sealed());
 
                         (
                             (
@@ -188,12 +190,27 @@ impl Pipeline {
                         } else if x.len() > 1 && x[1].entries.len() != 0 {
                             &x[1]
                         } else {
+                            if bucket_index == 0 && x[0].entry == 619802 {
+                                println!("Found with zero size! {}", x.len())
+                            }
+
                             continue;
                         };
 
                         let mut flags = entry.flags;
 
                         let is_lonely = x.len() == 1;
+
+                        if bucket_index == 0 && entry.entry == 619802 {
+                            println!(
+                                "Found while compacting! {} / {} / F:{} BS:{} ES:{}",
+                                is_lonely,
+                                entry.entries.len(),
+                                flags.is_forward(),
+                                flags.begin_sealed(),
+                                flags.end_sealed(),
+                            )
+                        }
 
                         assert!(is_lonely || x[0].entries.len() == 0 || x[1].entries.len() == 0);
 
@@ -204,6 +221,15 @@ impl Pipeline {
                             flags.seal_beginning();
 
                             if flags.end_sealed() {
+                                if bucket_index == 0 && entry.entry == 619802 {
+                                    println!(
+                                        "Writing to disk! {} / {} / {}",
+                                        is_lonely,
+                                        entry.entries.len(),
+                                        flags.is_forward()
+                                    )
+                                }
+
                                 let linked = entry.entries.get_slice(&last_unitigs_vec);
 
                                 // Write to disk, full unitig!
@@ -229,6 +255,15 @@ impl Pipeline {
                                 );
 
                                 for (index, link) in linked.iter().enumerate() {
+                                    if link.bucket() == 0 && link.index() == 619802 {
+                                        println!(
+                                            "Writing seqpart to disk! {} / {} / {}",
+                                            is_lonely,
+                                            entry.entries.len(),
+                                            flags.is_forward()
+                                        )
+                                    }
+
                                     results_tmp.add_element(
                                         link.bucket(),
                                         &(),
@@ -256,7 +291,7 @@ impl Pipeline {
                                 VecSlice::new_extend(&mut final_unitigs_vec, unitig_entries);
 
                             final_links_tmp.add_element(
-                                0,
+                                bucket_index,
                                 &final_unitigs_vec,
                                 UnitigLink {
                                     entry: entry.entry,
@@ -266,6 +301,16 @@ impl Pipeline {
                             );
 
                             for (index, link) in unitig_entries.iter().enumerate() {
+                                if link.bucket() == 0 && link.index() == 619802 {
+                                    println!(
+                                        "Writing seq circular to disk! I:{} {} / {} / {}",
+                                        index,
+                                        is_lonely,
+                                        entry.entries.len(),
+                                        flags.is_forward()
+                                    )
+                                }
+
                                 results_tmp.add_element(
                                     link.bucket(),
                                     &(),
@@ -278,32 +323,34 @@ impl Pipeline {
                             continue;
                         }
 
-                        let (new_entry, oth_entry, vec_slice, flags) =
-                            if flags.end_sealed() || rand_bool.get_randbool() {
-                                (
-                                    first_entry,
-                                    last_entry,
-                                    VecSlice::new_extend(&mut current_unitigs_vec, entries),
-                                    flags,
-                                )
-                            } else {
-                                (
-                                    last_entry,
-                                    first_entry,
-                                    VecSlice::new_extend_iter(
-                                        &mut current_unitigs_vec,
-                                        entries
-                                            .iter()
-                                            .rev()
-                                            .skip(1)
-                                            .chain(&[first_entry])
-                                            .map(|x| *x),
-                                    ),
-                                    flags.reversed(),
-                                )
-                            };
+                        let (new_entry, oth_entry, vec_slice, flags) = if flags.end_sealed()
+                            || (!flags.begin_sealed() && rand_bool.get_randbool())
+                        {
+                            (
+                                first_entry,
+                                last_entry,
+                                VecSlice::new_extend(&mut current_unitigs_vec, entries),
+                                flags,
+                            )
+                        } else {
+                            (
+                                last_entry,
+                                first_entry,
+                                VecSlice::new_extend_iter(
+                                    &mut current_unitigs_vec,
+                                    entries
+                                        .iter()
+                                        .rev()
+                                        .skip(1)
+                                        .chain(&[first_entry])
+                                        .map(|x| *x),
+                                ),
+                                flags.reversed(),
+                            )
+                        };
 
                         assert!(!flags.begin_sealed() || !flags.end_sealed());
+                        assert!(flags.end_sealed() || !flags.begin_sealed());
 
                         (
                             (
@@ -336,6 +383,10 @@ impl Pipeline {
                             link1.1.entries.get_slice(&current_unitigs_vec)
                         );
                         exit(0);
+                    }
+
+                    if !link1.1.flags.end_sealed() && link1.1.flags.begin_sealed() {
+                        println!("Bug found: {}", link1.1.entry);
                     }
 
                     links_tmp.add_element(link1.0, &current_unitigs_vec, link1.1);

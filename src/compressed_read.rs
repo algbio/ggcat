@@ -20,6 +20,15 @@ pub struct CompressedReadIndipendent {
 }
 
 impl CompressedReadIndipendent {
+    pub fn from_read(read: &CompressedRead, storage: &mut Vec<u8>) -> CompressedReadIndipendent {
+        let start = storage.len() * 4;
+        storage.extend_from_slice(read.get_compr_slice());
+        CompressedReadIndipendent {
+            start,
+            size: read.bases_count(),
+        }
+    }
+
     pub fn as_reference(&self, storage: &Vec<u8>) -> CompressedRead {
         CompressedRead {
             size: self.size,
@@ -31,10 +40,10 @@ impl CompressedReadIndipendent {
 }
 
 pub const H_LOOKUP: [u64; 4] = [
-    /*b'A'*/ 0x3c8b_fbb3_95c6_0474,
-    /*b'C'*/ 0x3193_c185_62a0_2b4c,
-    /*b'T'*/ 0x2955_49f5_4be2_4456,
-    /*b'G'*/ 0x2032_3ed0_8257_2324,
+    /*b'A'*/ nthash::HASH_A,
+    /*b'C'*/ nthash::HASH_C,
+    /*b'T'*/ nthash::HASH_T,
+    /*b'G'*/ nthash::HASH_G,
 ];
 pub const H_INV_LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
 
@@ -110,11 +119,13 @@ impl<'a> CompressedRead<'a> {
     }
 
     pub fn write_to_slice(&self, slice: &mut [u8]) {
-        for (val, letter) in slice.iter_mut().zip(
-            (0..self.size).map(|i| unsafe { H_INV_LETTERS[self.get_base_unchecked(i) as usize] }),
-        ) {
+        for (val, letter) in slice.iter_mut().zip(self.as_bases_iter()) {
             *val = letter;
         }
+    }
+
+    pub fn as_bases_iter(&'a self) -> impl Iterator<Item = u8> + 'a {
+        (0..self.size).map(move |i| unsafe { H_INV_LETTERS[self.get_base_unchecked(i) as usize] })
     }
 
     pub fn to_string(&self) -> String {
@@ -122,10 +133,6 @@ impl<'a> CompressedRead<'a> {
             (0..self.size)
                 .map(|i| unsafe { H_INV_LETTERS[self.get_base_unchecked(i) as usize] as char }),
         )
-    }
-
-    pub fn len(&self) -> usize {
-        self.size
     }
 }
 

@@ -8,6 +8,7 @@ mod tests {
     use crate::varint::encode_varint;
     use bincode::DefaultOptions;
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+    use nthash::{NtHashForwardIterator, NtHashIterator};
     use serde::{Deserialize, Serialize};
     use std::fs::File;
     use std::io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write};
@@ -357,5 +358,31 @@ mod tests {
             }
         });
         println!("Size {}", ser_vec.len());
+    }
+
+    #[test]
+    fn test_nthash() {
+        // TGGATGGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATGGG ==> TATGTATATATATATATATATATATATATATATATATATATATATATATATATATATATGTGT
+        // let str0 = b"GNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNG";
+        // let str1 = b"TNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNT";
+
+        // let str0 = b"GATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATTT";
+        // let str1 = b"TATATATATATATATATATATATATATATATATATATATATATATATATATATATATATTG";
+
+        let str0 = b"NGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNN";
+        let str1 = b"NTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNN";
+
+        let h = 6116442737687281716u64;
+
+        let hash = NtHashIterator::new(&str0[..], 61).unwrap();
+        println!(
+            "{:?}",
+            hash.iter().map(|x| x.rotate_left(1)).collect::<Vec<_>>()
+        );
+        let hash1 = NtHashIterator::new(&str1[..], 61).unwrap();
+        println!(
+            "{:?}",
+            hash1.iter().map(|x| x.rotate_left(1)).collect::<Vec<_>>()
+        )
     }
 }

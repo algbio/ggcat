@@ -7,7 +7,7 @@ use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt}
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
-use nthash::NtHashIterator;
+use nthash::{NtHashIterator, NtSequence};
 use os_pipe::{PipeReader, PipeWriter};
 use std::cell::{Cell, UnsafeCell};
 use std::cmp::{max, min};
@@ -118,7 +118,7 @@ impl<'a, T: SequenceExtraData> Drop for IntermediateSequencesStorage<'a, T> {
 impl<T: SequenceExtraData> IntermediateReadsWriter<T> {
     pub fn add_acgt_read(&mut self, el: &T, read: CompressedRead) {
         el.encode(&mut self.writer);
-        encode_varint(|b| self.writer.write(b), read.len() as u64);
+        encode_varint(|b| self.writer.write(b), read.bases_count() as u64);
         self.writer.write(read.get_compr_slice());
     }
 }

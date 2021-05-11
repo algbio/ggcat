@@ -125,7 +125,7 @@ dependencies = [
  "fnv",
  "fxhash",
  "getset",
- "itertools",
+ "itertools 0.8.2",
  "itertools-num",
  "lazy_static",
  "multimap",
@@ -574,7 +574,7 @@ dependencies = [
  "filebuffer",
  "flate2",
  "hashbrown",
- "itertools",
+ "itertools 0.10.0",
  "lazy_static",
  "libc",
  "libdeflater",
@@ -675,6 +675,15 @@ name = "itertools"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f56a2d0bc861f9165be4eb3442afd3c236d8a98afd426f65d92324ae1091a484"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37d572918e350e82412fe766d24b15e6682fb2ed2bbe018280caa810397cb319"
 dependencies = [
  "either",
 ]
@@ -820,7 +829,7 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25b001fc2f5df269365fb77bd8396ce6b1f61c9848f7f088c25e57494bacc57b"
 dependencies = [
- "itertools",
+ "itertools 0.8.2",
  "matrixmultiply",
  "num-complex 0.2.3",
  "num-integer",

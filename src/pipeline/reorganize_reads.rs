@@ -84,6 +84,15 @@ impl Pipeline {
 
             SequencesReader::process_file_extended(read_file, |seq| {
                 if map_index < mappings.len() && mappings[map_index].entry == index {
+                    if UnitigIndex::new(bucket_index, index as usize) == UnitigIndex::new(0, 394310)
+                    {
+                        println!(
+                            "Found while reorg: {} / {}",
+                            std::str::from_utf8(seq.ident).unwrap(),
+                            std::str::from_utf8(seq.seq).unwrap()
+                        );
+                    }
+
                     // Mapping found
                     tmp_reads_buffer.add_read(
                         UnitigIndex::new(bucket_index, index as usize),
@@ -93,7 +102,11 @@ impl Pipeline {
                     map_index += 1;
                 } else {
                     // TODO: Optimize lock!
-                    final_unitigs_file.lock().unwrap().add_read(seq);
+                    // final_unitigs_file.lock().unwrap().add_read(FastaSequence {
+                    //     ident: format!("{} {}", bucket_index, index).as_bytes(),
+                    //     seq: seq.seq,
+                    //     qual: None,
+                    // });
                     // No mapping, write unitig to file
                 }
                 index += 1;

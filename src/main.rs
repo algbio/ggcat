@@ -17,7 +17,7 @@ use crate::rolling_minqueue::GenericsFunctional;
 use crate::utils::Utils;
 use rayon::ThreadPoolBuilder;
 use std::cmp::min;
-use std::fs::create_dir_all;
+use std::fs::{create_dir_all, remove_file};
 use std::intrinsics::exact_div;
 use std::path::PathBuf;
 use std::process::exit;
@@ -61,6 +61,7 @@ arg_enum! {
         HashesSorting = 2,
         LinksCompaction = 3,
         ReorganizeReads = 4,
+        BuildUnitigs = 5
     }
 }
 
@@ -151,7 +152,28 @@ fn main() {
 
     let mut loop_iteration = args.number;
 
+    let unames =
+        Utils::generate_bucket_names(args.temp_dir.join("unitigs_map"), BUCKETS_COUNT, None);
+    let rnames =
+        Utils::generate_bucket_names(args.temp_dir.join("results_map"), BUCKETS_COUNT, None);
+
     let (unitigs_map, reads_map) = if args.step <= StartingStep::LinksCompaction {
+        for file in unames {
+            remove_file(file);
+        }
+
+        for file in rnames {
+            remove_file(file);
+        }
+
+        if loop_iteration != 0 {
+            links = Utils::generate_bucket_names(
+                args.temp_dir.join(format!("linksi{}", loop_iteration - 1)),
+                BUCKETS_COUNT,
+                None,
+            );
+        }
+
         loop {
             println!("Iteration: {}", loop_iteration);
 
@@ -169,24 +191,38 @@ fn main() {
                     break result;
                 }
             }
-            // exit(0);
             loop_iteration += 1;
         }
     } else {
-        (
-            Utils::generate_bucket_names(args.temp_dir.join("unitigs_map"), BUCKETS_COUNT, None),
-            Utils::generate_bucket_names(args.temp_dir.join("results_map"), BUCKETS_COUNT, None),
-        )
+        (unames, rnames)
     };
 
-    if args.step <= StartingStep::ReorganizeReads {
-        let reorganized_reads = Pipeline::reorganize_reads(
+    let reorganized_reads = if args.step <= StartingStep::ReorganizeReads {
+        Pipeline::reorganize_reads(
             sequences,
             reads_map,
             args.temp_dir.as_path(),
             BUCKETS_COUNT,
             k,
             m,
+        )
+    } else {
+        Utils::generate_bucket_names(
+            args.temp_dir.join("reads_bucket"),
+            BUCKETS_COUNT,
+            Some("lz4"),
+        )
+    };
+
+    if args.step <= StartingStep::BuildUnitigs {
+        let output_file = Pipeline::build_unitigs(
+            reorganized_reads,
+            unitigs_map,
+            args.temp_dir.as_path(),
+            BUCKETS_COUNT,
+            k,
+            m,
         );
+        println!("Final output saved to: {}", output_file.display());
     }
 }
