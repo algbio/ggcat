@@ -76,11 +76,11 @@ impl Pipeline {
                 let start_unitig = UnitigIndex::new(bucket_index, link.entry as usize);
 
                 assert!(!unitigs_hashmap.contains_key(&start_unitig));
-
                 unitigs_hashmap.insert(
                     start_unitig,
                     (counter, 1u8 | ((!link.flags.is_forward() as u8) << 1)),
                 );
+
                 counter += 1;
 
                 for el in link.entries.get_slice(&unitigs_tmp_vec) {
@@ -98,10 +98,12 @@ impl Pipeline {
             let mut temp_storage = Vec::new();
             final_sequences.resize(counter, None);
 
+            let mut count = 0;
             IntermediateReadsReader::<UnitigIndex>::new(read_file).for_each(|(index, seq)| {
-                if (index.index() == 394310) {
-                    println!("FOUND!");
+                if seq.to_string().as_str() == "TTTAAGGACAAGAAGATTTATCCCACCATTTCA" {
+                    println!("FOUND {:?}!", index);
                 }
+
                 // if !unitigs_hashmap.contains_key(&index) {
                 //     // println!(
                 //     //     "Unitig: {:?} => {}",
@@ -125,6 +127,19 @@ impl Pipeline {
                 1u8,
             )));
 
+            if let Some(index) = final_sequences
+                .iter()
+                .enumerate()
+                .filter(|x| x.1.is_none())
+                .next()
+                .map(|x| x.0) {
+
+                println!(
+                    "Index: {:?} ", index
+                );
+
+            }
+
             'uloop: for sequence in final_sequences.group_by(|a, b| b.unwrap().1 == 0) {
                 let is_backwards = (sequence[0].unwrap().1 >> 1) != 0;
 
@@ -147,19 +162,19 @@ impl Pipeline {
                         temp_sequence.extend(compr_read.as_bases_iter());
                         is_first = false;
                     } else {
-                        let mut tmp = [0; 62];
-                        compr_read.sub_slice(0..62).write_to_slice(&mut tmp[..]);
-                        if &temp_sequence[temp_sequence.len() - 62..temp_sequence.len()] != &tmp[..]
-                        {
-                            println!(
-                                "ERROR: {} ==> {}",
-                                std::str::from_utf8(temp_sequence.as_slice()).unwrap(),
-                                compr_read.to_string()
-                            )
-                        }
+                        // let mut tmp = [0; 62];
+                        // compr_read.sub_slice(0..62).write_to_slice(&mut tmp[..]);
+                        // if &temp_sequence[temp_sequence.len() - 62..temp_sequence.len()] != &tmp[..]
+                        // {
+                        //     println!(
+                        //         "ERROR: {} ==> {}",
+                        //         std::str::from_utf8(temp_sequence.as_slice()).unwrap(),
+                        //         compr_read.to_string()
+                        //     )
+                        // }
                         temp_sequence.extend(
                             compr_read
-                                .sub_slice(62..compr_read.bases_count())
+                                .sub_slice((k - 1)..compr_read.bases_count())
                                 .as_bases_iter(),
                         );
                     }
@@ -175,6 +190,7 @@ impl Pipeline {
             println!("Size: {}", unitigs_hashmap.len())
         });
 
+        final_unitigs_file.into_inner().unwrap().finalize();
         output_file
     }
 }

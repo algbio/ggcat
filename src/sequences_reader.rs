@@ -33,8 +33,28 @@ pub struct FastaSequence<'a> {
     pub qual: Option<&'a [u8]>,
 }
 
+const SEQ_LETTERS_MAPPING: [u8; 256] = {
+    let mut lookup = [b'N'; 256];
+    lookup[b'A' as usize] = b'A';
+    lookup[b'C' as usize] = b'C';
+    lookup[b'G' as usize] = b'G';
+    lookup[b'T' as usize] = b'T';
+    lookup[b'a' as usize] = b'A';
+    lookup[b'c' as usize] = b'C';
+    lookup[b'g' as usize] = b'G';
+    lookup[b't' as usize] = b'T';
+    lookup
+};
+
 pub struct SequencesReader;
 impl SequencesReader {
+
+    fn normalize_sequence(seq: &mut [u8]) {
+        for el in seq.iter_mut() {
+            *el = SEQ_LETTERS_MAPPING[*el as usize];
+        }
+    }
+
     #[inline]
     fn process_line<'a, 'b>(buffer: &'b mut &'a [u8]) -> (bool, &'a [u8]) {
         match buffer.find(&[b'\n']) {
@@ -142,11 +162,13 @@ impl SequencesReader {
 
             if state != IDENT_STATE {
                 let (complete, line) = Self::process_line(&mut buffer);
+
                 intermediate[state].extend_from_slice(line);
                 if !complete {
                     return;
                 }
                 if state == SEQ_STATE {
+                    Self::normalize_sequence(&mut intermediate[SEQ_STATE][..]);
                     func(FastaSequence {
                         ident: &intermediate[IDENT_STATE][..],
                         seq: &intermediate[SEQ_STATE][..],
@@ -177,11 +199,10 @@ impl SequencesReader {
                         } else {
                             &sequence_info[IDENT_STATE]
                         },
-                        seq: if int_seq.len() > 0 {
+                        seq: {
                             int_seq.extend_from_slice(&sequence_info[SEQ_STATE]);
+                            Self::normalize_sequence(&mut int_seq[..]);
                             &int_seq[..]
-                        } else {
-                            &sequence_info[SEQ_STATE]
                         },
                         qual: None,
                     });
@@ -219,6 +240,7 @@ impl SequencesReader {
                         intermediate[QUAL_STATE].clear();
                         skipped_plus = true;
                     } else {
+                        Self::normalize_sequence(&mut intermediate[SEQ_STATE][..]);
                         func(FastaSequence {
                             ident: &intermediate[IDENT_STATE][..],
                             seq: &intermediate[SEQ_STATE][..],
@@ -258,11 +280,10 @@ impl SequencesReader {
                         } else {
                             &sequence_info[IDENT_STATE]
                         },
-                        seq: if int_seq.len() > 0 {
+                        seq: {
                             int_seq.extend_from_slice(&sequence_info[SEQ_STATE]);
+                            Self::normalize_sequence(&mut int_seq[..]);
                             &int_seq[..]
-                        } else {
-                            &sequence_info[SEQ_STATE]
                         },
                         qual: Some(if int_qual.len() > 0 {
                             int_qual.extend_from_slice(&sequence_info[QUAL_STATE]);

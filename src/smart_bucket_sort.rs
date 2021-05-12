@@ -14,10 +14,7 @@ pub trait SortKey<T> {
     fn get(value: &T) -> DataType;
 }
 
-pub fn smart_radix_sort<T, F: SortKey<T>, const PARALLEL: bool>(
-    data: &mut [T],
-    shift: u8,
-) {
+pub fn smart_radix_sort<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T], shift: u8) {
     let mut counts: [IndexType; 256 + 1] = [0; 256 + 1];
     let mut sums: [IndexType; 256 + 1] = [0; 256 + 1];
     let mut sorted: [bool; 256] = [true; 256];

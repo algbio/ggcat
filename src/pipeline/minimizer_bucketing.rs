@@ -196,6 +196,9 @@ fn reader(context: &ExecutionContext, sender: &Sender<QueueData>) {
                 data = Some(context.pool.pop().unwrap_or(QueueData::new(CHUNKS_SIZE)));
             }
         });
+        if data.as_mut().unwrap().sequences.len() > 0 {
+            sender.send(unsafe { data.take().unwrap_unchecked() });
+        }
     }
 }
 

@@ -2,7 +2,7 @@ use crate::rolling_kseq_iterator::RollingKseqImpl;
 
 pub struct RollingQualityCheck {
     scores_index: [u32; 256],
-    prob_log: u32
+    prob_log: u32,
 }
 
 impl RollingQualityCheck {
@@ -21,13 +21,12 @@ impl RollingQualityCheck {
 
         RollingQualityCheck {
             scores_index,
-            prob_log: 0
+            prob_log: 0,
         }
     }
 }
 
 impl RollingKseqImpl<u8, u32> for RollingQualityCheck {
-
     #[inline(always)]
     fn clear(&mut self, ksize: usize) {
         self.prob_log = 0

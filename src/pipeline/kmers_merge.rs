@@ -165,6 +165,14 @@ impl Pipeline {
                             k,
                         );
 
+                        // TTTTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGCG
+                        //   TTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGCAG
+                        let mut debug = false;
+                        if read.to_string().as_str().contains("CATTGTCATGCTATTTTGCCTAGCCCTGTTTATCACATGGGACTCATACACATGTAATGAATC") {
+                            println!("Bucketing works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! {}", *hash);
+                            debug = true;
+                        }
+
                         if rhash_map.remove_entry(hash).is_none() {
                             continue;
                         }
@@ -183,25 +191,61 @@ impl Pipeline {
                         | {
                             let mut start_index = (*hash, 0, 0);
                             let mut current_hash;
+                            
+                            let mut lastxread = read;
+                            let mut lastxread1 = read;
+                            
                             loop {
                                 let mut count = 0;
                                 current_hash = start_index.0;
+                                break;
 
                                 for idx in 0..4 {
-                                    let new_hash = compute_hash(start_index.0, k, unsafe { read.get_h_unchecked(0) }, H_LOOKUP[idx]);
+                                    let new_hash = compute_hash(current_hash, k, unsafe { read.get_h_unchecked(out_base_index) }, H_LOOKUP[idx]);
+
                                     if let Some(hash) = rhash_map.remove(&new_hash) {
                                         if hash.1 >= min_multiplicity {
                                             count += 1;
                                             start_index = (new_hash, idx, hash.0);
                                         }
+
+                                        // if out_base_index == 0 {
+                                        //     let xnew_read = CompressedRead::from_compressed_reads(
+                                        //         &buckets[b][..],
+                                        //         hash.0,
+                                        //         k,
+                                        //     );
+                                        // 
+                                        //     // let xnew_read1 = CompressedRead::from_compressed_reads(
+                                        //     //     &buckets[b][..],
+                                        //     //     hash.0+1,
+                                        //     //     k-1,
+                                        //     // );
+                                        //     lastxread1 = xnew_read;
+                                        // 
+                                        //     // println!("XXX {} === {} / {}", xnew_read.sub_slice(1..k).to_string(), &xnew_read1.sub_slice(0..k-1).to_string(), hash.0);
+                                        //     let a = lastxread.sub_slice(1..k).to_string();
+                                        //     let b = xnew_read.sub_slice(0..k-1).to_string();
+                                        // 
+                                        //     if a != b { //new_hash == 17583997638664642746 {
+                                        //         println!("{} === {} / {} ==> {}", a, b, hash.0, output.len());
+                                        //         assert!(count > 2);                                                
+                                        //         // let x = NtHashIterator::new(a.as_bytes(), k-1).unwrap();
+                                        //         // let y = NtHashIterator::new(b.as_bytes(), k-1).unwrap();
+                                        //         
+                                        //         // println!("Added letter {} {} / {} {}  [{}/{}/{}]", H_INV_LETTERS[start_index.1], count, std::str::from_utf8(output).unwrap(), out_base_index, x.iter().next().unwrap(), y.iter().next().unwrap(), new_hash);
+                                        //     }
+                                        // }
                                     }
                                 }
+                                lastxread = lastxread1;
                                 if count == 1 {
                                     read = CompressedRead::from_compressed_reads(
                                         &buckets[b][..],
                                         start_index.2,
                                         k,
                                     );
+
                                     output.push(H_INV_LETTERS[start_index.1]);
                                 } else {
                                     break;
@@ -233,6 +277,11 @@ impl Pipeline {
                             seq: out_seq,
                             qual: None
                         });
+
+                        if std::str::from_utf8(out_seq).unwrap().contains("CATTGTCATGCTATTTTGCCTAGCCCTGTTTATCACATGGGACTCATACACATGTAATGAATC") {
+                            println!("Reading works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                        }
+
 
                         let fw_hash_sr = HashEntry {
                             hash: fw_hash,
@@ -274,7 +323,7 @@ impl Pipeline {
         });
 
         RetType {
-            sequences: vec![],
+            sequences: sequences.into_inner().unwrap(),
             hashes: hashes_buckets.finalize(),
         }
     }

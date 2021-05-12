@@ -101,8 +101,8 @@ impl<'a> CompressedRead<'a> {
     pub fn sub_slice(&self, range: Range<usize>) -> CompressedRead<'a> {
         assert!(range.start <= range.end);
 
-        let start = (range.start % 4) as u8;
-        let sbyte = range.start / 4;
+        let start = ((self.start + range.start as u8) % 4) as u8;
+        let sbyte = (self.start as usize + range.start) / 4;
 
         CompressedRead {
             size: range.end - range.start,

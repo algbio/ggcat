@@ -87,7 +87,6 @@ impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
     }
 
     pub fn add_read(&mut self, el: T, seq: &[u8], bucket: usize) {
-        assert!(seq.len() >= 32);
         if self.buffers[bucket].len() > 0
             && self.buffers[bucket].len() + seq.len() > self.buffers[bucket].capacity()
         {

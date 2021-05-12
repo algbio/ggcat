@@ -5,6 +5,7 @@ pub fn add_two(a: i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compressed_read::CompressedRead;
     use crate::varint::encode_varint;
     use bincode::DefaultOptions;
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -63,7 +64,7 @@ mod tests {
         assert_ne!(sum, 49999995000000);
     }
 
-    #[link(name = "test")]
+    // #[link(name = "test")]
     extern "C" {
         fn compute(data: *const u64, len: usize) -> usize;
     }
@@ -369,12 +370,16 @@ mod tests {
         // let str0 = b"GATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATTT";
         // let str1 = b"TATATATATATATATATATATATATATATATATATATATATATATATATATATATATATTG";
 
-        let str0 = b"NGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNN";
-        let str1 = b"NTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNN";
+        // let str0 = b"NGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNN";
+        // let str1 = b"NTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNN";
+
+        let str0 = b"TTTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGC";
+        let str1 = b"TTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGCA";
+
 
         let h = 6116442737687281716u64;
 
-        let hash = NtHashIterator::new(&str0[..], 61).unwrap();
+        let hash = NtHashIterator::new(&str0[..], 62).unwrap();
         println!(
             "{:?}",
             hash.iter().map(|x| x.rotate_left(1)).collect::<Vec<_>>()
@@ -384,5 +389,15 @@ mod tests {
             "{:?}",
             hash1.iter().map(|x| x.rotate_left(1)).collect::<Vec<_>>()
         )
+    }
+
+    #[test]
+    fn test_comprread() {
+        let vec = vec![0x23, 0x47, 0xFA, 0x7D, 0x59, 0xFF, 0xA1, 0x84];
+
+        let read1 = CompressedRead::from_compressed_reads(&vec[..], 0, 32).sub_slice(1..32);
+        let read12 = CompressedRead::from_compressed_reads(&vec[..], 1, 31).sub_slice(0..31);
+        println!("{}", read1.to_string());
+        println!("{}", read12.to_string());
     }
 }

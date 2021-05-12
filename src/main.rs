@@ -53,6 +53,8 @@ fn outputs_arg_group() -> ArgGroup<'static> {
 }
 
 use clap::arg_enum;
+use crate::sequences_reader::{SequencesReader, FastaSequence};
+use crate::reads_freezer::ReadsFreezer;
 arg_enum! {
     #[derive(Debug, PartialOrd, PartialEq)]
     enum StartingStep {
@@ -70,6 +72,9 @@ struct Cli {
     /// The input files
     #[structopt(required = true)]
     input: Vec<PathBuf>,
+
+    #[structopt(short)]
+    debug_reverse: bool,
 
     /// Specifies the k-mers length
     #[structopt(short, default_value = "32")]
@@ -110,6 +115,38 @@ fn main() {
     let args = Cli::from_args();
 
     const BUCKETS_COUNT: usize = 512;
+
+    if args.debug_reverse {
+
+        for file in args.input {
+            let mut output = ReadsFreezer::optfile_splitted_compressed_lz4("complementary");
+            let mut tmp_vec = Vec::new();
+            SequencesReader::process_file_extended(&file, |x| {
+
+                const COMPL: [u8; 256] = {
+                    let mut letters = [b'N'; 256];
+
+                    letters[b'A' as usize] = b'T';
+                    letters[b'C' as usize] = b'G';
+                    letters[b'G' as usize] = b'C';
+                    letters[b'T' as usize] = b'A';
+
+                    letters
+                };
+                tmp_vec.clear();
+                tmp_vec.extend(x.seq.iter().map(|x| COMPL[*x as usize]).rev());
+
+                output.add_read(FastaSequence {
+                    ident: x.ident,
+                    seq: &tmp_vec[..],
+                    qual: None
+                })
+
+            });
+            output.finalize();
+        }
+        return;
+    }
 
     ThreadPoolBuilder::new().num_threads(16).build_global();
 

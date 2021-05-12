@@ -84,12 +84,12 @@ impl Pipeline {
 
             SequencesReader::process_file_extended(read_file, |seq| {
                 if map_index < mappings.len() && mappings[map_index].entry == index {
-                    if UnitigIndex::new(bucket_index, index as usize) == UnitigIndex::new(0, 394310)
-                    {
+                    if UnitigIndex::new(bucket_index, index as usize) == UnitigIndex::new(0, 3) {
                         println!(
-                            "Found while reorg: {} / {}",
+                            "Found while reorg: {} / {} => {}",
                             std::str::from_utf8(seq.ident).unwrap(),
-                            std::str::from_utf8(seq.seq).unwrap()
+                            std::str::from_utf8(seq.seq).unwrap(),
+                            mappings[map_index].bucket as usize,
                         );
                     }
 
@@ -102,18 +102,22 @@ impl Pipeline {
                     map_index += 1;
                 } else {
                     // TODO: Optimize lock!
-                    // final_unitigs_file.lock().unwrap().add_read(FastaSequence {
-                    //     ident: format!("{} {}", bucket_index, index).as_bytes(),
-                    //     seq: seq.seq,
-                    //     qual: None,
-                    // });
+                    final_unitigs_file.lock().unwrap().add_read(FastaSequence {
+                        ident: format!("{} {}", bucket_index, index).as_bytes(),
+                        seq: seq.seq,
+                        qual: None,
+                    });
                     // No mapping, write unitig to file
                 }
                 index += 1;
             });
-            println!("Total reads: {}/{:?}", index, mappings.last().unwrap());
+            if mappings.len() > 0 {
+                println!("Total reads: {}/{:?}", index, mappings.last().unwrap());
+            }
             assert_eq!(map_index, mappings.len())
         });
+
+        final_unitigs_file.into_inner().unwrap().finalize();
 
         buckets.finalize()
     }
