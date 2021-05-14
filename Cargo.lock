@@ -580,7 +580,6 @@ dependencies = [
  "libdeflater",
  "lz4",
  "nix 0.15.0",
- "nthash",
  "object-pool",
  "os_pipe",
  "pad",
@@ -870,13 +869,6 @@ dependencies = [
  "cfg-if 0.1.10",
  "libc",
  "void",
-]
-
-[[package]]
-name = "nthash"
-version = "0.4.3"
-dependencies = [
- "error-chain",
 ]
 
 [[package]]

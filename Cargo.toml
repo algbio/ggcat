@@ -37,14 +37,5 @@ default-features = false
 features = ["cloudflare_zlib"]
 path = "flate2-rs"
 
-[dependencies.nthash]
-bstr = "0.2.8"
-ctrlc = "3.1.3"
-itertools = "0.8.2"
-os_pipe = "0.9.1"
-path = "nthash"
-rayon = "1.3.0"
-structopt = "0.3.5"
-
 [profile.release]
 debug = true
