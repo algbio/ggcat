@@ -1,4 +1,5 @@
 use crate::binary_writer::BinaryWriter;
+use crate::types::BucketIndexType;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -26,8 +27,8 @@ impl<B: BucketType> MultiThreadBuckets<B> {
         MultiThreadBuckets { buckets }
     }
 
-    pub fn flush(&self, index: usize, flush_fn: impl FnOnce(&mut B)) {
-        let mut bucket = self.buckets[index].lock().unwrap();
+    pub fn flush(&self, index: BucketIndexType, flush_fn: impl FnOnce(&mut B)) {
+        let mut bucket = self.buckets[index as usize].lock().unwrap();
         flush_fn(&mut bucket);
     }
 
@@ -77,14 +78,14 @@ impl<'a, B: BucketType, T: BucketWriter<BucketType = B> + Clone> BucketsThreadDi
         }
     }
     #[inline]
-    pub fn add_element(&mut self, bucket: usize, extra_data: &T::ExtraData, element: T) {
-        self.thread_data[bucket].push(element);
-        if self.thread_data[bucket].len() >= self.max_bucket_size {
+    pub fn add_element(&mut self, bucket: BucketIndexType, extra_data: &T::ExtraData, element: T) {
+        self.thread_data[bucket as usize].push(element);
+        if self.thread_data[bucket as usize].len() >= self.max_bucket_size {
             self.mtb.flush(bucket, |mtb_bucket| {
-                for el in self.thread_data[bucket].iter() {
+                for el in self.thread_data[bucket as usize].iter() {
                     el.write_to(mtb_bucket, extra_data);
                 }
-                self.thread_data[bucket].clear();
+                self.thread_data[bucket as usize].clear();
             })
         }
     }
@@ -94,7 +95,7 @@ impl<'a, B: BucketType, T: BucketWriter<BucketType = B> + Clone> BucketsThreadDi
             if vec.len() == 0 {
                 continue;
             }
-            self.mtb.flush(index, |mtb_bucket| {
+            self.mtb.flush(index as BucketIndexType, |mtb_bucket| {
                 for el in vec.iter() {
                     el.write_to(mtb_bucket, extra_data);
                 }

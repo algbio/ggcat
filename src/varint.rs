@@ -82,9 +82,11 @@ mod tests {
 
         const LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
 
+        let k = 1;
+
         let mut buffer = [0; 1024];
         for i in 0..100000 {
-            let size = (rng.next_u32() % 512) as usize + 1;
+            let size = (rng.next_u32() % 120) as usize + k;
             rng.fill_bytes(&mut buffer[..size]);
             sequences.push(String::from_iter(
                 buffer[..size]
@@ -99,15 +101,16 @@ mod tests {
         for read in sequences.iter() {
             tmp.clear();
             let read = CompressedRead::new_from_plain(read.as_bytes(), &mut tmp);
+            let read = read.as_reference(&tmp);
 
-            writer.add_acgt_read(&(), read.as_reference(&tmp));
+            writer.add_acgt_read(&(), read);
         }
         writer.finalize();
 
         let mut reader = IntermediateReadsReader::<()>::new("/tmp/test-encoding.0.lz4".to_string());
 
         let mut index = 0;
-        reader.for_each(|(_, x)| {
+        reader.for_each(|_, x| {
             let val = x.to_string();
             // println!("SQ: {} / {}", val, sequences[index]);
             if val != sequences[index].as_str() {

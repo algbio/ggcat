@@ -9,6 +9,7 @@ use crate::binary_writer::BinaryWriter;
 use crate::hash_entry::Direction;
 use crate::intermediate_storage::{SequenceExtraData, VecReader};
 use crate::multi_thread_buckets::BucketWriter;
+use crate::types::BucketIndexType;
 use crate::varint::{decode_varint, encode_varint};
 use crate::vec_slice::VecSlice;
 use std::fmt::{Debug, Formatter};
@@ -112,9 +113,9 @@ pub struct UnitigIndex {
 
 impl SequenceExtraData for UnitigIndex {
     fn decode(mut reader: impl Read) -> Option<Self> {
-        let bucket = decode_varint(|| reader.read_u8().ok())?;
+        let bucket = decode_varint(|| reader.read_u8().ok())? as BucketIndexType;
         let index = decode_varint(|| reader.read_u8().ok())?;
-        Some(UnitigIndex::new(bucket as usize, index as usize))
+        Some(UnitigIndex::new(bucket, index as usize))
     }
 
     fn encode(&self, mut writer: impl Write) {
@@ -137,14 +138,14 @@ impl UnitigIndex {
     const INDEX_MASK: usize = (1 << 48) - 1;
 
     #[inline]
-    pub fn new(bucket: usize, index: usize) -> Self {
+    pub fn new(bucket: BucketIndexType, index: usize) -> Self {
         Self {
-            index: (bucket << 48) | (index & Self::INDEX_MASK),
+            index: ((bucket as usize) << 48) | (index & Self::INDEX_MASK),
         }
     }
     #[inline]
-    pub fn bucket(&self) -> usize {
-        self.index >> 48
+    pub fn bucket(&self) -> BucketIndexType {
+        (self.index >> 48) as BucketIndexType
     }
     #[inline]
     pub fn index(&self) -> usize {
@@ -179,9 +180,9 @@ impl UnitigLink {
 
         let start = out_vec.len();
         for _i in 0..len {
-            let bucket = decode_varint(|| reader.read_u8().ok())?;
+            let bucket = decode_varint(|| reader.read_u8().ok())? as BucketIndexType;
             let index = decode_varint(|| reader.read_u8().ok())?;
-            out_vec.push(UnitigIndex::new(bucket as usize, index as usize));
+            out_vec.push(UnitigIndex::new(bucket, index as usize));
         }
 
         Some(Self {

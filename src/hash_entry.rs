@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize, Serializer};
 use crate::binary_writer::BinaryWriter;
 use crate::intermediate_storage::VecReader;
 use crate::multi_thread_buckets::BucketWriter;
+use crate::types::BucketIndexType;
 use crate::varint::{decode_varint, encode_varint};
 use crate::vec_slice::VecSlice;
+use serde::de::DeserializeOwned;
 
 #[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Direction {
@@ -17,14 +19,14 @@ pub enum Direction {
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
-pub struct HashEntry {
-    pub hash: u64,
-    pub bucket: u32,
+pub struct HashEntry<H: Copy> {
+    pub hash: H,
+    pub bucket: BucketIndexType,
     pub entry: u64,
     pub direction: Direction,
 }
 
-impl BucketWriter for HashEntry {
+impl<H: Serialize + DeserializeOwned + Copy> BucketWriter for HashEntry<H> {
     type BucketType = BinaryWriter;
     type ExtraData = ();
 

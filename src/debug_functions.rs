@@ -1,17 +1,27 @@
-use nthash::NtHashIterator;
+use crate::hash::HashFunction;
+use crate::hash::HashFunctionFactory;
+use crate::types::BucketIndexType;
 
-fn assert_reads(read: &[u8], bucket: u64) {
+fn assert_reads<H: HashFunctionFactory>(read: &[u8], bucket: BucketIndexType) {
     // Test ***************************
     let K: usize = 32;
 
     if read.len() == 33 {
-        let hashes = NtHashIterator::new(&read[0..K], M).unwrap();
-        let minimizer = hashes.iter().min_by_key(|read| *read >> 32).unwrap();
+        let hashes = H::new(&read[0..K], M);
+        let minimizer = hashes
+            .iter()
+            .min_by_key(|read| H::get_minimizer(*read))
+            .unwrap();
 
-        let hashes1 = NtHashIterator::new(&read[1..K + 1], M).unwrap();
-        let minimizer1 = hashes1.iter().min_by_key(|read| *read >> 32).unwrap();
+        let hashes1 = H::new(&read[1..K + 1], M);
+        let minimizer1 = hashes1
+            .iter()
+            .min_by_key(|read| H::get_minimizer(*read))
+            .unwrap();
 
-        assert!(minimizer % 512 == bucket || minimizer1 % 512 == bucket);
+        assert!(
+            H::get_bucket(minimizer) % 512 == bucket || H::get_bucket(minimizer1) % 512 == bucket
+        );
         println!("{} / {}", minimizer, minimizer1);
     }
 
@@ -23,20 +33,19 @@ fn assert_reads(read: &[u8], bucket: u64) {
 
     const M: usize = 12;
 
-    let hashes = NtHashIterator::new(&x[0..K], M).unwrap();
-    let minimizer = hashes.iter().min_by_key(|x| *x >> 32).unwrap();
+    let hashes = H::new(&x[0..K], M);
+    let minimizer = hashes.iter().min_by_key(|x| H::get_minimizer(*x)).unwrap();
 
-    assert!(minimizer % 512 == bucket);
+    assert_eq!(H::get_bucket(minimizer) % 512, bucket);
 
     if x.len() > K {
-        let hashes2 = NtHashIterator::new(&x[..], M).unwrap();
-        let minimizer2 = hashes2.iter().min_by_key(|x| *x >> 32).unwrap();
+        let hashes2 = H::new(&x[..], M);
+        let minimizer2 = hashes2.iter().min_by_key(|x| H::get_minimizer(*x)).unwrap();
 
         if minimizer != minimizer2 {
-            let vec: Vec<_> = NtHashIterator::new(&x[..], M)
-                .unwrap()
+            let vec: Vec<_> = H::new(&x[..], M)
                 .iter()
-                .map(|x| x >> 32)
+                .map(|x| H::get_minimizer(x))
                 .collect();
 
             println!("Kmers {}", std::str::from_utf8(x).unwrap());

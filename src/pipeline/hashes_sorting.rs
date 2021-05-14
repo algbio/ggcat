@@ -9,17 +9,21 @@ use rayon::iter::ParallelIterator;
 
 use crate::binary_writer::{BinaryWriter, StorageMode};
 use crate::fast_rand_bool::FastRandBool;
+use crate::hash::{HashFunctionFactory, HashTraitType};
 use crate::hash_entry::{Direction, HashEntry};
 use crate::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use crate::pipeline::Pipeline;
 use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
 use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::vec_slice::VecSlice;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use std::marker::PhantomData;
 
 impl Pipeline {
-    pub fn hashes_sorting(
+    pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
         file_hashes_inputs: Vec<PathBuf>,
-        output_dir: impl AsRef<Path>,
+        output_dir: P,
         buckets_count: usize,
     ) -> Vec<PathBuf> {
         let mut links_buckets = MultiThreadBuckets::<BinaryWriter>::new(
@@ -38,21 +42,32 @@ impl Pipeline {
                 let file = filebuffer::FileBuffer::open(input).unwrap();
 
                 let mut reader = Cursor::new(file.deref());
-                let mut vec: Vec<HashEntry> = Vec::new();
+                let mut vec: Vec<HashEntry<H::HashType>> = Vec::new();
 
                 while let Ok(value) = bincode::deserialize_from(&mut reader) {
                     vec.push(value);
                 }
 
-                struct Compare {}
-                impl SortKey<HashEntry> for Compare {
-                    fn get(value: &HashEntry) -> u64 {
+                struct Compare<H: HashFunctionFactory> {
+                    _phantom: PhantomData<H>,
+                }
+                impl<H: HashFunctionFactory> SortKey<HashEntry<H::HashType>> for Compare<H> {
+                    type KeyType = H::HashType;
+                    const KEY_BITS: usize = 64;
+
+                    #[inline(always)]
+                    fn get(value: &HashEntry<H::HashType>) -> H::HashType {
                         value.hash
+                    }
+
+                    #[inline(always)]
+                    fn get_shifted(value: &HashEntry<H::HashType>, rhs: u8) -> u8 {
+                        H::get_shifted(value.hash, rhs) as u8
                     }
                 }
 
                 // vec.sort_unstable_by_key(|e| e.hash);
-                smart_radix_sort::<_, Compare, false>(&mut vec[..], 64 - 8);
+                smart_radix_sort::<_, Compare<H>, false>(&mut vec[..]);
 
                 let mut unitigs_vec = Vec::new();
 
@@ -64,16 +79,10 @@ impl Pipeline {
                         };
 
                         let (slice_fw, slice_bw) = if rand_bool.get_randbool() {
-                            unitigs_vec.push(UnitigIndex::new(
-                                x[bw].bucket as usize,
-                                x[bw].entry as usize,
-                            ));
+                            unitigs_vec.push(UnitigIndex::new(x[bw].bucket, x[bw].entry as usize));
                             (VecSlice::new(unitigs_vec.len() - 1, 1), VecSlice::EMPTY)
                         } else {
-                            unitigs_vec.push(UnitigIndex::new(
-                                x[fw].bucket as usize,
-                                x[fw].entry as usize,
-                            ));
+                            unitigs_vec.push(UnitigIndex::new(x[fw].bucket, x[fw].entry as usize));
                             (VecSlice::EMPTY, VecSlice::new(unitigs_vec.len() - 1, 1))
                         };
 
@@ -92,7 +101,7 @@ impl Pipeline {
                         }
 
                         links_tmp.add_element(
-                            x[fw].bucket as usize,
+                            x[fw].bucket,
                             &unitigs_vec,
                             UnitigLink {
                                 entry: x[fw].entry,
@@ -102,7 +111,7 @@ impl Pipeline {
                         );
 
                         links_tmp.add_element(
-                            x[bw].bucket as usize,
+                            x[bw].bucket,
                             &unitigs_vec,
                             UnitigLink {
                                 entry: x[bw].entry,

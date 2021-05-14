@@ -1,5 +1,6 @@
+use crate::hash::HashableSequence;
+use crate::utils::Utils;
 use crate::varint::encode_varint;
-use nthash::NtSequence;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::ops::{Index, Range};
@@ -39,21 +40,13 @@ impl CompressedReadIndipendent {
     }
 }
 
-pub const H_LOOKUP: [u64; 4] = [
-    /*b'A'*/ nthash::HASH_A,
-    /*b'C'*/ nthash::HASH_C,
-    /*b'T'*/ nthash::HASH_T,
-    /*b'G'*/ nthash::HASH_G,
-];
-pub const H_INV_LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
-
 impl<'a> CompressedRead<'a> {
     pub fn new_from_plain(seq: &'a [u8], storage: &mut Vec<u8>) -> CompressedReadIndipendent {
         let start = storage.len() * 4;
         for chunk in seq.chunks(16) {
             let mut value = 0;
             for aa in chunk.iter().rev() {
-                value = (value << 2) | (((*aa >> 1) & 0x3) as u32);
+                value = (value << 2) | Utils::compress_base(*aa) as u32;
             }
             storage.extend_from_slice(&value.to_le_bytes()[..(chunk.len() + 3) / 4]);
         }
@@ -125,21 +118,21 @@ impl<'a> CompressedRead<'a> {
     }
 
     pub fn as_bases_iter(&'a self) -> impl Iterator<Item = u8> + 'a {
-        (0..self.size).map(move |i| unsafe { H_INV_LETTERS[self.get_base_unchecked(i) as usize] })
+        (0..self.size).map(move |i| unsafe { Utils::decompress_base(self.get_base_unchecked(i)) })
     }
 
     pub fn to_string(&self) -> String {
         String::from_iter(
             (0..self.size)
-                .map(|i| unsafe { H_INV_LETTERS[self.get_base_unchecked(i) as usize] as char }),
+                .map(|i| unsafe { Utils::decompress_base(self.get_base_unchecked(i)) as char }),
         )
     }
 }
 
-impl<'a> NtSequence for CompressedRead<'a> {
+impl<'a> HashableSequence for CompressedRead<'a> {
     #[inline(always)]
-    unsafe fn get_h_unchecked(&self, index: usize) -> u64 {
-        H_LOOKUP[self.get_base_unchecked(index) as usize]
+    unsafe fn get_unchecked_cbase(&self, index: usize) -> u8 {
+        self.get_base_unchecked(index)
     }
 
     #[inline(always)]

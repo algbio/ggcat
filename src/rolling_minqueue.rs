@@ -1,3 +1,4 @@
+use crate::hash::HashFunctionFactory;
 use crate::rolling_kseq_iterator::RollingKseqImpl;
 use rand::prelude::*;
 use serde::export::PhantomData;
@@ -7,22 +8,17 @@ use std::fmt::Display;
 use std::hint::unreachable_unchecked;
 use std::mem::MaybeUninit;
 
-pub trait GenericsFunctional<T, U> {
-    fn func(value: T) -> U;
-}
-
-pub struct RollingMinQueue<T: Copy, U: Ord + Copy, F: GenericsFunctional<T, U>> {
-    queue: Vec<(T, T)>,
+pub struct RollingMinQueue<H: HashFunctionFactory> {
+    queue: Vec<(H::HashType, H::HashType)>,
     index: usize,
     capacity_mask: usize,
     size: usize,
-    minimum: (T, usize),
-    _marker1: PhantomData<U>,
-    _marker2: PhantomData<F>,
+    minimum: (H::HashType, usize),
+    _marker: PhantomData<H>,
 }
 
-impl<T: Copy, U: Ord + Copy, F: GenericsFunctional<T, U>> RollingMinQueue<T, U, F> {
-    pub fn new(size: usize) -> RollingMinQueue<T, U, F> {
+impl<H: HashFunctionFactory> RollingMinQueue<H> {
+    pub fn new(size: usize) -> RollingMinQueue<H> {
         let capacity = size.next_power_of_two();
         let mut queue = Vec::with_capacity(capacity);
         unsafe {
@@ -35,8 +31,7 @@ impl<T: Copy, U: Ord + Copy, F: GenericsFunctional<T, U>> RollingMinQueue<T, U, 
             capacity_mask: capacity - 1,
             size,
             minimum: unsafe { (MaybeUninit::uninit().assume_init(), 0) },
-            _marker1: PhantomData,
-            _marker2: PhantomData,
+            _marker: PhantomData,
         }
     }
 
@@ -54,7 +49,7 @@ impl<T: Copy, U: Ord + Copy, F: GenericsFunctional<T, U>> RollingMinQueue<T, U, 
                 self.queue.get_unchecked_mut(i).1 = min_by_key(
                     self.queue.get_unchecked_mut(i).1,
                     self.queue.get_unchecked_mut((i + 1) & self.capacity_mask).1,
-                    |x| F::func(*x),
+                    |x| H::get_minimizer(*x),
                 );
             }
             i = i.wrapping_sub(1) & self.capacity_mask;
@@ -63,8 +58,8 @@ impl<T: Copy, U: Ord + Copy, F: GenericsFunctional<T, U>> RollingMinQueue<T, U, 
 
     pub fn make_iter<'a>(
         &'a mut self,
-        mut iter: impl Iterator<Item = T> + 'a,
-    ) -> impl Iterator<Item = T> + 'a {
+        mut iter: impl Iterator<Item = H::HashType> + 'a,
+    ) -> impl Iterator<Item = H::HashType> + 'a {
         for i in 0..(self.size - 1) {
             unsafe {
                 let value = iter.next().unwrap_unchecked();
@@ -81,7 +76,7 @@ impl<T: Copy, U: Ord + Copy, F: GenericsFunctional<T, U>> RollingMinQueue<T, U, 
             self.minimum = min_by_key(
                 self.minimum,
                 (x, (self.index + self.size) & self.capacity_mask),
-                |x| F::func(x.0),
+                |x| H::get_minimizer(x.0),
             );
             self.index = (self.index + 1) & self.capacity_mask;
 
@@ -94,7 +89,7 @@ impl<T: Copy, U: Ord + Copy, F: GenericsFunctional<T, U>> RollingMinQueue<T, U, 
                 self.queue
                     .get_unchecked_mut((self.index.wrapping_sub(self.size)) & self.capacity_mask)
                     .1,
-                |x| F::func(*x),
+                |x| H::get_minimizer(*x),
             )
         })
     }
@@ -102,22 +97,16 @@ impl<T: Copy, U: Ord + Copy, F: GenericsFunctional<T, U>> RollingMinQueue<T, U, 
 
 // #[cfg(feature = "test")]
 mod tests {
-    use crate::rolling_minqueue::{GenericsFunctional, RollingMinQueue};
+    use crate::hashes::nthash::NtHashIteratorFactory;
+    use crate::rolling_minqueue::RollingMinQueue;
     use rand::{thread_rng, RngCore, SeedableRng};
 
     #[test]
     fn minqueue_test() {
-        struct Func {}
-        impl GenericsFunctional<u64, u32> for Func {
-            fn func(value: u64) -> u32 {
-                (value >> 32) as u32
-            }
-        }
-
         const SIZE: usize = 10000000;
         const MINWINDOW: usize = 32;
 
-        let mut queue = RollingMinQueue::<_, _, Func>::new(MINWINDOW);
+        let mut queue = RollingMinQueue::<NtHashIteratorFactory>::new(MINWINDOW);
 
         let mut items = Vec::new();
         items.reserve(SIZE);

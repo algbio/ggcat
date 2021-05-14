@@ -6,10 +6,14 @@ pub fn add_two(a: i32) -> i32 {
 mod tests {
     use super::*;
     use crate::compressed_read::CompressedRead;
+    use crate::hash::{HashFunction, HashFunctionFactory};
+    use crate::hashes::nthash::{NtHashIterator, NtHashIteratorFactory};
+    use crate::hashes::seqhash::{SeqHashFactory, SeqHashIterator};
+    use crate::rolling_minqueue::RollingMinQueue;
+    use crate::utils::Utils;
     use crate::varint::encode_varint;
     use bincode::DefaultOptions;
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-    use nthash::{NtHashForwardIterator, NtHashIterator};
     use serde::{Deserialize, Serialize};
     use std::fs::File;
     use std::io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write};
@@ -376,7 +380,6 @@ mod tests {
         let str0 = b"TTTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGC";
         let str1 = b"TTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGCA";
 
-
         let h = 6116442737687281716u64;
 
         let hash = NtHashIterator::new(&str0[..], 62).unwrap();
@@ -389,6 +392,55 @@ mod tests {
             "{:?}",
             hash1.iter().map(|x| x.rotate_left(1)).collect::<Vec<_>>()
         )
+    }
+
+    #[test]
+    fn test_seqhash() {
+        // TGGATGGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATGGG ==> TATGTATATATATATATATATATATATATATATATATATATATATATATATATATATATGTGT
+        // let str0 = b"GNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNG";
+        // let str1 = b"TNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNT";
+
+        // let str0 = b"GATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATAGATTT";
+        // let str1 = b"TATATATATATATATATATATATATATATATATATATATATATATATATATATATATATTG";
+
+        // let str0 = b"NGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNN";
+        // let str1 = b"NTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNN";
+
+        // let str0 = b"TTTCTTTTTTTTTTTTTTTAATTTTGAGACAA";
+        // let str1 = b"TTTCTTTTTTTTTTTTTTTAATTTTGCCCCAATTTCTTTTTTTTTTTTTTTAATTTTGAGACAA";
+        //
+        // let hash = SeqHashIterator::new(&str0[..], 32).unwrap();
+        // println!("{:?}", hash.iter().collect::<Vec<_>>());
+        // let hash1 = SeqHashIterator::new(&str1[..], 32).unwrap();
+        // println!("{:?}", hash1.iter().collect::<Vec<_>>());
+
+        let a: Vec<_> = (&b"GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC"[..])
+            .iter()
+            .map(|x| Utils::compress_base(*x))
+            .collect();
+        let b: Vec<_> = (&b"CACCCACCCATTCACCTATCCATCCATCCAACCGTCCATCTGTTCATTC"[..])
+            .iter()
+            .map(|x| Utils::compress_base(*x))
+            .collect();
+
+        let ha: Vec<_> = NtHashIterator::new(&a[..], 15).unwrap().iter().collect();
+        // let hb: Vec<_> = SeqHashIterator::new(&b[..], 31).unwrap().iter().collect();
+
+        // let hc = SeqHashFactory::manual_roll_forward(ha, 32, a[0], *b.last().unwrap());
+
+        println!("X {:?}", ha);
+        // println!("Y {:?}", hb);
+        // println!("{:b}", hc);
+    }
+
+    #[test]
+    fn test_minqueue() {
+        let vec = vec![0x23, 0x47, 0xFA, 0x7D, 0x59, 0xFF, 0xA1, 0x84];
+
+        // let hashes = ::new(&seq[..], context.m);
+        // let mut minimizer_queue = RollingMinQueue::<NtHashIteratorFactory>::new(32 - 15);
+
+        // let mut rolling_iter = minimizer_queue.make_iter(hashes.iter());
     }
 
     #[test]

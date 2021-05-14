@@ -1,22 +1,21 @@
 use crate::compressed_read::{CompressedRead, CompressedReadIndipendent};
+use crate::hash::HashableSequence;
 use crate::intermediate_storage::{
     IntermediateReadsReader, IntermediateReadsWriter, IntermediateSequencesStorage,
 };
 use crate::multi_thread_buckets::MultiThreadBuckets;
 use crate::pipeline::links_compaction::LinkMapping;
 use crate::pipeline::Pipeline;
-use crate::reads_freezer::ReadsFreezer;
+use crate::reads_freezer::{FastaWriterConcurrentBuffer, ReadsFreezer};
 use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
 use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
 use crate::unitig_link::{UnitigIndex, UnitigLink};
 use crate::utils::Utils;
-use crate::NtHashMinTransform;
 use crossbeam::channel::*;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
 use nix::sys::ptrace::cont;
-use nthash::{NtHashIterator, NtSequence};
 use object_pool::Pool;
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
@@ -51,13 +50,15 @@ impl Pipeline {
             .zip(unitig_map_files.iter())
             .collect();
 
-        let output_file = output_path.join("output-unitigs.fa");
-
         let mut final_unitigs_file = Mutex::new(ReadsFreezer::optfile_splitted_compressed_lz4(
-            format!("{}", output_path.join("output-unitigs.fa").display()),
+            format!("{}", output_path.join("output-unitigs").display()),
         ));
+        let output_file = final_unitigs_file.lock().unwrap().get_path();
 
-        inputs.iter().for_each(|(read_file, unitigs_map_file)| {
+        inputs.par_iter().for_each(|(read_file, unitigs_map_file)| {
+            let mut tmp_final_unitigs_buffer =
+                FastaWriterConcurrentBuffer::new(&final_unitigs_file, 1024 * 1024 * 8);
+
             assert_eq!(
                 Utils::get_bucket_index(read_file),
                 Utils::get_bucket_index(unitigs_map_file)
@@ -99,7 +100,7 @@ impl Pipeline {
             final_sequences.resize(counter, None);
 
             let mut count = 0;
-            IntermediateReadsReader::<UnitigIndex>::new(read_file).for_each(|(index, seq)| {
+            IntermediateReadsReader::<UnitigIndex>::new(read_file).for_each(|index, seq| {
                 if seq.to_string().as_str() == "TTTAAGGACAAGAAGATTTATCCCACCATTTCA" {
                     println!("FOUND {:?}!", index);
                 }
@@ -120,7 +121,6 @@ impl Pipeline {
                 ));
             });
 
-            let mut ofile = final_unitigs_file.lock().unwrap();
             let mut temp_sequence = Vec::new();
             final_sequences.push(Some((
                 CompressedRead::new_from_plain(&[], &mut temp_storage),
@@ -132,12 +132,9 @@ impl Pipeline {
                 .enumerate()
                 .filter(|x| x.1.is_none())
                 .next()
-                .map(|x| x.0) {
-
-                println!(
-                    "Index: {:?} ", index
-                );
-
+                .map(|x| x.0)
+            {
+                println!("Index: {:?} ", index);
             }
 
             'uloop: for sequence in final_sequences.group_by(|a, b| b.unwrap().1 == 0) {
@@ -180,12 +177,14 @@ impl Pipeline {
                     }
                 }
 
-                ofile.add_read(FastaSequence {
+                tmp_final_unitigs_buffer.add_read(FastaSequence {
                     ident: b"SEQ",
                     seq: temp_sequence.as_slice(),
                     qual: None,
                 });
             }
+
+            tmp_final_unitigs_buffer.finalize();
 
             println!("Size: {}", unitigs_hashmap.len())
         });

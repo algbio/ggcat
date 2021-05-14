@@ -1,17 +1,20 @@
+use crate::hash::HashFunction;
+use crate::hash::HashFunctionFactory;
 use crate::intermediate_storage::{IntermediateReadsWriter, IntermediateSequencesStorage};
 use crate::multi_thread_buckets::MultiThreadBuckets;
+use crate::pipeline::kmers_merge::KmersFlags;
 use crate::pipeline::Pipeline;
 use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
-use crate::NtHashMinTransform;
+use crate::types::BucketIndexType;
 use crossbeam::channel::*;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
 use nix::sys::ptrace::cont;
-use nthash::NtHashIterator;
 use object_pool::Pool;
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
+use std::cmp::{max, min};
 use std::intrinsics::unlikely;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -87,7 +90,7 @@ struct ExecutionContext {
     k: usize,
     m: usize,
     buckets_count: usize,
-    buckets: MultiThreadBuckets<IntermediateReadsWriter<()>>,
+    buckets: MultiThreadBuckets<IntermediateReadsWriter<KmersFlags>>,
     start_time: Instant,
 }
 
@@ -108,9 +111,8 @@ const CHUNKS_SIZE: usize = 1024 * 1024 * 16;
 const MAX_READING_THREADS: usize = 2;
 const WATERMARK_HIGH: usize = 64;
 
-fn worker(context: &ExecutionContext, receiver: &Receiver<QueueData>) {
-    let mut minimizer_queue =
-        RollingMinQueue::<u64, u32, NtHashMinTransform>::new(context.k - context.m + 1);
+fn worker<H: HashFunctionFactory>(context: &ExecutionContext, receiver: &Receiver<QueueData>) {
+    let mut minimizer_queue = RollingMinQueue::<H>::new(context.k - context.m);
 
     let mut tmp_reads_buffer =
         IntermediateSequencesStorage::new(context.buckets_count, &context.buckets);
@@ -141,29 +143,64 @@ fn worker(context: &ExecutionContext, receiver: &Receiver<QueueData>) {
             };
 
             while let Some(seq) = get_sequence() {
-                let hashes = NtHashIterator::new(seq, context.m).unwrap();
+                // println!(
+                //     "ABC Process read: {}",
+                //     std::str::from_utf8(&seq[..]).unwrap()
+                // );
+                let hashes = H::new(&seq[..], context.m);
 
                 let mut rolling_iter = minimizer_queue.make_iter(hashes.iter());
 
                 let mut last_index = 0;
                 let mut last_hash = rolling_iter.next().unwrap();
 
+                let mut include_first = true;
+
                 for (index, min_hash) in rolling_iter.enumerate() {
                     if min_hash != last_hash {
-                        let bucket = (last_hash as usize) % context.buckets_count;
+                        let include_last = last_hash < min_hash;
+
+                        // println!(
+                        //     "ABC Bucketing: {} {} {}",
+                        //     std::str::from_utf8(
+                        //         &seq[(max(1, last_index) - 1)..min(seq.len(), index + context.k)]
+                        //     )
+                        //     .unwrap(),
+                        //     include_first as u8 | ((include_last as u8) << 1),
+                        //     last_hash
+                        // );
+
+                        let bucket =
+                            H::get_bucket(last_hash) % (context.buckets_count as BucketIndexType);
+
                         tmp_reads_buffer.add_read(
-                            (),
-                            &seq[last_index..(index + context.k)],
+                            KmersFlags(include_first as u8 | ((include_last as u8) << 1)),
+                            &seq[(max(1, last_index) - 1)..(index + context.k)],
                             bucket,
                         );
                         last_index = index + 1;
                         last_hash = min_hash;
+                        include_first = !include_last;
                     }
                 }
+
+                if b"AGAACAATAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACACGACCTGGGGGAATTTCAGG"
+                    == &seq[(max(1, last_index) - 1)..seq.len()]
+                {
+                    println!("ABC Found !!!!!",)
+                }
+
+                // println!(
+                //     "ABC Bucketing final: {} {} {}",
+                //     std::str::from_utf8(&seq[(max(1, last_index) - 1)..seq.len()]).unwrap(),
+                //     include_first as u8 | 0x2,
+                //     last_hash
+                // );
+                // FIXME: Add only if necessary
                 tmp_reads_buffer.add_read(
-                    (),
-                    &seq[last_index..seq.len()],
-                    (last_hash as usize) % context.buckets_count,
+                    KmersFlags(include_first as u8),
+                    &seq[(max(1, last_index) - 1)..seq.len()],
+                    H::get_bucket(last_hash) % (context.buckets_count as BucketIndexType),
                 );
             }
 
@@ -203,7 +240,7 @@ fn reader(context: &ExecutionContext, sender: &Sender<QueueData>) {
 }
 
 impl Pipeline {
-    pub fn minimizer_bucketing(
+    pub fn minimizer_bucketing<H: HashFunctionFactory>(
         mut input_files: Vec<PathBuf>,
         output_path: &Path,
         buckets_count: usize,
@@ -211,7 +248,7 @@ impl Pipeline {
         m: usize,
     ) -> Vec<PathBuf> {
         let start_time = Instant::now();
-        let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<()>>::new(
+        let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<KmersFlags>>::new(
             buckets_count,
             &output_path.join("bucket"),
         );
@@ -248,7 +285,7 @@ impl Pipeline {
             drop(sender_arc);
 
             for i in 0..16 {
-                s.spawn(|_| worker(&execution_context, &receiver));
+                s.spawn(|_| worker::<H>(&execution_context, &receiver));
             }
 
             readers.into_iter().for_each(|x| x.join().unwrap());

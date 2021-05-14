@@ -3,7 +3,7 @@ use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
 use std::cell::UnsafeCell;
 use std::mem::{size_of, swap};
-use std::ops::Add;
+use std::ops::{Add, Shr};
 use std::slice::from_raw_parts_mut;
 use std::time::Instant;
 
@@ -11,16 +11,24 @@ type DataType = u64;
 type IndexType = usize;
 
 pub trait SortKey<T> {
-    fn get(value: &T) -> DataType;
+    type KeyType: Ord;
+    const KEY_BITS: usize;
+
+    fn get(value: &T) -> Self::KeyType;
+    fn get_shifted(value: &T, rhs: u8) -> u8;
 }
 
-pub fn smart_radix_sort<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T], shift: u8) {
+pub fn smart_radix_sort<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T]) {
+    smart_radix_sort_::<T, F, PARALLEL>(data, F::KEY_BITS as u8 - 8)
+}
+
+fn smart_radix_sort_<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T], shift: u8) {
     let mut counts: [IndexType; 256 + 1] = [0; 256 + 1];
     let mut sums: [IndexType; 256 + 1] = [0; 256 + 1];
     let mut sorted: [bool; 256] = [true; 256];
 
     for el in data.iter() {
-        counts[((F::get(el) >> shift) & 0xFF) as usize + 1] += 1;
+        counts[F::get_shifted(el, shift) as usize + 1] += 1;
     }
 
     sums[0] = 0;
@@ -31,7 +39,7 @@ pub fn smart_radix_sort<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T], 
 
     let mut i = 0;
     while i < data.len() {
-        let mut val = ((F::get(&data[i]) >> shift) & 0xFF) as usize;
+        let mut val = F::get_shifted(&data[i], shift) as usize;
         if i == (sums[val] as usize) {
             i += 1;
 
@@ -71,7 +79,7 @@ pub fn smart_radix_sort<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T], 
         if slice.len() < 1024 * 1024 {
             slice.sort_unstable_by_key(F::get)
         } else {
-            smart_radix_sort::<T, F, PARALLEL>(slice, shift - 8);
+            smart_radix_sort_::<T, F, PARALLEL>(slice, shift - 8);
         }
     };
 

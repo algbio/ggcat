@@ -48,7 +48,6 @@ const SEQ_LETTERS_MAPPING: [u8; 256] = {
 
 pub struct SequencesReader;
 impl SequencesReader {
-
     fn normalize_sequence(seq: &mut [u8]) {
         for el in seq.iter_mut() {
             *el = SEQ_LETTERS_MAPPING[*el as usize];

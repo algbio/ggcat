@@ -5,6 +5,8 @@
 #![feature(min_type_alias_impl_trait)]
 #![feature(option_result_unwrap_unchecked)]
 #![feature(specialization)]
+#![feature(generic_associated_types)]
+#![feature(trait_alias)]
 #![allow(warnings)]
 #![feature(test)]
 
@@ -13,7 +15,6 @@ extern crate test;
 use crate::pipeline::kmers_merge::RetType;
 use crate::pipeline::Pipeline;
 use crate::reads_freezer::WriterChannels::Pipe;
-use crate::rolling_minqueue::GenericsFunctional;
 use crate::utils::Utils;
 use rayon::ThreadPoolBuilder;
 use std::cmp::min;
@@ -28,7 +29,9 @@ mod binary_writer;
 mod compressed_read;
 mod debug_functions;
 mod fast_rand_bool;
+mod hash;
 pub mod hash_entry;
+mod hashes;
 mod intermediate_storage;
 pub mod libdeflate;
 mod multi_thread_buckets;
@@ -40,7 +43,9 @@ mod rolling_minqueue;
 mod rolling_quality_check;
 mod sequences_reader;
 mod smart_bucket_sort;
+mod types;
 mod unitig_link;
+#[macro_use]
 mod utils;
 mod varint;
 mod vec_slice;
@@ -52,9 +57,13 @@ fn outputs_arg_group() -> ArgGroup<'static> {
     ArgGroup::with_name("outputs").required(true)
 }
 
-use clap::arg_enum;
-use crate::sequences_reader::{SequencesReader, FastaSequence};
+use crate::compressed_read::CompressedRead;
+use crate::hash::HashFunctionFactory;
+use crate::hashes::nthash::{NtHashIterator, NtHashIteratorFactory};
+use crate::hashes::seqhash::SeqHashFactory;
 use crate::reads_freezer::ReadsFreezer;
+use crate::sequences_reader::{FastaSequence, SequencesReader};
+use clap::arg_enum;
 arg_enum! {
     #[derive(Debug, PartialOrd, PartialEq)]
     enum StartingStep {
@@ -104,12 +113,8 @@ struct Cli {
     step: StartingStep,
 }
 
-struct NtHashMinTransform;
-impl GenericsFunctional<u64, u32> for NtHashMinTransform {
-    fn func(value: u64) -> u32 {
-        (value >> 32) as u32
-    }
-}
+type BucketingHash = NtHashIteratorFactory;
+type MergingHash = SeqHashFactory;
 
 fn main() {
     let args = Cli::from_args();
@@ -117,12 +122,10 @@ fn main() {
     const BUCKETS_COUNT: usize = 512;
 
     if args.debug_reverse {
-
         for file in args.input {
             let mut output = ReadsFreezer::optfile_splitted_compressed_lz4("complementary");
             let mut tmp_vec = Vec::new();
             SequencesReader::process_file_extended(&file, |x| {
-
                 const COMPL: [u8; 256] = {
                     let mut letters = [b'N'; 256];
 
@@ -139,9 +142,8 @@ fn main() {
                 output.add_read(FastaSequence {
                     ident: x.ident,
                     seq: &tmp_vec[..],
-                    qual: None
+                    qual: None,
                 })
-
             });
             output.finalize();
         }
@@ -156,13 +158,19 @@ fn main() {
     let m: usize = args.mlen.unwrap_or(min(12, (k + 2) / 3));
 
     let buckets = if args.step <= StartingStep::MinimizerBucketing {
-        Pipeline::minimizer_bucketing(args.input, args.temp_dir.as_path(), BUCKETS_COUNT, k, m)
+        Pipeline::minimizer_bucketing::<BucketingHash>(
+            args.input,
+            args.temp_dir.as_path(),
+            BUCKETS_COUNT,
+            k,
+            m,
+        )
     } else {
         Utils::generate_bucket_names(args.temp_dir.join("bucket"), BUCKETS_COUNT, Some("lz4"))
     };
 
     let RetType { sequences, hashes } = if args.step <= StartingStep::KmersMerge {
-        Pipeline::kmers_merge(
+        Pipeline::kmers_merge::<BucketingHash, MergingHash, _>(
             buckets,
             BUCKETS_COUNT,
             args.min_multiplicity,
@@ -182,7 +190,7 @@ fn main() {
     };
 
     let mut links = if args.step <= StartingStep::HashesSorting {
-        Pipeline::hashes_sorting(hashes, args.temp_dir.as_path(), BUCKETS_COUNT)
+        Pipeline::hashes_sorting::<MergingHash, _>(hashes, args.temp_dir.as_path(), BUCKETS_COUNT)
     } else {
         Utils::generate_bucket_names(args.temp_dir.join("links"), BUCKETS_COUNT, None)
     };

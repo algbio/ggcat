@@ -1,3 +1,4 @@
+use crate::types::BucketIndexType;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::JoinHandle;
@@ -6,8 +7,29 @@ use std::time::Duration;
 pub struct Utils;
 
 static THREADS_COUNTER: AtomicUsize = AtomicUsize::new(0);
+const C_INV_LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
+
+#[macro_export]
+macro_rules! panic_debug {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "debug")]
+        panic!($($arg)*);
+        #[cfg(not(feature = "debug"))]
+        unsafe { std::hint::unreachable_unchecked() }
+    };
+}
 
 impl Utils {
+    #[inline(always)]
+    pub fn compress_base(base: u8) -> u8 {
+        (base >> 1) & 0x3
+    }
+
+    #[inline(always)]
+    pub fn decompress_base(cbase: u8) -> u8 {
+        C_INV_LETTERS[cbase as usize]
+    }
+
     #[inline]
     pub fn pos_from_letter(letter: u8) -> u8 {
         match letter as char {
@@ -20,7 +42,7 @@ impl Utils {
         }
     }
 
-    pub fn get_bucket_index(bucket_file: impl AsRef<Path>) -> usize {
+    pub fn get_bucket_index(bucket_file: impl AsRef<Path>) -> BucketIndexType {
         let mut file_path = bucket_file.as_ref().to_path_buf();
 
         while let Some(extension) = file_path.extension() {

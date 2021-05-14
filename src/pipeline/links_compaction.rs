@@ -14,6 +14,7 @@ use crate::hash_entry::Direction;
 use crate::multi_thread_buckets::{BucketWriter, BucketsThreadDispatcher, MultiThreadBuckets};
 use crate::pipeline::Pipeline;
 use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
+use crate::types::BucketIndexType;
 use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::utils::Utils;
 use crate::varint::{decode_varint, encode_varint};
@@ -26,13 +27,13 @@ use std::process::exit;
 
 #[derive(Clone, Debug)]
 pub struct LinkMapping {
-    pub bucket: u64,
+    pub bucket: BucketIndexType,
     pub entry: u64,
 }
 
 impl LinkMapping {
     pub fn from_stream(mut reader: impl Read) -> Option<LinkMapping> {
-        let bucket = decode_varint(|| reader.read_u8().ok())?;
+        let bucket = decode_varint(|| reader.read_u8().ok())? as BucketIndexType;
         let entry = decode_varint(|| reader.read_u8().ok())?;
         Some(LinkMapping { bucket, entry })
     }
@@ -43,7 +44,7 @@ impl BucketWriter for LinkMapping {
     type ExtraData = ();
 
     fn write_to(&self, bucket: &mut Self::BucketType, extra_data: &Self::ExtraData) {
-        encode_varint(|b| bucket.get_writer().write(b), self.bucket);
+        encode_varint(|b| bucket.get_writer().write(b), self.bucket as u64);
         encode_varint(|b| bucket.get_writer().write(b), self.entry);
     }
 }
@@ -110,12 +111,19 @@ impl Pipeline {
 
                 struct Compare {}
                 impl SortKey<UnitigLink> for Compare {
+                    type KeyType = u64;
+                    const KEY_BITS: usize = 64;
+
                     fn get(value: &UnitigLink) -> u64 {
                         value.entry
                     }
+
+                    fn get_shifted(value: &UnitigLink, rhs: u8) -> u8 {
+                        (value.entry >> rhs) as u8
+                    }
                 }
 
-                smart_radix_sort::<_, Compare, false>(&mut vec[..], 64 - 8);
+                smart_radix_sort::<_, Compare, false>(&mut vec[..]);
 
                 let mut rem_links = 0;
                 let mut join_links = 0;
@@ -221,15 +229,6 @@ impl Pipeline {
                             flags.seal_beginning();
 
                             if flags.end_sealed() {
-                                if bucket_index == 0 && entry.entry == 619802 {
-                                    println!(
-                                        "Writing to disk! {} / {} / {}",
-                                        is_lonely,
-                                        entry.entries.len(),
-                                        flags.is_forward()
-                                    )
-                                }
-
                                 let linked = entry.entries.get_slice(&last_unitigs_vec);
 
                                 // Write to disk, full unitig!
@@ -250,7 +249,7 @@ impl Pipeline {
                                     &(),
                                     LinkMapping {
                                         entry: entry.entry as u64,
-                                        bucket: bucket_index as u64,
+                                        bucket: bucket_index,
                                     },
                                 );
 
@@ -269,7 +268,7 @@ impl Pipeline {
                                         &(),
                                         LinkMapping {
                                             entry: link.index() as u64,
-                                            bucket: bucket_index as u64,
+                                            bucket: bucket_index,
                                         },
                                     );
                                 }
@@ -316,7 +315,7 @@ impl Pipeline {
                                     &(),
                                     LinkMapping {
                                         entry: link.index() as u64,
-                                        bucket: bucket_index as u64,
+                                        bucket: bucket_index,
                                     },
                                 );
                             }

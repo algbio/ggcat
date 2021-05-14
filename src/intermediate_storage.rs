@@ -1,13 +1,14 @@
 use crate::compressed_read::{CompressedRead, CompressedReadIndipendent};
+use crate::hash::HashableSequence;
 use crate::multi_thread_buckets::{BucketType, MultiThreadBuckets};
 use crate::sequences_reader::FastaSequence;
+use crate::types::BucketIndexType;
 use crate::utils::{cast_static, cast_static_mut, Utils};
 use crate::varint::{decode_varint, encode_varint};
 use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
-use nthash::{NtHashIterator, NtSequence};
 use os_pipe::{PipeReader, PipeWriter};
 use std::cell::{Cell, UnsafeCell};
 use std::cmp::{max, min};
@@ -72,29 +73,30 @@ impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
         }
     }
 
-    fn flush_buffers(&mut self, bucket: usize) {
+    fn flush_buffers(&mut self, bucket: BucketIndexType) {
         if self.reads.len() == 0 {
             return;
         }
 
         self.buckets.flush(bucket, |writer| {
-            for (extra, read) in self.reads[bucket].iter() {
-                writer.add_acgt_read(extra, read.as_reference(&self.buffers[bucket]));
+            for (extra, read) in self.reads[bucket as usize].iter() {
+                writer.add_acgt_read(extra, read.as_reference(&self.buffers[bucket as usize]));
             }
         });
-        self.buffers[bucket].clear();
-        self.reads[bucket].clear();
+        self.buffers[bucket as usize].clear();
+        self.reads[bucket as usize].clear();
     }
 
-    pub fn add_read(&mut self, el: T, seq: &[u8], bucket: usize) {
-        if self.buffers[bucket].len() > 0
-            && self.buffers[bucket].len() + seq.len() > self.buffers[bucket].capacity()
+    pub fn add_read(&mut self, el: T, seq: &[u8], bucket: BucketIndexType) {
+        if self.buffers[bucket as usize].len() > 0
+            && self.buffers[bucket as usize].len() + seq.len()
+                > self.buffers[bucket as usize].capacity()
         {
             self.flush_buffers(bucket);
         }
 
-        let read = CompressedRead::new_from_plain(seq, &mut self.buffers[bucket]);
-        self.reads[bucket].push((el, read));
+        let read = CompressedRead::new_from_plain(seq, &mut self.buffers[bucket as usize]);
+        self.reads[bucket as usize].push((el, read));
         // assert_reads(
         //     &seq[(max(1, last_index) - 1)..min(seq.len(), index + k + 1)],
         //     bucket as u64,
@@ -108,7 +110,7 @@ impl<'a, T: SequenceExtraData> Drop for IntermediateSequencesStorage<'a, T> {
     fn drop(&mut self) {
         for bucket in 0..self.buffers.len() {
             if self.buffers[bucket].len() > 0 {
-                self.flush_buffers(bucket);
+                self.flush_buffers(bucket as BucketIndexType);
             }
         }
     }
@@ -256,7 +258,7 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
         }
     }
 
-    pub fn for_each(&mut self, mut lambda: impl FnMut((T, CompressedRead))) {
+    pub fn for_each(&mut self, mut lambda: impl FnMut(T, CompressedRead)) {
         let mut vec_reader = VecReader::new(1024 * 1024, &mut self.reader);
 
         // const LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
@@ -276,10 +278,10 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
 
             vec_reader.read_bytes(&mut read[..bytes]);
 
-            lambda((
+            lambda(
                 el,
                 CompressedRead::new_from_compressed(&read[..bytes], size),
-            ));
+            );
 
             // read.resize(max(read.len(), size + 32), 0);
             //
