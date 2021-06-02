@@ -1,11 +1,11 @@
 use crate::hash::HashFunctionFactory;
 use crate::rolling_kseq_iterator::RollingKseqImpl;
 use rand::prelude::*;
-use serde::export::PhantomData;
 use std::cmp::{min, min_by_key};
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hint::unreachable_unchecked;
+use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 
 pub struct RollingMinQueue<H: HashFunctionFactory> {

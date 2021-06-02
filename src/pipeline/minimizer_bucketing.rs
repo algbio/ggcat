@@ -1,7 +1,6 @@
 use crate::hash::HashFunction;
 use crate::hash::HashFunctionFactory;
 use crate::intermediate_storage::{IntermediateReadsWriter, IntermediateSequencesStorage};
-use crate::multi_thread_buckets::MultiThreadBuckets;
 use crate::pipeline::kmers_merge::KmersFlags;
 use crate::pipeline::Pipeline;
 use crate::rolling_minqueue::RollingMinQueue;
@@ -12,10 +11,15 @@ use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
 use nix::sys::ptrace::cont;
 use object_pool::Pool;
+use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
+use parallel_processor::threadpools_chain::{
+    ObjectsPoolManager, ThreadChainObject, ThreadPoolDefinition, ThreadPoolsChain,
+};
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
 use std::cmp::{max, min};
 use std::intrinsics::unlikely;
+use std::mem::swap;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -84,9 +88,20 @@ impl QueueData {
     }
 }
 
+impl ThreadChainObject for QueueData {
+    type InitData = usize;
+
+    fn initialize(params: &Self::InitData) -> Self {
+        Self::new(*params)
+    }
+
+    fn reset(&mut self) {
+        self.data.clear();
+        self.sequences.clear();
+    }
+}
+
 struct ExecutionContext {
-    files: ArrayQueue<PathBuf>,
-    pool: SegQueue<QueueData>,
     k: usize,
     m: usize,
     buckets_count: usize,
@@ -111,13 +126,16 @@ const CHUNKS_SIZE: usize = 1024 * 1024 * 16;
 const MAX_READING_THREADS: usize = 2;
 const WATERMARK_HIGH: usize = 64;
 
-fn worker<H: HashFunctionFactory>(context: &ExecutionContext, receiver: &Receiver<QueueData>) {
+fn worker<H: HashFunctionFactory>(
+    context: &ExecutionContext,
+    manager: ObjectsPoolManager<(), QueueData>,
+) {
     let mut minimizer_queue = RollingMinQueue::<H>::new(context.k - context.m);
 
     let mut tmp_reads_buffer =
         IntermediateSequencesStorage::new(context.buckets_count, &context.buckets);
 
-    while let Ok(data) = receiver.recv() {
+    while let Some(data) = manager.recv_obj() {
         for x in data.iter_sequences() {
             let mut start = 0;
             let mut end = 0;
@@ -153,53 +171,29 @@ fn worker<H: HashFunctionFactory>(context: &ExecutionContext, receiver: &Receive
 
                 let mut last_index = 0;
                 let mut last_hash = rolling_iter.next().unwrap();
-
                 let mut include_first = true;
 
                 for (index, min_hash) in rolling_iter.enumerate() {
                     if min_hash != last_hash {
-                        let include_last = last_hash < min_hash;
-
-                        // println!(
-                        //     "ABC Bucketing: {} {} {}",
-                        //     std::str::from_utf8(
-                        //         &seq[(max(1, last_index) - 1)..min(seq.len(), index + context.k)]
-                        //     )
-                        //     .unwrap(),
-                        //     include_first as u8 | ((include_last as u8) << 1),
-                        //     last_hash
-                        // );
-
                         let bucket =
                             H::get_bucket(last_hash) % (context.buckets_count as BucketIndexType);
 
                         tmp_reads_buffer.add_read(
-                            KmersFlags(include_first as u8 | ((include_last as u8) << 1)),
+                            KmersFlags(include_first as u8),
                             &seq[(max(1, last_index) - 1)..(index + context.k)],
                             bucket,
                         );
                         last_index = index + 1;
                         last_hash = min_hash;
-                        include_first = !include_last;
+                        include_first = false;
                     }
                 }
 
-                if b"AGAACAATAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACACGACCTGGGGGAATTTCAGG"
-                    == &seq[(max(1, last_index) - 1)..seq.len()]
-                {
-                    println!("ABC Found !!!!!",)
-                }
-
-                // println!(
-                //     "ABC Bucketing final: {} {} {}",
-                //     std::str::from_utf8(&seq[(max(1, last_index) - 1)..seq.len()]).unwrap(),
-                //     include_first as u8 | 0x2,
-                //     last_hash
-                // );
-                // FIXME: Add only if necessary
+                let start_index = max(1, last_index) - 1;
+                let include_last = true; // Always include the last element of the sequence in the last entry
                 tmp_reads_buffer.add_read(
-                    KmersFlags(include_first as u8),
-                    &seq[(max(1, last_index) - 1)..seq.len()],
+                    KmersFlags(include_first as u8 | ((include_last as u8) << 1)),
+                    &seq[start_index..seq.len()],
                     H::get_bucket(last_hash) % (context.buckets_count as BucketIndexType),
                 );
             }
@@ -212,29 +206,27 @@ fn worker<H: HashFunctionFactory>(context: &ExecutionContext, receiver: &Receive
                 );
             }
         }
-        let mut data = data;
-        data.sequences.clear();
-        data.data.clear();
-        context.pool.push(data);
+        manager.return_obj(data);
     }
     tmp_reads_buffer.finalize();
 }
 
-fn reader(context: &ExecutionContext, sender: &Sender<QueueData>) {
-    while let Some(input) = context.files.pop() {
-        let mut data = Some(context.pool.pop().unwrap_or(QueueData::new(CHUNKS_SIZE)));
+fn reader(context: &ExecutionContext, manager: ObjectsPoolManager<QueueData, PathBuf>) {
+    while let Some(input) = manager.recv_obj() {
+        let mut data = manager.allocate();
         SequencesReader::process_file_extended(input, |x| {
             if x.seq.len() < context.k {
                 return;
             }
 
-            if unsafe { unlikely(!data.as_mut().unwrap_unchecked().push_sequences(x)) } {
-                sender.send(unsafe { data.take().unwrap_unchecked() });
-                data = Some(context.pool.pop().unwrap_or(QueueData::new(CHUNKS_SIZE)));
+            if unsafe { unlikely(!data.push_sequences(x)) } {
+                let mut tmp_data = manager.allocate();
+                swap(&mut data, &mut tmp_data);
+                manager.send(tmp_data);
             }
         });
-        if data.as_mut().unwrap().sequences.len() > 0 {
-            sender.send(unsafe { data.take().unwrap_unchecked() });
+        if data.sequences.len() > 0 {
+            manager.send(data);
         }
     }
 }
@@ -251,21 +243,13 @@ impl Pipeline {
         let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<KmersFlags>>::new(
             buckets_count,
             &output_path.join("bucket"),
+            None,
         );
 
         input_files.sort_by_cached_key(|file| std::fs::metadata(file).unwrap().len());
         input_files.reverse();
 
-        let files = ArrayQueue::new(input_files.len());
-        for input in input_files {
-            files.push(input);
-        }
-
-        let (sender, receiver) = bounded(WATERMARK_HIGH);
-
         let execution_context = ExecutionContext {
-            files,
-            pool: SegQueue::new(),
             k,
             m,
             buckets_count,
@@ -273,23 +257,29 @@ impl Pipeline {
             start_time,
         };
 
-        thread::scope(|s| {
-            let mut readers = Vec::new();
-            let sender_arc = Arc::new(sender);
-
-            for i in 0..16 {
-                let sender_arc = sender_arc.clone();
-                let execution_context = &execution_context;
-                readers.push(s.spawn(move |_| reader(execution_context, sender_arc.deref())));
-            }
-            drop(sender_arc);
-
-            for i in 0..16 {
-                s.spawn(|_| worker::<H>(&execution_context, &receiver));
-            }
-
-            readers.into_iter().for_each(|x| x.join().unwrap());
-        });
+        ThreadPoolsChain::run_double(
+            input_files,
+            ThreadPoolDefinition::new(
+                &execution_context,
+                CHUNKS_SIZE,
+                String::from("minimizer-bucketing-reader"),
+                16,
+                WATERMARK_HIGH,
+                |context, manager| {
+                    reader(context, manager);
+                },
+            ),
+            ThreadPoolDefinition::new(
+                &execution_context,
+                (),
+                String::from("minimizer-bucketing-writer"),
+                16,
+                WATERMARK_HIGH,
+                |context, manager| {
+                    worker::<H>(context, manager);
+                },
+            ),
+        );
 
         execution_context.buckets.finalize()
     }

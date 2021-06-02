@@ -25,7 +25,6 @@ use std::process::exit;
 use structopt::{clap::ArgGroup, StructOpt};
 
 mod benchmarks;
-mod binary_writer;
 mod compressed_read;
 mod debug_functions;
 mod fast_rand_bool;
@@ -34,7 +33,6 @@ pub mod hash_entry;
 mod hashes;
 mod intermediate_storage;
 pub mod libdeflate;
-mod multi_thread_buckets;
 mod pipeline;
 mod progress;
 mod reads_freezer;
@@ -42,13 +40,14 @@ mod rolling_kseq_iterator;
 mod rolling_minqueue;
 mod rolling_quality_check;
 mod sequences_reader;
-mod smart_bucket_sort;
 mod types;
 mod unitig_link;
 #[macro_use]
 mod utils;
 mod varint;
 mod vec_slice;
+
+pub const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 24;
 
 fn outputs_arg_group() -> ArgGroup<'static> {
     // As the attributes of the struct are executed before the struct
@@ -114,7 +113,7 @@ struct Cli {
 }
 
 type BucketingHash = NtHashIteratorFactory;
-type MergingHash = SeqHashFactory;
+type MergingHash = NtHashIteratorFactory; // SeqHashFactory;
 
 fn main() {
     let args = Cli::from_args();
@@ -166,7 +165,8 @@ fn main() {
             m,
         )
     } else {
-        Utils::generate_bucket_names(args.temp_dir.join("bucket"), BUCKETS_COUNT, Some("lz4"))
+        vec![PathBuf::from(".temp_files/bucket.16.lz4")]
+        // Utils::generate_bucket_names(args.temp_dir.join("bucket"), BUCKETS_COUNT, Some("lz4"))
     };
 
     let RetType { sequences, hashes } = if args.step <= StartingStep::KmersMerge {

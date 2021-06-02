@@ -5,13 +5,13 @@ use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use serde::ser::SerializeTuple;
 use serde::{Deserialize, Serialize, Serializer};
 
-use crate::binary_writer::BinaryWriter;
 use crate::hash_entry::Direction;
 use crate::intermediate_storage::{SequenceExtraData, VecReader};
-use crate::multi_thread_buckets::BucketWriter;
 use crate::types::BucketIndexType;
 use crate::varint::{decode_varint, encode_varint};
 use crate::vec_slice::VecSlice;
+use parallel_processor::binary_writer::BinaryWriter;
+use parallel_processor::multi_thread_buckets::BucketWriter;
 use std::fmt::{Debug, Formatter};
 
 #[repr(transparent)]
@@ -119,8 +119,8 @@ impl SequenceExtraData for UnitigIndex {
     }
 
     fn encode(&self, mut writer: impl Write) {
-        encode_varint(|b| writer.write(b).ok(), self.bucket() as u64);
-        encode_varint(|b| writer.write(b).ok(), self.index() as u64);
+        encode_varint(|b| writer.write_all(b).ok(), self.bucket() as u64);
+        encode_varint(|b| writer.write_all(b).ok(), self.index() as u64);
     }
 }
 
@@ -194,21 +194,23 @@ impl UnitigLink {
 }
 
 impl BucketWriter for UnitigLink {
-    type BucketType = BinaryWriter;
     type ExtraData = Vec<UnitigIndex>;
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Self::BucketType, extra_data: &Self::ExtraData) {
-        let writer = bucket.get_writer();
-        encode_varint(|b| writer.write(b), self.entry);
-        writer.write(&[self.flags.0]);
+    fn write_to(&self, mut bucket: impl Write, extra_data: &Self::ExtraData) {
+        encode_varint(|b| bucket.write_all(b), self.entry);
+        bucket.write_all(&[self.flags.0]);
 
         let entries = self.entries.get_slice(extra_data);
-        encode_varint(|b| writer.write(b), entries.len() as u64);
+        encode_varint(|b| bucket.write_all(b), entries.len() as u64);
 
         for entry in entries {
-            encode_varint(|b| writer.write(b), entry.bucket() as u64);
-            encode_varint(|b| writer.write(b), entry.index() as u64);
+            encode_varint(|b| bucket.write_all(b), entry.bucket() as u64);
+            encode_varint(|b| bucket.write_all(b), entry.index() as u64);
         }
+    }
+
+    fn get_size(&self) -> usize {
+        16 + self.entries.len() * 8
     }
 }

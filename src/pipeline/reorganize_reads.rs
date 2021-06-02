@@ -1,11 +1,9 @@
 use crate::intermediate_storage::{IntermediateReadsWriter, IntermediateSequencesStorage};
-use crate::multi_thread_buckets::MultiThreadBuckets;
 use crate::pipeline::links_compaction::LinkMapping;
 use crate::pipeline::Pipeline;
 use crate::reads_freezer::{FastaWriterConcurrentBuffer, ReadsFreezer};
 use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
-use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
 use crate::unitig_link::UnitigIndex;
 use crate::utils::Utils;
 use crossbeam::channel::*;
@@ -13,6 +11,8 @@ use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
 use nix::sys::ptrace::cont;
 use object_pool::Pool;
+use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
+use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
 use std::fs::File;
@@ -35,10 +35,10 @@ impl Pipeline {
         k: usize,
         m: usize,
     ) -> Vec<PathBuf> {
-        let start_time = Instant::now();
         let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<UnitigIndex>>::new(
             buckets_count,
             &output_path.join("reads_bucket"),
+            None,
         );
 
         let mut final_unitigs_file = Mutex::new(ReadsFreezer::optfile_splitted_compressed_lz4(

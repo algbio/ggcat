@@ -54,9 +54,9 @@ mod tests {
     use crate::intermediate_storage::{
         IntermediateReadsReader, IntermediateReadsWriter, VecReader,
     };
-    use crate::multi_thread_buckets::BucketType;
     use crate::varint::{decode_varint, encode_varint};
     use byteorder::WriteBytesExt;
+    use parallel_processor::multi_thread_buckets::BucketType;
     use rand::RngCore;
     use std::io::{Cursor, Write};
     use std::iter::FromIterator;
@@ -68,7 +68,7 @@ mod tests {
 
         for i in 0..100000 {
             result.clear();
-            encode_varint(|b| result.write(b), i);
+            encode_varint(|b| result.write_all(b), i);
             let mut cursor = Cursor::new(&result);
             let mut vecreader = VecReader::new(4096, &mut cursor);
             assert_eq!(i, decode_varint(|| Some(vecreader.read_byte())).unwrap());
@@ -100,10 +100,8 @@ mod tests {
         let mut writer = IntermediateReadsWriter::<()>::new("/tmp/test-encoding".as_ref(), 0);
         for read in sequences.iter() {
             tmp.clear();
-            let read = CompressedRead::new_from_plain(read.as_bytes(), &mut tmp);
-            let read = read.as_reference(&tmp);
-
-            writer.add_acgt_read(&(), read);
+            CompressedRead::from_plain_write_directly_to_buffer(read.as_bytes(), &mut tmp);
+            writer.write_bytes(tmp.as_slice());
         }
         writer.finalize();
 

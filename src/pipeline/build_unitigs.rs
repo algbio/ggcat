@@ -3,13 +3,11 @@ use crate::hash::HashableSequence;
 use crate::intermediate_storage::{
     IntermediateReadsReader, IntermediateReadsWriter, IntermediateSequencesStorage,
 };
-use crate::multi_thread_buckets::MultiThreadBuckets;
 use crate::pipeline::links_compaction::LinkMapping;
 use crate::pipeline::Pipeline;
 use crate::reads_freezer::{FastaWriterConcurrentBuffer, ReadsFreezer};
 use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
-use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
 use crate::unitig_link::{UnitigIndex, UnitigLink};
 use crate::utils::Utils;
 use crossbeam::channel::*;
@@ -17,6 +15,8 @@ use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
 use nix::sys::ptrace::cont;
 use object_pool::Pool;
+use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
+use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
 use std::collections::HashMap;
@@ -101,19 +101,6 @@ impl Pipeline {
 
             let mut count = 0;
             IntermediateReadsReader::<UnitigIndex>::new(read_file).for_each(|index, seq| {
-                if seq.to_string().as_str() == "TTTAAGGACAAGAAGATTTATCCCACCATTTCA" {
-                    println!("FOUND {:?}!", index);
-                }
-
-                // if !unitigs_hashmap.contains_key(&index) {
-                //     // println!(
-                //     //     "Unitig: {:?} => {}",
-                //     //     index,
-                //     //     unitigs_hashmap.contains_key(&index)
-                //     // );
-                //     return;
-                // }
-
                 let &(findex, is_start) = unitigs_hashmap.get(&index).unwrap();
                 final_sequences[findex] = Some((
                     CompressedReadIndipendent::from_read(&seq, &mut temp_storage),
@@ -171,7 +158,8 @@ impl Pipeline {
                         // }
                         temp_sequence.extend(
                             compr_read
-                                .sub_slice((k - 1)..compr_read.bases_count())
+                                // When two unitigs are merging, they share a full k length kmer
+                                .sub_slice(k..compr_read.bases_count())
                                 .as_bases_iter(),
                         );
                     }

@@ -1,4 +1,4 @@
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,19 +8,22 @@ use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 
-use crate::binary_writer::{BinaryWriter, StorageMode};
 use crate::fast_rand_bool::FastRandBool;
 use crate::hash_entry::Direction;
-use crate::multi_thread_buckets::{BucketWriter, BucketsThreadDispatcher, MultiThreadBuckets};
 use crate::pipeline::Pipeline;
-use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
 use crate::types::BucketIndexType;
 use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::utils::Utils;
 use crate::varint::{decode_varint, encode_varint};
 use crate::vec_slice::VecSlice;
+use crate::DEFAULT_BUFFER_SIZE;
 use byteorder::ReadBytesExt;
 use hashbrown::HashMap;
+use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
+use parallel_processor::multi_thread_buckets::{
+    BucketWriter, BucketsThreadDispatcher, MultiThreadBuckets,
+};
+use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::process::exit;
@@ -40,12 +43,17 @@ impl LinkMapping {
 }
 
 impl BucketWriter for LinkMapping {
-    type BucketType = BinaryWriter;
     type ExtraData = ();
 
-    fn write_to(&self, bucket: &mut Self::BucketType, extra_data: &Self::ExtraData) {
-        encode_varint(|b| bucket.get_writer().write(b), self.bucket as u64);
-        encode_varint(|b| bucket.get_writer().write(b), self.entry);
+    #[inline(always)]
+    fn write_to(&self, mut bucket: impl Write, _extra_data: &Self::ExtraData) {
+        encode_varint(|b| bucket.write_all(b), self.bucket as u64);
+        encode_varint(|b| bucket.write_all(b), self.entry);
+    }
+
+    #[inline(always)]
+    fn get_size(&self) -> usize {
+        16
     }
 }
 
@@ -65,8 +73,11 @@ impl Pipeline {
                     .as_ref()
                     .to_path_buf()
                     .join(format!("linksi{}", elab_index)),
-                StorageMode::Plain,
+                StorageMode::Plain {
+                    buffer_size: DEFAULT_BUFFER_SIZE,
+                },
             ),
+            None,
         );
 
         let mut result_map_buckets = MultiThreadBuckets::<BinaryWriter>::new(
@@ -75,6 +86,7 @@ impl Pipeline {
                 output_dir.as_ref().to_path_buf().join("results_map"),
                 StorageMode::AppendOrCreate,
             ),
+            None,
         );
 
         let mut final_buckets = MultiThreadBuckets::<BinaryWriter>::new(
@@ -83,6 +95,7 @@ impl Pipeline {
                 output_dir.as_ref().to_path_buf().join("unitigs_map"),
                 StorageMode::AppendOrCreate,
             ),
+            None,
         );
 
         links_inputs
@@ -398,9 +411,9 @@ impl Pipeline {
                     index, rem_links, not_links, join_links
                 );
                 totsum.fetch_add(rem_links, Ordering::Relaxed);
-                links_tmp.finalize(&current_unitigs_vec);
-                final_links_tmp.finalize(&final_unitigs_vec);
-                results_tmp.finalize(&());
+                links_tmp.finalize();
+                final_links_tmp.finalize();
+                results_tmp.finalize();
             });
 
         let final_buckets = final_buckets.finalize();

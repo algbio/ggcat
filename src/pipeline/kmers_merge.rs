@@ -12,26 +12,29 @@ use std::time::Instant;
 
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
-use crate::binary_writer::{BinaryWriter, StorageMode};
+use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use crate::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::hash::HashFunction;
 use crate::hash::{HashFunctionFactory, HashableSequence};
 use crate::hash_entry::Direction;
 use crate::hash_entry::HashEntry;
 use crate::intermediate_storage::{IntermediateReadsReader, SequenceExtraData};
-use crate::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
+use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use crate::pipeline::Pipeline;
 use crate::reads_freezer::ReadsFreezer;
 use crate::sequences_reader::FastaSequence;
-use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
+use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use crate::types::BucketIndexType;
 use crate::utils::Utils;
 use byteorder::{ReadBytesExt, WriteBytesExt};
+use crate::DEFAULT_BUFFER_SIZE;
+use hashbrown::HashMap;
+use std::process::exit;
 
 pub const READ_FLAG_INCL_BEGIN: u8 = (1 << 0);
 pub const READ_FLAG_INCL_END: u8 = (1 << 1);
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct KmersFlags(pub u8);
 
 impl SequenceExtraData for KmersFlags {
@@ -57,6 +60,8 @@ struct ReadRef<H: HashFunctionFactory + Clone> {
     flags: KmersFlags,
 }
 
+const MERGE_BUCKETS_COUNT: usize = 256;
+
 impl Pipeline {
     pub fn kmers_merge<
         H: HashFunctionFactory,
@@ -76,12 +81,16 @@ impl Pipeline {
         const NONE: Option<Mutex<BufWriter<File>>> = None;
         let mut hashes_buckets = MultiThreadBuckets::<BinaryWriter>::new(
             buckets_count,
-            &(out_directory.as_ref().join("hashes"), StorageMode::Plain),
+            &(out_directory.as_ref().join("hashes"), StorageMode::Plain {
+                buffer_size: DEFAULT_BUFFER_SIZE
+            }),
+            None
         );
 
         let sequences = Mutex::new(Vec::new());
 
         file_inputs.par_iter().for_each(|input| {
+            // let mut hashmap = HashMap::new();
 
             const MAX_HASHES_FOR_FLUSH: usize = 1024 * 64;
             let mut hashes_tmp = BucketsThreadDispatcher::new(MAX_HASHES_FOR_FLUSH, &hashes_buckets);
@@ -105,8 +114,8 @@ impl Pipeline {
 
             let mut read_index = 0;
 
-            let mut buckets: Vec<Vec<u8>> = vec![Vec::new(); 256];
-            let mut cmp_reads: Vec<Vec<ReadRef<H>>> = vec![Vec::new(); 256];
+            let mut buckets: Vec<Vec<u8>> = vec![Vec::new(); MERGE_BUCKETS_COUNT];
+            let mut cmp_reads: Vec<Vec<ReadRef<H>>> = vec![Vec::new(); MERGE_BUCKETS_COUNT];
             let mut buckets = &mut buckets[..];
             let mut cmp_reads = &mut cmp_reads[..];
 
@@ -114,27 +123,31 @@ impl Pipeline {
 
                 let decr_val = ((x.bases_count() == k) && (flags.0 & READ_FLAG_INCL_END) == 0) as usize;
 
-                let do_debug = false; //x.to_string().contains("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC");
+                // let do_debug = x.to_string().contains("TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
                 let hashes = H::new(x.sub_slice((1 - decr_val)..(k - decr_val)), m);
 
                 let minimizer = hashes.iter().min_by_key(|k| H::get_minimizer(*k)).unwrap();
 
-                if do_debug {
-                    let hashes1 = H::new(x.sub_slice(1..x.bases_count() - 1), m);
-                    let minimizer2 = hashes1.iter().min_by_key(|k| H::get_minimizer(*k)).unwrap();
+                // if do_debug {
+                //
+                //     // if !hashmap.contains_key(&minimizer) {
+                //         let hashes1 = H::new(x.sub_slice(1..x.bases_count() - 1), m);
+                //         let minimizer2 = hashes1.iter().min_by_key(|k| H::get_minimizer(*k)).unwrap();
+                //
+                //         let hashes2 = H::new(x.sub_slice(0..x.bases_count() - 1), m);
+                //         let minimizer3 = hashes2.iter().min_by_key(|k| H::get_minimizer(*k)).unwrap();
+                //
+                //
+                //         println!("ABCFlags: {} => {} M: {}/{}/{} // {}", flags.0, x.to_string(), minimizer, minimizer2, minimizer3, decr_val);
+                //
+                //         stdout().lock().flush().unwrap();
+                //     // }
+                //     // hashmap.insert(minimizer, ());
+                //     // assert!(minimizer == H::HashType::from(13777055726464398864) || minimizer == H::HashType::from(12838026436787689768));
+                // }
 
-                    let hashes2 = H::new(x.sub_slice(0..x.bases_count() - 1), m);
-                    let minimizer3 = hashes2.iter().min_by_key(|k| H::get_minimizer(*k)).unwrap();
-
-
-                    println!("ABCFlags: {} => {} M: {}/{}/{} // {}", flags.0, x.to_string(), minimizer, minimizer2, minimizer3, decr_val);
-
-                    stdout().lock().flush().unwrap();
-                    // assert!(minimizer == H::HashType::from(13777055726464398864) || minimizer == H::HashType::from(12838026436787689768));
-                }
-
-                let bucket = H::get_second_bucket(minimizer) % 256;
+                let bucket = H::get_second_bucket(minimizer) % (MERGE_BUCKETS_COUNT as BucketIndexType);
 
                 let slen = buckets[bucket as usize].len();
                 buckets[bucket as usize].extend_from_slice(x.get_compr_slice());
@@ -144,7 +157,7 @@ impl Pipeline {
 
             let mut m5 = 0;
 
-            for b in 0..256 {
+            for b in 0..MERGE_BUCKETS_COUNT {
                 #[derive(Copy, Clone)]
                 struct SimpleHash<HF: HashFunctionFactory> {
                     value: u64,
@@ -177,7 +190,7 @@ impl Pipeline {
                     }
                 }
 
-                let mut rcorrect_reads: Vec<(MH::HashType, usize)> = Vec::new();
+                let mut rcorrect_reads: Vec<(MH::HashType, usize, bool, bool)> = Vec::new();
                 let mut rhash_map = hashbrown::HashMap::with_capacity(4096); // , SimpleHashBuilder::<MH> { _phantom: PhantomData });
 
                 let mut backward_seq = Vec::new();
@@ -226,7 +239,7 @@ impl Pipeline {
                             read_len,
                         );
 
-                        // let tgtstr = read.to_string().contains("ATCTGTAGAAGGCATCTGATTAAACACCAGGT");;
+                        // let tgtstr = read.to_string().contains("TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");;
                         //
                         // do_debug |= tgtstr;
 
@@ -239,7 +252,8 @@ impl Pipeline {
                         struct MapEntry {
                             count: usize,
                             position: u32,
-                            ignored: bool
+                            begin_ignored: bool,
+                            end_ignored: bool,
                         }
 
                         let last_hash_pos = read_len - k;
@@ -247,15 +261,23 @@ impl Pipeline {
 
                         for (idx, hash) in hashes.iter().enumerate() {
                             let position = (read_start * 4 + idx);
-                            let ignored = (flags.0 & READ_FLAG_INCL_BEGIN == 0 && idx == 0) ||
-                                (flags.0 & READ_FLAG_INCL_END == 0 && idx == last_hash_pos);
+                            let begin_ignored = flags.0 & READ_FLAG_INCL_BEGIN == 0 && idx == 0;
+                            let end_ignored = flags.0 & READ_FLAG_INCL_END == 0 && idx == last_hash_pos;
                             assert!(idx <= last_hash_pos);
                             did_max |= idx == last_hash_pos;
 
-                            let entry = rhash_map.entry(hash).or_insert(MapEntry { position: position as u32, count: 0, ignored });
+                            let entry = rhash_map.entry(hash).or_insert(MapEntry { position: position as u32, begin_ignored, count: 0, end_ignored });
+
+                            // if (entry.begin_ignored !=  begin_ignored) ||
+                            //     (entry.end_ignored != end_ignored) {
+                            //     // println!("Bug found on hash {} in bucket {}", hash, input.clone().display());
+                            //     // exit(0);
+                            // }
+
                             entry.count += 1;
-                            if entry.count == min_multiplicity && !ignored {
-                                rcorrect_reads.push((hash, position));
+
+                            if entry.count == min_multiplicity {
+                                rcorrect_reads.push((hash, position, begin_ignored, end_ignored));
                             }
                         }
                         assert!(did_max);
@@ -263,10 +285,10 @@ impl Pipeline {
                         tot_chars += read.bases_count();
                     }
 
-                    if do_debug {
-                        println!("ABC Processing new SEQUENCE!");
-                    }
-                    for (hash, read_start) in rcorrect_reads.iter() {
+                    // if do_debug {
+                    //     println!("ABC Processing new SEQUENCE!");
+                    // }
+                    for (hash, read_start, begin_ignored, end_ignored) in rcorrect_reads.iter() {
 
                         let mut read = CompressedRead::from_compressed_reads(
                             &buckets[b][..],
@@ -274,15 +296,15 @@ impl Pipeline {
                             k,
                         );
 
-                        if do_debug {
-                            println!("ABC Processing new hash seq {}!", read.to_string());
-                        }
-                        // // TTTTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGCG
+                        // if do_debug {
+                        //     println!("ABC Processing new hash seq {}!", read.to_string());
+                        // }
+                        // // // TTTTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGCG
                         // //   TTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGCAG
                         // let mut debug = false;
-                        // if read.to_string().as_str().contains("CATTGTCATGCTATTTTGCCTAGCCCTGTTTATCACATGGGACTCATACACATGTAATGAATC") {
-                        //     println!("Bucketing works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! {}", *hash);
-                        //     debug = true;
+                        // if read.to_string().as_str().contains("TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
+                        //     println!("Bucketing works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! {} {} {}", read.to_string(), begin_ignored, end_ignored);
+                        //     // do_debug = true;
                         // }
 
                         let rhentry = rhash_map.get_mut(hash).unwrap();
@@ -291,9 +313,9 @@ impl Pipeline {
                         }
                         rhentry.count = usize::MAX;
 
-                        if do_debug {
-                            println!("ABCMerging: {} => {}", read.to_string(), rhentry.ignored);
-                        }
+                        // if do_debug {
+                        //     println!("ABCMerging: {} => {}", read.to_string(), rhentry.ignored);
+                        // }
 
                         backward_seq.clear();
                         unsafe {
@@ -318,17 +340,9 @@ impl Pipeline {
                             // if out_base_index_fw == 0 {
                             //     assert_eq!(MH::new(read, k).iter().next().unwrap(), *hash);
                             // }
-                            'ext_loop: loop {
+                            return 'ext_loop: loop {
                                 let mut count = 0;
                                 current_hash = temp_data.0;
-
-                                // if out_base_index_fw == 0 {
-                                //     assert_eq!(MH::new(read, k).iter().next().unwrap(), current_hash);
-                                // }
-                                //
-                                // if format!("{}", current_hash).as_str() == "6941243556408711692" {
-                                //     println!("AAA")
-                                // }
                                 let mut ocount = 0;
                                 let tmp_hash = compute_hash_fw(current_hash, k, unsafe { read.get_base_unchecked(out_base_index_fw) }, 0);
                                 for idx in 0..4 {
@@ -336,122 +350,62 @@ impl Pipeline {
                                     if let Some(hash) = rhash_map.get(&bw_hash) {
                                         if hash.count >= min_multiplicity {
                                             if ocount > 0 {
-                                                // println!("ABCSkip multiple found!");
-                                                // Multiple backward letters, cannot extend forward
-                                                break 'ext_loop;
+                                                break 'ext_loop (temp_data.0, false);
                                             }
                                             ocount += 1;
                                         }
                                     }
                                 }
 
-
-                                let mut debug = true;
-                                // if read.to_string().contains("ATTCTCTCAGGCCTTGTCTTTGATTCTAATGGCGGTGTCCCTTTCTTTTCTCATCTTGTGTT") {
-                                //     println!("ERROR!!!!");
-                                //     debug = false;
-                                // }
-
                                 for idx in 0..4 {
                                     let new_hash = compute_hash_fw(current_hash, k, unsafe { read.get_base_unchecked(out_base_index_fw) }, idx);
-                                    // if out_base_index_fw == 0 {
-                                    //     assert_eq!(MH::new(read, k).iter().next().unwrap(), current_hash);
-                                    // }
                                     if let Some(hash) = rhash_map.get(&new_hash) {
                                         if hash.count >= min_multiplicity {
-                                            // println!("ABCFound entry!!");
-
                                             count += 1;
                                             temp_data = (new_hash, idx, hash.position);
                                         }
-
-                                        // if out_base_index_fw == 0 {
-                                        //     let xnew_read = CompressedRead::from_compressed_reads(
-                                        //         &buckets[b][..],
-                                        //         hash.0,
-                                        //         k,
-                                        //     );
-                                        //
-                                        //     // let xnew_read1 = CompressedRead::from_compressed_reads(
-                                        //     //     &buckets[b][..],
-                                        //     //     hash.0+1,
-                                        //     //     k-1,
-                                        //     // );
-                                        //     lastxread1 = xnew_read;
-                                        //
-                                        //     if debug {
-                                        //         // println!("XXX {} === {} / {}", xnew_read.sub_slice(1..k).to_string(), &xnew_read1.sub_slice(0..k-1).to_string(), hash.0);
-                                        //         let a = lastxread.sub_slice(1..k).to_string();
-                                        //         let b = xnew_read.sub_slice(0..k - 1).to_string();
-                                        //
-                                        //         if a != b { //new_hash == 17583997638664642746 {
-                                        //             let h0 = MH::new(read, k).iter().next().unwrap();
-                                        //             let h1 = MH::new(lastxread, k).iter().next().unwrap();
-                                        //             let h2 = MH::new(xnew_read, k).iter().next().unwrap();
-                                        //             let w: u64 = unsafe { core::ptr::read(&h2 as *const _ as *const u64) };
-                                        //             let bytes = w.to_le_bytes();
-                                        //
-                                        //             println!("H0: {} H1: {} H2: {} CH: {} NH: {}", h0, h1, h2, current_hash,
-                                        //                      compute_hash_fw(current_hash, k, unsafe { read.get_base_unchecked(out_base_index_fw) }, idx));
-                                        //
-                                        //             for i in 0..10 {
-                                        //                 println!("{} === {} / {} ==> {} // {} // {}", a, b, hash.0, output.len(), count, idx);
-                                        //             }
-                                        //             assert_eq!(xnew_read.to_string().as_bytes().iter().rev().map(|x| *x as char).collect::<String>(), CompressedRead::from_compressed_reads(&bytes[..], 0, k).to_string());
-                                        //             // assert!(count > 2);
-                                        //             // let x = H::new(a.as_bytes(), k-1).unwrap();
-                                        //             // let y = H::new(b.as_bytes(), k-1).unwrap();
-                                        //
-                                        //             // println!("Added letter {} {} / {} {}  [{}/{}/{}]", H_INV_LETTERS[start_index.1], count, std::str::from_utf8(output).unwrap(), out_base_index, x.iter().next().unwrap(), y.iter().next().unwrap(), new_hash);
-                                        //         }
-                                        //     }
-                                        //     // else {
-                                        //     //     println!("AAA");
-                                        //     // }
-                                        // }
                                     }
                                 }
-                                // lastxread = lastxread1;
+
                                 if count == 1 {
 
                                     let entryref = rhash_map.get_mut(&temp_data.0).unwrap();
 
                                     let already_used = entryref.count == usize::MAX;
-                                    let contig_break = entryref.ignored;
 
-                                    // Found a cycle unitig or a copy from another bucket
-                                    if already_used || contig_break {
-                                        if do_debug {
-                                            println!("ABC Skipping!!");
-                                        }
-                                        break;
+                                    // Found a cycle unitig
+                                    if already_used {
+                                        break (temp_data.0, false);
                                     }
 
                                     // Flag the entry as already used
                                     entryref.count = usize::MAX;
 
-                                    // if (output.len() % (1024 * 1024) == 0) {
-                                    //     println!("Adding: {} / {}", start_index.1, output.len());
-                                    // }
+                                    output.push(Utils::decompress_base(temp_data.1));
+
+                                    // Found a continuation into another bucket
+                                    let contig_break = entryref.begin_ignored || entryref.end_ignored;
+                                    if contig_break {
+                                        break (temp_data.0, contig_break);
+                                    }
+
                                     read = CompressedRead::from_compressed_reads(
                                         &buckets[b][..],
                                         temp_data.2 as usize,
                                         k,
                                     );
-                                    if do_debug {
-                                        println!("ABCExtending {} / {}!", read.to_string(), temp_data.1);
-                                    }
-                                    output.push(Utils::decompress_base(temp_data.1));
 
                                 } else {
-                                    break;
+                                    break (temp_data.0, false);
                                 }
-                            }
-                            current_hash
+                            };
                         };
 
-                        let mut fw_hash = try_extend_function(&mut forward_seq, MH::manual_roll_forward, 0, MH::manual_roll_reverse, k - 1);
-                        let mut bw_hash = try_extend_function(&mut backward_seq, MH::manual_roll_reverse, k - 1, MH::manual_roll_forward, 0);
+                        let (mut fw_hash, fwd_ignored) = try_extend_function(&mut forward_seq, MH::manual_roll_forward, 0, MH::manual_roll_reverse, k - 1);
+                        let (mut bw_hash, bwd_ignored) = try_extend_function(&mut backward_seq, MH::manual_roll_reverse, k - 1, MH::manual_roll_forward, 0);
+
+                        let fwd_ignored = if forward_seq.len() == k { *end_ignored } else { fwd_ignored };
+                        let bwd_ignored = if backward_seq.len() == 0 { *begin_ignored } else { bwd_ignored };
 
                         let out_seq = if backward_seq.len() > 0 {
                             backward_seq.reverse();
@@ -462,18 +416,13 @@ impl Pipeline {
                             &forward_seq[..]
                         };
 
-                        fw_hash = MH::manual_remove_only_forward(fw_hash, k, Utils::compress_base(out_seq[out_seq.len() - k]));
-                        bw_hash = MH::manual_remove_only_reverse(bw_hash, k, Utils::compress_base(out_seq[k - 1]));
-
-                        // if fw_hash == 225543591449317574 {
-                        //
+                        // if std::str::from_utf8(out_seq).unwrap().contains("TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
+                        //     println!("Bucketing after hashing works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! {}", read.to_string());
+                        //     // do_debug = true;
                         // }
 
-                        // dbg_seq.clear();
-                        // dbg_seq.extend(out_seq.iter().map(|x| Utils::compress_base(*x)));
-                        //
-                        // assert_eq!(fw_hash, MH::new(&dbg_seq[dbg_seq.len() - k+1..dbg_seq.len()], k-1).iter().next().unwrap());
-                        // assert_eq!(bw_hash, MH::new(&dbg_seq[0..k-1], k-1).iter().next().unwrap());
+                        // fw_hash = MH::manual_remove_only_forward(fw_hash, k, Utils::compress_base(out_seq[out_seq.len() - k]));
+                        // bw_hash = MH::manual_remove_only_reverse(bw_hash, k, Utils::compress_base(out_seq[k - 1]));
 
                         idx_str.clear();
                         idx_str.write_fmt(format_args!("{}", read_index));
@@ -484,33 +433,28 @@ impl Pipeline {
                             qual: None
                         });
 
-                        if do_debug {
-                            println!("ABC Output sequence: {} // F{} B{} HASH: {}", std::str::from_utf8(out_seq).unwrap(), fw_hash, bw_hash, hash);
+                        if fwd_ignored {
+                            let fw_hash_sr = HashEntry {
+                                hash: fw_hash,
+                                bucket: bucket_index as u32,
+                                entry: read_index,
+                                direction: Direction::Forward
+                            };
+                            let fw_bucket_index = MH::get_bucket(fw_hash) % (buckets_count as BucketIndexType);
+                            hashes_tmp.add_element(fw_bucket_index, &(), fw_hash_sr);
+
                         }
 
-                        if std::str::from_utf8(out_seq).unwrap().contains("CATTGTCATGCTATTTTGCCTAGCCCTGTTTATCACATGGGACTCATACACATGTAATGAATC") {
-                            println!("Reading works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                        if bwd_ignored {
+                            let bw_hash_sr = HashEntry {
+                                hash: bw_hash,
+                                bucket: bucket_index as u32,
+                                entry: read_index,
+                                direction: Direction::Backward
+                            };
+                            let bw_bucket_index = MH::get_bucket(bw_hash) % (buckets_count as BucketIndexType);
+                            hashes_tmp.add_element(bw_bucket_index, &(), bw_hash_sr);
                         }
-
-
-                        let fw_hash_sr = HashEntry {
-                            hash: fw_hash,
-                            bucket: bucket_index as u32,
-                            entry: read_index,
-                            direction: Direction::Forward
-                        };
-                        let fw_bucket_index = MH::get_bucket(fw_hash) % (buckets_count as BucketIndexType);
-                        hashes_tmp.add_element(fw_bucket_index, &(), fw_hash_sr);
-                        // fw_hash_sr.serialize_to_file(&mut hashes_buckets[]);
-
-                        let bw_hash_sr = HashEntry {
-                            hash: bw_hash,
-                            bucket: bucket_index as u32,
-                            entry: read_index,
-                            direction: Direction::Backward
-                        };
-                        let bw_bucket_index = MH::get_bucket(bw_hash) % (buckets_count as BucketIndexType);
-                        hashes_tmp.add_element(bw_bucket_index, &(), bw_hash_sr);
 
                         read_index += 1;
                     }
@@ -525,11 +469,11 @@ impl Pipeline {
                 (kmers_unique as f32) / (kmers_cnt as f32) * 100.0,
                 m5,
                 (m5 as f32) / (kmers_unique as f32) * 100.0,
-                buckets.iter().map(|x| x.len()).sum::<usize>() / 256, // set
+                buckets.iter().map(|x| x.len()).sum::<usize>() / MERGE_BUCKETS_COUNT, // set
                 start_time.elapsed()
             );
             writer.finalize();
-            hashes_tmp.finalize(&())
+            hashes_tmp.finalize()
         });
 
         RetType {

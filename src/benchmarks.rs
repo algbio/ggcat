@@ -356,8 +356,8 @@ mod tests {
         b.iter(|| {
             ser_vec.clear();
             for test in test_vec.iter() {
-                encode_varint(|b| ser_vec.write(b), test.x as u64);
-                encode_varint(|b| ser_vec.write(b), test.y as u64);
+                encode_varint(|b| ser_vec.write_all(b), test.x as u64);
+                encode_varint(|b| ser_vec.write_all(b), test.y as u64);
                 // ser_vec.write_u64::<LittleEndian>(test.x as u64);
                 // ser_vec.write_u64::<LittleEndian>(test.y as u64);
             }
@@ -377,21 +377,15 @@ mod tests {
         // let str0 = b"NGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNNGNNN";
         // let str1 = b"NTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNNTNNN";
 
-        let str0 = b"TTTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGC";
-        let str1 = b"TTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGCA";
+        let str0 = b"TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let str1 = b"TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAT";
 
         let h = 6116442737687281716u64;
 
-        let hash = NtHashIterator::new(&str0[..], 62).unwrap();
-        println!(
-            "{:?}",
-            hash.iter().map(|x| x.rotate_left(1)).collect::<Vec<_>>()
-        );
-        let hash1 = NtHashIterator::new(&str1[..], 61).unwrap();
-        println!(
-            "{:?}",
-            hash1.iter().map(|x| x.rotate_left(1)).collect::<Vec<_>>()
-        )
+        let hash = NtHashIterator::new(&str0[..], 15).unwrap();
+        println!("{:?}", hash.iter().collect::<Vec<_>>());
+        let hash1 = NtHashIterator::new(&str1[..], 15).unwrap();
+        println!("{:?}", hash1.iter().collect::<Vec<_>>())
     }
 
     #[test]

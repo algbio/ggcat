@@ -1,11 +1,7 @@
-use rand::{thread_rng, RngCore};
+use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
 use std::cell::UnsafeCell;
-use std::mem::{size_of, swap};
-use std::ops::{Add, Shr};
-use std::slice::from_raw_parts_mut;
-use std::time::Instant;
+use std::mem::size_of;
 
 type DataType = u64;
 type IndexType = usize;
@@ -71,7 +67,7 @@ fn smart_radix_sort_<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T], shi
         uc: UnsafeCell::new(data),
     };
 
-    let mut elab_subarray = |i: usize| {
+    let elab_subarray = |i: usize| {
         let data_ptr = unsafe { std::ptr::read(data_ptr.uc.get()) };
         let slice = &mut data_ptr[counts[i] as usize..counts[i + 1] as usize];
 
@@ -96,30 +92,36 @@ fn smart_radix_sort_<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T], shi
             .for_each(elab_subarray);
     }
 }
-
-#[test]
-fn test_radix_sort() {
-    let mut x = vec![];
-
-    let mut rand = thread_rng();
-
-    const EL_COUNT: usize = 1024 * 1024 * 1024 * 4;
-    x.reserve(EL_COUNT);
-
-    for i in 0..EL_COUNT {
-        x.push(((rand.next_u64()) as DataType));
-    }
-
-    // let mut cpy = x.clone();
-
-    let now = Instant::now();
-    // smart_radix_sort::<true>(x.as_mut_slice(), ((size_of::<DataType>() - 1) * 8) as u8);
-    println!("RS: {}", now.elapsed().as_secs_f32());
-    assert!(x.is_sorted());
-
-    // let now = Instant::now();
-    // cpy.sort();
-    // println!("SS: {}", now.elapsed().as_secs_f32());
-
-    // assert_eq!(x, cpy);
-}
+//
+// mod tests {
+//     use crate::smart_bucket_sort::DataType;
+//     use rand::{thread_rng, RngCore};
+//     use std::time::Instant;
+//
+//     #[test]
+//     fn test_radix_sort() {
+//         let mut x = vec![];
+//
+//         let mut rand = thread_rng();
+//
+//         const EL_COUNT: usize = 1024 * 1024 * 1024 * 4;
+//         x.reserve(EL_COUNT);
+//
+//         for i in 0..EL_COUNT {
+//             x.push(((rand.next_u64()) as DataType));
+//         }
+//
+//         // let mut cpy = x.clone();
+//
+//         let now = Instant::now();
+//         // smart_radix_sort::<true>(x.as_mut_slice(), ((size_of::<DataType>() - 1) * 8) as u8);
+//         println!("RS: {}", now.elapsed().as_secs_f32());
+//         assert!(x.is_sorted());
+//
+//         // let now = Instant::now();
+//         // cpy.sort();
+//         // println!("SS: {}", now.elapsed().as_secs_f32());
+//
+//         // assert_eq!(x, cpy);
+//     }
+// }

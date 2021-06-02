@@ -1,6 +1,7 @@
 use crate::hash::HashableSequence;
 use crate::utils::Utils;
 use crate::varint::encode_varint;
+use std::io::Write;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::ops::{Index, Range};
@@ -41,6 +42,11 @@ impl CompressedReadIndipendent {
 }
 
 impl<'a> CompressedRead<'a> {
+    pub fn from_plain_write_directly_to_buffer(seq: &'a [u8], buffer: &mut Vec<u8>) {
+        encode_varint(|b| buffer.extend_from_slice(b), seq.len() as u64);
+        Self::new_from_plain(seq, buffer);
+    }
+
     pub fn new_from_plain(seq: &'a [u8], storage: &mut Vec<u8>) -> CompressedReadIndipendent {
         let start = storage.len() * 4;
         for chunk in seq.chunks(16) {
@@ -86,6 +92,11 @@ impl<'a> CompressedRead<'a> {
             bases_count,
         )
     }
+
+    // pub fn write_to(&mut self, mut writer: impl Write) {
+    //     encode_varint(|b| writer.write(b), self.bases_count() as u64);
+    //     wr.write(self.get_compr_slice());
+    // }
 
     pub fn get_compr_slice(&self) -> &[u8] {
         unsafe { from_raw_parts(self.data, (self.size + self.start as usize + 3) / 4) }

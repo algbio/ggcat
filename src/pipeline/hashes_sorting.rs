@@ -7,15 +7,16 @@ use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 
-use crate::binary_writer::{BinaryWriter, StorageMode};
 use crate::fast_rand_bool::FastRandBool;
 use crate::hash::{HashFunctionFactory, HashTraitType};
 use crate::hash_entry::{Direction, HashEntry};
-use crate::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use crate::pipeline::Pipeline;
-use crate::smart_bucket_sort::{smart_radix_sort, SortKey};
 use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::vec_slice::VecSlice;
+use crate::DEFAULT_BUFFER_SIZE;
+use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
+use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
+use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::marker::PhantomData;
@@ -28,7 +29,13 @@ impl Pipeline {
     ) -> Vec<PathBuf> {
         let mut links_buckets = MultiThreadBuckets::<BinaryWriter>::new(
             buckets_count,
-            &(output_dir.as_ref().join("links"), StorageMode::Plain),
+            &(
+                output_dir.as_ref().join("links"),
+                StorageMode::Plain {
+                    buffer_size: DEFAULT_BUFFER_SIZE,
+                },
+            ),
+            None,
         );
 
         file_hashes_inputs
@@ -86,20 +93,6 @@ impl Pipeline {
                             (VecSlice::EMPTY, VecSlice::new(unitigs_vec.len() - 1, 1))
                         };
 
-                        if (x[fw].bucket == 0 && x[fw].entry == 394310)
-                            || (x[bw].bucket == 0 && x[bw].entry == 394310)
-                        {
-                            println!(
-                                "Found while hashing! {:?}/{:?} {:?}/{:?} [{}/{}]",
-                                x[fw].bucket,
-                                x[fw].entry,
-                                x[bw].bucket,
-                                x[bw].entry,
-                                x[fw].hash,
-                                x[bw].hash
-                            );
-                        }
-
                         links_tmp.add_element(
                             x[fw].bucket,
                             &unitigs_vec,
@@ -119,14 +112,9 @@ impl Pipeline {
                                 entries: slice_bw,
                             },
                         );
-
-                        // println!(
-                        //     "A: [{}]/{} B: [{}]{}",
-                        //     x[0].bucket, x[0].entry, x[1].bucket, x[1].entry
-                        // );
                     }
                 }
-                links_tmp.finalize(&unitigs_vec);
+                links_tmp.finalize();
                 println!("Done {}!", index);
             });
         links_buckets.finalize()
