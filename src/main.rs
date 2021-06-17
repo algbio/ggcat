@@ -104,6 +104,8 @@ struct Cli {
     number: usize, // Tests built bloom filter against this file for coverage tests
     // #[structopt(short = "f", requires = "elabbloom")]
     // coverage: Option<String>,
+    #[structopt(short = "j", long, default_value = "16")]
+    threads_count: usize,
 
     // Enables output compression
     // #[structopt(short, requires = "output")]
@@ -161,6 +163,7 @@ fn main() {
             args.input,
             args.temp_dir.as_path(),
             BUCKETS_COUNT,
+            args.threads_count,
             k,
             m,
         )

@@ -2,11 +2,6 @@ use std::io::Cursor;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
-use rand::{thread_rng, RngCore};
-use rayon::iter::IndexedParallelIterator;
-use rayon::iter::IntoParallelRefIterator;
-use rayon::iter::ParallelIterator;
-
 use crate::fast_rand_bool::FastRandBool;
 use crate::hash::{HashFunctionFactory, HashTraitType};
 use crate::hash_entry::{Direction, HashEntry};
@@ -15,8 +10,13 @@ use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::vec_slice::VecSlice;
 use crate::DEFAULT_BUFFER_SIZE;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
+use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
+use rand::{thread_rng, RngCore};
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::ParallelIterator;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::marker::PhantomData;
@@ -42,7 +42,10 @@ impl Pipeline {
             .par_iter()
             .enumerate()
             .for_each(|(index, input)| {
-                let mut links_tmp = BucketsThreadDispatcher::new(65536, &links_buckets);
+                let mut links_tmp = BucketsThreadDispatcher::new(
+                    MemoryDataSize::from_kibioctets(64.0),
+                    &links_buckets,
+                );
 
                 let mut rand_bool = FastRandBool::new();
 

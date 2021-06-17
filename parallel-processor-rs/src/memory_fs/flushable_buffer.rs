@@ -4,9 +4,13 @@ use std::sync::{Arc, Weak};
 
 use parking_lot::{Mutex, RwLock};
 
+use crate::memory_data_size::*;
+use crate::memory_fs::allocator::{AllocatedChunk, CHUNKS_ALLOCATOR};
 use crate::memory_fs::buffer_manager::BUFFER_MANAGER;
-use crate::memory_fs::concurrent_memory_chunk::ConcurrentMemoryChunk;
+use crate::memory_fs::FILES_FLUSH_HASH_MAP;
 use parking_lot::lock_api::RawRwLock;
+use std::panic::Location;
+use std::path::PathBuf;
 
 pub enum FlushMode {
     Append,
@@ -14,84 +18,78 @@ pub enum FlushMode {
 }
 
 pub struct FlushableBuffer {
-    pub(crate) buffer: ConcurrentMemoryChunk,
-    pub(crate) flush_pending_lock: RwLock<()>,
-    pub(crate) underlying_file: Arc<Mutex<File>>,
+    buffer: AllocatedChunk,
+    pub(crate) underlying_file: Arc<(PathBuf, Mutex<File>)>,
     pub(crate) flush_mode: FlushMode,
-    pub(crate) request_id: AtomicU32,
     _private: (),
 }
 
 impl Drop for FlushableBuffer {
     fn drop(&mut self) {
-        BUFFER_MANAGER.notify_drop(self.buffer.capacity())
+        if Arc::strong_count(&self.underlying_file) == 1 {
+            unsafe {
+                FILES_FLUSH_HASH_MAP
+                    .as_mut()
+                    .unwrap()
+                    .lock()
+                    .entry(self.underlying_file.0.clone())
+                    .or_insert(Vec::new())
+                    .push(self.underlying_file.clone())
+            }
+        }
+
+        BUFFER_MANAGER.notify_drop()
     }
 }
 
 impl FlushableBuffer {
-    pub fn new_alloc(
-        file: Arc<Mutex<File>>,
-        size: usize,
-        flush_mode: FlushMode,
-    ) -> Arc<FlushableBuffer> {
+    #[track_caller]
+    pub fn new_alloc(file: Arc<(PathBuf, Mutex<File>)>, flush_mode: FlushMode) -> FlushableBuffer {
         let ret = FlushableBuffer {
-            buffer: ConcurrentMemoryChunk::new(size),
-            flush_pending_lock: RwLock::new(()),
+            buffer: CHUNKS_ALLOCATOR.request_chunk(chunk_usage!(FileBuffer {
+                path: Location::caller().to_string() //String::from("Flushable buffer")
+            })),
             underlying_file: file,
             flush_mode,
-            request_id: AtomicU32::new(0),
             _private: (),
         };
 
-        BUFFER_MANAGER.notify_alloc(ret.buffer.capacity());
-        Arc::new(ret)
+        BUFFER_MANAGER.notify_alloc();
+        ret
+    }
+
+    #[inline(always)]
+    pub fn write_bytes_noextend(&self, data: &[u8]) -> bool {
+        self.buffer.write_bytes_noextend(data)
+    }
+
+    #[inline(always)]
+    pub fn has_space_for(&self, data_len: usize) -> bool {
+        self.buffer.has_space_for(data_len)
     }
 
     pub fn from_existing_memory_ready_to_flush(
-        file: Arc<Mutex<File>>,
-        buffer: Vec<u8>,
+        file: Arc<(PathBuf, Mutex<File>)>,
+        buffer: AllocatedChunk,
         flush_mode: FlushMode,
-    ) -> Arc<FlushableBuffer> {
-        BUFFER_MANAGER.notify_alloc(buffer.capacity());
+    ) -> FlushableBuffer {
+        BUFFER_MANAGER.notify_alloc();
 
-        Arc::new(FlushableBuffer {
-            buffer: ConcurrentMemoryChunk::from_memory(buffer),
-            flush_pending_lock: {
-                let lock = RwLock::new(());
-                unsafe { lock.raw().lock_exclusive() };
-                lock
-            },
+        FlushableBuffer {
+            buffer,
             underlying_file: file,
             flush_mode,
-            request_id: AtomicU32::new(0),
             _private: (),
-        })
-    }
-
-    pub fn wait_for_flush(&self) {
-        self.flush_pending_lock.read();
-    }
-
-    pub fn get_flush_handle(self: &Arc<FlushableBuffer>) -> FlushingBufferHandle {
-        FlushingBufferHandle {
-            request_id: self.request_id.load(Ordering::Relaxed),
-            underlying: Arc::downgrade(self),
         }
     }
-}
 
-pub struct FlushingBufferHandle {
-    request_id: u32,
-    underlying: Weak<FlushableBuffer>,
-}
+    #[inline(always)]
+    pub fn get_buffer(&self) -> &[u8] {
+        self.buffer.get()
+    }
 
-impl FlushingBufferHandle {
-    pub fn wait_flush(self) {
-        if let Some(buffer) = self.underlying.upgrade() {
-            if self.request_id == buffer.request_id.load(Ordering::Relaxed) {
-                // Wait for the buffer to be flushed
-                buffer.flush_pending_lock.read();
-            }
-        }
+    #[inline(always)]
+    pub fn clear_buffer(&self) {
+        self.buffer.clear();
     }
 }

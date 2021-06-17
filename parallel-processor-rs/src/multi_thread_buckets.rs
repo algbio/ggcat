@@ -1,16 +1,15 @@
-
-
 use crate::types::BucketIndexType;
-use parking_lot::{RwLock};
+use parking_lot::RwLock;
 use rand::{thread_rng, RngCore};
 use rayon::iter::ParallelIterator;
 
-
+use crate::memory_data_size::*;
+use crate::Utils;
 use std::cmp::{max, min};
 use std::io::Write;
 use std::marker::PhantomData;
 use std::mem::swap;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 
 pub trait BucketType: Send {
     type InitType: ?Sized;
@@ -53,8 +52,7 @@ impl<B: BucketType> MultiThreadBuckets<B> {
         init_data: &B::InitType,
         alternative_data: Option<(&B::InitType, DecimationFactor)>,
     ) -> MultiThreadBuckets<B> {
-        let mut buckets = Vec::new();
-        buckets.reserve(size);
+        let mut buckets = Vec::with_capacity(size);
 
         for i in 0..size {
             let init_data = match &alternative_data {
@@ -130,7 +128,7 @@ pub struct BucketsThreadDispatcher<'a, B: BucketType, T: BucketWriter + Clone> {
 
 impl<'a, B: BucketType, T: BucketWriter + Clone> BucketsThreadDispatcher<'a, B, T> {
     pub fn new(
-        max_buffersize: usize,
+        max_buffersize: MemoryDataSize,
         mtb: &'a MultiThreadBuckets<B>,
     ) -> BucketsThreadDispatcher<'a, B, T> {
         let mut thread_data = Vec::new();
@@ -140,21 +138,21 @@ impl<'a, B: BucketType, T: BucketWriter + Clone> BucketsThreadDispatcher<'a, B, 
         let mut rand_max_buffer_size = max_buffersize;
 
         for _i in 0..mtb.buckets.len() {
-            let fraction = (randomval.next_u64() as f64 / (u64::MAX as f64)) * 0.40 - 0.20;
-            let capacity = ((max_buffersize as f64) * (1.0 + fraction)) as usize;
-            thread_data.push(Vec::with_capacity(capacity));
-            rand_max_buffer_size = max(rand_max_buffer_size, capacity);
+            let fraction = (randomval.next_u32() as f64 / (u32::MAX as f64)) * 0.40 - 0.20;
+            let capacity = max_buffersize * (1.0 + fraction);
+            thread_data.push(Vec::with_capacity(capacity.as_bytes()));
+            rand_max_buffer_size = rand_max_buffer_size.max(capacity);
         }
 
         Self {
             mtb,
             thread_data,
-            max_bucket_size: rand_max_buffer_size,
+            max_bucket_size: rand_max_buffer_size.as_bytes(),
             _phantom: PhantomData,
         }
     }
+
     #[inline]
-    #[track_caller]
     pub fn add_element(&mut self, bucket: BucketIndexType, extra_data: &T::ExtraData, element: T) {
         let bucket_buf = &mut self.thread_data[bucket as usize];
         if element.get_size() + bucket_buf.len() > min(bucket_buf.capacity(), self.max_bucket_size)

@@ -20,6 +20,7 @@ use crate::DEFAULT_BUFFER_SIZE;
 use byteorder::ReadBytesExt;
 use hashbrown::HashMap;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
+use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::multi_thread_buckets::{
     BucketWriter, BucketsThreadDispatcher, MultiThreadBuckets,
 };
@@ -102,9 +103,18 @@ impl Pipeline {
             .par_iter()
             .enumerate()
             .for_each(|(index, input)| {
-                let mut links_tmp = BucketsThreadDispatcher::new(65536, &links_buckets);
-                let mut final_links_tmp = BucketsThreadDispatcher::new(16384, &final_buckets);
-                let mut results_tmp = BucketsThreadDispatcher::new(16384, &result_map_buckets);
+                let mut links_tmp = BucketsThreadDispatcher::new(
+                    MemoryDataSize::from_kibioctets(64.0),
+                    &links_buckets,
+                );
+                let mut final_links_tmp = BucketsThreadDispatcher::new(
+                    MemoryDataSize::from_kibioctets(16.0),
+                    &final_buckets,
+                );
+                let mut results_tmp = BucketsThreadDispatcher::new(
+                    MemoryDataSize::from_kibioctets(16.0),
+                    &result_map_buckets,
+                );
 
                 let bucket_index = Utils::get_bucket_index(input);
 

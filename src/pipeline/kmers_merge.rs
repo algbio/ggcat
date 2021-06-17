@@ -30,6 +30,8 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use crate::DEFAULT_BUFFER_SIZE;
 use hashbrown::HashMap;
 use std::process::exit;
+use parallel_processor::memory_data_size::MemoryDataSize;
+
 
 pub const READ_FLAG_INCL_BEGIN: u8 = (1 << 0);
 pub const READ_FLAG_INCL_END: u8 = (1 << 1);
@@ -92,7 +94,7 @@ impl Pipeline {
         file_inputs.par_iter().for_each(|input| {
             // let mut hashmap = HashMap::new();
 
-            const MAX_HASHES_FOR_FLUSH: usize = 1024 * 64;
+            const MAX_HASHES_FOR_FLUSH: MemoryDataSize = MemoryDataSize::from_kibioctets(64.0);
             let mut hashes_tmp = BucketsThreadDispatcher::new(MAX_HASHES_FOR_FLUSH, &hashes_buckets);
 
 

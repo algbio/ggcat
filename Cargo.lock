@@ -810,6 +810,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "measurements"
+version = "0.10.2"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "memchr"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1063,6 +1070,8 @@ dependencies = [
  "byteorder",
  "crossbeam",
  "heapless 0.7.1",
+ "libc",
+ "measurements",
  "parking_lot 0.11.1",
  "rand 0.8.3",
  "rayon",

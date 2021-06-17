@@ -236,6 +236,7 @@ impl Pipeline {
         mut input_files: Vec<PathBuf>,
         output_path: &Path,
         buckets_count: usize,
+        threads_count: usize,
         k: usize,
         m: usize,
     ) -> Vec<PathBuf> {
@@ -263,7 +264,8 @@ impl Pipeline {
                 &execution_context,
                 CHUNKS_SIZE,
                 String::from("minimizer-bucketing-reader"),
-                16,
+                threads_count,
+                &AtomicUsize::new(threads_count),
                 WATERMARK_HIGH,
                 |context, manager| {
                     reader(context, manager);
@@ -273,7 +275,8 @@ impl Pipeline {
                 &execution_context,
                 (),
                 String::from("minimizer-bucketing-writer"),
-                16,
+                threads_count,
+                &AtomicUsize::new(threads_count),
                 WATERMARK_HIGH,
                 |context, manager| {
                     worker::<H>(context, manager);

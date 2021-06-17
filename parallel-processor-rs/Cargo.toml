@@ -9,6 +9,8 @@ edition = "2018"
 byteorder = "1.4.3"
 crossbeam = "0.8.0"
 heapless = "0.7.1"
+libc = "0.2.94"
+measurements = { version = "0.10.2", path = "rust-measurements", features = ["serde"] }
 parking_lot = { version = "0.11.1", features = ["nightly"] }
 rand = "0.8.3"
 rayon = "1.5.0"
@@ -17,3 +19,5 @@ serde = "1.0.126"
 
 [features]
 no-stats = []
+memory-guards = []
+track-usage = []

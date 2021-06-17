@@ -1,3 +1,4 @@
+use crate::memory_fs::allocator::CHUNKS_ALLOCATOR;
 use parking_lot::RwLock;
 use std::time::{Duration, Instant};
 
@@ -28,9 +29,19 @@ impl PhaseTimesMonitor {
     }
 
     fn end_phase(&mut self) {
+        let total_mem = CHUNKS_ALLOCATOR.get_total_memory();
+        let free_mem = CHUNKS_ALLOCATOR.get_free_memory();
+
         if let Some((name, phase_timer)) = self.phase.take() {
             let elapsed = phase_timer.elapsed();
-            println!("Finished {}. phase duration: {:.2?}", name, &elapsed);
+            println!(
+                "Finished {}. phase duration: {:.2?} gtime: {:.2?} memory: {:.2} {:.2}%",
+                name,
+                &elapsed,
+                self.get_wallclock(),
+                total_mem - free_mem,
+                ((1.0 - free_mem / total_mem) * 100.0)
+            );
             self.results.push(PhaseResult {
                 name,
                 time: elapsed,
@@ -51,14 +62,33 @@ impl PhaseTimesMonitor {
             .unwrap_or(Duration::from_millis(0))
     }
 
+    pub fn get_phase_desc(&self) -> String {
+        self.phase
+            .as_ref()
+            .map(|x| x.0.clone())
+            .unwrap_or(String::new())
+    }
+
+    pub fn get_phase_timer(&self) -> Duration {
+        self.phase
+            .as_ref()
+            .map(|x| x.1.elapsed())
+            .unwrap_or(Duration::from_millis(0))
+    }
+
     pub fn get_formatted_counter(&self) -> String {
+        let total_mem = CHUNKS_ALLOCATOR.get_total_memory();
+        let free_mem = CHUNKS_ALLOCATOR.get_free_memory();
+
         format!(
-            " ptime: {:.2?} gtime: {:.2?}",
+            " ptime: {:.2?} gtime: {:.2?} memory: {:.2} {:.2}%",
             self.phase
                 .as_ref()
                 .map(|pt| pt.1.elapsed())
                 .unwrap_or(Duration::from_millis(0)),
-            self.get_wallclock()
+            self.get_wallclock(),
+            total_mem - free_mem,
+            ((1.0 - free_mem / total_mem) * 100.0)
         )
     }
 
