@@ -168,7 +168,7 @@ fn main() {
             m,
         )
     } else {
-        vec![PathBuf::from(".temp_files/bucket.16.lz4")]
+        vec![PathBuf::from(".temp_files/bucket.66.lz4")]
         // Utils::generate_bucket_names(args.temp_dir.join("bucket"), BUCKETS_COUNT, Some("lz4"))
     };
 

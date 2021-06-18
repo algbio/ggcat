@@ -246,7 +246,7 @@ impl Pipeline {
                         // do_debug |= tgtstr;
 
                         // if tgtstr {
-                        //     println!("Processing string {}", read.to_string());
+                        // println!("Processing string {}", read.to_string());
                         // }
 
                         let hashes = MH::new(read, k);
@@ -299,7 +299,7 @@ impl Pipeline {
                         );
 
                         // if do_debug {
-                        //     println!("ABC Processing new hash seq {}!", read.to_string());
+                        // println!("ABC Processing new hash seq {}!", read.to_string());
                         // }
                         // // // TTTTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGCG
                         // //   TTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGCAG
@@ -345,20 +345,6 @@ impl Pipeline {
                             return 'ext_loop: loop {
                                 let mut count = 0;
                                 current_hash = temp_data.0;
-                                let mut ocount = 0;
-                                let tmp_hash = compute_hash_fw(current_hash, k, unsafe { read.get_base_unchecked(out_base_index_fw) }, 0);
-                                for idx in 0..4 {
-                                    let bw_hash = compute_hash_bw(tmp_hash, k, unsafe { read.get_base_unchecked(out_base_index_bw) }, idx);
-                                    if let Some(hash) = rhash_map.get(&bw_hash) {
-                                        if hash.count >= min_multiplicity {
-                                            if ocount > 0 {
-                                                break 'ext_loop (temp_data.0, false);
-                                            }
-                                            ocount += 1;
-                                        }
-                                    }
-                                }
-
                                 for idx in 0..4 {
                                     let new_hash = compute_hash_fw(current_hash, k, unsafe { read.get_base_unchecked(out_base_index_fw) }, idx);
                                     if let Some(hash) = rhash_map.get(&new_hash) {
@@ -370,6 +356,25 @@ impl Pipeline {
                                 }
 
                                 if count == 1 {
+
+                                    // Test for backward branches
+                                    {
+                                        let mut ocount = 0;
+                                        let new_hash = temp_data.0;
+                                        for idx in 0..4 {
+                                            let bw_hash = compute_hash_bw(new_hash, k, temp_data.1, idx);
+                                            if let Some(hash) = rhash_map.get(&bw_hash) {
+                                                if hash.count >= min_multiplicity {
+                                                    if ocount > 0 {
+                                                        break 'ext_loop (current_hash, false);
+                                                    }
+                                                    ocount += 1;
+                                                }
+                                            }
+                                        }
+                                        assert_eq!(ocount, 1);
+                                    }
+
 
                                     let entryref = rhash_map.get_mut(&temp_data.0).unwrap();
 
@@ -419,7 +424,7 @@ impl Pipeline {
                         };
 
                         // if std::str::from_utf8(out_seq).unwrap().contains("TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
-                        //     println!("Bucketing after hashing works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! {}", read.to_string());
+                        // println!("Bucketing after hashing works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! {}", std::str::from_utf8(out_seq).unwrap());
                         //     // do_debug = true;
                         // }
 
