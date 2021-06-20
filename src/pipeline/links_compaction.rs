@@ -416,10 +416,10 @@ impl Pipeline {
                         links_tmp.add_element(link2.0, &current_unitigs_vec, link2.1);
                     }
                 }
-                println!(
-                    "Done {} {}/{} [JOINED: {}]!",
-                    index, rem_links, not_links, join_links
-                );
+                // println!(
+                //     "Done {} {}/{} [JOINED: {}]!",
+                //     index, rem_links, not_links, join_links
+                // );
                 totsum.fetch_add(rem_links, Ordering::Relaxed);
                 links_tmp.finalize();
                 final_links_tmp.finalize();

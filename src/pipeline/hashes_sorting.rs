@@ -3,7 +3,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 use crate::fast_rand_bool::FastRandBool;
-use crate::hash::{HashFunctionFactory, HashTraitType};
+use crate::hash::{ExtendableHashTraitType, HashFunctionFactory};
 use crate::hash_entry::{Direction, HashEntry};
 use crate::pipeline::Pipeline;
 use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
@@ -52,7 +52,7 @@ impl Pipeline {
                 let file = filebuffer::FileBuffer::open(input).unwrap();
 
                 let mut reader = Cursor::new(file.deref());
-                let mut vec: Vec<HashEntry<H::HashType>> = Vec::new();
+                let mut vec: Vec<HashEntry<H::HashTypeUnextendable>> = Vec::new();
 
                 while let Ok(value) = bincode::deserialize_from(&mut reader) {
                     vec.push(value);
@@ -61,17 +61,17 @@ impl Pipeline {
                 struct Compare<H: HashFunctionFactory> {
                     _phantom: PhantomData<H>,
                 }
-                impl<H: HashFunctionFactory> SortKey<HashEntry<H::HashType>> for Compare<H> {
-                    type KeyType = H::HashType;
+                impl<H: HashFunctionFactory> SortKey<HashEntry<H::HashTypeUnextendable>> for Compare<H> {
+                    type KeyType = H::HashTypeUnextendable;
                     const KEY_BITS: usize = 64;
 
                     #[inline(always)]
-                    fn get(value: &HashEntry<H::HashType>) -> H::HashType {
+                    fn get(value: &HashEntry<H::HashTypeUnextendable>) -> H::HashTypeUnextendable {
                         value.hash
                     }
 
                     #[inline(always)]
-                    fn get_shifted(value: &HashEntry<H::HashType>, rhs: u8) -> u8 {
+                    fn get_shifted(value: &HashEntry<H::HashTypeUnextendable>, rhs: u8) -> u8 {
                         H::get_shifted(value.hash, rhs) as u8
                     }
                 }
@@ -82,7 +82,10 @@ impl Pipeline {
                 let mut unitigs_vec = Vec::new();
 
                 for x in vec.group_by(|a, b| a.hash == b.hash) {
-                    if x.len() == 2 && x[0].direction != x[1].direction {
+                    if x.len() == 2 {
+
+                        assert!(x[0].direction != x[1].direction);
+
                         let (fw, bw) = match x[0].direction {
                             Direction::Forward => (0, 1),
                             Direction::Backward => (1, 0),
@@ -118,7 +121,6 @@ impl Pipeline {
                     }
                 }
                 links_tmp.finalize();
-                println!("Done {}!", index);
             });
         links_buckets.finalize()
     }

@@ -174,7 +174,7 @@ impl Pipeline {
 
             tmp_final_unitigs_buffer.finalize();
 
-            println!("Size: {}", unitigs_hashmap.len())
+            // println!("Size: {}", unitigs_hashmap.len())
         });
 
         final_unitigs_file.into_inner().unwrap().finalize();

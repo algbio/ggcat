@@ -7,8 +7,8 @@ mod tests {
     use super::*;
     use crate::compressed_read::CompressedRead;
     use crate::hash::{HashFunction, HashFunctionFactory};
-    use crate::hashes::nthash::{NtHashIterator, NtHashIteratorFactory};
-    use crate::hashes::seqhash::{SeqHashFactory, SeqHashIterator};
+    use crate::hashes::fw_nthash::{ForwardNtHashIterator, ForwardNtHashIteratorFactory};
+    use crate::hashes::fw_seqhash::{ForwardSeqHashFactory, ForwardSeqHashIterator};
     use crate::rolling_minqueue::RollingMinQueue;
     use crate::utils::Utils;
     use crate::varint::encode_varint;
@@ -382,9 +382,9 @@ mod tests {
 
         let h = 6116442737687281716u64;
 
-        let hash = NtHashIterator::new(&str0[..], 15).unwrap();
+        let hash = ForwardNtHashIterator::new(&str0[..], 15).unwrap();
         println!("{:?}", hash.iter().collect::<Vec<_>>());
-        let hash1 = NtHashIterator::new(&str1[..], 15).unwrap();
+        let hash1 = ForwardNtHashIterator::new(&str1[..], 15).unwrap();
         println!("{:?}", hash1.iter().collect::<Vec<_>>())
     }
 
@@ -417,7 +417,10 @@ mod tests {
             .map(|x| Utils::compress_base(*x))
             .collect();
 
-        let ha: Vec<_> = NtHashIterator::new(&a[..], 15).unwrap().iter().collect();
+        let ha: Vec<_> = ForwardNtHashIterator::new(&a[..], 15)
+            .unwrap()
+            .iter()
+            .collect();
         // let hb: Vec<_> = SeqHashIterator::new(&b[..], 31).unwrap().iter().collect();
 
         // let hc = SeqHashFactory::manual_roll_forward(ha, 32, a[0], *b.last().unwrap());

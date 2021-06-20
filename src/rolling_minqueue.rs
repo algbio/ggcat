@@ -9,11 +9,11 @@ use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 
 pub struct RollingMinQueue<H: HashFunctionFactory> {
-    queue: Vec<(H::HashType, H::HashType)>,
+    queue: Vec<(H::HashTypeUnextendable, H::HashTypeUnextendable)>,
     index: usize,
     capacity_mask: usize,
     size: usize,
-    minimum: (H::HashType, usize),
+    minimum: (H::HashTypeUnextendable, usize),
     _marker: PhantomData<H>,
 }
 
@@ -58,8 +58,8 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
 
     pub fn make_iter<'a>(
         &'a mut self,
-        mut iter: impl Iterator<Item = H::HashType> + 'a,
-    ) -> impl Iterator<Item = H::HashType> + 'a {
+        mut iter: impl Iterator<Item = H::HashTypeUnextendable> + 'a,
+    ) -> impl Iterator<Item = H::HashTypeUnextendable> + 'a {
         for i in 0..(self.size - 1) {
             unsafe {
                 let value = iter.next().unwrap_unchecked();
@@ -97,7 +97,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
 
 // #[cfg(feature = "test")]
 mod tests {
-    use crate::hashes::nthash::NtHashIteratorFactory;
+    use crate::hashes::fw_nthash::ForwardNtHashIteratorFactory;
     use crate::rolling_minqueue::RollingMinQueue;
     use rand::{thread_rng, RngCore, SeedableRng};
 
@@ -106,7 +106,7 @@ mod tests {
         const SIZE: usize = 10000000;
         const MINWINDOW: usize = 32;
 
-        let mut queue = RollingMinQueue::<NtHashIteratorFactory>::new(MINWINDOW);
+        let mut queue = RollingMinQueue::<ForwardNtHashIteratorFactory>::new(MINWINDOW);
 
         let mut items = Vec::new();
         items.reserve(SIZE);

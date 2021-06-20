@@ -1,3 +1,4 @@
+use crate::hash::ExtendableHashTraitType;
 use crate::hash::HashFunction;
 use crate::hash::HashFunctionFactory;
 use crate::intermediate_storage::{IntermediateReadsWriter, IntermediateSequencesStorage};
@@ -167,7 +168,8 @@ fn worker<H: HashFunctionFactory>(
                 // );
                 let hashes = H::new(&seq[..], context.m);
 
-                let mut rolling_iter = minimizer_queue.make_iter(hashes.iter());
+                let mut rolling_iter =
+                    minimizer_queue.make_iter(hashes.iter().map(|x| x.to_unextendable()));
 
                 let mut last_index = 0;
                 let mut last_hash = rolling_iter.next().unwrap();

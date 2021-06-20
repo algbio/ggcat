@@ -58,8 +58,10 @@ fn outputs_arg_group() -> ArgGroup<'static> {
 
 use crate::compressed_read::CompressedRead;
 use crate::hash::HashFunctionFactory;
-use crate::hashes::nthash::{NtHashIterator, NtHashIteratorFactory};
-use crate::hashes::seqhash::SeqHashFactory;
+use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
+use crate::hashes::cn_seqhash::{CanonicalSeqHashFactory, CanonicalSeqHashIterator};
+use crate::hashes::fw_nthash::{ForwardNtHashIterator, ForwardNtHashIteratorFactory};
+use crate::hashes::fw_seqhash::ForwardSeqHashFactory;
 use crate::reads_freezer::ReadsFreezer;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
 use clap::arg_enum;
@@ -114,8 +116,8 @@ struct Cli {
     step: StartingStep,
 }
 
-type BucketingHash = NtHashIteratorFactory;
-type MergingHash = NtHashIteratorFactory; // SeqHashFactory;
+type BucketingHash = CanonicalNtHashIteratorFactory; // CanonicalNtHashIteratorFactory; // ForwardNtHashIteratorFactory;
+type MergingHash = CanonicalSeqHashFactory; // CanonicalSeqHashFactory; // ForwardNtHashIteratorFactory; //SeqHashFactory; //
 
 fn main() {
     let args = Cli::from_args();
@@ -151,7 +153,9 @@ fn main() {
         return;
     }
 
-    ThreadPoolBuilder::new().num_threads(16).build_global();
+    ThreadPoolBuilder::new()
+        .num_threads(args.threads_count)
+        .build_global();
 
     create_dir_all(&args.temp_dir);
 
@@ -168,7 +172,7 @@ fn main() {
             m,
         )
     } else {
-        vec![PathBuf::from(".temp_files/bucket.66.lz4")]
+        vec![PathBuf::from(".temp_files-testD/bucket.0.lz4")]
         // Utils::generate_bucket_names(args.temp_dir.join("bucket"), BUCKETS_COUNT, Some("lz4"))
     };
 
