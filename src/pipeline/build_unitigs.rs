@@ -8,7 +8,7 @@ use crate::pipeline::Pipeline;
 use crate::reads_freezer::{FastaWriterConcurrentBuffer, ReadsFreezer};
 use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
-use crate::unitig_link::{UnitigIndex, UnitigLink};
+use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::utils::Utils;
 use crossbeam::channel::*;
 use crossbeam::queue::{ArrayQueue, SegQueue};
@@ -30,6 +30,12 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{sleep, Thread};
 use std::time::{Duration, Instant};
+
+#[derive(Copy, Clone, Debug)]
+struct FinalUnitigInfo {
+    is_start: bool,
+    flags: UnitigFlags,
+}
 
 impl Pipeline {
     pub fn build_unitigs(
@@ -74,12 +80,22 @@ impl Pipeline {
 
             let mut counter: usize = 0;
             while let Some(link) = UnitigLink::read_from(&mut reader, &mut unitigs_tmp_vec) {
-                let start_unitig = UnitigIndex::new(bucket_index, link.entry as usize);
+                let start_unitig = UnitigIndex::new(
+                    bucket_index,
+                    link.entry as usize,
+                    link.flags.is_reverse_complemented(),
+                );
 
                 assert!(!unitigs_hashmap.contains_key(&start_unitig));
                 unitigs_hashmap.insert(
                     start_unitig,
-                    (counter, 1u8 | ((!link.flags.is_forward() as u8) << 1)),
+                    (
+                        counter,
+                        FinalUnitigInfo {
+                            is_start: true,
+                            flags: link.flags,
+                        },
+                    ),
                 );
 
                 counter += 1;
@@ -87,7 +103,19 @@ impl Pipeline {
                 for el in link.entries.get_slice(&unitigs_tmp_vec) {
                     if *el != start_unitig {
                         assert!(!unitigs_hashmap.contains_key(el));
-                        unitigs_hashmap.insert(*el, (counter, 0u8));
+                        unitigs_hashmap.insert(
+                            *el,
+                            (
+                                counter,
+                                FinalUnitigInfo {
+                                    is_start: false,
+                                    flags: UnitigFlags::new_direction(
+                                        /*unused*/ false,
+                                        el.is_reverse_complemented(),
+                                    ),
+                                },
+                            ),
+                        );
                         counter += 1;
                     }
                 }
@@ -101,31 +129,31 @@ impl Pipeline {
 
             let mut count = 0;
             IntermediateReadsReader::<UnitigIndex>::new(read_file).for_each(|index, seq| {
-                let &(findex, is_start) = unitigs_hashmap.get(&index).unwrap();
+                let &(findex, unitig_info) = unitigs_hashmap.get(&index).unwrap();
                 final_sequences[findex] = Some((
                     CompressedReadIndipendent::from_read(&seq, &mut temp_storage),
-                    is_start,
+                    unitig_info,
                 ));
             });
 
             let mut temp_sequence = Vec::new();
-            final_sequences.push(Some((
-                CompressedRead::new_from_plain(&[], &mut temp_storage),
-                1u8,
-            )));
+            // final_sequences.push(Some((
+            //     CompressedRead::new_from_plain(&[], &mut temp_storage),
+            //     1u8,
+            // )));
 
-            if let Some(index) = final_sequences
-                .iter()
-                .enumerate()
-                .filter(|x| x.1.is_none())
-                .next()
-                .map(|x| x.0)
-            {
-                println!("Index: {:?} ", index);
-            }
+            // if let Some(index) = final_sequences
+            //     .iter()
+            //     .enumerate()
+            //     .filter(|x| x.1.is_none())
+            //     .next()
+            //     .map(|x| x.0)
+            // {
+            //     println!("Index: {:?} ", index);
+            // }
 
-            'uloop: for sequence in final_sequences.group_by(|a, b| b.unwrap().1 == 0) {
-                let is_backwards = (sequence[0].unwrap().1 >> 1) != 0;
+            'uloop: for sequence in final_sequences.group_by(|a, b| !b.unwrap().1.is_start) {
+                let is_backwards = !sequence[0].unwrap().1.flags.is_forward();
 
                 temp_sequence.clear();
 
@@ -136,32 +164,35 @@ impl Pipeline {
                 } else {
                     itertools::Either::Left(sequence.iter())
                 } {
-                    let (read, _) = upart.unwrap();
+                    let (read, FinalUnitigInfo { flags, .. }) = upart.unwrap();
 
                     let compr_read = read.as_reference(&temp_storage);
                     if compr_read.bases_count() == 0 {
                         continue 'uloop;
                     }
                     if is_first {
-                        temp_sequence.extend(compr_read.as_bases_iter());
+                        if flags.is_reverse_complemented() {
+                            temp_sequence.extend(compr_read.as_reverse_complement_bases_iter());
+                        } else {
+                            temp_sequence.extend(compr_read.as_bases_iter());
+                        }
                         is_first = false;
                     } else {
-                        // let mut tmp = [0; 62];
-                        // compr_read.sub_slice(0..62).write_to_slice(&mut tmp[..]);
-                        // if &temp_sequence[temp_sequence.len() - 62..temp_sequence.len()] != &tmp[..]
-                        // {
-                        //     println!(
-                        //         "ERROR: {} ==> {}",
-                        //         std::str::from_utf8(temp_sequence.as_slice()).unwrap(),
-                        //         compr_read.to_string()
-                        //     )
-                        // }
-                        temp_sequence.extend(
-                            compr_read
-                                // When two unitigs are merging, they share a full k length kmer
-                                .sub_slice(k..compr_read.bases_count())
-                                .as_bases_iter(),
-                        );
+                        if flags.is_reverse_complemented() {
+                            temp_sequence.extend(
+                                compr_read
+                                    // When two unitigs are merging, they share a full k length kmer
+                                    .sub_slice(0..compr_read.bases_count() - k)
+                                    .as_reverse_complement_bases_iter(),
+                            );
+                        } else {
+                            temp_sequence.extend(
+                                compr_read
+                                    // When two unitigs are merging, they share a full k length kmer
+                                    .sub_slice(k..compr_read.bases_count())
+                                    .as_bases_iter(),
+                            );
+                        }
                     }
                 }
 
@@ -173,8 +204,6 @@ impl Pipeline {
             }
 
             tmp_final_unitigs_buffer.finalize();
-
-            // println!("Size: {}", unitigs_hashmap.len())
         });
 
         final_unitigs_file.into_inner().unwrap().finalize();

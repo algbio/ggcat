@@ -132,6 +132,12 @@ impl<'a> CompressedRead<'a> {
         (0..self.size).map(move |i| unsafe { Utils::decompress_base(self.get_base_unchecked(i)) })
     }
 
+    pub fn as_reverse_complement_bases_iter(&'a self) -> impl Iterator<Item = u8> + 'a {
+        (0..self.size)
+            .rev()
+            .map(move |i| unsafe { Utils::decompress_base(self.get_base_unchecked(i) ^ 2) })
+    }
+
     pub fn to_string(&self) -> String {
         String::from_iter(
             (0..self.size)

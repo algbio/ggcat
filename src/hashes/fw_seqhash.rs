@@ -3,28 +3,31 @@ use crate::hash::{
     UnextendableHashTraitType,
 };
 use crate::types::MinimizerType;
+use std::mem::size_of;
+
+type HashIntegerType = u128;
 
 pub struct ForwardSeqHashIterator<N: HashableSequence> {
     seq: N,
-    mask: u64,
-    fh: u64,
+    mask: HashIntegerType,
+    fh: HashIntegerType,
     k_minus1: usize,
 }
 
 #[inline(always)]
-fn get_mask(k: usize) -> u64 {
-    u64::MAX >> (((32 - k) * 2) as u64)
+fn get_mask(k: usize) -> HashIntegerType {
+    HashIntegerType::MAX >> ((((size_of::<HashIntegerType>() * 4) - k) * 2) as HashIntegerType)
 }
 
 impl<N: HashableSequence> ForwardSeqHashIterator<N> {
     pub fn new(seq: N, k: usize) -> Result<ForwardSeqHashIterator<N>, &'static str> {
-        if k > seq.bases_count() || k > 32 {
+        if k > seq.bases_count() || k > (size_of::<HashIntegerType>() * 4) {
             return Err("K out of range!");
         }
 
         let mut fh = 0;
         for i in 0..(k - 1) {
-            fh = (fh << 2) | unsafe { seq.get_unchecked_cbase(i) as u64 };
+            fh = (fh << 2) | unsafe { seq.get_unchecked_cbase(i) as HashIntegerType };
         }
 
         let mask = get_mask(k);
@@ -41,8 +44,9 @@ impl<N: HashableSequence> ForwardSeqHashIterator<N> {
     fn roll_hash(&mut self, index: usize) -> ExtForwardSeqHash {
         assert!(unsafe { self.seq.get_unchecked_cbase(index) } < 4);
 
-        self.fh =
-            ((self.fh << 2) | unsafe { self.seq.get_unchecked_cbase(index) as u64 }) & self.mask;
+        self.fh = ((self.fh << 2)
+            | unsafe { self.seq.get_unchecked_cbase(index) as HashIntegerType })
+            & self.mask;
         ExtForwardSeqHash(self.fh)
     }
 }
@@ -72,10 +76,10 @@ pub struct ForwardSeqHashFactory;
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-pub struct ExtForwardSeqHash(u64);
+pub struct ExtForwardSeqHash(HashIntegerType);
 
 impl ExtendableHashTraitType for ExtForwardSeqHash {
-    type HashTypeUnextendable = u64;
+    type HashTypeUnextendable = HashIntegerType;
 
     #[inline(always)]
     fn to_unextendable(self) -> Self::HashTypeUnextendable {
@@ -84,7 +88,7 @@ impl ExtendableHashTraitType for ExtForwardSeqHash {
 }
 
 impl HashFunctionFactory for ForwardSeqHashFactory {
-    type HashTypeUnextendable = u64;
+    type HashTypeUnextendable = HashIntegerType;
     type HashTypeExtendable = ExtForwardSeqHash;
     type HashIterator<N: HashableSequence> = ForwardSeqHashIterator<N>;
     const NULL_BASE: u8 = 0;
@@ -125,7 +129,7 @@ impl HashFunctionFactory for ForwardSeqHashFactory {
         // 00BBCC
 
         let mask = get_mask(k);
-        ExtForwardSeqHash(((hash.0 << 2) | (in_base as u64)) & mask)
+        ExtForwardSeqHash(((hash.0 << 2) | (in_base as HashIntegerType)) & mask)
     }
 
     fn manual_roll_reverse(
@@ -139,7 +143,7 @@ impl HashFunctionFactory for ForwardSeqHashFactory {
         // 00AABB => roll rev CC
         // 00CCAA
 
-        ExtForwardSeqHash((hash.0 >> 2) | ((in_base as u64) << ((k - 1) * 2)))
+        ExtForwardSeqHash((hash.0 >> 2) | ((in_base as HashIntegerType) << ((k - 1) * 2)))
     }
 
     fn manual_remove_only_forward(

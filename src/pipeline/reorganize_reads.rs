@@ -91,18 +91,9 @@ impl Pipeline {
 
             SequencesReader::process_file_extended(read_file, |seq| {
                 if map_index < mappings.len() && mappings[map_index].entry == index {
-                    if UnitigIndex::new(bucket_index, index as usize) == UnitigIndex::new(0, 3) {
-                        println!(
-                            "Found while reorg: {} / {} => {}",
-                            std::str::from_utf8(seq.ident).unwrap(),
-                            std::str::from_utf8(seq.seq).unwrap(),
-                            mappings[map_index].bucket,
-                        );
-                    }
-
                     // Mapping found
                     tmp_reads_buffer.add_read(
-                        UnitigIndex::new(bucket_index, index as usize),
+                        UnitigIndex::new(bucket_index, index as usize, false),
                         seq.seq,
                         mappings[map_index].bucket,
                     );

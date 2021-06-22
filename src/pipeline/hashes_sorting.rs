@@ -82,42 +82,56 @@ impl Pipeline {
                 let mut unitigs_vec = Vec::new();
 
                 for x in vec.group_by(|a, b| a.hash == b.hash) {
-                    if x.len() == 2 {
+                    match x.len() {
+                        2 => {
 
-                        assert!(x[0].direction != x[1].direction);
+                            let mut reverse_complemented = [false, false];
 
-                        let (fw, bw) = match x[0].direction {
-                            Direction::Forward => (0, 1),
-                            Direction::Backward => (1, 0),
-                        };
+                            // Can happen with canonical kmers, we should reverse-complement one of the strands
+                            // the direction reverse is implicit as x[1] is treated as if it had the opposite of the x[0] direction
+                            if x[0].direction == x[1].direction {
+                                reverse_complemented[1] = true;
+                            }
 
-                        let (slice_fw, slice_bw) = if rand_bool.get_randbool() {
-                            unitigs_vec.push(UnitigIndex::new(x[bw].bucket, x[bw].entry as usize));
-                            (VecSlice::new(unitigs_vec.len() - 1, 1), VecSlice::EMPTY)
-                        } else {
-                            unitigs_vec.push(UnitigIndex::new(x[fw].bucket, x[fw].entry as usize));
-                            (VecSlice::EMPTY, VecSlice::new(unitigs_vec.len() - 1, 1))
-                        };
+                            let (fw, bw) = match x[0].direction {
+                                Direction::Forward => (0, 1),
+                                Direction::Backward => (1, 0),
+                            };
 
-                        links_tmp.add_element(
-                            x[fw].bucket,
-                            &unitigs_vec,
-                            UnitigLink {
-                                entry: x[fw].entry,
-                                flags: UnitigFlags::new_direction(true),
-                                entries: slice_fw,
-                            },
-                        );
+                            let (slice_fw, slice_bw) = if rand_bool.get_randbool() {
+                                unitigs_vec.push(UnitigIndex::new(x[bw].bucket, x[bw].entry as usize, reverse_complemented[bw]));
+                                (VecSlice::new(unitigs_vec.len() - 1, 1), VecSlice::EMPTY)
+                            } else {
+                                unitigs_vec.push(UnitigIndex::new(x[fw].bucket, x[fw].entry as usize, reverse_complemented[fw]));
+                                (VecSlice::EMPTY, VecSlice::new(unitigs_vec.len() - 1, 1))
+                            };
 
-                        links_tmp.add_element(
-                            x[bw].bucket,
-                            &unitigs_vec,
-                            UnitigLink {
-                                entry: x[bw].entry,
-                                flags: UnitigFlags::new_direction(false),
-                                entries: slice_bw,
-                            },
-                        );
+                            links_tmp.add_element(
+                                x[fw].bucket,
+                                &unitigs_vec,
+                                UnitigLink {
+                                    entry: x[fw].entry,
+                                    flags: UnitigFlags::new_direction(true, reverse_complemented[fw]),
+                                    entries: slice_fw,
+                                },
+                            );
+
+                            links_tmp.add_element(
+                                x[bw].bucket,
+                                &unitigs_vec,
+                                UnitigLink {
+                                    entry: x[bw].entry,
+                                    flags: UnitigFlags::new_direction(false, reverse_complemented[bw]),
+                                    entries: slice_bw,
+                                },
+                            );
+                        },
+                        1 => {
+                            println!("Warning spurious hash detected with index {}, this is a bug or a collision in the KmersMerge phase!", x[0].entry);
+                        }
+                        _ => {
+                            println!("More than 2 equal hashes found in hashes sorting phase, this indicates an hash collision!");
+                        }
                     }
                 }
                 links_tmp.finalize();

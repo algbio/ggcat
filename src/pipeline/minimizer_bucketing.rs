@@ -7,6 +7,7 @@ use crate::pipeline::Pipeline;
 use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
 use crate::types::BucketIndexType;
+use bstr::ByteSlice;
 use crossbeam::channel::*;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
@@ -162,10 +163,6 @@ fn worker<H: HashFunctionFactory>(
             };
 
             while let Some(seq) = get_sequence() {
-                // println!(
-                //     "ABC Process read: {}",
-                //     std::str::from_utf8(&seq[..]).unwrap()
-                // );
                 let hashes = H::new(&seq[..], context.m);
 
                 let mut rolling_iter =
@@ -225,6 +222,10 @@ fn reader(context: &ExecutionContext, manager: ObjectsPoolManager<QueueData, Pat
                 let mut tmp_data = manager.allocate();
                 swap(&mut data, &mut tmp_data);
                 manager.send(tmp_data);
+
+                if !data.push_sequences(x) {
+                    panic!("Out of memory!");
+                }
             }
         });
         if data.sequences.len() > 0 {
@@ -269,9 +270,7 @@ impl Pipeline {
                 threads_count,
                 &AtomicUsize::new(threads_count),
                 WATERMARK_HIGH,
-                |context, manager| {
-                    reader(context, manager);
-                },
+                reader,
             ),
             ThreadPoolDefinition::new(
                 &execution_context,
@@ -280,9 +279,7 @@ impl Pipeline {
                 threads_count,
                 &AtomicUsize::new(threads_count),
                 WATERMARK_HIGH,
-                |context, manager| {
-                    worker::<H>(context, manager);
-                },
+                worker::<H>,
             ),
         );
 

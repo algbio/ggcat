@@ -152,21 +152,41 @@ impl Pipeline {
                 let mut join_links = 0;
                 let mut not_links = 0;
 
-                for x in vec.group_by(|a, b| a.entry == b.entry) {
+                for x in vec.group_by_mut(|a, b| a.entry == b.entry) {
                     let (link1, link2) = if x.len() == 2
                         && x[0].entries.len() != 0
                         && x[1].entries.len() != 0
                     {
-                        assert_ne!(x[0].flags.is_forward(), x[1].flags.is_forward());
+                        let first = x[0].clone();
+                        let second = x[1].clone();
 
-                        let flags = UnitigFlags::combine(x[0].flags, x[1].flags);
+                        // assert_ne!(x[0].flags.is_forward(), x[1].flags.is_forward());
+                        if x[0].flags.is_forward() == x[1].flags.is_forward() {
+                            // Flip one of the strands
+                            x[1].flags.set_forward(!x[1].flags.is_forward());
+
+                            // Reverse complement one of the strands
+                            x[1].flags = x[1].flags.reverse_complement();
+                            let strand_slice = x[1].entries.get_slice_mut(&mut last_unitigs_vec);
+                            for el in strand_slice {
+                                el.change_reverse_complemented();
+                            }
+                        }
+
+                        // To be joined the entries should have the same reverse_complement flag
+                        assert_eq!(
+                            x[0].flags.is_reverse_complemented(),
+                            x[1].flags.is_reverse_complemented()
+                        );
+
+                        let mut flags = UnitigFlags::combine(x[0].flags, x[1].flags);
 
                         assert_eq!(x[0].flags.end_sealed(), flags.end_sealed());
 
                         let should_swap = x[1].flags.end_sealed()
                             || (!x[0].flags.end_sealed() && rand_bool.get_randbool());
-                        let (fw, bw, flags) = if should_swap {
-                            (1, 0, flags.reversed())
+                        let (fw, bw, mut flags) = if should_swap {
+                            (1, 0, flags.flipped())
                         } else {
                             (0, 1, flags)
                         };
@@ -189,10 +209,20 @@ impl Pipeline {
                             bw_slice
                                 .iter()
                                 .rev()
-                                .chain([UnitigIndex::new(bucket_index, x[0].entry as usize)].iter())
+                                .chain(
+                                    [UnitigIndex::new(
+                                        bucket_index,
+                                        x[0].entry as usize,
+                                        x[0].flags.is_reverse_complemented(),
+                                    )]
+                                    .iter(),
+                                )
                                 .chain(fw_slice.iter())
                                 .map(|x| *x),
                         );
+
+                        // Update the complemented status to match the one of the new entry
+                        flags.set_reverse_complement(new_entry.is_reverse_complemented());
 
                         join_links += 1;
                         assert!(flags.end_sealed() || !flags.begin_sealed());
@@ -221,10 +251,6 @@ impl Pipeline {
                         } else if x.len() > 1 && x[1].entries.len() != 0 {
                             &x[1]
                         } else {
-                            if bucket_index == 0 && x[0].entry == 619802 {
-                                println!("Found with zero size! {}", x.len())
-                            }
-
                             continue;
                         };
 
@@ -232,19 +258,7 @@ impl Pipeline {
 
                         let is_lonely = x.len() == 1;
 
-                        if bucket_index == 0 && entry.entry == 619802 {
-                            println!(
-                                "Found while compacting! {} / {} / F:{} BS:{} ES:{}",
-                                is_lonely,
-                                entry.entries.len(),
-                                flags.is_forward(),
-                                flags.begin_sealed(),
-                                flags.end_sealed(),
-                            )
-                        }
-
                         assert!(is_lonely || x[0].entries.len() == 0 || x[1].entries.len() == 0);
-
                         assert!(!flags.begin_sealed() || is_lonely);
 
                         if is_lonely {
@@ -277,15 +291,6 @@ impl Pipeline {
                                 );
 
                                 for (index, link) in linked.iter().enumerate() {
-                                    if link.bucket() == 0 && link.index() == 619802 {
-                                        println!(
-                                            "Writing seqpart to disk! {} / {} / {}",
-                                            is_lonely,
-                                            entry.entries.len(),
-                                            flags.is_forward()
-                                        )
-                                    }
-
                                     results_tmp.add_element(
                                         link.bucket(),
                                         &(),
@@ -301,7 +306,11 @@ impl Pipeline {
 
                         let entries = entry.entries.get_slice(&last_unitigs_vec);
 
-                        let first_entry = UnitigIndex::new(bucket_index, entry.entry as usize);
+                        let first_entry = UnitigIndex::new(
+                            bucket_index,
+                            entry.entry as usize,
+                            entry.flags.is_reverse_complemented(),
+                        );
                         let last_entry = *entries.last().unwrap();
 
                         // Circular unitig detected, output it
@@ -323,16 +332,6 @@ impl Pipeline {
                             );
 
                             for (index, link) in unitig_entries.iter().enumerate() {
-                                if link.bucket() == 0 && link.index() == 619802 {
-                                    println!(
-                                        "Writing seq circular to disk! I:{} {} / {} / {}",
-                                        index,
-                                        is_lonely,
-                                        entry.entries.len(),
-                                        flags.is_forward()
-                                    )
-                                }
-
                                 results_tmp.add_element(
                                     link.bucket(),
                                     &(),
@@ -345,7 +344,7 @@ impl Pipeline {
                             continue;
                         }
 
-                        let (new_entry, oth_entry, vec_slice, flags) = if flags.end_sealed()
+                        let (new_entry, oth_entry, vec_slice, mut flags) = if flags.end_sealed()
                             || (!flags.begin_sealed() && rand_bool.get_randbool())
                         {
                             (
@@ -367,12 +366,13 @@ impl Pipeline {
                                         .chain(&[first_entry])
                                         .map(|x| *x),
                                 ),
-                                flags.reversed(),
+                                flags.flipped(),
                             )
                         };
 
                         assert!(!flags.begin_sealed() || !flags.end_sealed());
                         assert!(flags.end_sealed() || !flags.begin_sealed());
+                        flags.set_reverse_complement(new_entry.is_reverse_complemented());
 
                         (
                             (
