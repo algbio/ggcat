@@ -64,7 +64,7 @@ impl<N: HashableSequence> HashFunction<ForwardNtHashIteratorFactory> for Forward
     }
 }
 
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct ForwardNtHashIteratorFactory;
 
 #[repr(transparent)]

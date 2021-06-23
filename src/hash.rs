@@ -16,7 +16,7 @@ pub trait ExtendableHashTraitType: Copy + Clone + Debug + Eq + Ord {
     fn to_unextendable(self) -> Self::HashTypeUnextendable;
 }
 
-pub trait HashFunctionFactory: Ord + Sized + Clone {
+pub trait HashFunctionFactory: Ord + Sized + Clone + Debug {
     type HashTypeUnextendable: UnextendableHashTraitType;
     type HashTypeExtendable: ExtendableHashTraitType<
         HashTypeUnextendable = Self::HashTypeUnextendable,

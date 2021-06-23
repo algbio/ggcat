@@ -71,7 +71,7 @@ impl<N: HashableSequence> HashFunction<ForwardSeqHashFactory> for ForwardSeqHash
     }
 }
 
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct ForwardSeqHashFactory;
 
 #[repr(transparent)]

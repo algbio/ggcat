@@ -18,7 +18,6 @@ pub mod memory_data_size;
 pub mod multi_thread_buckets;
 pub mod phase_times_monitor;
 pub mod semaphore;
-pub mod smart_bucket_sort;
 pub mod threadpools_chain;
 pub mod types;
 

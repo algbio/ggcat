@@ -80,7 +80,7 @@ impl<N: HashableSequence> HashFunction<CanonicalSeqHashFactory> for CanonicalSeq
     }
 }
 
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct CanonicalSeqHashFactory;
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]

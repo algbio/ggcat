@@ -27,10 +27,10 @@ use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use hashbrown::HashMap;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
+use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
 use std::process::exit;
@@ -56,7 +56,7 @@ pub struct RetType {
     pub hashes: Vec<PathBuf>,
 }
 
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 struct ReadRef<H: HashFunctionFactory + Clone> {
     read_start: usize,
     read_len: usize,
@@ -207,11 +207,13 @@ impl Pipeline {
                 };
                 impl<H: HashFunctionFactory> SortKey<ReadRef<H>> for Compare<H> {
                     type KeyType = H::HashTypeUnextendable;
-                    const KEY_BITS: usize = size_of::<H::HashTypeUnextendable>();
+                    const KEY_BITS: usize = size_of::<H::HashTypeUnextendable>() * 8;
 
                     #[inline(always)]
-                    fn get(value: &ReadRef<H>) -> H::HashTypeUnextendable {
-                        value.hash.to_unextendable()
+                    fn compare(left: &ReadRef<H>, right: &ReadRef<H>) -> std::cmp::Ordering {
+                        left.hash
+                            .to_unextendable()
+                            .cmp(&right.hash.to_unextendable())
                     }
 
                     #[inline(always)]
@@ -220,7 +222,7 @@ impl Pipeline {
                     }
                 }
 
-                smart_radix_sort::<_, Compare<H>, false>(&mut cmp_reads[b]);
+                fast_smart_radix_sort::<_, Compare<H>, false>(&mut cmp_reads[b]);
                 assert!(cmp_reads[b].is_sorted_by_key(|x| x.hash.to_unextendable()));
 
                 for slice in cmp_reads[b]

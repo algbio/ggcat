@@ -44,8 +44,6 @@ impl<const LEN: usize> BucketWriter for SortedData<LEN> {
 pub trait SortKey<T> {
     type KeyType: Ord;
     const KEY_BITS: usize;
-
-    fn get(value: &T) -> &Self::KeyType;
     fn compare(left: &T, right: &T) -> Ordering;
     fn get_shifted(value: &T, rhs: u8) -> u8;
 }
@@ -155,14 +153,11 @@ pub fn striped_parallel_smart_radix_sort<T: Ord + Send + Sync + Debug, F: SortKe
     }
 }
 
-pub fn fast_smart_radix_sort<T: Ord, F: SortKey<T>, const PARALLEL: bool>(
-    data: &mut [T],
-    _start_bits: usize,
-) {
+pub fn fast_smart_radix_sort<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T]) {
     smart_radix_sort_::<T, F, PARALLEL, false>(data, F::KEY_BITS as u8 - 8);
 }
 
-fn smart_radix_sort_<T: Ord, F: SortKey<T>, const PARALLEL: bool, const SINGLE_STEP: bool>(
+fn smart_radix_sort_<T, F: SortKey<T>, const PARALLEL: bool, const SINGLE_STEP: bool>(
     data: &mut [T],
     shift: u8,
 ) -> [IndexType; 256 + 1] {

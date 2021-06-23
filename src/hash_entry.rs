@@ -14,14 +14,14 @@ use parallel_processor::multi_thread_buckets::BucketWriter;
 use serde::de::DeserializeOwned;
 use std::mem::size_of;
 
-#[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize, Debug)]
 #[repr(u8)]
 pub enum Direction {
     Forward,
     Backward,
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct HashEntry<H: Copy> {
     pub hash: H,
     pub bucket: BucketIndexType,

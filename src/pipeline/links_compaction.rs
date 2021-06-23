@@ -20,12 +20,12 @@ use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
 use byteorder::ReadBytesExt;
 use hashbrown::HashMap;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
+use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::multi_thread_buckets::{
     BucketWriter, BucketsThreadDispatcher, MultiThreadBuckets,
 };
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::process::exit;
@@ -143,8 +143,8 @@ impl Pipeline {
                     type KeyType = u64;
                     const KEY_BITS: usize = 64;
 
-                    fn get(value: &UnitigLink) -> u64 {
-                        value.entry
+                    fn compare(left: &UnitigLink, right: &UnitigLink) -> std::cmp::Ordering {
+                        left.entry.cmp(&right.entry)
                     }
 
                     fn get_shifted(value: &UnitigLink, rhs: u8) -> u8 {
@@ -152,7 +152,7 @@ impl Pipeline {
                     }
                 }
 
-                smart_radix_sort::<_, Compare, false>(&mut vec[..]);
+                fast_smart_radix_sort::<_, Compare, false>(&mut vec[..]);
 
                 let mut rem_links = 0;
                 let mut join_links = 0;
@@ -401,31 +401,12 @@ impl Pipeline {
                     };
                     rem_links += 1;
 
-                    if link1.1.entries.get_slice(&current_unitigs_vec)[0].bucket() == link1.0
-                        && link1.1.entries.get_slice(&current_unitigs_vec)[0].index()
-                            == link1.1.entry as usize
-                    {
-                        println!("ERROR {:?}!!!!!", link1.1);
-                        println!(
-                            "ERROR {:?}!!!!!",
-                            link1.1.entries.get_slice(&current_unitigs_vec)
-                        );
-                        exit(0);
-                    }
-
-                    if !link1.1.flags.end_sealed() && link1.1.flags.begin_sealed() {
-                        println!("Bug found: {}", link1.1.entry);
-                    }
-
                     links_tmp.add_element(link1.0, &current_unitigs_vec, link1.1);
                     if let Some(link2) = link2 {
                         links_tmp.add_element(link2.0, &current_unitigs_vec, link2.1);
                     }
                 }
-                // println!(
-                //     "Done {} {}/{} [JOINED: {}]!",
-                //     index, rem_links, not_links, join_links
-                // );
+
                 totsum.fetch_add(rem_links, Ordering::Relaxed);
                 links_tmp.finalize();
                 final_links_tmp.finalize();

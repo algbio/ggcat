@@ -10,10 +10,10 @@ use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::vec_slice::VecSlice;
 use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
+use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use rand::{thread_rng, RngCore};
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
@@ -77,18 +77,19 @@ impl Pipeline {
                     const KEY_BITS: usize = 64;
 
                     #[inline(always)]
-                    fn get(value: &HashEntry<H::HashTypeUnextendable>) -> H::HashTypeUnextendable {
-                        value.hash
+                    fn get_shifted(value: &HashEntry<H::HashTypeUnextendable>, rhs: u8) -> u8 {
+                        H::get_shifted(value.hash, rhs) as u8
                     }
 
                     #[inline(always)]
-                    fn get_shifted(value: &HashEntry<H::HashTypeUnextendable>, rhs: u8) -> u8 {
-                        H::get_shifted(value.hash, rhs) as u8
+                    fn compare(left: &HashEntry<<H as HashFunctionFactory>::HashTypeUnextendable>,
+                               right: &HashEntry<<H as HashFunctionFactory>::HashTypeUnextendable>) -> std::cmp::Ordering {
+                        left.hash.cmp(&right.hash)
                     }
                 }
 
                 // vec.sort_unstable_by_key(|e| e.hash);
-                smart_radix_sort::<_, Compare<H>, false>(&mut vec[..]);
+                fast_smart_radix_sort::<_, Compare<H>, false>(&mut vec[..]);
 
                 let mut unitigs_vec = Vec::new();
 

@@ -12,9 +12,9 @@ use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
 use nix::sys::ptrace::cont;
 use object_pool::Pool;
+use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
 use std::fs::File;
@@ -83,16 +83,16 @@ impl Pipeline {
                 type KeyType = u64;
                 const KEY_BITS: usize = 64;
 
-                fn get(value: &LinkMapping) -> u64 {
-                    value.entry
-                }
-
                 fn get_shifted(value: &LinkMapping, rhs: u8) -> u8 {
                     (value.entry >> rhs) as u8
                 }
+
+                fn compare(left: &LinkMapping, right: &LinkMapping) -> std::cmp::Ordering {
+                    left.entry.cmp(&right.entry)
+                }
             }
 
-            smart_radix_sort::<_, Compare, false>(&mut mappings[..]);
+            fast_smart_radix_sort::<_, Compare, false>(&mut mappings[..]);
 
             let mut index = 0;
             let mut map_index = 0;

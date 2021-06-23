@@ -18,7 +18,6 @@ use nix::sys::ptrace::cont;
 use object_pool::Pool;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
 use std::collections::HashMap;
