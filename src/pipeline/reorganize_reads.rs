@@ -1,17 +1,19 @@
 use crate::intermediate_storage::{IntermediateReadsWriter, IntermediateSequencesStorage};
 use crate::pipeline::links_compaction::LinkMapping;
 use crate::pipeline::Pipeline;
-use crate::reads_freezer::{FastaWriterConcurrentBuffer, ReadsFreezer};
+use crate::reads_freezer::{FastaWriterConcurrentBuffer, ReadsFreezer, ReadsWriter};
 use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
 use crate::unitig_link::UnitigIndex;
 use crate::utils::Utils;
+use crate::KEEP_FILES;
 use crossbeam::channel::*;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
 use nix::sys::ptrace::cont;
 use object_pool::Pool;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
+use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
@@ -30,20 +32,21 @@ impl Pipeline {
     pub fn reorganize_reads(
         mut reads: Vec<PathBuf>,
         mut mapping_files: Vec<PathBuf>,
-        output_path: &Path,
+        temp_path: &Path,
+        out_file: &Mutex<ReadsWriter>,
         buckets_count: usize,
         k: usize,
         m: usize,
     ) -> Vec<PathBuf> {
+        PHASES_TIMES_MONITOR
+            .write()
+            .start_phase("phase: reads reorganization".to_string());
+
         let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<UnitigIndex>>::new(
             buckets_count,
-            &output_path.join("reads_bucket"),
+            &temp_path.join("reads_bucket"),
             None,
         );
-
-        let mut final_unitigs_file = Mutex::new(ReadsFreezer::optfile_splitted_compressed_lz4(
-            format!("{}", output_path.join("output.fa").display()),
-        ));
 
         reads.sort();
         mapping_files.sort();
@@ -53,7 +56,7 @@ impl Pipeline {
         inputs.par_iter().for_each(|(read_file, mapping_file)| {
             let mut tmp_reads_buffer = IntermediateSequencesStorage::new(buckets_count, &buckets);
             let mut tmp_lonely_unitigs_buffer =
-                FastaWriterConcurrentBuffer::new(&final_unitigs_file, 1024 * 1024 * 8);
+                FastaWriterConcurrentBuffer::new(out_file, 1024 * 1024 * 8);
 
             let mut mappings = Vec::new();
 
@@ -68,6 +71,11 @@ impl Pipeline {
             let mut reader = Cursor::new(mappings_file.deref());
             while let Some(link) = LinkMapping::from_stream(&mut reader) {
                 mappings.push(link);
+            }
+
+            drop(mappings_file);
+            if !KEEP_FILES.load(Ordering::Relaxed) {
+                std::fs::remove_file(mapping_file);
             }
 
             struct Compare {}
@@ -89,34 +97,32 @@ impl Pipeline {
             let mut index = 0;
             let mut map_index = 0;
 
-            SequencesReader::process_file_extended(read_file, |seq| {
-                if map_index < mappings.len() && mappings[map_index].entry == index {
-                    // Mapping found
-                    tmp_reads_buffer.add_read(
-                        UnitigIndex::new(bucket_index, index as usize, false),
-                        seq.seq,
-                        mappings[map_index].bucket,
-                    );
-                    map_index += 1;
-                } else {
-                    tmp_lonely_unitigs_buffer.add_read(FastaSequence {
-                        ident: format!("{} {}", bucket_index, index).as_bytes(),
-                        seq: seq.seq,
-                        qual: None,
-                    });
-                    // No mapping, write unitig to file
-                }
-                index += 1;
-            });
+            SequencesReader::process_file_extended(
+                read_file,
+                |seq| {
+                    if map_index < mappings.len() && mappings[map_index].entry == index {
+                        // Mapping found
+                        tmp_reads_buffer.add_read(
+                            UnitigIndex::new(bucket_index, index as usize, false),
+                            seq.seq,
+                            mappings[map_index].bucket,
+                        );
+                        map_index += 1;
+                    } else {
+                        tmp_lonely_unitigs_buffer.add_read(FastaSequence {
+                            ident: format!("{} {}", bucket_index, index).as_bytes(),
+                            seq: seq.seq,
+                            qual: None,
+                        });
+                        // No mapping, write unitig to file
+                    }
+                    index += 1;
+                },
+                !KEEP_FILES.load(Ordering::Relaxed),
+            );
             tmp_lonely_unitigs_buffer.finalize();
-            if mappings.len() > 0 {
-                println!("Total reads: {}/{:?}", index, mappings.last().unwrap());
-            }
             assert_eq!(map_index, mappings.len())
         });
-
-        final_unitigs_file.into_inner().unwrap().finalize();
-
         buckets.finalize()
     }
 }

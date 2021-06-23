@@ -5,17 +5,19 @@ use crate::intermediate_storage::{
 };
 use crate::pipeline::links_compaction::LinkMapping;
 use crate::pipeline::Pipeline;
-use crate::reads_freezer::{FastaWriterConcurrentBuffer, ReadsFreezer};
+use crate::reads_freezer::{FastaWriterConcurrentBuffer, ReadsFreezer, ReadsWriter};
 use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
 use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::utils::Utils;
+use crate::KEEP_FILES;
 use crossbeam::channel::*;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
 use nix::sys::ptrace::cont;
 use object_pool::Pool;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
+use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
@@ -42,12 +44,15 @@ impl Pipeline {
     pub fn build_unitigs(
         mut read_buckets_files: Vec<PathBuf>,
         mut unitig_map_files: Vec<PathBuf>,
-        output_path: &Path,
+        temp_path: &Path,
+        out_file: &Mutex<ReadsWriter>,
         buckets_count: usize,
         k: usize,
         m: usize,
-    ) -> PathBuf {
-        let start_time = Instant::now();
+    ) {
+        PHASES_TIMES_MONITOR
+            .write()
+            .start_phase("phase: unitigs building".to_string());
 
         read_buckets_files.sort();
         unitig_map_files.sort();
@@ -57,14 +62,9 @@ impl Pipeline {
             .zip(unitig_map_files.iter())
             .collect();
 
-        let mut final_unitigs_file = Mutex::new(ReadsFreezer::optfile_splitted_compressed_lz4(
-            format!("{}", output_path.join("output-unitigs").display()),
-        ));
-        let output_file = final_unitigs_file.lock().unwrap().get_path();
-
         inputs.par_iter().for_each(|(read_file, unitigs_map_file)| {
             let mut tmp_final_unitigs_buffer =
-                FastaWriterConcurrentBuffer::new(&final_unitigs_file, 1024 * 1024 * 8);
+                FastaWriterConcurrentBuffer::new(&out_file, 1024 * 1024 * 8);
 
             assert_eq!(
                 Utils::get_bucket_index(read_file),
@@ -133,12 +133,21 @@ impl Pipeline {
                 unitigs_tmp_vec.clear();
             }
 
+            drop(mappings_file);
+            if !KEEP_FILES.load(Ordering::Relaxed) {
+                std::fs::remove_file(&unitigs_map_file);
+            }
+
             let mut final_sequences = Vec::with_capacity(counter);
             let mut temp_storage = Vec::new();
             final_sequences.resize(counter, None);
 
             let mut count = 0;
-            IntermediateReadsReader::<UnitigIndex>::new(read_file).for_each(|index, seq| {
+            IntermediateReadsReader::<UnitigIndex>::new(
+                read_file,
+                !KEEP_FILES.load(Ordering::Relaxed),
+            )
+            .for_each(|index, seq| {
                 let &(findex, unitig_info) = unitigs_hashmap.get(&index).unwrap();
                 final_sequences[findex] = Some((
                     CompressedReadIndipendent::from_read(&seq, &mut temp_storage),
@@ -146,21 +155,11 @@ impl Pipeline {
                 ));
             });
 
-            let mut temp_sequence = Vec::new();
-            // final_sequences.push(Some((
-            //     CompressedRead::new_from_plain(&[], &mut temp_storage),
-            //     1u8,
-            // )));
+            if !KEEP_FILES.load(Ordering::Relaxed) {
+                std::fs::remove_file(&read_file);
+            }
 
-            // if let Some(index) = final_sequences
-            //     .iter()
-            //     .enumerate()
-            //     .filter(|x| x.1.is_none())
-            //     .next()
-            //     .map(|x| x.0)
-            // {
-            //     println!("Index: {:?} ", index);
-            // }
+            let mut temp_sequence = Vec::new();
 
             'uloop: for sequence in final_sequences.group_by(|a, b| !b.unwrap().1.is_start) {
                 let is_backwards = !sequence[0].unwrap().1.flags.is_forward();
@@ -221,8 +220,5 @@ impl Pipeline {
 
             tmp_final_unitigs_buffer.finalize();
         });
-
-        final_unitigs_file.into_inner().unwrap().finalize();
-        output_file
     }
 }

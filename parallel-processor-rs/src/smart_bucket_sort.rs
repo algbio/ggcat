@@ -21,7 +21,6 @@ pub fn smart_radix_sort<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T]) 
 fn smart_radix_sort_<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T], shift: u8) {
     let mut counts: [IndexType; 256 + 1] = [0; 256 + 1];
     let mut sums: [IndexType; 256 + 1] = [0; 256 + 1];
-    let mut sorted: [bool; 256] = [true; 256];
 
     for el in data.iter() {
         counts[F::get_shifted(el, shift) as usize + 1] += 1;
@@ -38,10 +37,6 @@ fn smart_radix_sort_<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T], shi
         let mut val = F::get_shifted(&data[i], shift) as usize;
         if i == (sums[val] as usize) {
             i += 1;
-
-            sorted[val] &= (counts[val] == sums[val])
-                || (F::get(&data[sums[val] as usize]) >= F::get(&data[sums[val] as usize - 1]));
-
             sums[val] += 1;
             val += 1;
 
@@ -51,10 +46,6 @@ fn smart_radix_sort_<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T], shi
             }
         } else {
             data.swap(i, sums[val]);
-
-            sorted[val] &= (counts[val] == sums[val])
-                || (F::get(&data[sums[val] as usize]) >= F::get(&data[sums[val] as usize - 1]));
-
             sums[val] += 1;
         }
     }
@@ -81,15 +72,9 @@ fn smart_radix_sort_<T, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T], shi
 
     if PARALLEL && shift as usize == (size_of::<DataType>() - 1) * 8 {
         // let nums: [usize; 256] = [0; 256];
-        (0..256usize)
-            .into_par_iter()
-            .filter(|x| !sorted[*x as usize])
-            .for_each(elab_subarray);
+        (0..256usize).into_par_iter().for_each(elab_subarray);
     } else {
-        (0..256)
-            .filter(|x| !sorted[*x as usize])
-            .into_iter()
-            .for_each(elab_subarray);
+        (0..256).into_iter().for_each(elab_subarray);
     }
 }
 //

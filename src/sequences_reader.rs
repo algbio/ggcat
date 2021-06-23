@@ -84,7 +84,11 @@ impl SequencesReader {
         }
     }
 
-    pub fn process_file_extended<F: FnMut(FastaSequence)>(source: impl AsRef<Path>, mut func: F) {
+    pub fn process_file_extended<F: FnMut(FastaSequence)>(
+        source: impl AsRef<Path>,
+        mut func: F,
+        remove_file: bool,
+    ) {
         const FASTQ_EXTS: &[&str] = &["fq", "fastq"];
         const FASTA_EXTS: &[&str] = &["fa", "fasta", "fna", "ffn"];
 
@@ -112,26 +116,26 @@ impl SequencesReader {
             ),
             Some(ftype) => match ftype {
                 FileType::Fasta => {
-                    Self::process_fasta(source, func);
+                    Self::process_fasta(source, func, remove_file);
                 }
                 FileType::Fastq => {
-                    Self::process_fastq(source, func);
+                    Self::process_fastq(source, func, remove_file);
                 }
             },
         }
     }
 
-    pub fn read_binary_file(file: impl AsRef<Path>, mut callback: impl FnMut(&[u8])) {
+    pub fn read_binary_file(file: impl AsRef<Path>, mut callback: impl FnMut(&[u8]), remove: bool) {
         if file.as_ref().extension().filter(|x| *x == "gz").is_some() {
             decompress_file(
-                file,
+                &file,
                 |data| {
                     callback(data);
                 },
                 1024 * 512,
             );
         } else if file.as_ref().extension().filter(|x| *x == "lz4").is_some() {
-            let mut file = lz4::Decoder::new(File::open(file).unwrap()).unwrap();
+            let mut file = lz4::Decoder::new(File::open(&file).unwrap()).unwrap();
             let mut buffer = [0; 1024 * 512];
             while let Ok(count) = file.read(&mut buffer) {
                 if count == 0 {
@@ -140,7 +144,7 @@ impl SequencesReader {
                 callback(&buffer[0..count]);
             }
         } else {
-            let mut file = File::open(file).unwrap();
+            let mut file = File::open(&file).unwrap();
             let mut buffer = [0; 1024 * 512];
             while let Ok(count) = file.read(&mut buffer) {
                 if count == 0 {
@@ -149,9 +153,17 @@ impl SequencesReader {
                 callback(&buffer[0..count]);
             }
         }
+
+        if remove {
+            std::fs::remove_file(file);
+        }
     }
 
-    fn process_fasta(source: impl AsRef<Path>, mut func: impl FnMut(FastaSequence)) {
+    fn process_fasta(
+        source: impl AsRef<Path>,
+        mut func: impl FnMut(FastaSequence),
+        remove_file: bool,
+    ) {
         // Ident, seq
         let mut intermediate = [Vec::new(), Vec::new()];
         let mut state = IDENT_STATE;
@@ -216,10 +228,14 @@ impl SequencesReader {
                 .for_each(|(slice, vec)| vec.extend_from_slice(slice));
         };
 
-        Self::read_binary_file(&source, process_function);
+        Self::read_binary_file(&source, process_function, remove_file);
     }
 
-    fn process_fastq(source: impl AsRef<Path>, mut func: impl FnMut(FastaSequence)) {
+    fn process_fastq(
+        source: impl AsRef<Path>,
+        mut func: impl FnMut(FastaSequence),
+        remove_file: bool,
+    ) {
         // Ident, seq, qual
         let mut intermediate = [Vec::new(), Vec::new(), Vec::new()];
         let mut state = IDENT_STATE;
@@ -303,6 +319,6 @@ impl SequencesReader {
                 .for_each(|(slice, vec)| vec.extend_from_slice(slice));
         };
 
-        Self::read_binary_file(&source, process_function);
+        Self::read_binary_file(&source, process_function, remove_file);
     }
 }

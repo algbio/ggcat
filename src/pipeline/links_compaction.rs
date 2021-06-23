@@ -16,7 +16,7 @@ use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::utils::Utils;
 use crate::varint::{decode_varint, encode_varint};
 use crate::vec_slice::VecSlice;
-use crate::DEFAULT_BUFFER_SIZE;
+use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
 use byteorder::ReadBytesExt;
 use hashbrown::HashMap;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
@@ -24,6 +24,7 @@ use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::multi_thread_buckets::{
     BucketWriter, BucketsThreadDispatcher, MultiThreadBuckets,
 };
+use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -120,7 +121,7 @@ impl Pipeline {
 
                 let mut rand_bool = FastRandBool::new();
 
-                let file = filebuffer::FileBuffer::open(input).unwrap();
+                let file = filebuffer::FileBuffer::open(&input).unwrap();
                 let mut vec = Vec::new();
 
                 let mut reader = Cursor::new(file.deref());
@@ -130,6 +131,11 @@ impl Pipeline {
 
                 while let Some(entry) = UnitigLink::read_from(&mut reader, &mut last_unitigs_vec) {
                     vec.push(entry);
+                }
+
+                drop(file);
+                if !KEEP_FILES.load(Ordering::Relaxed) {
+                    std::fs::remove_file(&input);
                 }
 
                 struct Compare {}
@@ -429,7 +435,13 @@ impl Pipeline {
         let final_buckets = final_buckets.finalize();
         let result_map_buckets = result_map_buckets.finalize();
 
-        println!("Remaining: {}", totsum.load(Ordering::Relaxed));
+        println!(
+            "Remaining: {} {}",
+            totsum.load(Ordering::Relaxed),
+            PHASES_TIMES_MONITOR
+                .read()
+                .get_formatted_counter_without_memory()
+        );
         (
             links_buckets.finalize(),
             match totsum.load(Ordering::Relaxed) {

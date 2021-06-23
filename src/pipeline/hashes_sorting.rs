@@ -8,10 +8,11 @@ use crate::hash_entry::{Direction, HashEntry};
 use crate::pipeline::Pipeline;
 use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::vec_slice::VecSlice;
-use crate::DEFAULT_BUFFER_SIZE;
+use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
+use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use rand::{thread_rng, RngCore};
 use rayon::iter::IndexedParallelIterator;
@@ -20,6 +21,7 @@ use rayon::iter::ParallelIterator;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::marker::PhantomData;
+use std::sync::atomic::Ordering;
 
 impl Pipeline {
     pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
@@ -27,6 +29,10 @@ impl Pipeline {
         output_dir: P,
         buckets_count: usize,
     ) -> Vec<PathBuf> {
+        PHASES_TIMES_MONITOR
+            .write()
+            .start_phase("phase: hashes sorting".to_string());
+
         let mut links_buckets = MultiThreadBuckets::<BinaryWriter>::new(
             buckets_count,
             &(
@@ -56,6 +62,11 @@ impl Pipeline {
 
                 while let Ok(value) = bincode::deserialize_from(&mut reader) {
                     vec.push(value);
+                }
+
+                drop(file);
+                if !KEEP_FILES.load(Ordering::Relaxed) {
+                    std::fs::remove_file(&input);
                 }
 
                 struct Compare<H: HashFunctionFactory> {

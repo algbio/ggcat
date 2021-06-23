@@ -6,6 +6,7 @@
 #![feature(option_result_unwrap_unchecked)]
 #![feature(specialization)]
 #![feature(generic_associated_types)]
+#![feature(const_fn_floating_point_arithmetic)]
 #![feature(trait_alias)]
 #![allow(warnings)]
 #![feature(test)]
@@ -65,6 +66,9 @@ use crate::hashes::fw_seqhash::ForwardSeqHashFactory;
 use crate::reads_freezer::ReadsFreezer;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
 use clap::arg_enum;
+use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 arg_enum! {
     #[derive(Debug, PartialOrd, PartialEq)]
     enum StartingStep {
@@ -102,12 +106,23 @@ struct Cli {
     #[structopt(short = "t", long = "temp-dir", default_value = ".temp_files")]
     temp_dir: PathBuf,
 
+    /// Minimum correctness probability for each kmer (using fastq quality checks)
+    #[structopt(short = "q", long = "quality-threshold")]
+    quality_threshold: Option<f64>,
+
+    /// Keep intermediate temporary files for debugging purposes
+    #[structopt(long = "keep-temp-files")]
+    keep_temp_files: bool,
+
     #[structopt(short = "n", long, default_value = "0")]
     number: usize, // Tests built bloom filter against this file for coverage tests
     // #[structopt(short = "f", requires = "elabbloom")]
     // coverage: Option<String>,
     #[structopt(short = "j", long, default_value = "16")]
     threads_count: usize,
+
+    #[structopt(short = "o", long = "output-file", default_value = "output.fasta.lz4")]
+    output_file: PathBuf,
 
     // Enables output compression
     // #[structopt(short, requires = "output")]
@@ -119,35 +134,43 @@ struct Cli {
 type BucketingHash = CanonicalNtHashIteratorFactory; // CanonicalNtHashIteratorFactory; // ForwardNtHashIteratorFactory;
 type MergingHash = CanonicalSeqHashFactory; // CanonicalSeqHashFactory; // ForwardNtHashIteratorFactory; //SeqHashFactory; //
 
+static KEEP_FILES: AtomicBool = AtomicBool::new(false);
+
 fn main() {
-    let args = Cli::from_args();
+    let args: Cli = Cli::from_args();
 
     const BUCKETS_COUNT: usize = 512;
 
+    KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
+
     if args.debug_reverse {
         for file in args.input {
-            let mut output = ReadsFreezer::optfile_splitted_compressed_lz4("complementary");
+            let mut output = ReadsFreezer::optfile_splitted_compressed_lz4("complementary.lz4");
             let mut tmp_vec = Vec::new();
-            SequencesReader::process_file_extended(&file, |x| {
-                const COMPL: [u8; 256] = {
-                    let mut letters = [b'N'; 256];
+            SequencesReader::process_file_extended(
+                &file,
+                |x| {
+                    const COMPL: [u8; 256] = {
+                        let mut letters = [b'N'; 256];
 
-                    letters[b'A' as usize] = b'T';
-                    letters[b'C' as usize] = b'G';
-                    letters[b'G' as usize] = b'C';
-                    letters[b'T' as usize] = b'A';
+                        letters[b'A' as usize] = b'T';
+                        letters[b'C' as usize] = b'G';
+                        letters[b'G' as usize] = b'C';
+                        letters[b'T' as usize] = b'A';
 
-                    letters
-                };
-                tmp_vec.clear();
-                tmp_vec.extend(x.seq.iter().map(|x| COMPL[*x as usize]).rev());
+                        letters
+                    };
+                    tmp_vec.clear();
+                    tmp_vec.extend(x.seq.iter().map(|x| COMPL[*x as usize]).rev());
 
-                output.add_read(FastaSequence {
-                    ident: x.ident,
-                    seq: &tmp_vec[..],
-                    qual: None,
-                })
-            });
+                    output.add_read(FastaSequence {
+                        ident: x.ident,
+                        seq: &tmp_vec[..],
+                        qual: None,
+                    })
+                },
+                false,
+            );
             output.finalize();
         }
         return;
@@ -162,6 +185,8 @@ fn main() {
     let k: usize = args.klen;
     let m: usize = args.mlen.unwrap_or(min(12, (k + 2) / 3));
 
+    PHASES_TIMES_MONITOR.write().init();
+
     let buckets = if args.step <= StartingStep::MinimizerBucketing {
         Pipeline::minimizer_bucketing::<BucketingHash>(
             args.input,
@@ -170,10 +195,10 @@ fn main() {
             args.threads_count,
             k,
             m,
+            args.quality_threshold,
         )
     } else {
-        vec![PathBuf::from(".temp_files-testD/bucket.0.lz4")]
-        // Utils::generate_bucket_names(args.temp_dir.join("bucket"), BUCKETS_COUNT, Some("lz4"))
+        Utils::generate_bucket_names(args.temp_dir.join("bucket"), BUCKETS_COUNT, Some("lz4"))
     };
 
     let RetType { sequences, hashes } = if args.step <= StartingStep::KmersMerge {
@@ -226,7 +251,11 @@ fn main() {
             );
         }
 
-        loop {
+        PHASES_TIMES_MONITOR
+            .write()
+            .start_phase("phase: links compaction".to_string());
+
+        let result = loop {
             println!("Iteration: {}", loop_iteration);
 
             let (new_links, result) = Pipeline::links_compaction(
@@ -244,16 +273,33 @@ fn main() {
                 }
             }
             loop_iteration += 1;
+        };
+
+        if !KEEP_FILES.load(Ordering::Relaxed) {
+            for link_file in links {
+                std::fs::remove_file(&link_file);
+            }
         }
+        result
     } else {
         (unames, rnames)
     };
+
+    let mut final_unitigs_file = Mutex::new(match args.output_file.extension() {
+        Some(ext) => match ext.to_string_lossy().to_string().as_str() {
+            "lz4" => ReadsFreezer::optfile_splitted_compressed_lz4(&args.output_file),
+            "gz" => ReadsFreezer::optfile_splitted_compressed(&args.output_file),
+            _ => ReadsFreezer::optifile_splitted(&args.output_file),
+        },
+        None => ReadsFreezer::optifile_splitted(&args.output_file),
+    });
 
     let reorganized_reads = if args.step <= StartingStep::ReorganizeReads {
         Pipeline::reorganize_reads(
             sequences,
             reads_map,
             args.temp_dir.as_path(),
+            &final_unitigs_file,
             BUCKETS_COUNT,
             k,
             m,
@@ -267,14 +313,24 @@ fn main() {
     };
 
     if args.step <= StartingStep::BuildUnitigs {
-        let output_file = Pipeline::build_unitigs(
+        Pipeline::build_unitigs(
             reorganized_reads,
             unitigs_map,
             args.temp_dir.as_path(),
+            &final_unitigs_file,
             BUCKETS_COUNT,
             k,
             m,
         );
-        println!("Final output saved to: {}", output_file.display());
     }
+
+    std::fs::remove_dir(args.temp_dir.as_path());
+
+    final_unitigs_file.into_inner().unwrap().finalize();
+
+    PHASES_TIMES_MONITOR
+        .write()
+        .print_stats("Compacted De Brujin graph construction completed.".to_string());
+
+    println!("Final output saved to: {}", args.output_file.display());
 }

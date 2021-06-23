@@ -46,6 +46,8 @@ pub struct IntermediateReadsWriter<T> {
 
 pub struct IntermediateReadsReader<T: SequenceExtraData> {
     reader: lz4::Decoder<BufReader<File>>,
+    remove_file: bool,
+    file_path: PathBuf,
     _phantom: PhantomData<T>,
 }
 
@@ -243,7 +245,7 @@ impl<'a, R: Read> Read for VecReader<'a, R> {
     }
 }
 impl<T: SequenceExtraData> IntermediateReadsReader<T> {
-    pub fn new(name: impl AsRef<Path>) -> Self {
+    pub fn new(name: impl AsRef<Path>, remove_file: bool) -> Self {
         Self {
             reader: lz4::Decoder::new(BufReader::with_capacity(
                 1024 * 1024 * 4,
@@ -251,11 +253,13 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
                     .unwrap_or_else(|_| panic!("Cannot open file {}", name.as_ref().display())),
             ))
             .unwrap(),
+            remove_file,
+            file_path: name.as_ref().to_path_buf(),
             _phantom: PhantomData,
         }
     }
 
-    pub fn for_each(&mut self, mut lambda: impl FnMut(T, CompressedRead)) {
+    pub fn for_each(mut self, mut lambda: impl FnMut(T, CompressedRead)) {
         let mut vec_reader = VecReader::new(1024 * 1024, &mut self.reader);
 
         // const LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
@@ -308,6 +312,11 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
             // }
             //
             // lambda(&read[0..size]);
+        }
+
+        drop(vec_reader);
+        if self.remove_file {
+            std::fs::remove_file(self.file_path);
         }
 
         //

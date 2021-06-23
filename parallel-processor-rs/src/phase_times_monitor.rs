@@ -29,18 +29,13 @@ impl PhaseTimesMonitor {
     }
 
     fn end_phase(&mut self) {
-        let total_mem = CHUNKS_ALLOCATOR.get_total_memory();
-        let free_mem = CHUNKS_ALLOCATOR.get_free_memory();
-
         if let Some((name, phase_timer)) = self.phase.take() {
             let elapsed = phase_timer.elapsed();
             println!(
-                "Finished {}. phase duration: {:.2?} gtime: {:.2?} memory: {:.2} {:.2}%",
+                "Finished {}. phase duration: {:.2?} gtime: {:.2?} ", // memory: {:.2} {:.2}%
                 name,
                 &elapsed,
-                self.get_wallclock(),
-                total_mem - free_mem,
-                ((1.0 - free_mem / total_mem) * 100.0)
+                self.get_wallclock()
             );
             self.results.push(PhaseResult {
                 name,
@@ -89,6 +84,17 @@ impl PhaseTimesMonitor {
             self.get_wallclock(),
             total_mem - free_mem,
             ((1.0 - free_mem / total_mem) * 100.0)
+        )
+    }
+
+    pub fn get_formatted_counter_without_memory(&self) -> String {
+        format!(
+            " ptime: {:.2?} gtime: {:.2?}",
+            self.phase
+                .as_ref()
+                .map(|pt| pt.1.elapsed())
+                .unwrap_or(Duration::from_millis(0)),
+            self.get_wallclock(),
         )
     }
 

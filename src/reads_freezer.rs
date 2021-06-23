@@ -203,9 +203,7 @@ impl ReadsFreezer {
         )
     }
 
-    pub fn optfile_splitted_compressed(name: String) -> ReadsWriter {
-        let path = PathBuf::from(name + ".freeze.fa.gz");
-
+    pub fn optfile_splitted_compressed(path: impl AsRef<Path>) -> ReadsWriter {
         let mut compress_stream = GzEncoder::new(
             BufWriter::with_capacity(1024 * 1024 * 16, File::create(&path).unwrap()),
             Compression::new(2),
@@ -216,26 +214,11 @@ impl ReadsFreezer {
                 1024 * 1024,
                 compress_stream,
             )),
-            path,
+            path: path.as_ref().to_path_buf(),
         }
     }
 
-    pub fn optfile_splitted_compressed_lz4(name: impl AsRef<Path>) -> ReadsWriter {
-        let path = PathBuf::from(name.as_ref().parent().unwrap()).join(
-            name.as_ref()
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-                + ".fa.lz4",
-        );
-
-        //        let mut process = Command::new("./libdeflate/gzip").args(&["-c2"])
-        //            .stdin(Stdio::piped())
-        //            .stdout(Stdio::from(File::create(file).unwrap())).spawn().unwrap();
-        //
-        //        let compress_stream = process.stdin.unwrap();
+    pub fn optfile_splitted_compressed_lz4(path: impl AsRef<Path>) -> ReadsWriter {
         let mut compress_stream = lz4::EncoderBuilder::new()
             .level(2)
             .checksum(ContentChecksum::NoChecksum)
@@ -252,18 +235,17 @@ impl ReadsFreezer {
                 1024 * 1024 * 8,
                 compress_stream,
             )),
-            path,
+            path: path.as_ref().to_path_buf(),
         }
     }
 
-    pub fn optifile_splitted(name: String) -> ReadsWriter {
-        let path = PathBuf::from(name + ".freeze.fa");
+    pub fn optifile_splitted(path: impl AsRef<Path>) -> ReadsWriter {
         ReadsWriter {
             writer: WriterChannels::File(BufWriter::with_capacity(
                 1024 * 128,
                 File::create(&path).unwrap(),
             )),
-            path,
+            path: path.as_ref().to_path_buf(),
         }
     }
 

@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use std::mem::{size_of, MaybeUninit};
 use std::ops::{Index, Range};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -23,12 +23,13 @@ use crate::reads_freezer::ReadsFreezer;
 use crate::sequences_reader::FastaSequence;
 use crate::types::BucketIndexType;
 use crate::utils::Utils;
-use crate::DEFAULT_BUFFER_SIZE;
+use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use hashbrown::HashMap;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
+use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::smart_bucket_sort::{smart_radix_sort, SortKey};
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
@@ -78,7 +79,10 @@ impl Pipeline {
         k: usize,
         m: usize,
     ) -> RetType {
-        let start_time = Instant::now();
+        PHASES_TIMES_MONITOR
+            .write()
+            .start_phase("phase: kmers merge".to_string());
+
         static CURRENT_BUCKETS_COUNT: AtomicU64 = AtomicU64::new(0);
 
         const NONE: Option<Mutex<BufWriter<File>>> = None;
@@ -95,27 +99,32 @@ impl Pipeline {
 
         let sequences = Mutex::new(Vec::new());
 
-        file_inputs.par_iter().for_each(|input| {
-            // let mut hashmap = HashMap::new();
+        let incr_bucket_index = AtomicUsize::new(0);
 
+        file_inputs.par_iter().for_each(|input| {
             const MAX_HASHES_FOR_FLUSH: MemoryDataSize = MemoryDataSize::from_kibioctets(64.0);
             let mut hashes_tmp =
                 BucketsThreadDispatcher::new(MAX_HASHES_FOR_FLUSH, &hashes_buckets);
 
             let bucket_index = Utils::get_bucket_index(&input);
-            // if bucket_index != 448 {
-            //     hashes_tmp.finalize(&());
-            //     return;
-            // }
 
-            // println!("Processing file {:?}", input.file_name().unwrap());
-            // println!("Processing bucket {}...", bucket_index);
+            let incr_bucket_index_val = incr_bucket_index.fetch_add(1, Ordering::Relaxed);
+            if incr_bucket_index_val % (buckets_count / 8) == 0 {
+                println!(
+                    "Processing bucket {} of {} {}",
+                    incr_bucket_index_val,
+                    buckets_count,
+                    PHASES_TIMES_MONITOR
+                        .read()
+                        .get_formatted_counter_without_memory()
+                );
+            }
 
             let mut kmers_cnt = 0;
             let mut kmers_unique = 0;
 
             let mut writer = ReadsFreezer::optfile_splitted_compressed_lz4(format!(
-                "{}/result.{}",
+                "{}/result.{}.fasta.lz4",
                 out_directory.as_ref().display(),
                 bucket_index
             ));
@@ -128,7 +137,11 @@ impl Pipeline {
             let mut buckets = &mut buckets[..];
             let mut cmp_reads = &mut cmp_reads[..];
 
-            IntermediateReadsReader::<KmersFlags>::new(input.clone()).for_each(|flags, x| {
+            IntermediateReadsReader::<KmersFlags>::new(
+                input.clone(),
+                !KEEP_FILES.load(Ordering::Relaxed),
+            )
+            .for_each(|flags, x| {
                 let decr_val =
                     ((x.bases_count() == k) && (flags.0 & READ_FLAG_INCL_END) == 0) as usize;
 
