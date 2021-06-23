@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 #[derive(Copy, Clone, Debug)]
 struct FinalUnitigInfo {
     is_start: bool,
+    is_circular: bool,
     flags: UnitigFlags,
 }
 
@@ -86,6 +87,13 @@ impl Pipeline {
                     link.flags.is_reverse_complemented(),
                 );
 
+                let is_circular = link
+                    .entries
+                    .get_slice(&unitigs_tmp_vec)
+                    .last()
+                    .map(|u| u == &start_unitig)
+                    .unwrap_or(false);
+
                 assert!(!unitigs_hashmap.contains_key(&start_unitig));
                 unitigs_hashmap.insert(
                     start_unitig,
@@ -93,6 +101,7 @@ impl Pipeline {
                         counter,
                         FinalUnitigInfo {
                             is_start: true,
+                            is_circular,
                             flags: link.flags,
                         },
                     ),
@@ -109,6 +118,7 @@ impl Pipeline {
                                 counter,
                                 FinalUnitigInfo {
                                     is_start: false,
+                                    is_circular,
                                     flags: UnitigFlags::new_direction(
                                         /*unused*/ false,
                                         el.is_reverse_complemented(),
@@ -154,6 +164,7 @@ impl Pipeline {
 
             'uloop: for sequence in final_sequences.group_by(|a, b| !b.unwrap().1.is_start) {
                 let is_backwards = !sequence[0].unwrap().1.flags.is_forward();
+                let is_circular = sequence[0].unwrap().1.is_circular;
 
                 temp_sequence.clear();
 
@@ -194,6 +205,11 @@ impl Pipeline {
                             );
                         }
                     }
+                }
+
+                // In case of circular unitigs, remove an extra ending base
+                if is_circular {
+                    temp_sequence.pop();
                 }
 
                 tmp_final_unitigs_buffer.add_read(FastaSequence {

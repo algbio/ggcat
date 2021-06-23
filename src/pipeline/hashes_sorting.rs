@@ -84,7 +84,6 @@ impl Pipeline {
                 for x in vec.group_by(|a, b| a.hash == b.hash) {
                     match x.len() {
                         2 => {
-
                             let mut reverse_complemented = [false, false];
 
                             // Can happen with canonical kmers, we should reverse-complement one of the strands
