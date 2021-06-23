@@ -223,7 +223,6 @@ impl Pipeline {
                 }
 
                 fast_smart_radix_sort::<_, Compare<H>, false>(&mut cmp_reads[b]);
-                assert!(cmp_reads[b].is_sorted_by_key(|x| x.hash.to_unextendable()));
 
                 for slice in cmp_reads[b]
                     .group_by(|a, b| a.hash.to_unextendable() == b.hash.to_unextendable())
