@@ -238,7 +238,7 @@ fn worker<H: HashFunctionFactory>(
                 );
             });
 
-            if SEQ_COUNT.fetch_add(1, Ordering::Relaxed) % 10000000 == 0 {
+            if SEQ_COUNT.fetch_add(1, Ordering::Relaxed) % 100000000 == 0 {
                 TOT_BASES_COUNT.fetch_add(total_bases, Ordering::Relaxed);
                 VALID_BASES_COUNT.fetch_add(valid_bases, Ordering::Relaxed);
                 total_bases = 0;

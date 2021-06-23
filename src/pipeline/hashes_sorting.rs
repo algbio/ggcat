@@ -21,6 +21,7 @@ use rayon::iter::ParallelIterator;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::marker::PhantomData;
+use std::mem::size_of;
 use std::sync::atomic::Ordering;
 
 impl Pipeline {
@@ -74,7 +75,7 @@ impl Pipeline {
                 }
                 impl<H: HashFunctionFactory> SortKey<HashEntry<H::HashTypeUnextendable>> for Compare<H> {
                     type KeyType = H::HashTypeUnextendable;
-                    const KEY_BITS: usize = 64;
+                    const KEY_BITS: usize = size_of::<H::HashTypeUnextendable>() * 8;
 
                     #[inline(always)]
                     fn get_shifted(value: &HashEntry<H::HashTypeUnextendable>, rhs: u8) -> u8 {

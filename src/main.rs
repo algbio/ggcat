@@ -215,7 +215,7 @@ fn main() {
             sequences: Utils::generate_bucket_names(
                 args.temp_dir.join("result"),
                 BUCKETS_COUNT,
-                Some("fa.lz4"),
+                Some("fasta.lz4"),
             ),
             hashes: Utils::generate_bucket_names(args.temp_dir.join("hashes"), BUCKETS_COUNT, None),
         }
