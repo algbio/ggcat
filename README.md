@@ -1,6 +1,6 @@
 # BiLoki
 
-BiLoki is a tool for building compacted De Brujin graphs from raw sequencing data or for merging multiple existing cDBJ graphs in a single graph.
+BiLoki is a tool for building compacted De Brujin graphs from raw sequencing data or for merging multiple existing cDBJ graphs in a single graph. It has a speedup from x8 to x32 wrt. other publicly available tools for cDBJ construction.
 
 ## Tool usage
 
@@ -39,6 +39,8 @@ ARGS:
 
 ```
 
+At the moment the maximum allowed kmer size is 64, this restriction will be removed in the near future.
+
 
 ## Installation
 At the moment building from source is the only option to install the tool.
@@ -54,7 +56,9 @@ rustup toolchain install nightly
 
 ### Windows
 Follow the instructions at the site:
-https://rustup.rs/#
+https://rustup.rs/
+
+The building process was not tested on windows, but it should work with minor tweaks.
 
 ### Building
 
@@ -64,5 +68,6 @@ git clone https://github.com/Guilucand/biloki --recursive
 cd biloki/
 cargo install --path .
 ```
-that puts the binary in ```$HOME/.cargo/bin```
+the binary is automatically copied to ```$HOME/.cargo/bin```
+
 To launch the tool directly from the command line, the above directory should be added to the ```$PATH``` variable. 
