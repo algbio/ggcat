@@ -3,6 +3,42 @@
 version = 3
 
 [[package]]
+name = "BiLoki"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "bio",
+ "bitvec",
+ "bstr",
+ "byteorder",
+ "clap",
+ "crossbeam",
+ "ctrlc",
+ "filebuffer",
+ "flate2",
+ "hashbrown",
+ "itertools 0.10.0",
+ "lazy_static",
+ "libc",
+ "libdeflater",
+ "lz4",
+ "nix 0.15.0",
+ "object-pool",
+ "os_pipe",
+ "pad",
+ "parallel-processor",
+ "postcard",
+ "rand 0.8.3",
+ "rand_chacha 0.3.1",
+ "rand_pcg 0.3.0",
+ "rayon",
+ "serde",
+ "stopwatch",
+ "structopt",
+ "threadpool",
+]
+
+[[package]]
 name = "adler32"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -559,42 +595,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "genome-assembly"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "bio",
- "bitvec",
- "bstr",
- "byteorder",
- "clap",
- "crossbeam",
- "ctrlc",
- "filebuffer",
- "flate2",
- "hashbrown",
- "itertools 0.10.0",
- "lazy_static",
- "libc",
- "libdeflater",
- "lz4",
- "nix 0.15.0",
- "object-pool",
- "os_pipe",
- "pad",
- "parallel-processor",
- "postcard",
- "rand 0.8.3",
- "rand_chacha 0.3.1",
- "rand_pcg 0.3.0",
- "rayon",
- "serde",
- "stopwatch",
- "structopt",
- "threadpool",
-]
-
-[[package]]
 name = "getrandom"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1077,6 +1077,7 @@ dependencies = [
  "rand 0.8.3",
  "rayon",
  "serde",
+ "unchecked-index",
 ]
 
 [[package]]
@@ -1778,6 +1779,12 @@ name = "typenum"
 version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d2783fe2d6b8c1101136184eb41be8b1ad379e4657050b8aaff0c79ee7575f9"
+
+[[package]]
+name = "unchecked-index"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eeba86d422ce181a719445e51872fa30f1f7413b62becb52e95ec91aa262d85c"
 
 [[package]]
 name = "unicode-segmentation"

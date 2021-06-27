@@ -55,6 +55,9 @@ pub struct SortingData<'a, T> {
     mask: u8,
 }
 
+const RADIX_SIZE_LOG: u8 = 8;
+const RADIX_SIZE: usize = (1 << 8);
+
 pub fn striped_parallel_smart_radix_sort_memfile<
     T: Ord + Send + Sync + Debug + 'static,
     F: SortKey<T>,
@@ -67,9 +70,7 @@ pub fn striped_parallel_smart_radix_sort_memfile<
 
     dest_buffer.clear();
     dest_buffer.reserve(tot_entries);
-    unsafe {
-        dest_buffer.set_len(tot_entries)
-    };
+    unsafe { dest_buffer.set_len(tot_entries) };
 
     striped_parallel_smart_radix_sort::<T, F>(chunks.as_slice(), dest_buffer.as_mut_slice());
 
@@ -87,10 +88,10 @@ pub fn striped_parallel_smart_radix_sort<T: Ord + Send + Sync + Debug, F: SortKe
     let num_threads = rayon::current_num_threads();
     let queue = crossbeam::queue::ArrayQueue::new(num_threads);
 
-    let first_shift = F::KEY_BITS as u8 - 8;
+    let first_shift = F::KEY_BITS as u8 - RADIX_SIZE_LOG;
 
     for i in 0..num_threads {
-        queue.push([0; 256 + 1]);
+        queue.push([0; RADIX_SIZE + 1]);
     }
 
     striped_file.par_iter().for_each(|chunk| {
@@ -101,18 +102,18 @@ pub fn striped_parallel_smart_radix_sort<T: Ord + Send + Sync + Debug, F: SortKe
         queue.push(counts);
     });
 
-    let mut counters = [0; 256 + 1];
+    let mut counters = [0; RADIX_SIZE + 1];
     while let Some(counts) = queue.pop() {
-        for i in 1..(256 + 1) {
+        for i in 1..(RADIX_SIZE + 1) {
             counters[i] += counts[i];
         }
     }
     const ATOMIC_USIZE_ZERO: AtomicUsize = AtomicUsize::new(0);
-    let offsets = [ATOMIC_USIZE_ZERO; 256 + 1];
-    let mut offsets_reference = [0; 256 + 1];
+    let offsets = [ATOMIC_USIZE_ZERO; RADIX_SIZE + 1];
+    let mut offsets_reference = [0; RADIX_SIZE + 1];
 
     use std::sync::atomic::Ordering;
-    for i in 1..(256 + 1) {
+    for i in 1..(RADIX_SIZE + 1) {
         offsets_reference[i] = offsets[i - 1].load(Ordering::Relaxed) + counters[i];
         offsets[i].store(offsets_reference[i], Ordering::Relaxed);
     }
@@ -124,9 +125,12 @@ pub fn striped_parallel_smart_radix_sort<T: Ord + Send + Sync + Debug, F: SortKe
         let chunk_addr = chunk.as_ptr() as usize;
         let chunk_data_mut = unsafe { from_raw_parts_mut(chunk_addr as *mut T, chunk.len()) };
 
-        let choffs = smart_radix_sort_::<T, F, false, true>(chunk_data_mut, F::KEY_BITS as u8 - 8);
+        let choffs = smart_radix_sort_::<T, F, false, true>(
+            chunk_data_mut,
+            F::KEY_BITS as u8 - RADIX_SIZE_LOG,
+        );
         let mut offset = 0;
-        for idx in 1..(256 + 1) {
+        for idx in 1..(RADIX_SIZE + 1) {
             let count = choffs[idx] - choffs[idx - 1];
             let dest_position = offsets[idx - 1].fetch_add(count, Ordering::Relaxed);
 
@@ -158,7 +162,7 @@ pub fn striped_parallel_smart_radix_sort<T: Ord + Send + Sync + Debug, F: SortKe
 }
 
 pub fn fast_smart_radix_sort<T: Sync + Send, F: SortKey<T>, const PARALLEL: bool>(data: &mut [T]) {
-    smart_radix_sort_::<T, F, PARALLEL, false>(data, F::KEY_BITS as u8 - 8);
+    smart_radix_sort_::<T, F, PARALLEL, false>(data, F::KEY_BITS as u8 - RADIX_SIZE_LOG);
 }
 
 fn smart_radix_sort_<
@@ -169,14 +173,13 @@ fn smart_radix_sort_<
 >(
     data: &mut [T],
     shift: u8,
-) -> [IndexType; 256 + 1] {
-    let mut stack = unsafe { unchecked_index(vec![(0..0, 0); shift as usize * 256]) };
-
+) -> [IndexType; RADIX_SIZE + 1] {
+    let mut stack = unsafe { unchecked_index(vec![(0..0, 0); shift as usize * RADIX_SIZE]) };
 
     let mut stack_index = 1;
     stack[0] = (0..data.len(), shift);
 
-    let mut ret_counts = [0; 256 + 1];
+    let mut ret_counts = [0; RADIX_SIZE + 1];
 
     let mut first = true;
 
@@ -186,20 +189,20 @@ fn smart_radix_sort_<
 
         let mut data = unsafe { unchecked_index(&mut data[range.clone()]) };
 
-        let mut counts: UncheckedIndex<[IndexType; 256 + 1]> =
-            unsafe { unchecked_index([0; 256 + 1]) };
-        let mut sums: UncheckedIndex<[IndexType; 256 + 1]> =
-            unsafe { unchecked_index([0; 256 + 1]) };
+        let mut counts: UncheckedIndex<[IndexType; RADIX_SIZE + 1]> =
+            unsafe { unchecked_index([0; RADIX_SIZE + 1]) };
+        let mut sums: UncheckedIndex<[IndexType; RADIX_SIZE + 1]> =
+            unsafe { unchecked_index([0; RADIX_SIZE + 1]) };
 
         unsafe {
             if PARALLEL {
                 const ATOMIC_ZERO: AtomicUsize = AtomicUsize::new(0);
-                let mut par_counts: UncheckedIndex<[AtomicUsize; 256 + 1]> =
-                    unsafe { unchecked_index([ATOMIC_ZERO; 256 + 1]) };
+                let mut par_counts: UncheckedIndex<[AtomicUsize; RADIX_SIZE + 1]> =
+                    unsafe { unchecked_index([ATOMIC_ZERO; RADIX_SIZE + 1]) };
                 let num_threads = rayon::current_num_threads();
                 let chunk_size = (data.len() + num_threads - 1) / num_threads;
                 data.chunks(chunk_size).par_bridge().for_each(|chunk| {
-                    let mut thread_counts = unsafe { unchecked_index([0; 256 + 1]) };
+                    let mut thread_counts = unsafe { unchecked_index([0; RADIX_SIZE + 1]) };
 
                     for el in chunk {
                         thread_counts[(F::get_shifted(el, shift)) as usize + 1] += 1;
@@ -210,14 +213,14 @@ fn smart_radix_sort_<
                     }
                 });
 
-                for i in 1..(256 + 1) {
+                for i in 1..(RADIX_SIZE + 1) {
                     counts[i] =
                         counts[i - 1] + par_counts[i].load(std::sync::atomic::Ordering::Relaxed);
                 }
                 sums = counts;
 
-                let mut bucket_queues = Vec::with_capacity(256);
-                for i in 0..256 {
+                let mut bucket_queues = Vec::with_capacity(RADIX_SIZE);
+                for i in 0..RADIX_SIZE {
                     bucket_queues.push(crossbeam::channel::unbounded());
 
                     let range = sums[i]..counts[i + 1];
@@ -237,17 +240,16 @@ fn smart_radix_sort_<
 
                 let data_ptr = data.as_mut_ptr() as usize;
                 (0..num_threads).into_par_iter().for_each(|thread_index| {
-                    let mut start_buckets = unsafe { unchecked_index([0; 256]) };
-                    let mut end_buckets = unsafe { unchecked_index([0; 256]) };
+                    let mut start_buckets = unsafe { unchecked_index([0; RADIX_SIZE]) };
+                    let mut end_buckets = unsafe { unchecked_index([0; RADIX_SIZE]) };
 
                     let data = from_raw_parts_mut(data_ptr as *mut T, data.len());
 
-
                     let get_bpart = || {
-                        let start = thread_rng().next_u32() as usize % 256;
+                        let start = thread_rng().next_u32() as usize % RADIX_SIZE;
                         let mut res = None;
-                        for i in 0..256 {
-                            let bucket_num = (i + start) % 256;
+                        for i in 0..RADIX_SIZE {
+                            let bucket_num = (i + start) % RADIX_SIZE;
                             if let Ok(val) = bucket_queues[bucket_num].1.try_recv() {
                                 res = Some((bucket_num, val));
                                 break;
@@ -263,7 +265,6 @@ fn smart_radix_sort_<
                         end_buckets[bidx] = bpart.end;
                         buckets_stack.push(bidx);
 
-
                         while let Some(bucket) = buckets_stack.pop() {
                             while start_buckets[bucket] < end_buckets[bucket] {
                                 let mut val =
@@ -278,7 +279,7 @@ fn smart_radix_sort_<
                                                 bucket_queues[val].1.recv().unwrap()
                                             } else {
                                                 // Non final thread, exit and let the final thread finish the computation
-                                                for i in 0..256 {
+                                                for i in 0..RADIX_SIZE {
                                                     if start_buckets[i] < end_buckets[i] {
                                                         bucket_queues[i]
                                                             .0
@@ -305,12 +306,12 @@ fn smart_radix_sort_<
                     counts[(F::get_shifted(el, shift)) as usize + 1] += 1;
                 }
 
-                for i in 1..(256 + 1) {
+                for i in 1..(RADIX_SIZE + 1) {
                     counts[i] += counts[i - 1];
                 }
                 sums = counts;
 
-                for bucket in 0..256 {
+                for bucket in 0..RADIX_SIZE {
                     let end = counts[bucket + 1];
                     while sums[bucket] < end {
                         let mut val = (F::get_shifted(&data[sums[bucket]], shift)) as usize;
@@ -334,18 +335,18 @@ fn smart_radix_sort_<
             uc: UnsafeCell::new(data),
         };
 
-        if !SINGLE_STEP && shift >= 8 {
-            if PARALLEL && shift as usize == (F::KEY_BITS - 8) {
+        if !SINGLE_STEP && shift >= RADIX_SIZE_LOG {
+            if PARALLEL && shift as usize == (F::KEY_BITS - RADIX_SIZE_LOG as usize) {
                 (0..256usize)
                     .into_par_iter()
                     .filter(|x| (counts[(*x as usize) + 1] - counts[*x as usize]) > 1)
                     .for_each(|i| {
                         let mut data_ptr = unsafe { std::ptr::read(data_ptr.uc.get()) };
                         let slice = &mut data_ptr[counts[i] as usize..counts[i + 1] as usize];
-                        smart_radix_sort_::<T, F, false, false>(slice, shift - 8);
+                        smart_radix_sort_::<T, F, false, false>(slice, shift - RADIX_SIZE_LOG);
                     });
             } else {
-                (0..256).into_iter().for_each(|i| {
+                (0..RADIX_SIZE).into_iter().for_each(|i| {
                     let slice_len = counts[i + 1] - counts[i];
                     let mut data_ptr = unsafe { std::ptr::read(data_ptr.uc.get()) };
 
@@ -370,7 +371,7 @@ fn smart_radix_sort_<
 
                     stack[stack_index] = (
                         range.start + counts[i] as usize..range.start + counts[i + 1] as usize,
-                        shift - 8,
+                        shift - RADIX_SIZE_LOG,
                     );
                     stack_index += 1;
                 });
@@ -382,36 +383,39 @@ fn smart_radix_sort_<
 
 mod tests {
     use crate::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
-    use rand::{thread_rng, RngCore};
+    use rand::{thread_rng, Rng, RngCore};
     use rayon::prelude::*;
     use std::cmp::Ordering;
     use std::time::Instant;
 
     const VEC_SIZE: usize = 1000000000;
 
+    #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
+    struct DataTypeStruct(u128, [u8; (32 - 16)]);
+
     struct U64SortKey;
-    impl SortKey<u64> for U64SortKey {
-        type KeyType = u64;
-        const KEY_BITS: usize = std::mem::size_of::<u64>() * 8;
+    impl SortKey<DataTypeStruct> for U64SortKey {
+        type KeyType = u128;
+        const KEY_BITS: usize = std::mem::size_of::<u128>() * 8;
 
         #[inline(always)]
-        fn compare(left: &u64, right: &u64) -> std::cmp::Ordering {
-            left.cmp(right)
+        fn compare(left: &DataTypeStruct, right: &DataTypeStruct) -> std::cmp::Ordering {
+            left.0.cmp(&right.0)
         }
 
         #[inline(always)]
-        fn get_shifted(value: &u64, rhs: u8) -> u8 {
-            (*value >> rhs) as u8
+        fn get_shifted(value: &DataTypeStruct, rhs: u8) -> u8 {
+            (value.0 >> rhs) as u8
         }
     }
 
     #[test]
     fn sorting_test() {
-        let mut data = vec![0; VEC_SIZE];
+        let mut data = vec![DataTypeStruct(0, [0; 32 - 16]); VEC_SIZE];
 
         data.par_iter_mut()
             .enumerate()
-            .for_each(|(i, x)| *x = thread_rng().next_u64());
+            .for_each(|(i, x)| *x = DataTypeStruct(thread_rng().gen(), [2; 32 - 16]));
 
         println!("Started sorting...");
         let start = Instant::now();
@@ -422,7 +426,7 @@ mod tests {
                 Ordering::Less => Ordering::Less,
                 Ordering::Equal => Ordering::Equal,
                 Ordering::Greater => {
-                    panic!("{} > {}!", a, b);
+                    panic!("{:?} > {:?}!", a, b);
                 }
             })
         }));
