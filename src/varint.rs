@@ -105,7 +105,8 @@ mod tests {
         }
         writer.finalize();
 
-        let mut reader = IntermediateReadsReader::<()>::new("/tmp/test-encoding.0.lz4".to_string());
+        let mut reader =
+            IntermediateReadsReader::<()>::new("/tmp/test-encoding.0.lz4".to_string(), false);
 
         let mut index = 0;
         reader.for_each(|_, x| {

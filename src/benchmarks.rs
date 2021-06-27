@@ -14,10 +14,13 @@ mod tests {
     use crate::varint::encode_varint;
     use bincode::DefaultOptions;
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+    use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, IntegerSorter};
+    use rand::{thread_rng, RngCore};
     use serde::{Deserialize, Serialize};
     use std::fs::File;
     use std::io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write};
     use std::ops::Deref;
+    use std::time::Instant;
     use test::Bencher;
 
     #[test]
@@ -106,6 +109,27 @@ mod tests {
     //
     //     assert_ne!(sum, 49999995000000);
     // }
+
+    #[test]
+    fn parallel_sorting() {
+        const ARRAY_SIZE: usize = 1000000000;
+        const EL_MAX_SIZE: u32 = 1000000000;
+
+        let mut vec = Vec::with_capacity(ARRAY_SIZE);
+
+        let mut rng = thread_rng();
+
+        for i in 0..ARRAY_SIZE {
+            vec.push((rng.next_u32()) as u16);
+        }
+
+        println!("Starting...");
+        let start = Instant::now();
+        fast_smart_radix_sort::<_, IntegerSorter, true>(vec.as_mut_slice());
+
+        let end = start.elapsed();
+        println!("Total time: {:.2?}", end);
+    }
 
     #[bench]
     fn bench_cursor_vec(b: &mut Bencher) {
