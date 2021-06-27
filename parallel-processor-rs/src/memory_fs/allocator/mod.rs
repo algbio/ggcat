@@ -379,15 +379,16 @@ pub static CHUNKS_ALLOCATOR: ChunksAllocator = ChunksAllocator::new();
 
 #[test]
 fn allocate_memory() {
-    CHUNKS_ALLOCATOR.initialize(MemoryDataSize::from_gibioctets(64.0));
+    CHUNKS_ALLOCATOR.initialize(MemoryDataSize::from_gibioctets(8.0));
     for i in 0..5 {
-        let mut allocated_chunks: Vec<_> =
-            std::iter::from_fn(move || CHUNKS_ALLOCATOR.request_chunk(ChunkUsage_::TemporarySpace))
-                .collect();
+        let mut allocated_chunks: Vec<_> = std::iter::from_fn(move || {
+            Some(CHUNKS_ALLOCATOR.request_chunk(chunk_usage!(TemporarySpace)))
+        })
+        .collect();
 
         allocated_chunks.par_iter_mut().for_each(|x| {
             x.zero_memory();
         });
     }
-    CHUNKS_ALLOCATOR.deinitialize().unwrap();
+    CHUNKS_ALLOCATOR.deinitialize();
 }
