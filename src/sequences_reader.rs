@@ -136,7 +136,7 @@ impl SequencesReader {
             );
         } else if file.as_ref().extension().filter(|x| *x == "lz4").is_some() {
             let mut file = lz4::Decoder::new(
-                File::open(&file).expect(&format!("Cannot find file {}", file.as_ref().display())),
+                File::open(&file).expect(&format!("Cannot open file {}", file.as_ref().display())),
             )
             .unwrap();
             let mut buffer = [0; 1024 * 512];
@@ -147,7 +147,8 @@ impl SequencesReader {
                 callback(&buffer[0..count]);
             }
         } else {
-            let mut file = File::open(&file).unwrap();
+            let mut file =
+                File::open(&file).expect(&format!("Cannot open file {}", file.as_ref().display()));
             let mut buffer = [0; 1024 * 512];
             while let Ok(count) = file.read(&mut buffer) {
                 if count == 0 {

@@ -139,6 +139,9 @@ static KEEP_FILES: AtomicBool = AtomicBool::new(false);
 fn main() {
     let args: Cli = Cli::from_args();
 
+    // Increase the maximum allowed number of open files
+    fdlimit::raise_fd_limit();
+
     const BUCKETS_COUNT: usize = 512;
 
     KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);

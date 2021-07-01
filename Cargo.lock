@@ -14,6 +14,7 @@ dependencies = [
  "clap",
  "crossbeam",
  "ctrlc",
+ "fdlimit",
  "filebuffer",
  "flate2",
  "hashbrown",
@@ -514,6 +515,15 @@ checksum = "3ab49e9dcb602294bc42f9a7dfc9bc6e936fca4418ea300dbfb84fe16de0b7d9"
 dependencies = [
  "backtrace",
  "version_check 0.1.5",
+]
+
+[[package]]
+name = "fdlimit"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c4c9e43643f5a3be4ca5b67d26b98031ff9db6806c3440ae32e02e3ceac3f1b"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
