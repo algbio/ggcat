@@ -121,8 +121,7 @@ mod tests {
         }
 
         for (index, item) in queue.make_iter(items.clone().into_iter()).enumerate() {
-            // *items[index..index + MINWINDOW].iter().min().unwrap()
-            assert_eq!(item, item);
+            assert_eq!(item, *items[index..index + MINWINDOW].iter().min().unwrap());
         }
     }
 }
