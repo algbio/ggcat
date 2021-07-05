@@ -6,6 +6,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
 use os_pipe::{PipeReader, PipeWriter};
+use parking_lot::Mutex;
 use std::cell::{Cell, UnsafeCell};
 use std::fs::{File, OpenOptions};
 use std::hash::Hasher;
@@ -13,7 +14,6 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
-use std::sync::Mutex;
 use std::thread;
 
 pub struct ReadsFreezer {
@@ -41,6 +41,7 @@ unsafe impl<'a, T: ?Sized> Sync for RefThreadWrapper<'a, T> {}
 unsafe impl<'a, T: ?Sized> Send for RefThreadWrapper<'a, T> {}
 
 pub enum WriterChannels {
+    None,
     Pipe(PipeWriter),
     File(BufWriter<File>),
     CompressedFile(BufWriter<GzEncoder<BufWriter<File>>>),
@@ -54,6 +55,7 @@ impl WriterChannels {
             WriterChannels::File(x) => x,
             WriterChannels::CompressedFile(x) => x,
             WriterChannels::CompressedFileLZ4(x) => x,
+            WriterChannels::None => unreachable!(),
         }
     }
 }
@@ -77,8 +79,11 @@ impl<'a> FastaWriterConcurrentBuffer<'a> {
         }
     }
 
-    fn flush(&mut self) {
-        let mut buffer = self.target.lock().unwrap();
+    fn flush(&mut self) -> usize {
+        let mut buffer = self.target.lock();
+
+        let first_read_index = buffer.get_reads_count();
+
         for (ident, seq, qual) in self.sequences.iter() {
             buffer.add_read(FastaSequence {
                 ident: ident.get_slice(&self.ident_buf),
@@ -91,6 +96,8 @@ impl<'a> FastaWriterConcurrentBuffer<'a> {
         self.ident_buf.clear();
         self.seq_buf.clear();
         self.qual_buf.clear();
+
+        first_read_index
     }
 
     #[inline(always)]
@@ -98,7 +105,9 @@ impl<'a> FastaWriterConcurrentBuffer<'a> {
         vec.len() > 0 && (vec.len() + len > vec.capacity())
     }
 
-    pub fn add_read(&mut self, read: FastaSequence) {
+    pub fn add_read(&mut self, read: FastaSequence) -> Option<usize> {
+        let mut result = None;
+
         if Self::will_overflow(&self.ident_buf, read.ident.len())
             || Self::will_overflow(&self.seq_buf, read.seq.len())
             || match read.qual {
@@ -106,7 +115,7 @@ impl<'a> FastaWriterConcurrentBuffer<'a> {
                 Some(qual) => Self::will_overflow(&self.qual_buf, qual.len()),
             }
         {
-            self.flush();
+            result = Some(self.flush());
         }
         let qual = read
             .qual
@@ -117,23 +126,32 @@ impl<'a> FastaWriterConcurrentBuffer<'a> {
             VecSlice::new_extend(&mut self.seq_buf, read.seq),
             qual,
         ));
+
+        result
     }
 
-    pub fn finalize(self) {}
+    pub fn finalize(mut self) -> usize {
+        self.flush()
+    }
 }
 
 impl Drop for FastaWriterConcurrentBuffer<'_> {
     fn drop(&mut self) {
-        self.flush()
+        self.flush();
     }
 }
 
 pub struct ReadsWriter {
     writer: WriterChannels,
     path: PathBuf,
+    reads_count: usize,
 }
 
 impl ReadsWriter {
+    pub fn get_reads_count(&mut self) -> usize {
+        self.reads_count
+    }
+
     pub fn add_read(&mut self, read: FastaSequence) {
         let writer = self.writer.get_writer();
         writer.write_all(read.ident);
@@ -144,6 +162,8 @@ impl ReadsWriter {
             writer.write_all(qual).unwrap();
         }
         writer.write_u8(b'\n').unwrap();
+
+        self.reads_count += 1;
     }
     pub fn pipe_freezer(&mut self, mut freezer: ReadsFreezer) {
         let writer = self.writer.get_writer();
@@ -154,23 +174,7 @@ impl ReadsWriter {
         self.path.clone()
     }
 
-    pub fn finalize(mut self) {
-        match self.writer {
-            WriterChannels::Pipe(mut writer) => {}
-            WriterChannels::File(mut writer) => {}
-            WriterChannels::CompressedFile(mut writer) => {}
-            WriterChannels::CompressedFileLZ4(mut writer) => {
-                writer.flush();
-                writer
-                    .into_inner()
-                    .unwrap_or_else(|_| panic!("Cannot unwrap!"))
-                    .finish()
-                    .0
-                    .flush()
-                    .unwrap();
-            }
-        }
-    }
+    pub fn finalize(self) {}
 }
 
 impl ReadsFreezer {
@@ -181,6 +185,7 @@ impl ReadsFreezer {
             func(&mut ReadsWriter {
                 writer: WriterChannels::Pipe(writer),
                 path: PathBuf::new(),
+                reads_count: 0,
             });
         });
 
@@ -199,6 +204,7 @@ impl ReadsFreezer {
             ReadsWriter {
                 writer: WriterChannels::Pipe(writer),
                 path: PathBuf::new(),
+                reads_count: 0,
             },
         )
     }
@@ -215,6 +221,7 @@ impl ReadsFreezer {
                 compress_stream,
             )),
             path: path.as_ref().to_path_buf(),
+            reads_count: 0,
         }
     }
 
@@ -236,6 +243,7 @@ impl ReadsFreezer {
                 compress_stream,
             )),
             path: path.as_ref().to_path_buf(),
+            reads_count: 0,
         }
     }
 
@@ -246,6 +254,7 @@ impl ReadsFreezer {
                 File::create(&path).unwrap(),
             )),
             path: path.as_ref().to_path_buf(),
+            reads_count: 0,
         }
     }
 
@@ -300,6 +309,28 @@ impl ReadsFreezer {
         let reader = BufReader::new(reader_cell);
         for line in reader.lines() {
             func(line.unwrap().as_bytes());
+        }
+    }
+}
+
+impl Drop for ReadsWriter {
+    fn drop(&mut self) {
+        let writer = std::mem::replace(&mut self.writer, WriterChannels::None);
+        match writer {
+            WriterChannels::Pipe(mut writer) => {}
+            WriterChannels::File(mut writer) => {}
+            WriterChannels::CompressedFile(mut writer) => {}
+            WriterChannels::CompressedFileLZ4(mut writer) => {
+                writer.flush();
+                writer
+                    .into_inner()
+                    .unwrap_or_else(|_| panic!("Cannot unwrap!"))
+                    .finish()
+                    .0
+                    .flush()
+                    .unwrap();
+            }
+            WriterChannels::None => unreachable!(),
         }
     }
 }

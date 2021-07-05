@@ -1,11 +1,12 @@
 use crate::memory_fs::buffer_manager::BUFFER_MANAGER;
+use parking_lot::Mutex;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+
 use std::thread;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -88,7 +89,7 @@ impl StatsLogger {
                 BUFFER_MANAGER.update_buffer_stats();
 
                 let mut entries: Vec<_>;
-                let mut map_lock = unsafe { (*self.stats.get()).as_mut().unwrap().lock().unwrap() };
+                let mut map_lock = unsafe { (*self.stats.get()).as_mut().unwrap().lock() };
                 entries = map_lock.iter().map(|(e, f)| (*e, f.0)).collect();
 
                 *map_lock = map_lock
@@ -116,7 +117,6 @@ impl StatsLogger {
                         .as_mut()
                         .unwrap()
                         .lock()
-                        .unwrap()
                         .write_all(values.as_slice());
                 }
             });
@@ -130,7 +130,7 @@ impl StatsLogger {
             if !self.started.load(Ordering::Relaxed) {
                 return;
             }
-            let mut map_lock = (*self.stats.get()).as_mut().unwrap().lock().unwrap();
+            let mut map_lock = (*self.stats.get()).as_mut().unwrap().lock();
 
             let val = map_lock.entry(name).or_insert((0.0, mode));
             match mode {

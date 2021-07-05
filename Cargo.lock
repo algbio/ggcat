@@ -28,6 +28,7 @@ dependencies = [
  "os_pipe",
  "pad",
  "parallel-processor",
+ "parking_lot 0.11.1",
  "postcard",
  "rand 0.8.3",
  "rand_chacha 0.3.1",

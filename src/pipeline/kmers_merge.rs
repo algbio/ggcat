@@ -1,3 +1,4 @@
+use parking_lot::Mutex;
 use std::cmp::min;
 use std::fs::File;
 use std::hash::{BuildHasher, Hasher};
@@ -7,10 +8,9 @@ use std::mem::{size_of, MaybeUninit};
 use std::ops::{Index, Range};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Mutex;
 use std::time::Instant;
 
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::prelude::*;
 
 use crate::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::hash::{ExtendableHashTraitType, HashFunction};
@@ -19,11 +19,13 @@ use crate::hash_entry::Direction;
 use crate::hash_entry::HashEntry;
 use crate::intermediate_storage::{IntermediateReadsReader, SequenceExtraData};
 use crate::pipeline::Pipeline;
-use crate::reads_freezer::ReadsFreezer;
+use crate::reads_freezer::{FastaWriterConcurrentBuffer, ReadsFreezer, ReadsWriter};
+use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::FastaSequence;
 use crate::types::BucketIndexType;
 use crate::utils::Utils;
 use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
+use bitvec::ptr::Mut;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use hashbrown::HashMap;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
@@ -31,9 +33,13 @@ use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey}
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parallel_processor::threadpools_chain::{
+    ObjectsPoolManager, ThreadChainObject, ThreadPoolDefinition, ThreadPoolsChain,
+};
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
 use std::process::exit;
+use std::sync::Arc;
 
 pub const READ_FLAG_INCL_BEGIN: u8 = (1 << 0);
 pub const READ_FLAG_INCL_END: u8 = (1 << 1);
@@ -120,15 +126,12 @@ impl Pipeline {
                 );
             }
 
-            let mut kmers_cnt = 0;
-            let mut kmers_unique = 0;
-
             let mut writer = ReadsFreezer::optfile_splitted_compressed_lz4(format!(
                 "{}/result.{}.fasta.lz4",
                 out_directory.as_ref().display(),
                 bucket_index
             ));
-            sequences.lock().unwrap().push(writer.get_path());
+            sequences.lock().push(writer.get_path());
 
             let mut read_index = 0;
 
@@ -145,32 +148,12 @@ impl Pipeline {
                 let decr_val =
                     ((x.bases_count() == k) && (flags.0 & READ_FLAG_INCL_END) == 0) as usize;
 
-                // let do_debug = x.to_string().contains("TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-
                 let hashes = H::new(x.sub_slice((1 - decr_val)..(k - decr_val)), m);
 
                 let minimizer = hashes
                     .iter()
                     .min_by_key(|k| H::get_minimizer(k.to_unextendable()))
                     .unwrap();
-
-                // if do_debug {
-                //
-                //     // if !hashmap.contains_key(&minimizer) {
-                //         let hashes1 = H::new(x.sub_slice(1..x.bases_count() - 1), m);
-                //         let minimizer2 = hashes1.iter().min_by_key(|k| H::get_minimizer(*k)).unwrap();
-                //
-                //         let hashes2 = H::new(x.sub_slice(0..x.bases_count() - 1), m);
-                //         let minimizer3 = hashes2.iter().min_by_key(|k| H::get_minimizer(*k)).unwrap();
-                //
-                //
-                //         println!("ABCFlags: {} => {} M: {}/{}/{} // {}", flags.0, x.to_string(), minimizer, minimizer2, minimizer3, decr_val);
-                //
-                //         stdout().lock().flush().unwrap();
-                //     // }
-                //     // hashmap.insert(minimizer, ());
-                //     // assert!(minimizer == H::HashType::from(13777055726464398864) || minimizer == H::HashType::from(12838026436787689768));
-                // }
 
                 let bucket = H::get_second_bucket(minimizer.to_unextendable())
                     % (MERGE_BUCKETS_COUNT as BucketIndexType);
@@ -186,8 +169,6 @@ impl Pipeline {
                 });
             });
 
-            let mut m5 = 0;
-
             for b in 0..MERGE_BUCKETS_COUNT {
                 let mut rcorrect_reads: Vec<(MH::HashTypeExtendable, usize, bool, bool)> =
                     Vec::new();
@@ -195,8 +176,6 @@ impl Pipeline {
 
                 let mut backward_seq = Vec::new();
                 let mut forward_seq = Vec::new();
-
-                // let mut dbg_seq = Vec::new();
 
                 forward_seq.reserve(k);
 
@@ -242,20 +221,10 @@ impl Pipeline {
                         ..
                     } in slice
                     {
-                        kmers_cnt += read_len - k + 1;
-
                         let read = CompressedRead::new_from_compressed(
                             &buckets[b][read_start..read_start + ((read_len + 3) / 4)],
                             read_len,
                         );
-
-                        // let tgtstr = read.to_string().contains("TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");;
-                        //
-                        // do_debug |= tgtstr;
-
-                        // if tgtstr {
-                        // println!("Processing string {}", read.to_string());
-                        // }
 
                         let hashes = MH::new(read, k);
 
@@ -284,11 +253,6 @@ impl Pipeline {
                                     count: 0,
                                     end_ignored,
                                 });
-                            // if (entry.begin_ignored !=  begin_ignored) ||
-                            //     (entry.end_ignored != end_ignored) {
-                            //     // println!("Bug found on hash {} in bucket {}", hash, input.clone().display());
-                            //     // exit(0);
-                            // }
 
                             entry.count += 1;
 
@@ -301,33 +265,15 @@ impl Pipeline {
                         tot_chars += read.bases_count();
                     }
 
-                    // if do_debug {
-                    //     println!("ABC Processing new SEQUENCE!");
-                    // }
                     for (hash, read_start, begin_ignored, end_ignored) in rcorrect_reads.iter() {
                         let mut read =
                             CompressedRead::from_compressed_reads(&buckets[b][..], *read_start, k);
-
-                        // if do_debug {
-                        // println!("ABC Processing new hash seq {} ({}, {})!", read.to_string(), begin_ignored, end_ignored);
-                        // }
-                        // // // TTTTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGCG
-                        // //   TTCTTTTTTTTTTTTTTTAATTTTGAGACAGAGTCTCACTCTATCACCCAGGCTGGAGTGCAG
-                        // let mut debug = false;
-                        // if read.to_string().as_str().contains("TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
-                        //     println!("Bucketing works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! {} {} {}", read.to_string(), begin_ignored, end_ignored);
-                        //     // do_debug = true;
-                        // }
 
                         let rhentry = rhash_map.get_mut(&hash.to_unextendable()).unwrap();
                         if rhentry.count == usize::MAX {
                             continue;
                         }
                         rhentry.count = usize::MAX;
-
-                        // if do_debug {
-                        //     println!("ABCMerging: {} => {}", read.to_string(), rhentry.ignored);
-                        // }
 
                         backward_seq.clear();
                         unsafe {
@@ -357,14 +303,6 @@ impl Pipeline {
                                 let mut temp_data = (*hash, 0, 0);
                                 let mut current_hash;
 
-                                // let mut lastxread = read;
-                                // let mut lastxread1 = read;
-
-                                // println!("Trying extend read {:x?}!", *hash);
-
-                                // if out_base_index_fw == 0 {
-                                //     assert_eq!(MH::new(read, k).iter().next().unwrap(), *hash);
-                                // }
                                 return 'ext_loop: loop {
                                     let mut count = 0;
                                     current_hash = temp_data.0;
@@ -424,8 +362,6 @@ impl Pipeline {
                                         entryref.count = usize::MAX;
 
                                         output.push(Utils::decompress_base(temp_data.1));
-
-                                        // println!("Read successfully extended, result: {} => {} {}!", std::str::from_utf8(output.as_slice()).unwrap(), entryref.begin_ignored, entryref.end_ignored);
 
                                         // Found a continuation into another bucket
                                         let contig_break =
@@ -490,14 +426,6 @@ impl Pipeline {
                             &forward_seq[..]
                         };
 
-                        // if std::str::from_utf8(out_seq).unwrap().contains("TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
-                        // println!("Bucketing after hashing works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! {}", std::str::from_utf8(out_seq).unwrap());
-                        //     // do_debug = true;
-                        // }
-
-                        // fw_hash = MH::manual_remove_only_forward(fw_hash, k, Utils::compress_base(out_seq[out_seq.len() - k]));
-                        // bw_hash = MH::manual_remove_only_reverse(bw_hash, k, Utils::compress_base(out_seq[k - 1]));
-
                         idx_str.clear();
                         idx_str.write_fmt(format_args!("{}", read_index));
 
@@ -538,24 +466,13 @@ impl Pipeline {
                     }
                 }
             }
-            // println!(
-            //     "[{}/{}]Kmers {}, unique: {}, ratio: {:.2}% ~~ m5: {} ratio: {:.2}% [{:?}] Time: {:?}",
-            //     CURRENT_BUCKETS_COUNT.fetch_add(1, Ordering::Relaxed) + 1,
-            //     buckets_count,
-            //     kmers_cnt,
-            //     kmers_unique,
-            //     (kmers_unique as f32) / (kmers_cnt as f32) * 100.0,
-            //     m5,
-            //     (m5 as f32) / (kmers_unique as f32) * 100.0,
-            //     buckets.iter().map(|x| x.len()).sum::<usize>() / MERGE_BUCKETS_COUNT, // set
-            //     start_time.elapsed()
-            // );
+
             writer.finalize();
             hashes_tmp.finalize()
         });
 
         RetType {
-            sequences: sequences.into_inner().unwrap(),
+            sequences: sequences.into_inner(),
             hashes: hashes_buckets.finalize(),
         }
     }

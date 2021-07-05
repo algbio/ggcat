@@ -15,6 +15,7 @@ use object_pool::Pool;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parking_lot::Mutex;
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
 use std::fs::File;
@@ -24,7 +25,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::{sleep, Thread};
 use std::time::{Duration, Instant};
 

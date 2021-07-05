@@ -67,8 +67,11 @@ use crate::reads_freezer::ReadsFreezer;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
 use clap::arg_enum;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parking_lot::Mutex;
+use std::io::Write;
+use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+
 arg_enum! {
     #[derive(Debug, PartialOrd, PartialEq)]
     enum StartingStep {
@@ -138,6 +141,25 @@ static KEEP_FILES: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     let args: Cli = Cli::from_args();
+
+    panic::set_hook(Box::new(move |info| {
+        let stdout = std::io::stdout();
+        let mut _lock = stdout.lock();
+
+        let stderr = std::io::stderr();
+        let mut err_lock = stderr.lock();
+
+        writeln!(
+            err_lock,
+            "Thread panicked at location: {:?}",
+            info.location()
+        );
+        if let Some(s) = info.payload().downcast_ref::<&str>() {
+            writeln!(err_lock, "Panic payload: {:?}", s);
+        }
+
+        exit(1);
+    }));
 
     // Increase the maximum allowed number of open files
     fdlimit::raise_fd_limit();
@@ -329,7 +351,7 @@ fn main() {
 
     std::fs::remove_dir(args.temp_dir.as_path());
 
-    final_unitigs_file.into_inner().unwrap().finalize();
+    final_unitigs_file.into_inner().finalize();
 
     PHASES_TIMES_MONITOR
         .write()

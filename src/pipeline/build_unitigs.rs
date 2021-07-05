@@ -18,6 +18,7 @@ use nix::sys::ptrace::cont;
 use object_pool::Pool;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parking_lot::Mutex;
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
 use std::collections::HashMap;
@@ -27,8 +28,10 @@ use std::io::Cursor;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::exit;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, AtomicUsize, Ordering},
+    Arc,
+};
 use std::thread::{sleep, Thread};
 use std::time::{Duration, Instant};
 
