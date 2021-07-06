@@ -214,7 +214,7 @@ impl Pipeline {
                 }
 
                 tmp_final_unitigs_buffer.add_read(FastaSequence {
-                    ident: b"SEQ",
+                    ident: b">SEQ",
                     seq: temp_sequence.as_slice(),
                     qual: None,
                 });

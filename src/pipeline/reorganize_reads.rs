@@ -111,7 +111,7 @@ impl Pipeline {
                         map_index += 1;
                     } else {
                         tmp_lonely_unitigs_buffer.add_read(FastaSequence {
-                            ident: format!("{} {}", bucket_index, index).as_bytes(),
+                            ident: format!(">{} {}", bucket_index, index).as_bytes(),
                             seq: seq.seq,
                             qual: None,
                         });
