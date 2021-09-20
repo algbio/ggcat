@@ -5,7 +5,7 @@ use crate::intermediate_storage::{
 };
 use crate::pipeline::links_compaction::LinkMapping;
 use crate::pipeline::Pipeline;
-use crate::reads_freezer::{FastaWriterConcurrentBuffer, ReadsFreezer, ReadsWriter};
+use crate::reads_storage::{FastaWriterConcurrentBuffer, ReadsStorage, ReadsWriter};
 use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
 use crate::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};

@@ -117,7 +117,7 @@ impl HashFunctionFactory for ForwardNtHashIteratorFactory {
         out_base: u8,
         in_base: u8,
     ) -> Self::HashTypeExtendable {
-        fwd_nt_manual_roll(hash, k - 1, out_base, in_base)
+        fwd_nt_manual_roll(hash, k, out_base, in_base)
     }
 
     #[inline(always)]
@@ -127,7 +127,7 @@ impl HashFunctionFactory for ForwardNtHashIteratorFactory {
         out_base: u8,
         in_base: u8,
     ) -> Self::HashTypeExtendable {
-        fwd_nt_manual_roll_rev(hash, k - 1, out_base, in_base)
+        fwd_nt_manual_roll_rev(hash, k, out_base, in_base)
     }
 
     #[inline(always)]
@@ -137,7 +137,7 @@ impl HashFunctionFactory for ForwardNtHashIteratorFactory {
         out_base: u8,
     ) -> Self::HashTypeExtendable {
         ExtForwardNtHash(
-            fwd_nt_manual_roll(hash, k - 1, out_base, Self::NULL_BASE)
+            fwd_nt_manual_roll(hash, k, out_base, Self::NULL_BASE)
                 .0
                 .rotate_right(1),
         )
@@ -149,28 +149,35 @@ impl HashFunctionFactory for ForwardNtHashIteratorFactory {
         k: usize,
         out_base: u8,
     ) -> Self::HashTypeExtendable {
-        fwd_nt_manual_roll_rev(hash, k - 1, out_base, Self::NULL_BASE)
+        fwd_nt_manual_roll_rev(hash, k, out_base, Self::NULL_BASE)
     }
 }
 
 #[inline(always)]
-fn fwd_nt_manual_roll(
-    hash: ExtForwardNtHash,
-    kminus_1: usize,
-    out_b: u8,
-    in_b: u8,
-) -> ExtForwardNtHash {
+fn fwd_nt_manual_roll(hash: ExtForwardNtHash, k: usize, out_b: u8, in_b: u8) -> ExtForwardNtHash {
     let res = hash.0.rotate_left(1) ^ h(in_b);
-    ExtForwardNtHash(res ^ h(out_b).rotate_left(kminus_1 as u32))
+    ExtForwardNtHash(res ^ h(out_b).rotate_left(k as u32))
 }
 
 #[inline(always)]
 fn fwd_nt_manual_roll_rev(
     hash: ExtForwardNtHash,
-    kminus_1: usize,
+    k: usize,
     out_b: u8,
     in_b: u8,
 ) -> ExtForwardNtHash {
-    let res = hash.0 ^ h(in_b).rotate_left(kminus_1 as u32);
+    let res = hash.0 ^ h(in_b).rotate_left(k as u32);
     ExtForwardNtHash((res ^ h(out_b)).rotate_right(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::hash::tests::test_hash_function;
+    use crate::hashes::fw_nthash::ForwardNtHashIteratorFactory;
+    use std::mem::size_of;
+
+    #[test]
+    fn fw_nthash_test() {
+        test_hash_function::<ForwardNtHashIteratorFactory>(&(2..4096).collect::<Vec<_>>(), false);
+    }
 }

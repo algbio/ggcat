@@ -131,7 +131,7 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
         out_base: u8,
         in_base: u8,
     ) -> Self::HashTypeExtendable {
-        cnc_nt_manual_roll(hash, k - 1, out_base, in_base)
+        cnc_nt_manual_roll(hash, k, out_base, in_base)
     }
 
     #[inline(always)]
@@ -141,7 +141,7 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
         out_base: u8,
         in_base: u8,
     ) -> Self::HashTypeExtendable {
-        cnc_nt_manual_roll_rev(hash, k - 1, out_base, in_base)
+        cnc_nt_manual_roll_rev(hash, k, out_base, in_base)
     }
 
     #[inline(always)]
@@ -150,7 +150,7 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
         k: usize,
         out_base: u8,
     ) -> Self::HashTypeExtendable {
-        let ExtCanonicalNtHash(fw, rc) = cnc_nt_manual_roll(hash, k - 1, out_base, Self::NULL_BASE);
+        let ExtCanonicalNtHash(fw, rc) = cnc_nt_manual_roll(hash, k, out_base, Self::NULL_BASE);
         ExtCanonicalNtHash(fw.rotate_right(1), rc)
     }
 
@@ -160,8 +160,7 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
         k: usize,
         out_base: u8,
     ) -> Self::HashTypeExtendable {
-        let ExtCanonicalNtHash(fw, rc) =
-            cnc_nt_manual_roll_rev(hash, k - 1, out_base, Self::NULL_BASE);
+        let ExtCanonicalNtHash(fw, rc) = cnc_nt_manual_roll_rev(hash, k, out_base, Self::NULL_BASE);
         ExtCanonicalNtHash(fw, rc.rotate_right(1))
     }
 }
@@ -169,15 +168,15 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
 #[inline(always)]
 fn cnc_nt_manual_roll(
     hash: ExtCanonicalNtHash,
-    kminus_1: usize,
+    k: usize,
     out_b: u8,
     in_b: u8,
 ) -> ExtCanonicalNtHash {
     let res = hash.0.rotate_left(1) ^ h(in_b);
-    let res_rc = hash.0 ^ rc(in_b).rotate_left(kminus_1 as u32);
+    let res_rc = hash.1 ^ rc(in_b).rotate_left(k as u32);
 
     ExtCanonicalNtHash(
-        res ^ h(out_b).rotate_left(kminus_1 as u32),
+        res ^ h(out_b).rotate_left(k as u32),
         (res_rc ^ rc(out_b)).rotate_right(1),
     )
 }
@@ -185,68 +184,27 @@ fn cnc_nt_manual_roll(
 #[inline(always)]
 fn cnc_nt_manual_roll_rev(
     hash: ExtCanonicalNtHash,
-    kminus_1: usize,
+    k: usize,
     out_b: u8,
     in_b: u8,
 ) -> ExtCanonicalNtHash {
-    let res = hash.0 ^ h(in_b).rotate_left(kminus_1 as u32);
-    let res_rc = hash.0.rotate_left(1) ^ rc(in_b);
+    let res = hash.0 ^ h(in_b).rotate_left(k as u32);
+    let res_rc = hash.1.rotate_left(1) ^ rc(in_b);
     ExtCanonicalNtHash(
         (res ^ h(out_b)).rotate_right(1),
-        res_rc ^ rc(out_b).rotate_left(kminus_1 as u32),
+        res_rc ^ rc(out_b).rotate_left(k as u32),
     )
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::hash::tests::test_hash_function;
     use crate::hash::{ExtendableHashTraitType, HashFunction, HashFunctionFactory};
     use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
     use crate::rolling_minqueue::RollingMinQueue;
 
     #[test]
     fn cn_nthash_test() {
-        let first = CanonicalNtHashIteratorFactory::new(
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAG".as_bytes(),
-            15,
-        ); //"ACGTACGTTTCTACCA".as_bytes(), 16);
-        println!("AAAA");
-        let second = CanonicalNtHashIteratorFactory::new(
-            "CTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT".as_bytes(),
-            15,
-        ); //"TGGTAGAAACGTACGT".as_bytes(), 16);
-
-        let mut minimizer_queue = RollingMinQueue::<CanonicalNtHashIteratorFactory>::new(63 - 15);
-        let mut rolling_iter =
-            minimizer_queue.make_iter(first.clone().iter().map(|x| x.to_unextendable()));
-
-        println!("A raw: {:x?}", first.clone().iter().collect::<Vec<_>>());
-
-        println!(
-            "A unext: {:x?}",
-            first
-                .clone()
-                .iter()
-                .map(|x| x.to_unextendable())
-                .collect::<Vec<_>>()
-        );
-        println!("A {:x?}", rolling_iter.collect::<Vec<_>>());
-
-        println!("B raw: {:x?}", second.clone().iter().collect::<Vec<_>>());
-
-        println!(
-            "B unext: {:x?}",
-            second
-                .clone()
-                .iter()
-                .map(|x| x.to_unextendable())
-                .collect::<Vec<_>>()
-        );
-
-        let mut rolling_iter_second =
-            minimizer_queue.make_iter(second.iter().map(|x| x.to_unextendable()));
-        let mut second = rolling_iter_second.collect::<Vec<_>>();
-        second.reverse();
-
-        println!("B {:x?}", second);
+        test_hash_function::<CanonicalNtHashIteratorFactory>(&(32..512).collect::<Vec<_>>(), true);
     }
 }

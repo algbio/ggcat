@@ -15,7 +15,7 @@ extern crate test;
 
 use crate::pipeline::kmers_merge::RetType;
 use crate::pipeline::Pipeline;
-use crate::reads_freezer::WriterChannels::Pipe;
+use crate::reads_storage::WriterChannels::Pipe;
 use crate::utils::Utils;
 use rayon::ThreadPoolBuilder;
 use std::cmp::min;
@@ -36,7 +36,7 @@ mod intermediate_storage;
 pub mod libdeflate;
 mod pipeline;
 mod progress;
-mod reads_freezer;
+mod reads_storage;
 mod rolling_kseq_iterator;
 mod rolling_minqueue;
 mod rolling_quality_check;
@@ -45,6 +45,7 @@ mod types;
 mod unitig_link;
 #[macro_use]
 mod utils;
+mod assembler;
 mod varint;
 mod vec_slice;
 
@@ -57,13 +58,15 @@ fn outputs_arg_group() -> ArgGroup<'static> {
     ArgGroup::with_name("outputs").required(true)
 }
 
+use crate::assembler::run_assembler;
 use crate::compressed_read::CompressedRead;
 use crate::hash::HashFunctionFactory;
 use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
-use crate::hashes::cn_seqhash::{CanonicalSeqHashFactory, CanonicalSeqHashIterator};
+use crate::hashes::cn_seqhash;
+use crate::hashes::cn_seqhash::u64::CanonicalSeqHashFactory;
 use crate::hashes::fw_nthash::{ForwardNtHashIterator, ForwardNtHashIteratorFactory};
-use crate::hashes::fw_seqhash::ForwardSeqHashFactory;
-use crate::reads_freezer::ReadsFreezer;
+use crate::hashes::fw_seqhash::u64::ForwardSeqHashFactory;
+use crate::reads_storage::ReadsStorage;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
 use clap::arg_enum;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -74,13 +77,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 arg_enum! {
     #[derive(Debug, PartialOrd, PartialEq)]
-    enum StartingStep {
+    pub enum StartingStep {
         MinimizerBucketing = 0,
         KmersMerge = 1,
         HashesSorting = 2,
         LinksCompaction = 3,
         ReorganizeReads = 4,
         BuildUnitigs = 5
+    }
+}
+
+arg_enum! {
+    #[derive(Copy, Clone, Debug, PartialOrd, PartialEq)]
+    pub enum HashType {
+        Auto = 0,
+        SeqHash = 1,
+        RabinKarp32 = 2,
+        RabinKarp64 = 3,
+        RabinKarp128 = 4
     }
 }
 
@@ -118,14 +132,21 @@ struct Cli {
     keep_temp_files: bool,
 
     #[structopt(short = "n", long, default_value = "0")]
-    number: usize, // Tests built bloom filter against this file for coverage tests
-    // #[structopt(short = "f", requires = "elabbloom")]
-    // coverage: Option<String>,
+    number: usize,
+
     #[structopt(short = "j", long, default_value = "16")]
     threads_count: usize,
 
     #[structopt(short = "o", long = "output-file", default_value = "output.fasta.lz4")]
     output_file: PathBuf,
+
+    /// Hash type used to identify kmers
+    #[structopt(short = "w", long, default_value = "Auto")]
+    hash_type: HashType,
+
+    /// Treats reverse complementary kmers as different
+    #[structopt(short = "f", long)]
+    forward_only: bool,
 
     // Enables output compression
     // #[structopt(short, requires = "output")]
@@ -134,10 +155,28 @@ struct Cli {
     step: StartingStep,
 }
 
-type BucketingHash = CanonicalNtHashIteratorFactory; // CanonicalNtHashIteratorFactory; // ForwardNtHashIteratorFactory;
-type MergingHash = CanonicalSeqHashFactory; // CanonicalSeqHashFactory; // ForwardNtHashIteratorFactory; //SeqHashFactory; //
-
 static KEEP_FILES: AtomicBool = AtomicBool::new(false);
+
+fn run_assembler_from_args<
+    BucketingHash: HashFunctionFactory,
+    MergingHash: HashFunctionFactory,
+    const BUCKETS_COUNT: usize,
+>(
+    args: Cli,
+) {
+    run_assembler::<BucketingHash, MergingHash, BUCKETS_COUNT>(
+        args.klen,
+        args.mlen.unwrap_or(min(12, (args.klen + 2) / 3)),
+        args.step,
+        args.input,
+        args.output_file,
+        args.temp_dir,
+        args.threads_count,
+        args.min_multiplicity,
+        args.quality_threshold,
+        Some(args.number),
+    );
+}
 
 fn main() {
     let args: Cli = Cli::from_args();
@@ -164,13 +203,11 @@ fn main() {
     // Increase the maximum allowed number of open files
     fdlimit::raise_fd_limit();
 
-    const BUCKETS_COUNT: usize = 512;
-
     KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
 
     if args.debug_reverse {
         for file in args.input {
-            let mut output = ReadsFreezer::optfile_splitted_compressed_lz4("complementary.lz4");
+            let mut output = ReadsStorage::optfile_splitted_compressed_lz4("complementary.lz4");
             let mut tmp_vec = Vec::new();
             SequencesReader::process_file_extended(
                 &file,
@@ -207,155 +244,132 @@ fn main() {
 
     create_dir_all(&args.temp_dir);
 
-    let k: usize = args.klen;
-    let m: usize = args.mlen.unwrap_or(min(12, (k + 2) / 3));
+    const BUCKETS_COUNT: usize = 512;
 
-    PHASES_TIMES_MONITOR.write().init();
-
-    let buckets = if args.step <= StartingStep::MinimizerBucketing {
-        Pipeline::minimizer_bucketing::<BucketingHash>(
-            args.input,
-            args.temp_dir.as_path(),
-            BUCKETS_COUNT,
-            args.threads_count,
-            k,
-            m,
-            args.quality_threshold,
-        )
-    } else {
-        Utils::generate_bucket_names(args.temp_dir.join("bucket"), BUCKETS_COUNT, Some("lz4"))
+    let hash_type = match args.hash_type {
+        HashType::Auto => {
+            if args.klen <= 64 {
+                HashType::SeqHash
+            } else {
+                HashType::RabinKarp128
+            }
+        }
+        x => x,
     };
 
-    let RetType { sequences, hashes } = if args.step <= StartingStep::KmersMerge {
-        Pipeline::kmers_merge::<BucketingHash, MergingHash, _>(
-            buckets,
-            BUCKETS_COUNT,
-            args.min_multiplicity,
-            args.temp_dir.as_path(),
-            k,
-            m,
-        )
-    } else {
-        RetType {
-            sequences: Utils::generate_bucket_names(
-                args.temp_dir.join("result"),
-                BUCKETS_COUNT,
-                Some("fasta.lz4"),
-            ),
-            hashes: Utils::generate_bucket_names(args.temp_dir.join("hashes"), BUCKETS_COUNT, None),
-        }
-    };
+    use hashes::*;
 
-    let mut links = if args.step <= StartingStep::HashesSorting {
-        Pipeline::hashes_sorting::<MergingHash, _>(hashes, args.temp_dir.as_path(), BUCKETS_COUNT)
-    } else {
-        Utils::generate_bucket_names(args.temp_dir.join("links"), BUCKETS_COUNT, None)
-    };
+    match hash_type {
+        HashType::SeqHash => {
+            let k = args.klen;
 
-    let mut loop_iteration = args.number;
-
-    let unames =
-        Utils::generate_bucket_names(args.temp_dir.join("unitigs_map"), BUCKETS_COUNT, None);
-    let rnames =
-        Utils::generate_bucket_names(args.temp_dir.join("results_map"), BUCKETS_COUNT, None);
-
-    let (unitigs_map, reads_map) = if args.step <= StartingStep::LinksCompaction {
-        for file in unames {
-            remove_file(file);
-        }
-
-        for file in rnames {
-            remove_file(file);
-        }
-
-        if loop_iteration != 0 {
-            links = Utils::generate_bucket_names(
-                args.temp_dir.join(format!("linksi{}", loop_iteration - 1)),
-                BUCKETS_COUNT,
-                None,
-            );
-        }
-
-        PHASES_TIMES_MONITOR
-            .write()
-            .start_phase("phase: links compaction".to_string());
-
-        let result = loop {
-            println!("Iteration: {}", loop_iteration);
-
-            let (new_links, result) = Pipeline::links_compaction(
-                links,
-                args.temp_dir.as_path(),
-                BUCKETS_COUNT,
-                loop_iteration,
-            );
-            links = new_links;
-            match result {
-                None => {}
-                Some(result) => {
-                    println!("Completed compaction with {} iters", loop_iteration);
-                    break result;
+            if k <= 8 {
+                if args.forward_only {
+                    run_assembler_from_args::<
+                        CanonicalNtHashIteratorFactory,
+                        cn_seqhash::u16::CanonicalSeqHashFactory,
+                        BUCKETS_COUNT,
+                    >(args);
+                } else {
+                    run_assembler_from_args::<
+                        CanonicalNtHashIteratorFactory,
+                        cn_seqhash::u16::CanonicalSeqHashFactory,
+                        BUCKETS_COUNT,
+                    >(args)
                 }
-            }
-            loop_iteration += 1;
-        };
-
-        if !KEEP_FILES.load(Ordering::Relaxed) {
-            for link_file in links {
-                std::fs::remove_file(&link_file);
+            } else if k <= 16 {
+                if args.forward_only {
+                    run_assembler_from_args::<
+                        ForwardNtHashIteratorFactory,
+                        fw_seqhash::u32::ForwardSeqHashFactory,
+                        BUCKETS_COUNT,
+                    >(args);
+                } else {
+                    run_assembler_from_args::<
+                        CanonicalNtHashIteratorFactory,
+                        cn_seqhash::u32::CanonicalSeqHashFactory,
+                        BUCKETS_COUNT,
+                    >(args)
+                }
+            } else if k <= 32 {
+                if args.forward_only {
+                    run_assembler_from_args::<
+                        ForwardNtHashIteratorFactory,
+                        fw_seqhash::u64::ForwardSeqHashFactory,
+                        BUCKETS_COUNT,
+                    >(args);
+                } else {
+                    run_assembler_from_args::<
+                        CanonicalNtHashIteratorFactory,
+                        cn_seqhash::u64::CanonicalSeqHashFactory,
+                        BUCKETS_COUNT,
+                    >(args)
+                }
+            } else if k <= 64 {
+                if args.forward_only {
+                    run_assembler_from_args::<
+                        ForwardNtHashIteratorFactory,
+                        fw_seqhash::u128::ForwardSeqHashFactory,
+                        BUCKETS_COUNT,
+                    >(args);
+                } else {
+                    run_assembler_from_args::<
+                        CanonicalNtHashIteratorFactory,
+                        cn_seqhash::u128::CanonicalSeqHashFactory,
+                        BUCKETS_COUNT,
+                    >(args)
+                }
+            } else {
+                panic!("Cannot use sequence hash for k > 64!");
             }
         }
-        result
-    } else {
-        (unames, rnames)
-    };
-
-    let mut final_unitigs_file = Mutex::new(match args.output_file.extension() {
-        Some(ext) => match ext.to_string_lossy().to_string().as_str() {
-            "lz4" => ReadsFreezer::optfile_splitted_compressed_lz4(&args.output_file),
-            "gz" => ReadsFreezer::optfile_splitted_compressed(&args.output_file),
-            _ => ReadsFreezer::optifile_splitted(&args.output_file),
-        },
-        None => ReadsFreezer::optifile_splitted(&args.output_file),
-    });
-
-    let reorganized_reads = if args.step <= StartingStep::ReorganizeReads {
-        Pipeline::reorganize_reads(
-            sequences,
-            reads_map,
-            args.temp_dir.as_path(),
-            &final_unitigs_file,
-            BUCKETS_COUNT,
-            k,
-            m,
-        )
-    } else {
-        Utils::generate_bucket_names(
-            args.temp_dir.join("reads_bucket"),
-            BUCKETS_COUNT,
-            Some("lz4"),
-        )
-    };
-
-    if args.step <= StartingStep::BuildUnitigs {
-        Pipeline::build_unitigs(
-            reorganized_reads,
-            unitigs_map,
-            args.temp_dir.as_path(),
-            &final_unitigs_file,
-            BUCKETS_COUNT,
-            k,
-            m,
-        );
+        HashType::RabinKarp32 => {
+            if args.forward_only {
+                run_assembler_from_args::<
+                    ForwardNtHashIteratorFactory,
+                    fw_rkhash::u32::ForwardRabinKarpHashFactory,
+                    BUCKETS_COUNT,
+                >(args);
+            } else {
+                run_assembler_from_args::<
+                    CanonicalNtHashIteratorFactory,
+                    cn_rkhash::u32::CanonicalRabinKarpHashFactory,
+                    BUCKETS_COUNT,
+                >(args)
+            }
+        }
+        HashType::RabinKarp64 => {
+            if args.forward_only {
+                run_assembler_from_args::<
+                    ForwardNtHashIteratorFactory,
+                    fw_rkhash::u64::ForwardRabinKarpHashFactory,
+                    BUCKETS_COUNT,
+                >(args);
+            } else {
+                run_assembler_from_args::<
+                    CanonicalNtHashIteratorFactory,
+                    cn_rkhash::u64::CanonicalRabinKarpHashFactory,
+                    BUCKETS_COUNT,
+                >(args)
+            }
+        }
+        HashType::RabinKarp128 => {
+            if args.forward_only {
+                run_assembler_from_args::<
+                    ForwardNtHashIteratorFactory,
+                    fw_rkhash::u128::ForwardRabinKarpHashFactory,
+                    BUCKETS_COUNT,
+                >(args);
+            } else {
+                run_assembler_from_args::<
+                    CanonicalNtHashIteratorFactory,
+                    cn_rkhash::u128::CanonicalRabinKarpHashFactory,
+                    BUCKETS_COUNT,
+                >(args)
+            }
+        }
+        HashType::Auto => {
+            unreachable!()
+        }
     }
-
-    std::fs::remove_dir(args.temp_dir.as_path());
-
-    final_unitigs_file.into_inner().finalize();
-
-    PHASES_TIMES_MONITOR
-        .write()
-        .print_stats("Compacted De Brujin graph construction completed.".to_string());
-
-    println!("Final output saved to: {}", args.output_file.display());
 }

@@ -8,7 +8,7 @@ mod tests {
     use crate::compressed_read::CompressedRead;
     use crate::hash::{HashFunction, HashFunctionFactory};
     use crate::hashes::fw_nthash::{ForwardNtHashIterator, ForwardNtHashIteratorFactory};
-    use crate::hashes::fw_seqhash::{ForwardSeqHashFactory, ForwardSeqHashIterator};
+    use crate::hashes::fw_seqhash::u64::{ForwardSeqHashFactory, ForwardSeqHashIterator};
     use crate::rolling_minqueue::RollingMinQueue;
     use crate::utils::Utils;
     use crate::varint::encode_varint;

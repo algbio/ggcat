@@ -39,9 +39,6 @@ ARGS:
 
 ```
 
-At the moment the maximum allowed kmer size is 64, this restriction will be removed in the near future.
-
-
 ## Installation
 At the moment building from source is the only option to install the tool.
 To build the tool the Rust nightly toolchain is required, and can be downloaded with the following commands:

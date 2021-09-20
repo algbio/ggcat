@@ -19,7 +19,7 @@ use crate::hash_entry::Direction;
 use crate::hash_entry::HashEntry;
 use crate::intermediate_storage::{IntermediateReadsReader, SequenceExtraData};
 use crate::pipeline::Pipeline;
-use crate::reads_freezer::{FastaWriterConcurrentBuffer, ReadsFreezer, ReadsWriter};
+use crate::reads_storage::{FastaWriterConcurrentBuffer, ReadsStorage, ReadsWriter};
 use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::FastaSequence;
 use crate::types::BucketIndexType;
@@ -126,7 +126,7 @@ impl Pipeline {
                 );
             }
 
-            let mut writer = ReadsFreezer::optfile_splitted_compressed_lz4(format!(
+            let mut writer = ReadsStorage::optfile_splitted_compressed_lz4(format!(
                 "{}/result.{}.fasta.lz4",
                 out_directory.as_ref().display(),
                 bucket_index

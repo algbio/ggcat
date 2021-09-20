@@ -16,12 +16,12 @@ use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
 use std::thread;
 
-pub struct ReadsFreezer {
+pub struct ReadsStorage {
     reader: UnsafeCell<Box<dyn Read>>,
 }
 
-unsafe impl Send for ReadsFreezer {}
-unsafe impl Sync for ReadsFreezer {}
+unsafe impl Send for ReadsStorage {}
+unsafe impl Sync for ReadsStorage {}
 
 trait UnsafeCellGetMutable {
     type Output;
@@ -165,7 +165,7 @@ impl ReadsWriter {
 
         self.reads_count += 1;
     }
-    pub fn pipe_freezer(&mut self, mut freezer: ReadsFreezer) {
+    pub fn pipe_freezer(&mut self, mut freezer: ReadsStorage) {
         let writer = self.writer.get_writer();
         std::io::copy(&mut freezer.reader.uget(), writer).unwrap();
     }
@@ -177,8 +177,8 @@ impl ReadsWriter {
     pub fn finalize(self) {}
 }
 
-impl ReadsFreezer {
-    pub fn from_generator<F: 'static + FnOnce(&mut ReadsWriter) + Send>(func: F) -> ReadsFreezer {
+impl ReadsStorage {
+    pub fn from_generator<F: 'static + FnOnce(&mut ReadsWriter) + Send>(func: F) -> ReadsStorage {
         let (reader, writer) = os_pipe::pipe().unwrap();
 
         Utils::thread_safespawn(move || {
@@ -189,16 +189,16 @@ impl ReadsFreezer {
             });
         });
 
-        ReadsFreezer {
+        ReadsStorage {
             reader: UnsafeCell::new(Box::new(reader)),
         }
     }
 
-    pub fn new_splitted() -> (ReadsFreezer, ReadsWriter) {
+    pub fn new_splitted() -> (ReadsStorage, ReadsWriter) {
         let (reader, writer) = os_pipe::pipe().unwrap();
 
         (
-            ReadsFreezer {
+            ReadsStorage {
                 reader: UnsafeCell::new(Box::new(reader)),
             },
             ReadsWriter {
@@ -258,7 +258,7 @@ impl ReadsFreezer {
         }
     }
 
-    pub fn from_file(name: String) -> ReadsFreezer {
+    pub fn from_file(name: String) -> ReadsStorage {
         let is_compressed = name.ends_with(".lz4");
         let file = File::open(name).unwrap();
 
@@ -268,7 +268,7 @@ impl ReadsFreezer {
         } else {
             Box::new(file)
         };
-        ReadsFreezer {
+        ReadsStorage {
             reader: UnsafeCell::new(reader),
         }
     }

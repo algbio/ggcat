@@ -19,7 +19,7 @@ use parking_lot::{Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 use crate::memory_data_size::*;
 use crate::memory_fs::allocator::{AllocatedChunk, CHUNKS_ALLOCATOR};
 use crate::memory_fs::buffer_manager::BUFFER_MANAGER;
-use crate::stats_logger::StatMode;
+use crate::stats_logger::{StatMode, StatRaiiCounter};
 use crate::Utils;
 use std::mem::{replace, size_of};
 // use std::os::unix::fs::OpenOptionsExt;
@@ -168,9 +168,12 @@ impl MemoryFile {
 
                                 match file_to_flush.flush_mode {
                                     FlushMode::Append => {
+                                        let _stat =
+                                            StatRaiiCounter::create("FILE_DISK_WRITING_APPEND");
                                         file_lock.write_all(file_to_flush.get_buffer());
                                     }
                                     FlushMode::WriteAt(offset) => {
+                                        let _stat = StatRaiiCounter::create("FILE_DISK_WRITEAT");
                                         file_lock.seek(SeekFrom::Start(offset as u64));
                                         file_lock.write_all(file_to_flush.get_buffer());
                                     }
