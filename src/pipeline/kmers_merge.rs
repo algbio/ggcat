@@ -17,7 +17,10 @@ use crate::hash::{ExtendableHashTraitType, HashFunction};
 use crate::hash::{HashFunctionFactory, HashableSequence};
 use crate::hash_entry::Direction;
 use crate::hash_entry::HashEntry;
-use crate::intermediate_storage::{IntermediateReadsReader, SequenceExtraData};
+use crate::intermediate_storage::{
+    IntermediateReadsReader, IntermediateReadsWriter, SequenceExtraData,
+};
+use crate::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
 use crate::pipeline::Pipeline;
 use crate::reads_storage::{FastaWriterConcurrentBuffer, ReadsStorage, ReadsWriter};
 use crate::rolling_minqueue::RollingMinQueue;
@@ -31,7 +34,9 @@ use hashbrown::HashMap;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_data_size::MemoryDataSize;
-use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
+use parallel_processor::multi_thread_buckets::{
+    BucketType, BucketsThreadDispatcher, MultiThreadBuckets,
+};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::threadpools_chain::{
     ObjectsPoolManager, ThreadChainObject, ThreadPoolDefinition, ThreadPoolsChain,
@@ -107,12 +112,21 @@ impl Pipeline {
 
         let incr_bucket_index = AtomicUsize::new(0);
 
+        let mut reads_buckets = MultiThreadBuckets::<IntermediateReadsWriter<()>>::new(
+            buckets_count,
+            &out_directory.as_ref().join("result"),
+            None,
+        );
+
         file_inputs.par_iter().for_each(|input| {
             const MAX_HASHES_FOR_FLUSH: MemoryDataSize = MemoryDataSize::from_kibioctets(64.0);
             let mut hashes_tmp =
                 BucketsThreadDispatcher::new(MAX_HASHES_FOR_FLUSH, &hashes_buckets);
 
             let bucket_index = Utils::get_bucket_index(&input);
+
+            let mut temp_bucket_writer =
+                IntermediateSequencesStorageSingleBucket::new(bucket_index, &reads_buckets);
 
             let incr_bucket_index_val = incr_bucket_index.fetch_add(1, Ordering::Relaxed);
             if incr_bucket_index_val % (buckets_count / 8) == 0 {
@@ -126,12 +140,7 @@ impl Pipeline {
                 );
             }
 
-            let mut writer = ReadsStorage::optfile_splitted_compressed_lz4(format!(
-                "{}/result.{}.fasta.lz4",
-                out_directory.as_ref().display(),
-                bucket_index
-            ));
-            sequences.lock().push(writer.get_path());
+            sequences.lock().push(temp_bucket_writer.get_path());
 
             let mut read_index = 0;
 
@@ -178,8 +187,6 @@ impl Pipeline {
                 let mut forward_seq = Vec::new();
 
                 forward_seq.reserve(k);
-
-                let mut idx_str: Vec<u8> = Vec::new();
 
                 struct Compare<H> {
                     _phantom: PhantomData<H>,
@@ -426,14 +433,7 @@ impl Pipeline {
                             &forward_seq[..]
                         };
 
-                        idx_str.clear();
-                        idx_str.write_fmt(format_args!("{}", read_index));
-
-                        writer.add_read(FastaSequence {
-                            ident: &idx_str[..],
-                            seq: out_seq,
-                            qual: None,
-                        });
+                        temp_bucket_writer.add_read((), out_seq);
 
                         if let Some(fw_hash) = fw_hash {
                             let fw_hash = fw_hash.to_unextendable();
@@ -467,7 +467,7 @@ impl Pipeline {
                 }
             }
 
-            writer.finalize();
+            temp_bucket_writer.finalize();
             hashes_tmp.finalize()
         });
 

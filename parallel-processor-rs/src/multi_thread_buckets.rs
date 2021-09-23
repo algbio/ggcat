@@ -71,6 +71,10 @@ impl<B: BucketType> MultiThreadBuckets<B> {
         MultiThreadBuckets { buckets }
     }
 
+    pub fn get_path(&self, bucket: BucketIndexType) -> PathBuf {
+        self.buckets[bucket as usize].read().get_path()
+    }
+
     pub fn add_data(&self, index: BucketIndexType, data: &[u8]) {
         if B::SUPPORTS_LOCK_FREE {
             let bucket = self.buckets[index as usize].read();

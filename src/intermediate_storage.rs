@@ -74,7 +74,7 @@ impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
     }
 
     fn flush_buffers(&mut self, bucket: BucketIndexType) {
-        if self.buffers.len() == 0 {
+        if self.buffers[bucket as usize].len() == 0 {
             return;
         }
 

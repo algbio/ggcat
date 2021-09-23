@@ -1,4 +1,7 @@
-use crate::intermediate_storage::{IntermediateReadsWriter, IntermediateSequencesStorage};
+use crate::hash::HashableSequence;
+use crate::intermediate_storage::{
+    IntermediateReadsReader, IntermediateReadsWriter, IntermediateSequencesStorage,
+};
 use crate::pipeline::links_compaction::LinkMapping;
 use crate::pipeline::Pipeline;
 use crate::reads_storage::{FastaWriterConcurrentBuffer, ReadsStorage, ReadsWriter};
@@ -98,29 +101,35 @@ impl Pipeline {
             let mut index = 0;
             let mut map_index = 0;
 
-            SequencesReader::process_file_extended(
-                read_file,
-                |seq| {
+            let mut decompress_buffer = Vec::new();
+
+            IntermediateReadsReader::<()>::new(read_file, !KEEP_FILES.load(Ordering::Relaxed))
+                .for_each(|_, seq| {
+                    if seq.bases_count() > decompress_buffer.len() {
+                        decompress_buffer.resize(seq.bases_count(), 0);
+                    }
+                    seq.write_to_slice(&mut decompress_buffer[..seq.bases_count()]);
+
+                    let seq = &decompress_buffer[..seq.bases_count()];
+
                     if map_index < mappings.len() && mappings[map_index].entry == index {
                         // Mapping found
                         tmp_reads_buffer.add_read(
                             UnitigIndex::new(bucket_index, index as usize, false),
-                            seq.seq,
+                            seq,
                             mappings[map_index].bucket,
                         );
                         map_index += 1;
                     } else {
                         tmp_lonely_unitigs_buffer.add_read(FastaSequence {
                             ident: format!(">{} {}", bucket_index, index).as_bytes(),
-                            seq: seq.seq,
+                            seq,
                             qual: None,
                         });
                         // No mapping, write unitig to file
                     }
                     index += 1;
-                },
-                !KEEP_FILES.load(Ordering::Relaxed),
-            );
+                });
             tmp_lonely_unitigs_buffer.finalize();
             assert_eq!(map_index, mappings.len())
         });

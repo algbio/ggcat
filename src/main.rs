@@ -46,6 +46,7 @@ mod unitig_link;
 #[macro_use]
 mod utils;
 mod assembler;
+mod intermediate_storage_single;
 mod varint;
 mod vec_slice;
 
