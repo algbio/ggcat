@@ -57,7 +57,7 @@ pub fn run_assembler<
             sequences: Utils::generate_bucket_names(
                 temp_dir.join("result"),
                 BUCKETS_COUNT,
-                Some("fasta.lz4"),
+                Some("lz4"),
             ),
             hashes: Utils::generate_bucket_names(temp_dir.join("hashes"), BUCKETS_COUNT, None),
         }

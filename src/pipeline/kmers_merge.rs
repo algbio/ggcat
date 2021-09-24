@@ -182,11 +182,13 @@ impl Pipeline {
                 let mut rcorrect_reads: Vec<(MH::HashTypeExtendable, usize, bool, bool)> =
                     Vec::new();
                 let mut rhash_map = hashbrown::HashMap::with_capacity(4096);
+                // let mut xhash_map = hashbrown::HashMap::with_capacity(4096);
 
                 let mut backward_seq = Vec::new();
                 let mut forward_seq = Vec::new();
 
                 forward_seq.reserve(k);
+                backward_seq.reserve(k);
 
                 struct Compare<H> {
                     _phantom: PhantomData<H>,
@@ -214,12 +216,13 @@ impl Pipeline {
                     .group_by(|a, b| a.hash.to_unextendable() == b.hash.to_unextendable())
                 {
                     rhash_map.clear();
+                    // xhash_map.clear();
                     rcorrect_reads.clear();
 
                     let mut tot_reads = 0;
                     let mut tot_chars = 0;
 
-                    let mut do_debug = false; //false;
+                    let mut do_debug = false;
 
                     for &ReadRef {
                         read_start,
@@ -237,10 +240,11 @@ impl Pipeline {
 
                         struct MapEntry {
                             count: usize,
-                            position: u32,
-                            begin_ignored: bool,
-                            end_ignored: bool,
+                            // position: u32,
+                            ignored: bool,
                         }
+
+                        struct ExtensionEntry {}
 
                         let last_hash_pos = read_len - k;
                         let mut did_max = false;
@@ -255,10 +259,9 @@ impl Pipeline {
 
                             let entry =
                                 rhash_map.entry(hash.to_unextendable()).or_insert(MapEntry {
-                                    position: position as u32,
-                                    begin_ignored,
+                                    // position: position as u32,
+                                    ignored: begin_ignored || end_ignored,
                                     count: 0,
-                                    end_ignored,
                                 });
 
                             entry.count += 1;
@@ -273,7 +276,7 @@ impl Pipeline {
                     }
 
                     for (hash, read_start, begin_ignored, end_ignored) in rcorrect_reads.iter() {
-                        let mut read =
+                        let cread =
                             CompressedRead::from_compressed_reads(&buckets[b][..], *read_start, k);
 
                         let rhentry = rhash_map.get_mut(&hash.to_unextendable()).unwrap();
@@ -282,12 +285,14 @@ impl Pipeline {
                         }
                         rhentry.count = usize::MAX;
 
-                        backward_seq.clear();
                         unsafe {
                             forward_seq.set_len(k);
+                            backward_seq.set_len(k);
                         }
 
-                        read.write_to_slice(&mut forward_seq[..]);
+                        cread.write_to_slice(&mut forward_seq[..]);
+                        backward_seq[..].copy_from_slice(&forward_seq[..]);
+                        backward_seq.reverse();
 
                         let mut try_extend_function =
                             |output: &mut Vec<u8>,
@@ -298,16 +303,14 @@ impl Pipeline {
                                 in_b: u8,
                             )
                                 -> MH::HashTypeExtendable,
-                             out_base_index_fw: usize,
                              compute_hash_bw: fn(
                                 hash: MH::HashTypeExtendable,
                                 klen: usize,
                                 out_b: u8,
                                 in_b: u8,
                             )
-                                -> MH::HashTypeExtendable,
-                             out_base_index_bw: usize| {
-                                let mut temp_data = (*hash, 0, 0);
+                                -> MH::HashTypeExtendable| {
+                                let mut temp_data = (*hash, 0);
                                 let mut current_hash;
 
                                 return 'ext_loop: loop {
@@ -317,7 +320,7 @@ impl Pipeline {
                                         let new_hash = compute_hash_fw(
                                             current_hash,
                                             k,
-                                            unsafe { read.get_base_unchecked(out_base_index_fw) },
+                                            Utils::compress_base(output[output.len() - k]),
                                             idx,
                                         );
                                         if let Some(hash) =
@@ -326,7 +329,7 @@ impl Pipeline {
                                             if hash.count >= min_multiplicity {
                                                 // println!("Forward match extend read {:x?}!", new_hash);
                                                 count += 1;
-                                                temp_data = (new_hash, idx, hash.position);
+                                                temp_data = (new_hash, idx);
                                             }
                                         }
                                     }
@@ -371,18 +374,16 @@ impl Pipeline {
                                         output.push(Utils::decompress_base(temp_data.1));
 
                                         // Found a continuation into another bucket
-                                        let contig_break =
-                                            entryref.begin_ignored || entryref.end_ignored;
+                                        let contig_break = entryref.ignored;
                                         if contig_break {
                                             break (temp_data.0, contig_break);
                                         }
 
-                                        read = CompressedRead::from_compressed_reads(
-                                            &buckets[b][..],
-                                            temp_data.2 as usize,
-                                            k,
-                                        );
-                                        // println!("Again!");
+                                        // read = CompressedRead::from_compressed_reads(
+                                        //     &buckets[b][..],
+                                        //     temp_data.2 as usize,
+                                        //     k,
+                                        // );
                                     } else {
                                         break (temp_data.0, false);
                                     }
@@ -396,9 +397,7 @@ impl Pipeline {
                                 let (fw_hash, end_ignored) = try_extend_function(
                                     &mut forward_seq,
                                     MH::manual_roll_forward,
-                                    0,
                                     MH::manual_roll_reverse,
-                                    k - 1,
                                 );
                                 match end_ignored {
                                     true => Some(fw_hash),
@@ -414,9 +413,7 @@ impl Pipeline {
                                 let (bw_hash, begin_ignored) = try_extend_function(
                                     &mut backward_seq,
                                     MH::manual_roll_reverse,
-                                    k - 1,
                                     MH::manual_roll_forward,
-                                    0,
                                 );
                                 match begin_ignored {
                                     true => Some(bw_hash),
@@ -425,12 +422,10 @@ impl Pipeline {
                             }
                         };
 
-                        let out_seq = if backward_seq.len() > 0 {
+                        let out_seq = {
                             backward_seq.reverse();
-                            backward_seq.extend_from_slice(&forward_seq[..]);
+                            backward_seq.extend_from_slice(&forward_seq[k..]);
                             &backward_seq[..]
-                        } else {
-                            &forward_seq[..]
                         };
 
                         temp_bucket_writer.add_read((), out_seq);

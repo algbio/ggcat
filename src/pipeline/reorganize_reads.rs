@@ -87,12 +87,12 @@ impl Pipeline {
                 type KeyType = u64;
                 const KEY_BITS: usize = 64;
 
-                fn get_shifted(value: &LinkMapping, rhs: u8) -> u8 {
-                    (value.entry >> rhs) as u8
-                }
-
                 fn compare(left: &LinkMapping, right: &LinkMapping) -> std::cmp::Ordering {
                     left.entry.cmp(&right.entry)
+                }
+
+                fn get_shifted(value: &LinkMapping, rhs: u8) -> u8 {
+                    (value.entry >> rhs) as u8
                 }
             }
 
