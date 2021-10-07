@@ -1,6 +1,8 @@
-use crate::hash::HashableSequence;
+use crate::colors_manager::{ColorsManager, ColorsMergeManager};
+use crate::hash::{HashFunctionFactory, HashableSequence};
 use crate::intermediate_storage::{
     IntermediateReadsReader, IntermediateReadsWriter, IntermediateSequencesStorage,
+    SequenceExtraData,
 };
 use crate::pipeline::links_compaction::LinkMapping;
 use crate::pipeline::Pipeline;
@@ -10,6 +12,7 @@ use crate::sequences_reader::{FastaSequence, SequencesReader};
 use crate::unitig_link::UnitigIndex;
 use crate::utils::Utils;
 use crate::KEEP_FILES;
+use bstr::ByteSlice;
 use crossbeam::channel::*;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
@@ -23,7 +26,7 @@ use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
 use std::fs::File;
 use std::intrinsics::unlikely;
-use std::io::Cursor;
+use std::io::{Cursor, Read, Write};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -32,8 +35,28 @@ use std::sync::Arc;
 use std::thread::{sleep, Thread};
 use std::time::{Duration, Instant};
 
+#[derive(Clone, Debug)]
+pub struct ReorganizedReadsExtraData<CX: SequenceExtraData> {
+    pub unitig: UnitigIndex,
+    pub color: CX,
+}
+
+impl<CX: SequenceExtraData> SequenceExtraData for ReorganizedReadsExtraData<CX> {
+    fn decode(mut reader: impl Read) -> Option<Self> {
+        Some(Self {
+            unitig: UnitigIndex::decode(&mut reader)?,
+            color: CX::decode(&mut reader)?,
+        })
+    }
+
+    fn encode(&self, mut writer: impl Write) {
+        self.unitig.encode(&mut writer);
+        self.color.encode(&mut writer);
+    }
+}
+
 impl Pipeline {
-    pub fn reorganize_reads(
+    pub fn reorganize_reads<MH: HashFunctionFactory, CX: ColorsManager>(
         mut reads: Vec<PathBuf>,
         mut mapping_files: Vec<PathBuf>,
         temp_path: &Path,
@@ -46,11 +69,12 @@ impl Pipeline {
             .write()
             .start_phase("phase: reads reorganization".to_string());
 
-        let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<UnitigIndex>>::new(
-            buckets_count,
-            &temp_path.join("reads_bucket"),
-            None,
-        );
+        let mut buckets = MultiThreadBuckets::<
+            IntermediateReadsWriter<ReorganizedReadsExtraData<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
+                MH,
+                CX,
+            >>::PartialUnitigsColorStructure>>,
+        >::new(buckets_count, &temp_path.join("reads_bucket"), None);
 
         reads.sort();
         mapping_files.sort();
@@ -102,9 +126,14 @@ impl Pipeline {
             let mut map_index = 0;
 
             let mut decompress_buffer = Vec::new();
+            let mut ident_buffer = Vec::new();
 
-            IntermediateReadsReader::<()>::new(read_file, !KEEP_FILES.load(Ordering::Relaxed))
-                .for_each(|_, seq| {
+            IntermediateReadsReader::<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
+                MH,
+                CX,
+            >>::PartialUnitigsColorStructure>::new(read_file, !KEEP_FILES.load(Ordering::Relaxed))
+                .for_each(|color, seq| {
+
                     if seq.bases_count() > decompress_buffer.len() {
                         decompress_buffer.resize(seq.bases_count(), 0);
                     }
@@ -114,20 +143,33 @@ impl Pipeline {
 
                     if map_index < mappings.len() && mappings[map_index].entry == index {
                         // Mapping found
-                        tmp_reads_buffer.add_read(
-                            UnitigIndex::new(bucket_index, index as usize, false),
+                        tmp_reads_buffer.add_read(ReorganizedReadsExtraData {
+                            unitig: UnitigIndex::new(bucket_index, index as usize, false),
+                            color
+                        },
                             seq,
                             mappings[map_index].bucket,
                         );
                         map_index += 1;
                     } else {
+
+                        ident_buffer.clear();
+                        write!(ident_buffer, "> {} {}", bucket_index, index);
+                        CX::ColorsMergeManagerType::<MH>::print_color_data(&color, &mut ident_buffer);
+
                         tmp_lonely_unitigs_buffer.add_read(FastaSequence {
-                            ident: format!(">{} {}", bucket_index, index).as_bytes(),
+                            ident: ident_buffer.as_bytes(),
                             seq,
                             qual: None,
                         });
                         // No mapping, write unitig to file
                     }
+
+                    <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
+                        MH,
+                        CX,
+                    >>::clear_deserialized_unitigs_colors();
+
                     index += 1;
                 });
             tmp_lonely_unitigs_buffer.finalize();

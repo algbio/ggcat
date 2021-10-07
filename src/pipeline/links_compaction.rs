@@ -19,6 +19,7 @@ use crate::vec_slice::VecSlice;
 use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
 use byteorder::ReadBytesExt;
 use hashbrown::HashMap;
+use hashbrown::HashSet;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_data_size::MemoryDataSize;
@@ -27,7 +28,6 @@ use parallel_processor::multi_thread_buckets::{
 };
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::process::exit;
 
 #[derive(Clone, Debug)]

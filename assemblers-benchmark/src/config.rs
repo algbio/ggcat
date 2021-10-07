@@ -35,8 +35,8 @@ pub struct Benchmark {
     pub max_memory: usize,
     #[serde(rename = "min-multiplicity")]
     pub min_multiplicity: usize,
-    #[serde(rename = "output-mode")]
-    pub output_mode: String,
+    // #[serde(rename = "output-mode")]
+    // pub output_mode: String,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]

@@ -1,8 +1,8 @@
 use crate::compressed_read::CompressedRead;
 use crate::reads_freezer::ReadsWriter;
 use crate::sequences_reader::FastaSequence;
+use hashbrown::HashMap;
 use nthash::NtSequence;
-use std::collections::HashMap;
 use std::num::NonZeroU32;
 
 pub struct KmerNode {

@@ -1,3 +1,5 @@
+use crate::colors_manager::ColorsManager;
+use crate::default_colors_manager::DefaultColorsManager;
 use crate::hash::HashFunctionFactory;
 use crate::pipeline::kmers_merge::RetType;
 use crate::pipeline::Pipeline;
@@ -10,6 +12,8 @@ use parking_lot::Mutex;
 use std::fs::remove_file;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
+
+type AssemblerColorsManager = DefaultColorsManager;
 
 pub fn run_assembler<
     BucketingHash: HashFunctionFactory,
@@ -29,8 +33,10 @@ pub fn run_assembler<
 ) {
     PHASES_TIMES_MONITOR.write().init();
 
+    let global_colors_table = AssemblerColorsManager::create_colors_table();
+
     let buckets = if step <= StartingStep::MinimizerBucketing {
-        Pipeline::minimizer_bucketing::<BucketingHash>(
+        Pipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
             input,
             temp_dir.as_path(),
             BUCKETS_COUNT,
@@ -44,8 +50,9 @@ pub fn run_assembler<
     };
 
     let RetType { sequences, hashes } = if step <= StartingStep::KmersMerge {
-        Pipeline::kmers_merge::<BucketingHash, MergingHash, _>(
+        Pipeline::kmers_merge::<BucketingHash, MergingHash, AssemblerColorsManager, _>(
             buckets,
+            &global_colors_table,
             BUCKETS_COUNT,
             min_multiplicity,
             temp_dir.as_path(),
@@ -62,6 +69,8 @@ pub fn run_assembler<
             hashes: Utils::generate_bucket_names(temp_dir.join("hashes"), BUCKETS_COUNT, None),
         }
     };
+
+    global_colors_table.write_to_file(output_file.with_extension("colors.json"));
 
     let mut links = if step <= StartingStep::HashesSorting {
         Pipeline::hashes_sorting::<MergingHash, _>(hashes, temp_dir.as_path(), BUCKETS_COUNT)
@@ -135,7 +144,7 @@ pub fn run_assembler<
     });
 
     let reorganized_reads = if step <= StartingStep::ReorganizeReads {
-        Pipeline::reorganize_reads(
+        Pipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
             sequences,
             reads_map,
             temp_dir.as_path(),
@@ -149,7 +158,7 @@ pub fn run_assembler<
     };
 
     if step <= StartingStep::BuildUnitigs {
-        Pipeline::build_unitigs(
+        Pipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(
             reorganized_reads,
             unitigs_map,
             temp_dir.as_path(),
@@ -167,6 +176,8 @@ pub fn run_assembler<
     PHASES_TIMES_MONITOR
         .write()
         .print_stats("Compacted De Brujin graph construction completed.".to_string());
+
+    global_colors_table.print_stats();
 
     println!("Final output saved to: {}", output_file.display());
 }

@@ -1,8 +1,7 @@
-#![feature(new_uninit, core_intrinsics)]
-#![feature(is_sorted)]
+#![feature(new_uninit, core_intrinsics, type_alias_impl_trait)]
+#![feature(is_sorted, thread_local, panic_info_message)]
 #![feature(slice_group_by)]
 #![feature(llvm_asm)]
-#![feature(min_type_alias_impl_trait)]
 #![feature(option_result_unwrap_unchecked)]
 #![feature(specialization)]
 #![feature(generic_associated_types)]
@@ -10,6 +9,7 @@
 #![feature(trait_alias)]
 #![allow(warnings)]
 #![feature(test)]
+#![feature(slice_partition_dedup)]
 
 extern crate test;
 
@@ -46,6 +46,9 @@ mod unitig_link;
 #[macro_use]
 mod utils;
 mod assembler;
+mod colors_manager;
+mod colors_storage;
+mod default_colors_manager;
 mod intermediate_storage_single;
 mod varint;
 mod vec_slice;
@@ -194,6 +197,9 @@ fn main() {
             "Thread panicked at location: {:?}",
             info.location()
         );
+        if let Some(message) = info.message() {
+            writeln!(err_lock, "Error message: {}", message);
+        }
         if let Some(s) = info.payload().downcast_ref::<&str>() {
             writeln!(err_lock, "Panic payload: {:?}", s);
         }

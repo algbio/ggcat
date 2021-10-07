@@ -1,8 +1,11 @@
+use crate::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use crate::hash::ExtendableHashTraitType;
 use crate::hash::HashFunction;
 use crate::hash::HashFunctionFactory;
-use crate::intermediate_storage::{IntermediateReadsWriter, IntermediateSequencesStorage};
-use crate::pipeline::kmers_merge::KmersFlags;
+use crate::intermediate_storage::{
+    IntermediateReadsWriter, IntermediateSequencesStorage, SequenceExtraData,
+};
+use crate::pipeline::kmers_merge::{KmersFlags, MapEntry};
 use crate::pipeline::Pipeline;
 use crate::rolling_kseq_iterator::{RollingKseqImpl, RollingKseqIterator};
 use crate::rolling_minqueue::RollingMinQueue;
@@ -14,6 +17,7 @@ use bstr::ByteSlice;
 use crossbeam::channel::*;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
+use hashbrown::HashMap;
 use itertools::Itertools;
 use nix::sys::ptrace::cont;
 use object_pool::Pool;
@@ -42,6 +46,7 @@ static VALID_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 struct QueueData {
     data: Vec<u8>,
     sequences: Vec<(usize, usize, usize, usize)>,
+    pub file_index: u64,
 }
 
 impl QueueData {
@@ -49,6 +54,7 @@ impl QueueData {
         Self {
             data: Vec::with_capacity(capacity),
             sequences: Vec::with_capacity(capacity / 512),
+            file_index: 0,
         }
     }
 
@@ -110,11 +116,13 @@ impl ThreadChainObject for QueueData {
     }
 }
 
-struct ExecutionContext {
+struct ExecutionContext<CX: ColorsManager> {
     k: usize,
     m: usize,
     buckets_count: usize,
-    buckets: MultiThreadBuckets<IntermediateReadsWriter<KmersFlags>>,
+    buckets: MultiThreadBuckets<
+        IntermediateReadsWriter<KmersFlags<CX::MinimizerBucketingSeqColorDataType>>,
+    >,
     quality_threshold: Option<f64>,
 }
 
@@ -135,8 +143,8 @@ const CHUNKS_SIZE: usize = 1024 * 1024 * 16;
 const MAX_READING_THREADS: usize = 2;
 const WATERMARK_HIGH: usize = 64;
 
-fn worker<H: HashFunctionFactory>(
-    context: &ExecutionContext,
+fn worker<H: HashFunctionFactory, CX: ColorsManager>(
+    context: &ExecutionContext<CX>,
     manager: ObjectsPoolManager<(), QueueData>,
 ) {
     let mut minimizer_queue = RollingMinQueue::<H>::new(context.k - context.m);
@@ -219,7 +227,10 @@ fn worker<H: HashFunctionFactory>(
                             H::get_bucket(last_hash) % (context.buckets_count as BucketIndexType);
 
                         tmp_reads_buffer.add_read(
-                            KmersFlags(include_first as u8),
+                            KmersFlags(
+                                include_first as u8,
+                                CX::MinimizerBucketingSeqColorDataType::create(data.file_index),
+                            ),
                             &seq[(max(1, last_index) - 1)..(index + context.k)],
                             bucket,
                         );
@@ -232,7 +243,10 @@ fn worker<H: HashFunctionFactory>(
                 let start_index = max(1, last_index) - 1;
                 let include_last = true; // Always include the last element of the sequence in the last entry
                 tmp_reads_buffer.add_read(
-                    KmersFlags(include_first as u8 | ((include_last as u8) << 1)),
+                    KmersFlags(
+                        include_first as u8 | ((include_last as u8) << 1),
+                        CX::MinimizerBucketingSeqColorDataType::create(data.file_index),
+                    ),
                     &seq[start_index..seq.len()],
                     H::get_bucket(last_hash) % (context.buckets_count as BucketIndexType),
                 );
@@ -265,9 +279,14 @@ fn worker<H: HashFunctionFactory>(
     tmp_reads_buffer.finalize();
 }
 
-fn reader(context: &ExecutionContext, manager: ObjectsPoolManager<QueueData, PathBuf>) {
-    while let Some(input) = manager.recv_obj() {
+fn reader<CX: ColorsManager>(
+    context: &ExecutionContext<CX>,
+    manager: ObjectsPoolManager<QueueData, (PathBuf, u64)>,
+) {
+    while let Some((input, file_index)) = manager.recv_obj() {
         let mut data = manager.allocate();
+        data.file_index = file_index;
+
         SequencesReader::process_file_extended(
             input,
             |x| {
@@ -277,6 +296,8 @@ fn reader(context: &ExecutionContext, manager: ObjectsPoolManager<QueueData, Pat
 
                 if unsafe { unlikely(!data.push_sequences(x)) } {
                     let mut tmp_data = manager.allocate();
+                    data.file_index = file_index;
+
                     swap(&mut data, &mut tmp_data);
                     manager.send(tmp_data);
 
@@ -294,8 +315,8 @@ fn reader(context: &ExecutionContext, manager: ObjectsPoolManager<QueueData, Pat
 }
 
 impl Pipeline {
-    pub fn minimizer_bucketing<H: HashFunctionFactory>(
-        mut input_files: Vec<PathBuf>,
+    pub fn minimizer_bucketing<H: HashFunctionFactory, CX: ColorsManager>(
+        input_files: Vec<PathBuf>,
         output_path: &Path,
         buckets_count: usize,
         threads_count: usize,
@@ -307,13 +328,17 @@ impl Pipeline {
             .write()
             .start_phase("phase: reads bucketing".to_string());
 
-        let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<KmersFlags>>::new(
-            buckets_count,
-            &output_path.join("bucket"),
-            None,
-        );
+        let mut buckets = MultiThreadBuckets::<
+            IntermediateReadsWriter<KmersFlags<CX::MinimizerBucketingSeqColorDataType>>,
+        >::new(buckets_count, &output_path.join("bucket"), None);
 
-        input_files.sort_by_cached_key(|file| {
+        let mut input_files: Vec<_> = input_files
+            .into_iter()
+            .enumerate()
+            .map(|(i, f)| (f, i as u64))
+            .collect();
+
+        input_files.sort_by_cached_key(|(file, _)| {
             std::fs::metadata(file)
                 .expect(&format!("Error while opening file {}", file.display()))
                 .len()
@@ -346,7 +371,7 @@ impl Pipeline {
                 threads_count,
                 &AtomicUsize::new(threads_count),
                 WATERMARK_HIGH,
-                worker::<H>,
+                worker::<H, CX>,
             ),
         );
 

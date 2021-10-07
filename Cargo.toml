@@ -22,7 +22,7 @@ stopwatch = "0.0.7"
 structopt = "0.3.5"
 pad = "0.1.6"
 bitvec = "0.22.3"
-hashbrown = "0.11.2"
+hashbrown = "=0.11.2"
 rand_pcg = "0.3.0"
 rand = "0.8.3"
 libdeflater = "0.7.1"
@@ -37,6 +37,8 @@ fdlimit = "0.2.1"
 parking_lot = "0.11.1"
 num = "0.4.0"
 pcg_rand = "0.13.0"
+dashmap = { version = "4.0.2", features = ["serde"] }
+serde_json = "1.0.68"
 
 [dependencies.flate2]
 default-features = false
