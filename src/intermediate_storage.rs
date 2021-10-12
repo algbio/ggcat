@@ -19,7 +19,9 @@ use std::cmp::{max, min};
 use std::fmt::Debug;
 use std::fs::{File, OpenOptions};
 use std::hash::Hasher;
-use std::io::{stdin, stdout, BufRead, BufReader, BufWriter, Error, Read, Seek, SeekFrom, Write};
+use std::io::{
+    stdin, stdout, BufRead, BufReader, BufWriter, Cursor, Error, Read, Seek, SeekFrom, Write,
+};
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
@@ -27,6 +29,11 @@ use std::process::{ChildStdin, Command, Stdio};
 use std::slice::from_raw_parts;
 
 pub trait SequenceExtraData: Sized + Send + Debug {
+    fn decode_from_slice(slice: &[u8]) -> Option<Self> {
+        let cursor = Cursor::new(slice);
+        Self::decode(cursor)
+    }
+
     fn decode(reader: impl Read) -> Option<Self>;
     fn encode(&self, writer: impl Write);
 }

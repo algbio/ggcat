@@ -11,7 +11,7 @@ mod tests {
     use crate::hashes::fw_seqhash::u64::{ForwardSeqHashFactory, ForwardSeqHashIterator};
     use crate::rolling_minqueue::RollingMinQueue;
     use crate::utils::Utils;
-    use crate::varint::encode_varint;
+    use crate::varint::{encode_varint, encode_varint_flags};
     use bincode::DefaultOptions;
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
     use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
@@ -384,6 +384,39 @@ mod tests {
                 encode_varint(|b| ser_vec.write_all(b), test.y as u64);
                 // ser_vec.write_u64::<LittleEndian>(test.x as u64);
                 // ser_vec.write_u64::<LittleEndian>(test.y as u64);
+            }
+        });
+        println!("Size {}", ser_vec.len());
+    }
+
+    #[bench]
+    fn bench_varint_encoding_flags(b: &mut Bencher) {
+        const TEST_SIZE: usize = 10000000;
+
+        let mut test_vec = Vec::with_capacity(TEST_SIZE);
+
+        for i in 0..TEST_SIZE as u64 {
+            test_vec.push(Test {
+                x: i,
+                y: i + 1230120312031023,
+            })
+        }
+
+        let mut ser_vec = Vec::with_capacity(TEST_SIZE * 18);
+
+        b.iter(|| {
+            ser_vec.clear();
+            for test in test_vec.iter() {
+                encode_varint_flags::<_, _, 2>(
+                    |b| ser_vec.write_all(b),
+                    test.x as u64,
+                    (test.x % 4) as u8,
+                );
+                encode_varint_flags::<_, _, 2>(
+                    |b| ser_vec.write_all(b),
+                    test.y as u64,
+                    (test.y % 4) as u8,
+                );
             }
         });
         println!("Size {}", ser_vec.len());

@@ -29,6 +29,7 @@ use crate::rolling_minqueue::RollingMinQueue;
 use crate::sequences_reader::FastaSequence;
 use crate::types::BucketIndexType;
 use crate::utils::Utils;
+use crate::varint::{decode_varint, decode_varint_flags, encode_varint_flags};
 use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
 use bitvec::ptr::Mut;
 use byteorder::{ReadBytesExt, WriteBytesExt};
@@ -79,11 +80,9 @@ pub struct MapEntry<CHI> {
 }
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
-struct ReadRef<H: HashFunctionFactory + Clone, CX: ColorsManager> {
+struct ReadRef {
     read_start: usize,
-    read_len: usize,
-    hash: H::HashTypeExtendable,
-    flags: KmersFlags<CX::MinimizerBucketingSeqColorDataType>,
+    hash: u64,
 }
 
 const MERGE_BUCKETS_COUNT: usize = 256;
@@ -162,7 +161,7 @@ impl Pipeline {
             let mut read_index = 0;
 
             let mut buckets: Vec<Vec<u8>> = vec![Vec::new(); MERGE_BUCKETS_COUNT];
-            let mut cmp_reads: Vec<Vec<ReadRef<H, CX>>> = vec![Vec::new(); MERGE_BUCKETS_COUNT];
+            let mut cmp_reads: Vec<Vec<ReadRef>> = vec![Vec::new(); MERGE_BUCKETS_COUNT];
             let mut buckets = &mut buckets[..];
             let mut cmp_reads = &mut cmp_reads[..];
 
@@ -184,14 +183,21 @@ impl Pipeline {
                 let bucket = H::get_second_bucket(minimizer.to_unextendable())
                     % (MERGE_BUCKETS_COUNT as BucketIndexType);
 
-                let slen = buckets[bucket as usize].len();
+                let st_len = buckets[bucket as usize].len();
+
+                encode_varint_flags::<_, _, 2>(
+                    |slice| buckets[bucket as usize].extend_from_slice(slice),
+                    x.bases_count() as u64,
+                    flags.0
+                );
                 buckets[bucket as usize].extend_from_slice(x.get_compr_slice());
+                flags.1.encode(&mut buckets[bucket as usize]);
 
                 cmp_reads[bucket as usize].push(ReadRef {
-                    read_start: slen,
-                    read_len: x.bases_count(),
-                    hash: minimizer,
-                    flags,
+                    read_start: st_len,
+                    // read_len: x.bases_count(),
+                    hash: H::get_u64(minimizer.to_unextendable()),
+                    // flags,
                 });
             });
 
@@ -209,36 +215,33 @@ impl Pipeline {
                 forward_seq.reserve(k);
                 backward_seq.reserve(k);
 
-                struct Compare<H> {
-                    _phantom: PhantomData<H>,
+                struct Compare {
                 };
-                impl<H: HashFunctionFactory, CX: ColorsManager> SortKey<ReadRef<H, CX>> for Compare<H> {
-                    type KeyType = H::HashTypeUnextendable;
-                    const KEY_BITS: usize = size_of::<H::HashTypeUnextendable>() * 8;
+                impl SortKey<ReadRef> for Compare {
+                    type KeyType = u64;
+                    const KEY_BITS: usize = size_of::<u64>() * 8;
 
                     #[inline(always)]
-                    fn compare(left: &ReadRef<H, CX>, right: &ReadRef<H, CX>) -> std::cmp::Ordering {
+                    fn compare(left: &ReadRef, right: &ReadRef) -> std::cmp::Ordering {
                         left.hash
-                            .to_unextendable()
-                            .cmp(&right.hash.to_unextendable())
+                            .cmp(&right.hash)
                     }
 
                     #[inline(always)]
-                    fn get_shifted(value: &ReadRef<H, CX>, rhs: u8) -> u8 {
-                        H::get_shifted(value.hash.to_unextendable(), rhs)
+                    fn get_shifted(value: &ReadRef, rhs: u8) -> u8 {
+                        (value.hash >> rhs) as u8
                     }
                 }
 
-                fast_smart_radix_sort::<_, Compare<H>, false>(&mut cmp_reads[b]);
+                fast_smart_radix_sort::<_, Compare, false>(&mut cmp_reads[b]);
 
                 let mut temp_unitig_colors = CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure();
 
                 for slice in cmp_reads[b]
-                    .group_by(|a, b| a.hash.to_unextendable() == b.hash.to_unextendable())
+                    .group_by(|a, b| a.hash == b.hash)
                 {
                     CX::ColorsMergeManagerType::<MH>::reinit_temp_buffer_structure(&mut colors_struct);
                     rhash_map.clear();
-                    // xhash_map.clear();
                     rcorrect_reads.clear();
 
                     let mut tot_reads = 0;
@@ -247,16 +250,28 @@ impl Pipeline {
                     let mut do_debug = false;
 
                     for &ReadRef {
-                        read_start,
-                        read_len,
-                        flags,
+                        mut read_start,
                         ..
                     } in slice
                     {
+                        let (read_len, kmer_flags) = decode_varint_flags::<_, 2>(|| {
+                            let x = buckets[b][read_start];
+                            read_start += 1;
+                            Some(x)
+                        }).unwrap();
+
+                        let read_bases_start = read_start;
+                        let read_len = read_len as usize;
+                        let read_len_bytes = (read_len + 3) / 4;
+
                         let read = CompressedRead::new_from_compressed(
-                            &buckets[b][read_start..read_start + ((read_len + 3) / 4)],
+                            &buckets[b][read_bases_start..read_bases_start + read_len_bytes],
                             read_len,
                         );
+
+                        let color = CX::MinimizerBucketingSeqColorDataType::decode_from_slice(
+                            &buckets[b][read_bases_start + read_len_bytes..]
+                        ).unwrap();
 
                         let hashes = MH::new(read, k);
 
@@ -266,23 +281,22 @@ impl Pipeline {
                         let mut did_max = false;
 
                         for (idx, hash) in hashes.iter_enumerate() {
-                            let position = (read_start * 4 + idx);
-                            let begin_ignored = flags.0 & READ_FLAG_INCL_BEGIN == 0 && idx == 0;
+                            let position = (read_bases_start * 4 + idx);
+                            let begin_ignored = kmer_flags & READ_FLAG_INCL_BEGIN == 0 && idx == 0;
                             let end_ignored =
-                                flags.0 & READ_FLAG_INCL_END == 0 && idx == last_hash_pos;
+                                kmer_flags & READ_FLAG_INCL_END == 0 && idx == last_hash_pos;
                             assert!(idx <= last_hash_pos);
                             did_max |= idx == last_hash_pos;
 
                             let entry =
                                 rhash_map.entry(hash.to_unextendable()).or_insert(MapEntry {
-                                    // position: position as u32,
                                     ignored: begin_ignored || end_ignored,
                                     count: 0,
                                     color_index: CX::ColorsMergeManagerType::<MH>::new_color_index()
                                 });
 
                             entry.count += 1;
-                            CX::ColorsMergeManagerType::<MH>::add_temp_buffer_structure_el(&mut colors_struct, &flags.1, (idx, hash.to_unextendable()));
+                            CX::ColorsMergeManagerType::<MH>::add_temp_buffer_structure_el(&mut colors_struct, &color, (idx, hash.to_unextendable()));
 
                             if entry.count == min_multiplicity {
                                 rcorrect_reads.push((hash, position, begin_ignored, end_ignored));
@@ -297,9 +311,9 @@ impl Pipeline {
                         CX::ColorsMergeManagerType::<MH>::process_colors(colors_global_table, &mut colors_struct, &mut rhash_map, min_multiplicity);
                     }
 
-                    for (hash, read_start, begin_ignored, end_ignored) in rcorrect_reads.iter() {
+                    for (hash, read_bases_start, begin_ignored, end_ignored) in rcorrect_reads.iter() {
                         let cread =
-                            CompressedRead::from_compressed_reads(&buckets[b][..], *read_start, k);
+                            CompressedRead::from_compressed_reads(&buckets[b][..], *read_bases_start, k);
 
                         let rhentry = rhash_map.get_mut(&hash.to_unextendable()).unwrap();
                         if rhentry.count == usize::MAX {

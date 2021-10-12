@@ -6,4 +6,5 @@ mod hashes_sorting;
 pub mod kmers_merge;
 mod links_compaction;
 pub mod minimizer_bucketing;
+mod parallel_kmers_merge;
 mod reorganize_reads;

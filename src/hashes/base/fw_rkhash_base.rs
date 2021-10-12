@@ -179,6 +179,11 @@ impl HashFunctionFactory for ForwardRabinKarpHashFactory {
         (hash >> shift) as u8
     }
 
+    #[inline(always)]
+    fn get_u64(hash: Self::HashTypeUnextendable) -> u64 {
+        hash as u64
+    }
+
     fn manual_roll_forward(
         hash: Self::HashTypeExtendable,
         k: usize,

@@ -34,6 +34,7 @@ pub trait HashFunctionFactory: Ord + Sized + Clone + Debug {
     fn get_second_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType;
     fn get_minimizer(hash: Self::HashTypeUnextendable) -> MinimizerType;
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8;
+    fn get_u64(hash: Self::HashTypeUnextendable) -> u64;
 
     fn manual_roll_forward(
         hash: Self::HashTypeExtendable,
