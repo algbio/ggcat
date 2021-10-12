@@ -84,15 +84,22 @@ impl Read for SequentialReader {
                         return Ok(read);
                     }
                 }
-                Err(err) => return Err(err),
+                Err(err) => {
+                    return Err(err);
+                }
             }
             self.index_position += 1;
-            if self.index.index.len() as u64 >= self.index_position {
+
+            if self.index_position >= self.index.index.len() as u64 {
                 return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
             }
 
             replace_with_or_abort(&mut self.reader, |reader| {
                 let mut file = reader.finish().0;
+                assert_eq!(
+                    file.stream_position().unwrap(),
+                    self.index.index[self.index_position as usize]
+                );
                 file.seek(SeekFrom::Start(
                     self.index.index[self.index_position as usize],
                 ))
@@ -187,10 +194,11 @@ impl<T: SequenceExtraData> IntermediateReadsWriter<T> {
 
             lz4::EncoderBuilder::new().level(0).build(file_buf).unwrap()
         });
+        self.chunk_size = 0;
     }
 }
 
-const MAXIMUM_CHUNK_SIZE: u64 = 1024 * 1024 * 32;
+const MAXIMUM_CHUNK_SIZE: u64 = 1024 * 1024 * 16;
 
 impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
     type InitType = Path;
@@ -374,6 +382,7 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
         let mut vec_reader = VecReader::new(1024 * 1024, &mut self.reader);
 
         // const LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
+
         let mut read = vec![];
 
         while let Some(el) = T::decode(&mut vec_reader) {

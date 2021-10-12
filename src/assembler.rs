@@ -53,7 +53,7 @@ pub fn run_assembler<
             quality_threshold,
         )
     } else {
-        Utils::generate_bucket_names(temp_dir.join("bucket"), BUCKETS_COUNT, Some("lz4"))
+        Utils::generate_bucket_names(temp_dir.join("bucket"), BUCKETS_COUNT, Some("tmp"))
     };
 
     let RetType { sequences, hashes } = if step <= StartingStep::KmersMerge {
