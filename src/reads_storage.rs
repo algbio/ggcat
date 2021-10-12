@@ -178,21 +178,21 @@ impl ReadsWriter {
 }
 
 impl ReadsStorage {
-    pub fn from_generator<F: 'static + FnOnce(&mut ReadsWriter) + Send>(func: F) -> ReadsStorage {
-        let (reader, writer) = os_pipe::pipe().unwrap();
-
-        Utils::thread_safespawn(move || {
-            func(&mut ReadsWriter {
-                writer: WriterChannels::Pipe(writer),
-                path: PathBuf::new(),
-                reads_count: 0,
-            });
-        });
-
-        ReadsStorage {
-            reader: UnsafeCell::new(Box::new(reader)),
-        }
-    }
+    // pub fn from_generator<F: 'static + FnOnce(&mut ReadsWriter) + Send>(func: F) -> ReadsStorage {
+    //     let (reader, writer) = os_pipe::pipe().unwrap();
+    //
+    //     Utils::thread_safespawn(move || {
+    //         func(&mut ReadsWriter {
+    //             writer: WriterChannels::Pipe(writer),
+    //             path: PathBuf::new(),
+    //             reads_count: 0,
+    //         });
+    //     });
+    //
+    //     ReadsStorage {
+    //         reader: UnsafeCell::new(Box::new(reader)),
+    //     }
+    // }
 
     pub fn new_splitted() -> (ReadsStorage, ReadsWriter) {
         let (reader, writer) = os_pipe::pipe().unwrap();
@@ -273,36 +273,36 @@ impl ReadsStorage {
         }
     }
 
-    pub fn freeze(&self, name: String, compress: bool) {
-        let file = File::create(if compress {
-            name + ".freeze.fa.lz4"
-        } else {
-            name + ".freeze.fa"
-        })
-        .unwrap();
-
-        let mut uncompressed = None;
-        let mut compressed = None;
-
-        let mut value: &mut dyn Read = self.reader.uget().as_mut();
-
-        let reader_ref = RefThreadWrapper(cast_static_mut(value));
-
-        Utils::thread_safespawn(move || {
-            let freezer: &mut dyn Write = if compress {
-                compressed = Some(lz4::EncoderBuilder::new().build(file).unwrap());
-                compressed.as_mut().unwrap()
-            } else {
-                uncompressed = Some(file);
-                uncompressed.as_mut().unwrap()
-            };
-
-            std::io::copy(reader_ref.0, freezer).unwrap();
-            if let Some(mut stream) = compressed {
-                let (file, result) = stream.finish();
-            }
-        });
-    }
+    // pub fn freeze(&self, name: String, compress: bool) {
+    //     let file = File::create(if compress {
+    //         name + ".freeze.fa.lz4"
+    //     } else {
+    //         name + ".freeze.fa"
+    //     })
+    //     .unwrap();
+    //
+    //     let mut uncompressed = None;
+    //     let mut compressed = None;
+    //
+    //     let mut value: &mut dyn Read = self.reader.uget().as_mut();
+    //
+    //     let reader_ref = RefThreadWrapper(cast_static_mut(value));
+    //
+    //     Utils::thread_safespawn(move || {
+    //         let freezer: &mut dyn Write = if compress {
+    //             compressed = Some(lz4::EncoderBuilder::new().build(file).unwrap());
+    //             compressed.as_mut().unwrap()
+    //         } else {
+    //             uncompressed = Some(file);
+    //             uncompressed.as_mut().unwrap()
+    //         };
+    //
+    //         std::io::copy(reader_ref.0, freezer).unwrap();
+    //         if let Some(mut stream) = compressed {
+    //             let (file, result) = stream.finish();
+    //         }
+    //     });
+    // }
 
     pub fn for_each<F: FnMut(&[u8])>(&self, mut func: F) {
         let mut reader_cell = self.reader.uget();
