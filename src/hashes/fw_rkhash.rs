@@ -6,6 +6,8 @@ use crate::types::MinimizerType;
 use std::mem::size_of;
 
 pub mod u32 {
+    use crate::dummy_hasher::DummyHasherBuilder;
+
     type HashIntegerType = u32;
     const MULTIPLIER: HashIntegerType = 0xdc7d07b1;
     const MULT_INV: HashIntegerType = 0xfd0ee151;
@@ -19,6 +21,8 @@ pub mod u32 {
 }
 
 pub mod u64 {
+    use crate::dummy_hasher::DummyHasherBuilder;
+
     type HashIntegerType = u64;
     const MULTIPLIER: HashIntegerType = 0x660b123642ca9149;
     const MULT_INV: HashIntegerType = 0x397f178c6ae330f9;
@@ -32,6 +36,8 @@ pub mod u64 {
 }
 
 pub mod u128 {
+    use crate::dummy_hasher::DummyHasherBuilder;
+
     type HashIntegerType = u128;
     const MULTIPLIER: HashIntegerType = 0x3eb9402f3e733993add64d3ca00e1b6b;
     const MULT_INV: HashIntegerType = 0x9cb6ff6f1b1a6d733e0952e899c3943;

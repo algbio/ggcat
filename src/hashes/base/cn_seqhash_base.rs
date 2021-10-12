@@ -99,6 +99,13 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
     type HashIterator<N: HashableSequence> = CanonicalSeqHashIterator<N>;
     const NULL_BASE: u8 = 0;
 
+    type PreferredRandomState = ahash::RandomState;
+
+    #[inline(always)]
+    fn get_random_state() -> Self::PreferredRandomState {
+        ahash::RandomState::new()
+    }
+
     fn new<N: HashableSequence>(seq: N, k: usize) -> Self::HashIterator<N> {
         CanonicalSeqHashIterator::new(seq, k).unwrap()
     }

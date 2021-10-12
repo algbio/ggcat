@@ -3,6 +3,7 @@ use crate::intermediate_storage::SequenceExtraData;
 use crate::pipeline::kmers_merge::MapEntry;
 use hashbrown::HashMap;
 use std::io::Write;
+use std::path::Path;
 
 /// Encoded color(s) of a minimizer bucketing step sequence
 pub trait MinimizerBucketingSeqColorData: Copy + Clone + SequenceExtraData + Send + Sync {
@@ -71,7 +72,10 @@ pub trait ColorsManager: Copy + Clone {
     const COLORS_ENABLED: bool;
 
     type GlobalColorsTable: Sync;
-    fn create_colors_table() -> Self::GlobalColorsTable;
+    fn create_colors_table(
+        path: impl AsRef<Path>,
+        color_names: Vec<String>,
+    ) -> Self::GlobalColorsTable;
 
     type MinimizerBucketingSeqColorDataType: MinimizerBucketingSeqColorData;
 
@@ -85,7 +89,10 @@ impl ColorsManager for () {
     const COLORS_ENABLED: bool = false;
     type GlobalColorsTable = ();
 
-    fn create_colors_table() -> Self::GlobalColorsTable {
+    fn create_colors_table(
+        _path: impl AsRef<Path>,
+        _color_names: Vec<String>,
+    ) -> Self::GlobalColorsTable {
         ()
     }
 

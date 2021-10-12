@@ -1,5 +1,5 @@
 use std::fmt::{Debug, Display};
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
 use std::ops::{Shl, Shr};
 
 use crate::hashes::fw_nthash::ForwardNtHashIterator;
@@ -22,6 +22,9 @@ pub trait HashFunctionFactory: Ord + Sized + Clone + Debug {
         HashTypeUnextendable = Self::HashTypeUnextendable,
     >;
     type HashIterator<N: HashableSequence>: HashFunction<Self>;
+
+    type PreferredRandomState: BuildHasher;
+    fn get_random_state() -> Self::PreferredRandomState;
 
     const NULL_BASE: u8;
 

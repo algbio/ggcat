@@ -148,6 +148,13 @@ impl HashFunctionFactory for ForwardRabinKarpHashFactory {
     type HashIterator<N: HashableSequence> = ForwardRabinKarpHashIterator<N>;
     const NULL_BASE: u8 = 0;
 
+    type PreferredRandomState = DummyHasherBuilder;
+
+    #[inline(always)]
+    fn get_random_state() -> Self::PreferredRandomState {
+        DummyHasherBuilder {}
+    }
+
     fn new<N: HashableSequence>(seq: N, k: usize) -> Self::HashIterator<N> {
         ForwardRabinKarpHashIterator::new(seq, k).unwrap()
     }

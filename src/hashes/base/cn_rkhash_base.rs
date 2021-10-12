@@ -183,6 +183,13 @@ impl HashFunctionFactory for CanonicalRabinKarpHashFactory {
     type HashIterator<N: HashableSequence> = CanonicalRabinKarpHashIterator<N>;
     const NULL_BASE: u8 = 0;
 
+    type PreferredRandomState = DummyHasherBuilder;
+
+    #[inline(always)]
+    fn get_random_state() -> Self::PreferredRandomState {
+        DummyHasherBuilder
+    }
+
     fn new<N: HashableSequence>(seq: N, k: usize) -> Self::HashIterator<N> {
         CanonicalRabinKarpHashIterator::new(seq, k).unwrap()
     }

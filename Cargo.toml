@@ -37,8 +37,11 @@ fdlimit = "0.2.1"
 parking_lot = "0.11.1"
 num = "0.4.0"
 pcg_rand = "0.13.0"
-dashmap = { version = "4.0.2", features = ["serde"] }
+dashmap = { version = "4.0.2" }
 serde_json = "1.0.68"
+ahash = "0.7.4"
+siphasher = "0.3.7"
+desse = "0.2.1"
 
 [dependencies.flate2]
 default-features = false

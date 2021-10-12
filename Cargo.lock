@@ -6,6 +6,7 @@ version = 3
 name = "BiLoki"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "bincode",
  "bio",
  "bitvec",
@@ -15,6 +16,7 @@ dependencies = [
  "crossbeam",
  "ctrlc",
  "dashmap",
+ "desse",
  "fdlimit",
  "filebuffer",
  "flate2",
@@ -39,6 +41,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "siphasher",
  "stopwatch",
  "structopt",
  "threadpool",
@@ -498,7 +501,26 @@ checksum = "e77a43b28d0668df09411cb0bc9a8c2adc40f9a048afe863e05fd43251e8e39c"
 dependencies = [
  "cfg-if 1.0.0",
  "num_cpus",
- "serde",
+]
+
+[[package]]
+name = "desse"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4653d7e3dbbf1799510a844266e5841510f8df4b4b29abb4eb09e0523b95780"
+dependencies = [
+ "desse-derive",
+]
+
+[[package]]
+name = "desse-derive"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3321ed740015e8e1bed6b1af99050f2a68799bd70f453f4f8045cd6bd53667a8"
+dependencies = [
+ "proc-macro2 0.4.30",
+ "quote 0.6.13",
+ "syn 0.15.44",
 ]
 
 [[package]]
@@ -1677,6 +1699,12 @@ dependencies = [
  "ryu",
  "serde",
 ]
+
+[[package]]
+name = "siphasher"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "533494a8f9b724d33625ab53c6c4800f7cc445895924a8ef649222dcb76e938b"
 
 [[package]]
 name = "skeptic"

@@ -19,7 +19,7 @@ use crate::reads_storage::WriterChannels::Pipe;
 use crate::utils::Utils;
 use rayon::ThreadPoolBuilder;
 use std::cmp::min;
-use std::fs::{create_dir_all, remove_file};
+use std::fs::{create_dir_all, remove_file, File};
 use std::intrinsics::exact_div;
 use std::path::PathBuf;
 use std::process::exit;
@@ -46,9 +46,12 @@ mod unitig_link;
 #[macro_use]
 mod utils;
 mod assembler;
+mod async_slice_queue;
 mod colors_manager;
+mod colors_memmap;
 mod colors_storage;
 mod default_colors_manager;
+mod dummy_hasher;
 mod intermediate_storage_single;
 mod varint;
 mod vec_slice;
@@ -63,7 +66,10 @@ fn outputs_arg_group() -> ArgGroup<'static> {
 }
 
 use crate::assembler::run_assembler;
+use crate::colors_manager::ColorsManager;
+use crate::colors_storage::{ColorIndexSerializer, ColorIndexType, ColorsStorage};
 use crate::compressed_read::CompressedRead;
+use crate::default_colors_manager::DefaultColorsManager;
 use crate::hash::HashFunctionFactory;
 use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
 use crate::hashes::cn_seqhash;
@@ -72,10 +78,12 @@ use crate::hashes::fw_nthash::{ForwardNtHashIterator, ForwardNtHashIteratorFacto
 use crate::hashes::fw_seqhash::u64::ForwardSeqHashFactory;
 use crate::reads_storage::ReadsStorage;
 use crate::sequences_reader::{FastaSequence, SequencesReader};
+use crate::varint::decode_varint;
+use byteorder::ReadBytesExt;
 use clap::arg_enum;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -104,12 +112,23 @@ arg_enum! {
 
 #[derive(StructOpt, Debug)]
 struct Cli {
+    #[structopt(long = "print-matches")]
+    /// Debug print matches of a color index
+    print_matches: Option<ColorIndexType>,
+
     /// The input files
-    #[structopt(required = true)]
     input: Vec<PathBuf>,
+
+    /// The lists of input files
+    #[structopt(short = "l", long = "input-lists")]
+    input_lists: Vec<PathBuf>,
 
     #[structopt(short)]
     debug_reverse: bool,
+
+    /// Enable colors
+    #[structopt(short, long)]
+    colors: bool,
 
     /// Specifies the k-mers length
     #[structopt(short, default_value = "32")]
@@ -164,15 +183,31 @@ static KEEP_FILES: AtomicBool = AtomicBool::new(false);
 fn run_assembler_from_args<
     BucketingHash: HashFunctionFactory,
     MergingHash: HashFunctionFactory,
+    ColorsImpl: ColorsManager,
     const BUCKETS_COUNT: usize,
 >(
     args: Cli,
 ) {
-    run_assembler::<BucketingHash, MergingHash, BUCKETS_COUNT>(
+    let mut inputs = args.input.clone();
+
+    for list in args.input_lists {
+        for input in BufReader::new(File::open(list).unwrap()).lines() {
+            if let Ok(input) = input {
+                inputs.push(PathBuf::from(input));
+            }
+        }
+    }
+
+    if inputs.is_empty() {
+        println!("ERROR: No input files specified!");
+        exit(1);
+    }
+
+    run_assembler::<BucketingHash, MergingHash, ColorsImpl, BUCKETS_COUNT>(
         args.klen,
         args.mlen.unwrap_or(min(12, (args.klen + 2) / 3)),
         args.step,
-        args.input,
+        inputs,
         args.output_file,
         args.temp_dir,
         args.threads_count,
@@ -180,6 +215,149 @@ fn run_assembler_from_args<
         args.quality_threshold,
         Some(args.number),
     );
+}
+
+fn dispatch_assembler_hash_type<ColorsImpl: ColorsManager, const BUCKETS_COUNT: usize>(args: Cli) {
+    let hash_type = match args.hash_type {
+        HashType::Auto => {
+            if args.klen <= 64 {
+                HashType::SeqHash
+            } else {
+                HashType::RabinKarp128
+            }
+        }
+        x => x,
+    };
+
+    use hashes::*;
+
+    match hash_type {
+        HashType::SeqHash => {
+            let k = args.klen;
+
+            if k <= 8 {
+                if args.forward_only {
+                    run_assembler_from_args::<
+                        CanonicalNtHashIteratorFactory,
+                        cn_seqhash::u16::CanonicalSeqHashFactory,
+                        ColorsImpl,
+                        BUCKETS_COUNT,
+                    >(args);
+                } else {
+                    run_assembler_from_args::<
+                        CanonicalNtHashIteratorFactory,
+                        cn_seqhash::u16::CanonicalSeqHashFactory,
+                        ColorsImpl,
+                        BUCKETS_COUNT,
+                    >(args)
+                }
+            } else if k <= 16 {
+                if args.forward_only {
+                    run_assembler_from_args::<
+                        ForwardNtHashIteratorFactory,
+                        fw_seqhash::u32::ForwardSeqHashFactory,
+                        ColorsImpl,
+                        BUCKETS_COUNT,
+                    >(args);
+                } else {
+                    run_assembler_from_args::<
+                        CanonicalNtHashIteratorFactory,
+                        cn_seqhash::u32::CanonicalSeqHashFactory,
+                        ColorsImpl,
+                        BUCKETS_COUNT,
+                    >(args)
+                }
+            } else if k <= 32 {
+                if args.forward_only {
+                    run_assembler_from_args::<
+                        ForwardNtHashIteratorFactory,
+                        fw_seqhash::u64::ForwardSeqHashFactory,
+                        ColorsImpl,
+                        BUCKETS_COUNT,
+                    >(args);
+                } else {
+                    run_assembler_from_args::<
+                        CanonicalNtHashIteratorFactory,
+                        cn_seqhash::u64::CanonicalSeqHashFactory,
+                        ColorsImpl,
+                        BUCKETS_COUNT,
+                    >(args)
+                }
+            } else if k <= 64 {
+                if args.forward_only {
+                    run_assembler_from_args::<
+                        ForwardNtHashIteratorFactory,
+                        fw_seqhash::u128::ForwardSeqHashFactory,
+                        ColorsImpl,
+                        BUCKETS_COUNT,
+                    >(args);
+                } else {
+                    run_assembler_from_args::<
+                        CanonicalNtHashIteratorFactory,
+                        cn_seqhash::u128::CanonicalSeqHashFactory,
+                        ColorsImpl,
+                        BUCKETS_COUNT,
+                    >(args)
+                }
+            } else {
+                panic!("Cannot use sequence hash for k > 64!");
+            }
+        }
+        HashType::RabinKarp32 => {
+            if args.forward_only {
+                run_assembler_from_args::<
+                    ForwardNtHashIteratorFactory,
+                    fw_rkhash::u32::ForwardRabinKarpHashFactory,
+                    ColorsImpl,
+                    BUCKETS_COUNT,
+                >(args);
+            } else {
+                run_assembler_from_args::<
+                    CanonicalNtHashIteratorFactory,
+                    cn_rkhash::u32::CanonicalRabinKarpHashFactory,
+                    ColorsImpl,
+                    BUCKETS_COUNT,
+                >(args)
+            }
+        }
+        HashType::RabinKarp64 => {
+            if args.forward_only {
+                run_assembler_from_args::<
+                    ForwardNtHashIteratorFactory,
+                    fw_rkhash::u64::ForwardRabinKarpHashFactory,
+                    ColorsImpl,
+                    BUCKETS_COUNT,
+                >(args);
+            } else {
+                run_assembler_from_args::<
+                    CanonicalNtHashIteratorFactory,
+                    cn_rkhash::u64::CanonicalRabinKarpHashFactory,
+                    ColorsImpl,
+                    BUCKETS_COUNT,
+                >(args)
+            }
+        }
+        HashType::RabinKarp128 => {
+            if args.forward_only {
+                run_assembler_from_args::<
+                    ForwardNtHashIteratorFactory,
+                    fw_rkhash::u128::ForwardRabinKarpHashFactory,
+                    ColorsImpl,
+                    BUCKETS_COUNT,
+                >(args);
+            } else {
+                run_assembler_from_args::<
+                    CanonicalNtHashIteratorFactory,
+                    cn_rkhash::u128::CanonicalRabinKarpHashFactory,
+                    ColorsImpl,
+                    BUCKETS_COUNT,
+                >(args)
+            }
+        }
+        HashType::Auto => {
+            unreachable!()
+        }
+    }
 }
 
 fn main() {
@@ -206,6 +384,16 @@ fn main() {
 
         exit(1);
     }));
+
+    if let Some(color_index) = args.print_matches {
+        let colors_file = args.output_file.with_extension("colors.dat");
+        let colors = ColorsStorage::read_color(colors_file, color_index);
+        for color in colors {
+            println!("MATCH: {}", color);
+        }
+
+        return;
+    }
 
     // Increase the maximum allowed number of open files
     fdlimit::raise_fd_limit();
@@ -253,130 +441,9 @@ fn main() {
 
     const BUCKETS_COUNT: usize = 512;
 
-    let hash_type = match args.hash_type {
-        HashType::Auto => {
-            if args.klen <= 64 {
-                HashType::SeqHash
-            } else {
-                HashType::RabinKarp128
-            }
-        }
-        x => x,
-    };
-
-    use hashes::*;
-
-    match hash_type {
-        HashType::SeqHash => {
-            let k = args.klen;
-
-            if k <= 8 {
-                if args.forward_only {
-                    run_assembler_from_args::<
-                        CanonicalNtHashIteratorFactory,
-                        cn_seqhash::u16::CanonicalSeqHashFactory,
-                        BUCKETS_COUNT,
-                    >(args);
-                } else {
-                    run_assembler_from_args::<
-                        CanonicalNtHashIteratorFactory,
-                        cn_seqhash::u16::CanonicalSeqHashFactory,
-                        BUCKETS_COUNT,
-                    >(args)
-                }
-            } else if k <= 16 {
-                if args.forward_only {
-                    run_assembler_from_args::<
-                        ForwardNtHashIteratorFactory,
-                        fw_seqhash::u32::ForwardSeqHashFactory,
-                        BUCKETS_COUNT,
-                    >(args);
-                } else {
-                    run_assembler_from_args::<
-                        CanonicalNtHashIteratorFactory,
-                        cn_seqhash::u32::CanonicalSeqHashFactory,
-                        BUCKETS_COUNT,
-                    >(args)
-                }
-            } else if k <= 32 {
-                if args.forward_only {
-                    run_assembler_from_args::<
-                        ForwardNtHashIteratorFactory,
-                        fw_seqhash::u64::ForwardSeqHashFactory,
-                        BUCKETS_COUNT,
-                    >(args);
-                } else {
-                    run_assembler_from_args::<
-                        CanonicalNtHashIteratorFactory,
-                        cn_seqhash::u64::CanonicalSeqHashFactory,
-                        BUCKETS_COUNT,
-                    >(args)
-                }
-            } else if k <= 64 {
-                if args.forward_only {
-                    run_assembler_from_args::<
-                        ForwardNtHashIteratorFactory,
-                        fw_seqhash::u128::ForwardSeqHashFactory,
-                        BUCKETS_COUNT,
-                    >(args);
-                } else {
-                    run_assembler_from_args::<
-                        CanonicalNtHashIteratorFactory,
-                        cn_seqhash::u128::CanonicalSeqHashFactory,
-                        BUCKETS_COUNT,
-                    >(args)
-                }
-            } else {
-                panic!("Cannot use sequence hash for k > 64!");
-            }
-        }
-        HashType::RabinKarp32 => {
-            if args.forward_only {
-                run_assembler_from_args::<
-                    ForwardNtHashIteratorFactory,
-                    fw_rkhash::u32::ForwardRabinKarpHashFactory,
-                    BUCKETS_COUNT,
-                >(args);
-            } else {
-                run_assembler_from_args::<
-                    CanonicalNtHashIteratorFactory,
-                    cn_rkhash::u32::CanonicalRabinKarpHashFactory,
-                    BUCKETS_COUNT,
-                >(args)
-            }
-        }
-        HashType::RabinKarp64 => {
-            if args.forward_only {
-                run_assembler_from_args::<
-                    ForwardNtHashIteratorFactory,
-                    fw_rkhash::u64::ForwardRabinKarpHashFactory,
-                    BUCKETS_COUNT,
-                >(args);
-            } else {
-                run_assembler_from_args::<
-                    CanonicalNtHashIteratorFactory,
-                    cn_rkhash::u64::CanonicalRabinKarpHashFactory,
-                    BUCKETS_COUNT,
-                >(args)
-            }
-        }
-        HashType::RabinKarp128 => {
-            if args.forward_only {
-                run_assembler_from_args::<
-                    ForwardNtHashIteratorFactory,
-                    fw_rkhash::u128::ForwardRabinKarpHashFactory,
-                    BUCKETS_COUNT,
-                >(args);
-            } else {
-                run_assembler_from_args::<
-                    CanonicalNtHashIteratorFactory,
-                    cn_rkhash::u128::CanonicalRabinKarpHashFactory,
-                    BUCKETS_COUNT,
-                >(args)
-            }
-        }
-        HashType::Auto => {
-            unreachable!()
-        }
+    if args.colors {
+        dispatch_assembler_hash_type::<DefaultColorsManager, BUCKETS_COUNT>(args);
+    } else {
+        dispatch_assembler_hash_type::<(), BUCKETS_COUNT>(args);
     }
 }

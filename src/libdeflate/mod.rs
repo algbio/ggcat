@@ -49,7 +49,7 @@ pub fn decompress_file(
         let mut input_bytes = 0;
         let mut output_bytes = 0;
 
-        let mut total_reads = 0;
+        // let mut total_reads = 0;
 
         let mut in_ptr = file_map.as_ptr();
         let mut rem_len = file_map.len();
@@ -70,7 +70,7 @@ pub fn decompress_file(
             );
             rem_len -= input_bytes as usize;
             in_ptr = in_ptr.add(input_bytes as usize);
-            total_reads += output_bytes;
+            // total_reads += output_bytes;
             if result != 0 {
                 return Err(ErrorKind::InvalidData);
             }
@@ -79,14 +79,14 @@ pub fn decompress_file(
             }
         }
 
-        println!(
-            "File: {} Size: {} IO[{}/{}] Reads: {}",
-            file.as_ref().display(),
-            rem_len,
-            input_bytes,
-            output_bytes,
-            total_reads
-        );
+        // println!(
+        //     "File: {} Size: {} IO[{}/{}] Reads: {}",
+        //     file.as_ref().display(),
+        //     rem_len,
+        //     input_bytes,
+        //     output_bytes,
+        //     total_reads
+        // );
         libdeflate_free_decompressor(decompressor);
 
         drop(file_map);

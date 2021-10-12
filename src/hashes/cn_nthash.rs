@@ -1,3 +1,4 @@
+use crate::dummy_hasher::DummyHasherBuilder;
 use crate::hash::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     UnextendableHashTraitType,
@@ -96,6 +97,12 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
     type HashTypeUnextendable = u64;
     type HashTypeExtendable = ExtCanonicalNtHash;
     type HashIterator<N: HashableSequence> = CanonicalNtHashIterator<N>;
+    type PreferredRandomState = DummyHasherBuilder;
+
+    #[inline(always)]
+    fn get_random_state() -> Self::PreferredRandomState {
+        DummyHasherBuilder
+    }
 
     // Corresponds to 'N' hash (zero)
     const NULL_BASE: u8 = 4;

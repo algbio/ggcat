@@ -1,5 +1,6 @@
 use crate::colors_manager::{ColorsManager, ColorsMergeManager, MinimizerBucketingSeqColorData};
-use crate::colors_storage::{ColorIndexType, ColorsStorage};
+use crate::colors_memmap::ColorsMemmap;
+use crate::colors_storage::ColorIndexType;
 use crate::hash::HashFunctionFactory;
 use crate::intermediate_storage::SequenceExtraData;
 use crate::pipeline::kmers_merge::{KmersFlags, MapEntry};
@@ -8,6 +9,7 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use hashbrown::HashMap;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
+use std::path::Path;
 use std::slice::from_raw_parts;
 
 #[derive(Copy, Clone)]
@@ -15,10 +17,13 @@ pub struct DefaultColorsManager;
 
 impl ColorsManager for DefaultColorsManager {
     const COLORS_ENABLED: bool = true;
-    type GlobalColorsTable = ColorsStorage;
+    type GlobalColorsTable = ColorsMemmap;
 
-    fn create_colors_table() -> Self::GlobalColorsTable {
-        ColorsStorage::new()
+    fn create_colors_table(
+        path: impl AsRef<Path>,
+        color_names: Vec<String>,
+    ) -> Self::GlobalColorsTable {
+        ColorsMemmap::new(path, color_names)
     }
 
     type MinimizerBucketingSeqColorDataType = MinBkSingleColor;
@@ -152,7 +157,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H, DefaultColorsManager>
     }
 
     fn process_colors(
-        global_colors_table: &ColorsStorage,
+        global_colors_table: &ColorsMemmap,
         data: &mut Self::ColorsBufferTempStructure,
         map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
         min_multiplicity: usize,

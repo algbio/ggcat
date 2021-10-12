@@ -91,6 +91,13 @@ impl HashFunctionFactory for ForwardSeqHashFactory {
     type HashIterator<N: HashableSequence> = ForwardSeqHashIterator<N>;
     const NULL_BASE: u8 = 0;
 
+    type PreferredRandomState = ahash::RandomState;
+
+    #[inline(always)]
+    fn get_random_state() -> Self::PreferredRandomState {
+        ahash::RandomState::new()
+    }
+
     fn new<N: HashableSequence>(seq: N, k: usize) -> Self::HashIterator<N> {
         ForwardSeqHashIterator::new(seq, k).unwrap()
     }

@@ -3,6 +3,7 @@ use crate::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::hash::{HashFunctionFactory, HashableSequence};
 use crate::intermediate_storage::{
     IntermediateReadsReader, IntermediateReadsWriter, IntermediateSequencesStorage,
+    SequenceExtraData,
 };
 use crate::pipeline::links_compaction::LinkMapping;
 use crate::pipeline::reorganize_reads::ReorganizedReadsExtraData;
@@ -43,6 +44,10 @@ struct FinalUnitigInfo {
     is_start: bool,
     is_circular: bool,
     flags: UnitigFlags,
+}
+
+struct FinalUnitigExtraData<CI: SequenceExtraData> {
+    color: CI,
 }
 
 impl Pipeline {
