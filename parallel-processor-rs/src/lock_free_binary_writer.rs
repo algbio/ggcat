@@ -39,11 +39,11 @@ impl BucketType for LockFreeBinaryWriter {
         }
     }
 
-    fn write_bytes(&mut self, bytes: &[u8]) {
+    fn write_data(&mut self, bytes: &[u8]) {
         self.writer.write_all(bytes);
     }
 
-    fn write_bytes_lock_free(&self, bytes: &[u8]) {
+    fn write_data_lock_free(&self, bytes: &[u8]) {
         let stat_raii = StatRaiiCounter::create("THREADS_BUSY_WRITING");
         self.writer.write_all(bytes);
         drop(stat_raii);

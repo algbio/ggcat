@@ -1,9 +1,9 @@
-use crate::dummy_hasher::DummyHasherBuilder;
-use crate::hash::{
+use crate::hashes::dummy_hasher::DummyHasherBuilder;
+use crate::hashes::nthash_base::h;
+use crate::hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     UnextendableHashTraitType,
 };
-use crate::hashes::nthash_base::h;
 use crate::types::{BucketIndexType, MinimizerType};
 
 #[derive(Debug, Clone)]
@@ -185,8 +185,8 @@ fn fwd_nt_manual_roll_rev(
 
 #[cfg(test)]
 mod tests {
-    use crate::hash::tests::test_hash_function;
     use crate::hashes::fw_nthash::ForwardNtHashIteratorFactory;
+    use crate::hashes::tests::test_hash_function;
     use std::mem::size_of;
 
     #[test]

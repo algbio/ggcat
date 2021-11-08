@@ -8,17 +8,18 @@ use crate::Utils;
 use std::cmp::{max, min};
 use std::io::Write;
 use std::marker::PhantomData;
-use std::mem::swap;
+use std::mem::{size_of, swap};
 use std::path::PathBuf;
 
 pub trait BucketType: Send {
     type InitType: ?Sized;
+    type DataType = u8;
 
     const SUPPORTS_LOCK_FREE: bool;
 
     fn new(init_data: &Self::InitType, index: usize) -> Self;
-    fn write_bytes(&mut self, bytes: &[u8]);
-    fn write_bytes_lock_free(&self, _bytes: &[u8]) {}
+    fn write_data(&mut self, data: &[Self::DataType]);
+    fn write_data_lock_free(&self, _data: &[Self::DataType]) {}
     fn get_path(&self) -> PathBuf;
     fn finalize(self);
 }
@@ -75,13 +76,13 @@ impl<B: BucketType> MultiThreadBuckets<B> {
         self.buckets[bucket as usize].read().get_path()
     }
 
-    pub fn add_data(&self, index: BucketIndexType, data: &[u8]) {
+    pub fn add_data(&self, index: BucketIndexType, data: &[B::DataType]) {
         if B::SUPPORTS_LOCK_FREE {
             let bucket = self.buckets[index as usize].read();
-            bucket.write_bytes_lock_free(data);
+            bucket.write_data_lock_free(data);
         } else {
             let mut bucket = self.buckets[index as usize].write();
-            bucket.write_bytes(data);
+            bucket.write_data(data);
         }
     }
 
@@ -104,16 +105,30 @@ impl<B: BucketType> Drop for MultiThreadBuckets<B> {
 unsafe impl<B: BucketType> Send for MultiThreadBuckets<B> {}
 unsafe impl<B: BucketType> Sync for MultiThreadBuckets<B> {}
 
-pub trait BucketWriter {
+pub trait BucketWriter<DataType = u8> {
     type ExtraData;
-    fn write_to(&self, bucket: impl Write, extra_data: &Self::ExtraData);
+    fn write_to(&self, bucket: &mut Vec<DataType>, extra_data: &Self::ExtraData);
     fn get_size(&self) -> usize;
+}
+
+impl<T: Copy> BucketWriter<T> for T {
+    type ExtraData = ();
+
+    #[inline(always)]
+    fn write_to(&self, bucket: &mut Vec<T>, extra_data: &Self::ExtraData) {
+        bucket.push(*self);
+    }
+
+    #[inline(always)]
+    fn get_size(&self) -> usize {
+        1
+    }
 }
 
 impl<const SIZE: usize> BucketWriter for [u8; SIZE] {
     type ExtraData = ();
     #[inline(always)]
-    fn write_to(&self, mut bucket: impl Write, _extra_data: &Self::ExtraData) {
+    fn write_to(&self, mut bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
         bucket.write(self);
     }
 
@@ -123,14 +138,14 @@ impl<const SIZE: usize> BucketWriter for [u8; SIZE] {
     }
 }
 
-pub struct BucketsThreadDispatcher<'a, B: BucketType, T: BucketWriter + Clone> {
+pub struct BucketsThreadDispatcher<'a, B: BucketType, T: BucketWriter<B::DataType> + Clone> {
     mtb: &'a MultiThreadBuckets<B>,
-    thread_data: Vec<Vec<u8>>,
+    thread_data: Vec<Vec<B::DataType>>,
     max_bucket_size: usize,
     _phantom: PhantomData<T>,
 }
 
-impl<'a, B: BucketType, T: BucketWriter + Clone> BucketsThreadDispatcher<'a, B, T> {
+impl<'a, B: BucketType, T: BucketWriter<B::DataType> + Clone> BucketsThreadDispatcher<'a, B, T> {
     pub fn new(
         max_buffersize: MemoryDataSize,
         mtb: &'a MultiThreadBuckets<B>,
@@ -144,7 +159,9 @@ impl<'a, B: BucketType, T: BucketWriter + Clone> BucketsThreadDispatcher<'a, B, 
         for _i in 0..mtb.buckets.len() {
             let fraction = (randomval.next_u32() as f64 / (u32::MAX as f64)) * 0.40 - 0.20;
             let capacity = max_buffersize * (1.0 + fraction);
-            thread_data.push(Vec::with_capacity(capacity.as_bytes()));
+            thread_data.push(Vec::with_capacity(
+                capacity.as_bytes() / size_of::<B::DataType>(),
+            ));
             rand_max_buffer_size = rand_max_buffer_size.max(capacity);
         }
 
@@ -170,7 +187,9 @@ impl<'a, B: BucketType, T: BucketWriter + Clone> BucketsThreadDispatcher<'a, B, 
     pub fn finalize(self) {}
 }
 
-impl<'a, B: BucketType, T: BucketWriter + Clone> Drop for BucketsThreadDispatcher<'a, B, T> {
+impl<'a, B: BucketType, T: BucketWriter<B::DataType> + Clone> Drop
+    for BucketsThreadDispatcher<'a, B, T>
+{
     fn drop(&mut self) {
         for (index, vec) in self.thread_data.iter_mut().enumerate() {
             if vec.len() == 0 {

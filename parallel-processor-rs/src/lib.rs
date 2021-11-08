@@ -1,6 +1,7 @@
 #![feature(trait_alias)]
 #![feature(is_sorted, specialization)]
 #![feature(const_fn_trait_bound)]
+#![feature(associated_type_defaults)]
 
 use crate::memory_data_size::MemoryDataSize;
 use core::cmp;

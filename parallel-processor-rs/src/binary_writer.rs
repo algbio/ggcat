@@ -82,12 +82,12 @@ impl BucketType for BinaryWriter {
         Self { writer, path }
     }
 
-    fn write_bytes(&mut self, bytes: &[u8]) {
+    fn write_data(&mut self, bytes: &[u8]) {
         update_stat!("UNKNOWN_BYTES_WRITTEN", bytes.len() as f64, StatMode::Sum);
         self.writer.write_all(bytes).unwrap();
     }
 
-    fn write_bytes_lock_free(&self, _bytes: &[u8]) {
+    fn write_data_lock_free(&self, _bytes: &[u8]) {
         todo!()
     }
 

@@ -34,7 +34,7 @@ impl<const LEN: usize> BucketWriter for SortedData<LEN> {
     type ExtraData = ();
 
     #[inline(always)]
-    fn write_to(&self, mut bucket: impl Write, _: &Self::ExtraData) {
+    fn write_to(&self, bucket: &mut Vec<u8>, _: &Self::ExtraData) {
         bucket.write(&self.data[..]);
     }
     #[inline(always)]

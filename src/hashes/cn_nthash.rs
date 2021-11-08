@@ -1,9 +1,9 @@
-use crate::dummy_hasher::DummyHasherBuilder;
-use crate::hash::{
+use crate::hashes::dummy_hasher::DummyHasherBuilder;
+use crate::hashes::nthash_base::{h, rc};
+use crate::hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     UnextendableHashTraitType,
 };
-use crate::hashes::nthash_base::{h, rc};
 use crate::types::{BucketIndexType, MinimizerType};
 use std::cmp::min;
 
@@ -210,10 +210,10 @@ fn cnc_nt_manual_roll_rev(
 
 #[cfg(test)]
 mod tests {
-    use crate::hash::tests::test_hash_function;
-    use crate::hash::{ExtendableHashTraitType, HashFunction, HashFunctionFactory};
     use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
-    use crate::rolling_minqueue::RollingMinQueue;
+    use crate::hashes::tests::test_hash_function;
+    use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory};
+    use crate::rolling::minqueue::RollingMinQueue;
 
     #[test]
     fn cn_nthash_test() {

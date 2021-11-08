@@ -5,13 +5,13 @@ pub fn add_two(a: i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compressed_read::CompressedRead;
-    use crate::hash::{HashFunction, HashFunctionFactory};
     use crate::hashes::fw_nthash::{ForwardNtHashIterator, ForwardNtHashIteratorFactory};
     use crate::hashes::fw_seqhash::u64::{ForwardSeqHashFactory, ForwardSeqHashIterator};
-    use crate::rolling_minqueue::RollingMinQueue;
+    use crate::hashes::{HashFunction, HashFunctionFactory};
+    use crate::io::varint::{encode_varint, encode_varint_flags};
+    use crate::rolling::minqueue::RollingMinQueue;
+    use crate::utils::compressed_read::CompressedRead;
     use crate::utils::Utils;
-    use crate::varint::{encode_varint, encode_varint_flags};
     use bincode::DefaultOptions;
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
     use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
@@ -334,9 +334,9 @@ mod tests {
 
     #[derive(Serialize, Deserialize)]
     struct Test {
-        #[serde(with = "crate::varint")]
+        #[serde(with = "crate::io::varint")]
         x: u64,
-        #[serde(with = "crate::varint")]
+        #[serde(with = "crate::io::varint")]
         y: u64,
     }
 

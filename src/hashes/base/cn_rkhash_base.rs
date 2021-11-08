@@ -1,4 +1,4 @@
-use crate::hash::{
+use crate::hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     UnextendableHashTraitType,
 };
@@ -298,8 +298,8 @@ impl HashFunctionFactory for CanonicalRabinKarpHashFactory {
 #[cfg(test)]
 mod tests {
     use super::CanonicalRabinKarpHashFactory;
-    use crate::hash::tests::test_hash_function;
-    use crate::hash::{HashFunction, HashFunctionFactory};
+    use crate::hashes::tests::test_hash_function;
+    use crate::hashes::{HashFunction, HashFunctionFactory};
 
     #[test]
     fn cn_rkhash_test() {

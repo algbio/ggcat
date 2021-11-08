@@ -1,9 +1,11 @@
-use crate::colors_manager::ColorsManager;
-use crate::default_colors_manager::DefaultColorsManager;
-use crate::hash::HashFunctionFactory;
-use crate::pipeline::kmers_merge::RetType;
-use crate::pipeline::Pipeline;
-use crate::reads_storage::ReadsStorage;
+use crate::assemble_pipeline::current_kmers_merge::structs::RetType;
+use crate::assemble_pipeline::AssemblePipeline;
+use crate::colors::colors_manager::ColorsManager;
+use crate::colors::default_colors_manager::DefaultColorsManager;
+use crate::hashes::HashFunctionFactory;
+use crate::io::reads_reader::ReadsReader;
+use crate::io::reads_writer::ReadsWriter;
+use crate::utils::debug_utils::debug_print;
 use crate::utils::Utils;
 use crate::{StartingStep, KEEP_FILES};
 use itertools::Itertools;
@@ -43,7 +45,7 @@ pub fn run_assembler<
     );
 
     let buckets = if step <= StartingStep::MinimizerBucketing {
-        Pipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
+        AssemblePipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
             input,
             temp_dir.as_path(),
             BUCKETS_COUNT,
@@ -57,15 +59,37 @@ pub fn run_assembler<
     };
 
     let RetType { sequences, hashes } = if step <= StartingStep::KmersMerge {
-        Pipeline::kmers_merge::<BucketingHash, MergingHash, AssemblerColorsManager, _>(
-            buckets,
-            &global_colors_table,
-            BUCKETS_COUNT,
-            min_multiplicity,
-            temp_dir.as_path(),
-            k,
-            m,
-        )
+        #[cfg(feature = "kpar")]
+        {
+            AssemblePipeline::parallel_kmers_merge::<
+                BucketingHash,
+                MergingHash,
+                AssemblerColorsManager,
+                _,
+            >(
+                buckets,
+                &global_colors_table,
+                BUCKETS_COUNT,
+                min_multiplicity,
+                temp_dir.as_path(),
+                k,
+                m,
+                threads_count,
+            )
+        }
+
+        #[cfg(not(feature = "kpar"))]
+        {
+            AssemblePipeline::kmers_merge::<BucketingHash, MergingHash, AssemblerColorsManager, _>(
+                buckets,
+                &global_colors_table,
+                BUCKETS_COUNT,
+                min_multiplicity,
+                temp_dir.as_path(),
+                k,
+                m,
+            )
+        }
     } else {
         RetType {
             sequences: Utils::generate_bucket_names(
@@ -77,10 +101,16 @@ pub fn run_assembler<
         }
     };
 
+    AssemblerColorsManager::print_color_stats(&global_colors_table);
+
     drop(global_colors_table);
 
     let mut links = if step <= StartingStep::HashesSorting {
-        Pipeline::hashes_sorting::<MergingHash, _>(hashes, temp_dir.as_path(), BUCKETS_COUNT)
+        AssemblePipeline::hashes_sorting::<MergingHash, _>(
+            hashes,
+            temp_dir.as_path(),
+            BUCKETS_COUNT,
+        )
     } else {
         Utils::generate_bucket_names(temp_dir.join("links"), BUCKETS_COUNT, None)
     };
@@ -114,7 +144,7 @@ pub fn run_assembler<
         let result = loop {
             println!("Iteration: {}", loop_iteration);
 
-            let (new_links, result) = Pipeline::links_compaction(
+            let (new_links, result) = AssemblePipeline::links_compaction(
                 links,
                 temp_dir.as_path(),
                 BUCKETS_COUNT,
@@ -143,15 +173,15 @@ pub fn run_assembler<
 
     let mut final_unitigs_file = Mutex::new(match output_file.extension() {
         Some(ext) => match ext.to_string_lossy().to_string().as_str() {
-            "lz4" => ReadsStorage::optfile_splitted_compressed_lz4(&output_file),
-            "gz" => ReadsStorage::optfile_splitted_compressed(&output_file),
-            _ => ReadsStorage::optifile_splitted(&output_file),
+            "lz4" => ReadsWriter::new_compressed_lz4(&output_file),
+            "gz" => ReadsWriter::new_compressed_gzip(&output_file),
+            _ => ReadsWriter::new_plain(&output_file),
         },
-        None => ReadsStorage::optifile_splitted(&output_file),
+        None => ReadsWriter::new_plain(&output_file),
     });
 
     let reorganized_reads = if step <= StartingStep::ReorganizeReads {
-        Pipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
+        AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
             sequences,
             reads_map,
             temp_dir.as_path(),
@@ -165,7 +195,7 @@ pub fn run_assembler<
     };
 
     if step <= StartingStep::BuildUnitigs {
-        Pipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(
+        AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(
             reorganized_reads,
             unitigs_map,
             temp_dir.as_path(),

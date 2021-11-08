@@ -45,6 +45,7 @@ ahash = "0.7.4"
 siphasher = "0.3.7"
 desse = "0.2.1"
 replace_with = "0.1.7"
+roaring = "0.7.0"
 
 [dependencies.flate2]
 default-features = false
@@ -53,3 +54,6 @@ path = "flate2-rs"
 
 [profile.release]
 debug = true
+
+[features]
+kpar = []

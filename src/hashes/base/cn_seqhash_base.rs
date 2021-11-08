@@ -1,4 +1,4 @@
-use crate::hash::{
+use crate::hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     UnextendableHashTraitType,
 };
@@ -206,8 +206,8 @@ fn xrc(base: HashIntegerType) -> HashIntegerType {
 mod tests {
     use super::CanonicalSeqHashFactory;
     use super::HashIntegerType;
-    use crate::hash::tests::test_hash_function;
-    use crate::hash::{HashFunction, HashFunctionFactory};
+    use crate::hashes::tests::test_hash_function;
+    use crate::hashes::{HashFunction, HashFunctionFactory};
     use std::mem::size_of;
 
     #[test]

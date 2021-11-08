@@ -1,4 +1,4 @@
-use crate::hash::{
+use crate::hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     UnextendableHashTraitType,
 };
@@ -185,7 +185,7 @@ mod tests {
 
     use super::ForwardSeqHashFactory;
     use super::HashIntegerType;
-    use crate::hash::tests::test_hash_function;
+    use crate::hashes::tests::test_hash_function;
     use std::mem::size_of;
 
     #[test]

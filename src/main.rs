@@ -1,6 +1,6 @@
 #![feature(new_uninit, core_intrinsics, type_alias_impl_trait)]
 #![feature(is_sorted, thread_local, panic_info_message)]
-#![feature(slice_group_by)]
+#![feature(slice_group_by, raw_vec_internals)]
 #![feature(llvm_asm)]
 #![feature(option_result_unwrap_unchecked)]
 #![feature(specialization)]
@@ -11,11 +11,10 @@
 #![feature(test)]
 #![feature(slice_partition_dedup)]
 
+extern crate alloc;
 extern crate test;
 
-use crate::pipeline::kmers_merge::RetType;
-use crate::pipeline::Pipeline;
-use crate::reads_storage::WriterChannels::Pipe;
+use crate::assemble_pipeline::AssemblePipeline;
 use crate::utils::Utils;
 use rayon::ThreadPoolBuilder;
 use std::cmp::min;
@@ -25,36 +24,19 @@ use std::path::PathBuf;
 use std::process::exit;
 use structopt::{clap::ArgGroup, StructOpt};
 
+mod assemble_pipeline;
 mod benchmarks;
-mod compressed_read;
-mod debug_functions;
-mod fast_rand_bool;
-mod hash;
-pub mod hash_entry;
 mod hashes;
-mod intermediate_storage;
 pub mod libdeflate;
-mod pipeline;
-mod progress;
-mod reads_storage;
-mod rolling_kseq_iterator;
-mod rolling_minqueue;
-mod rolling_quality_check;
-mod sequences_reader;
 mod types;
-mod unitig_link;
 #[macro_use]
 mod utils;
 mod assembler;
-mod async_slice_queue;
-mod colors_manager;
-mod colors_memmap;
-mod colors_storage;
-mod default_colors_manager;
-mod dummy_hasher;
-mod intermediate_storage_single;
-mod varint;
-mod vec_slice;
+mod colors;
+mod io;
+mod pipeline_common;
+mod query_pipeline;
+mod rolling;
 
 pub const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 24;
 
@@ -66,19 +48,22 @@ fn outputs_arg_group() -> ArgGroup<'static> {
 }
 
 use crate::assembler::run_assembler;
-use crate::colors_manager::ColorsManager;
-use crate::colors_storage::{ColorIndexSerializer, ColorIndexType, ColorsStorage};
-use crate::compressed_read::CompressedRead;
-use crate::default_colors_manager::DefaultColorsManager;
-use crate::hash::HashFunctionFactory;
+use crate::colors::colors_manager::ColorsManager;
+use crate::colors::default_colors_manager::DefaultColorsManager;
+use crate::colors::storage::run_length::RunLengthColorsSerializer;
+use crate::colors::storage::serializer::ColorsSerializer;
+use crate::colors::ColorIndexType;
 use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
 use crate::hashes::cn_seqhash;
 use crate::hashes::cn_seqhash::u64::CanonicalSeqHashFactory;
 use crate::hashes::fw_nthash::{ForwardNtHashIterator, ForwardNtHashIteratorFactory};
 use crate::hashes::fw_seqhash::u64::ForwardSeqHashFactory;
-use crate::reads_storage::ReadsStorage;
-use crate::sequences_reader::{FastaSequence, SequencesReader};
-use crate::varint::decode_varint;
+use crate::hashes::HashFunctionFactory;
+use crate::io::reads_reader::ReadsReader;
+use crate::io::reads_writer::ReadsWriter;
+use crate::io::sequences_reader::{FastaSequence, SequencesReader};
+use crate::io::varint::decode_varint;
+use crate::utils::compressed_read::CompressedRead;
 use byteorder::ReadBytesExt;
 use clap::arg_enum;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -387,7 +372,8 @@ fn main() {
 
     if let Some(color_index) = args.print_matches {
         let colors_file = args.output_file.with_extension("colors.dat");
-        let colors = ColorsStorage::read_color(colors_file, color_index);
+        let colors =
+            ColorsSerializer::<RunLengthColorsSerializer>::read_color(colors_file, color_index);
         for color in colors {
             println!("MATCH: {}", color);
         }
@@ -402,7 +388,7 @@ fn main() {
 
     if args.debug_reverse {
         for file in args.input {
-            let mut output = ReadsStorage::optfile_splitted_compressed_lz4("complementary.lz4");
+            let mut output = ReadsWriter::new_compressed_lz4("complementary.lz4");
             let mut tmp_vec = Vec::new();
             SequencesReader::process_file_extended(
                 &file,
