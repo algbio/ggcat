@@ -30,7 +30,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
             index: 0,
             capacity_mask: capacity - 1,
             size,
-            minimum: unsafe { (MaybeUninit::uninit().assume_init(), 0) },
+            minimum: unsafe { (H::HashTypeUnextendable::default(), 0) },
             _marker: PhantomData,
         }
     }

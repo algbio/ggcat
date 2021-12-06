@@ -130,6 +130,7 @@ impl<T> AsyncVec<T> {
         }
     }
 
+    #[allow(clippy::mut_from_ref)]
     pub fn as_slice_mut(&self) -> &mut [T] {
         let inner = self.inner.write();
 

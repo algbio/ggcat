@@ -91,8 +91,6 @@ pub fn process_subbucket<MH: HashFunctionFactory, CX: ColorsManager>(
         let mut tot_reads = 0;
         let mut tot_chars = 0;
 
-        let mut do_debug = false;
-
         for &ReadRef { mut read_start, .. } in slice {
             let (read_len, kmer_flags) = decode_varint_flags::<_, 2>(|| {
                 let x = unsafe { *read_start };

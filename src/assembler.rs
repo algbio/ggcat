@@ -7,7 +7,7 @@ use crate::io::reads_reader::ReadsReader;
 use crate::io::reads_writer::ReadsWriter;
 use crate::utils::debug_utils::debug_print;
 use crate::utils::Utils;
-use crate::{StartingStep, KEEP_FILES};
+use crate::{AssemblerStartingStep, KEEP_FILES};
 use itertools::Itertools;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
@@ -23,7 +23,7 @@ pub fn run_assembler<
 >(
     k: usize,
     m: usize,
-    step: StartingStep,
+    step: AssemblerStartingStep,
     input: Vec<PathBuf>,
     output_file: PathBuf,
     temp_dir: PathBuf,
@@ -44,7 +44,7 @@ pub fn run_assembler<
         color_names,
     );
 
-    let buckets = if step <= StartingStep::MinimizerBucketing {
+    let buckets = if step <= AssemblerStartingStep::MinimizerBucketing {
         AssemblePipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
             input,
             temp_dir.as_path(),
@@ -58,7 +58,7 @@ pub fn run_assembler<
         Utils::generate_bucket_names(temp_dir.join("bucket"), BUCKETS_COUNT, Some("tmp"))
     };
 
-    let RetType { sequences, hashes } = if step <= StartingStep::KmersMerge {
+    let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
         #[cfg(feature = "kpar")]
         {
             AssemblePipeline::parallel_kmers_merge::<
@@ -105,7 +105,7 @@ pub fn run_assembler<
 
     drop(global_colors_table);
 
-    let mut links = if step <= StartingStep::HashesSorting {
+    let mut links = if step <= AssemblerStartingStep::HashesSorting {
         AssemblePipeline::hashes_sorting::<MergingHash, _>(
             hashes,
             temp_dir.as_path(),
@@ -120,7 +120,7 @@ pub fn run_assembler<
     let unames = Utils::generate_bucket_names(temp_dir.join("unitigs_map"), BUCKETS_COUNT, None);
     let rnames = Utils::generate_bucket_names(temp_dir.join("results_map"), BUCKETS_COUNT, None);
 
-    let (unitigs_map, reads_map) = if step <= StartingStep::LinksCompaction {
+    let (unitigs_map, reads_map) = if step <= AssemblerStartingStep::LinksCompaction {
         for file in unames {
             remove_file(file);
         }
@@ -180,7 +180,7 @@ pub fn run_assembler<
         None => ReadsWriter::new_plain(&output_file),
     });
 
-    let reorganized_reads = if step <= StartingStep::ReorganizeReads {
+    let reorganized_reads = if step <= AssemblerStartingStep::ReorganizeReads {
         AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
             sequences,
             reads_map,
@@ -194,7 +194,7 @@ pub fn run_assembler<
         Utils::generate_bucket_names(temp_dir.join("reads_bucket"), BUCKETS_COUNT, Some("lz4"))
     };
 
-    if step <= StartingStep::BuildUnitigs {
+    if step <= AssemblerStartingStep::BuildUnitigs {
         AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(
             reorganized_reads,
             unitigs_map,

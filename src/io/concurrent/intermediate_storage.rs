@@ -253,7 +253,8 @@ impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
             index
         ));
 
-        let mut file = File::create(&path).unwrap();
+        let mut file =
+            File::create(&path).expect(&format!("Failed to open file: {}", path.display()));
 
         // Write empty header
         file.write_all(&IntermediateReadsHeader::default().serialize()[..]);

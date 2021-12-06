@@ -1,7 +1,7 @@
 use std::cell::UnsafeCell;
 use std::cmp::max;
 use std::collections::HashMap;
-use std::fs::{read_link, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 
 use std::ops::{Deref, DerefMut};
@@ -13,14 +13,12 @@ use std::thread::JoinHandle;
 use crossbeam::channel::*;
 
 use flushable_buffer::{FlushMode, FlushableBuffer};
-use parking_lot::lock_api::{RawRwLock, RwLockReadGuard};
+use parking_lot::lock_api::RwLockReadGuard;
 use parking_lot::{Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 
-use crate::memory_data_size::*;
 use crate::memory_fs::allocator::{AllocatedChunk, CHUNKS_ALLOCATOR};
 use crate::memory_fs::buffer_manager::BUFFER_MANAGER;
 use crate::stats_logger::{StatMode, StatRaiiCounter};
-use crate::Utils;
 use std::mem::{replace, size_of};
 // use std::os::unix::fs::OpenOptionsExt;
 // use std::os::unix::io::AsRawFd;

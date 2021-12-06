@@ -18,8 +18,18 @@ use serde::Serialize;
 
 use crate::types::{BucketIndexType, MinimizerType};
 
-pub trait UnextendableHashTraitType =
-    Copy + Clone + Debug + Display + Eq + Ord + Hash + Send + Sync + Serialize + DeserializeOwned;
+pub trait UnextendableHashTraitType = Copy
+    + Clone
+    + Debug
+    + Default
+    + Display
+    + Eq
+    + Ord
+    + Hash
+    + Send
+    + Sync
+    + Serialize
+    + DeserializeOwned;
 
 pub trait ExtendableHashTraitType: Copy + Clone + Debug + Eq + Ord + Send + Sync {
     type HashTypeUnextendable: UnextendableHashTraitType;

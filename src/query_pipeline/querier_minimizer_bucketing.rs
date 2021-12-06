@@ -7,8 +7,9 @@ use crate::io::concurrent::intermediate_storage::{
     IntermediateReadsWriter, IntermediateSequencesStorage, SequenceExtraData,
 };
 use crate::io::sequences_reader::{FastaSequence, SequencesReader};
-use crate::pipeline_common::common_minimizer_bucketing::{
-    minb_reader, MinimizerBucketingExecutionContext, MinimizerBucketingQueueData,
+use crate::io::varint::{decode_varint, encode_varint};
+use crate::pipeline_common::minimizer_bucketing::{
+    GenericMinimizerBucketing, MinimizerBucketingExecutionContext, MinimizerBucketingExecutor,
 };
 use crate::query_pipeline::QueryPipeline;
 use crate::rolling::kseq_iterator::{RollingKseqImpl, RollingKseqIterator};
@@ -17,6 +18,7 @@ use crate::rolling::quality_check::{RollingQualityCheck, LOGPROB_MULTIPLIER, SCO
 use crate::types::BucketIndexType;
 use crate::KEEP_FILES;
 use bstr::ByteSlice;
+use byteorder::ReadBytesExt;
 use crossbeam::channel::*;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
@@ -32,9 +34,12 @@ use parallel_processor::threadpools_chain::{
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
 use std::cmp::{max, min};
+use std::hash::Hasher;
 use std::intrinsics::unlikely;
+use std::io::{Read, Write};
+use std::marker::PhantomData;
 use std::mem::swap;
-use std::ops::Deref;
+use std::ops::{Deref, Range};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -46,167 +51,142 @@ static SEQ_COUNT: AtomicU64 = AtomicU64::new(0);
 static TOT_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 static VALID_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 
-struct ContextExtraData {
-    quality_threshold: Option<f64>,
-}
+struct ContextExtraData {}
 
 const CHUNKS_SIZE: usize = 1024 * 1024 * 16;
 const MAX_READING_THREADS: usize = 2;
 const WATERMARK_HIGH: usize = 64;
 
-fn worker<H: HashFunctionFactory, CX: ColorsManager>(
-    context: &MinimizerBucketingExecutionContext<CX, ContextExtraData>,
-    manager: ObjectsPoolManager<(), MinimizerBucketingQueueData>,
-) {
-    let mut minimizer_queue = RollingMinQueue::<H>::new(context.k - context.m);
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+pub struct KmersQueryData(pub u64);
 
-    let mut tmp_reads_buffer =
-        IntermediateSequencesStorage::new(context.buckets_count, &context.buckets);
-    let mut quality_check = RollingQualityCheck::new();
+impl SequenceExtraData for KmersQueryData {
+    #[inline(always)]
+    fn decode(mut reader: impl Read) -> Option<Self> {
+        Some(Self(decode_varint(|| reader.read_u8().ok())?))
+    }
 
-    let quality_log_threshold: u64 = RollingQualityCheck::get_log_for_correct_probability(
-        context.extra.quality_threshold.unwrap_or(0.0),
-    ); //0.9967);
+    #[inline(always)]
+    fn encode(&self, mut writer: impl Write) {
+        encode_varint(|b| writer.write_all(b), self.0);
+    }
 
-    while let Some(data) = manager.recv_obj() {
-        let mut total_bases = 0;
-        let mut valid_bases = 0;
+    #[inline(always)]
+    fn max_size(&self) -> usize {
+        10
+    }
+}
 
-        for x in data.iter_sequences() {
-            let mut start = 0;
-            let mut end = 0;
-            total_bases += x.seq.len() as u64;
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+pub struct KmersReferenceData<CX: MinimizerBucketingSeqColorData>(pub CX);
 
-            let mut process_sequences = |process_fn: &mut dyn FnMut(&[u8])| {
-                while end < x.seq.len() {
-                    start = end;
-                    // Skip all not recognized characters
-                    while start < x.seq.len() && x.seq[start] == b'N' {
-                        start += 1;
-                    }
-                    end = start;
-                    // Find the last valid character in this sequence
-                    while end < x.seq.len() && x.seq[end] != b'N' {
-                        end += 1;
-                    }
-                    // If the length of the read is long enough, return it
-                    if end - start >= context.k {
-                        if context.extra.quality_threshold.is_some() && x.qual.is_some() {
-                            let q = x.qual.unwrap();
+impl<CX: MinimizerBucketingSeqColorData> SequenceExtraData for KmersReferenceData<CX> {
+    #[inline(always)]
+    fn decode(mut reader: impl Read) -> Option<Self> {
+        Some(Self(CX::decode(reader)?))
+    }
 
-                            for (valid, mut el) in &RollingKseqIterator::iter_seq(
-                                &q[start..end],
-                                context.k,
-                                &mut quality_check,
-                            )
-                            .enumerate()
-                            .group_by(|(_, x)| *x < quality_log_threshold)
-                            {
-                                if !valid {
-                                    continue;
-                                }
-                                let first_el = el.next().unwrap();
-                                let last_el = el.last().unwrap_or(first_el);
+    #[inline(always)]
+    fn encode(&self, mut writer: impl Write) {
+        self.0.encode(writer);
+    }
 
-                                let start_index = start + first_el.0;
-                                let end_index = start + last_el.0 + context.k;
+    #[inline(always)]
+    fn max_size(&self) -> usize {
+        self.0.max_size()
+    }
+}
 
-                                valid_bases += (end_index - start_index) as u64;
-                                process_fn(&x.seq[start_index..end_index]);
-                            }
-                        } else {
-                            valid_bases += (end - start) as u64;
-                            process_fn(&x.seq[start..end]);
-                        }
-                    }
-                }
-            };
+pub struct QuerierMinimizerBucketingExecutor<H: HashFunctionFactory, CX: ColorsManager> {
+    minimizer_queue: RollingMinQueue<H>,
+    _phantom: PhantomData<CX>,
+}
 
-            process_sequences(&mut |seq| {
-                let hashes = H::new(&seq[..], context.m);
+impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
+    for QuerierMinimizerBucketingExecutor<H, CX>
+{
+    type GlobalData = ();
+    type ExtraData = KmersReferenceData<CX::MinimizerBucketingSeqColorDataType>;
+    type PreprocessInfo = u64;
+    type FileInfo = u64;
 
-                let mut rolling_iter =
-                    minimizer_queue.make_iter(hashes.iter().map(|x| x.to_unextendable()));
+    fn new<C>(
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+    ) -> Self {
+        Self {
+            minimizer_queue: RollingMinQueue::new(global_data.k - global_data.m),
+            _phantom: PhantomData,
+        }
+    }
 
-                let mut last_index = 0;
-                let mut last_hash = rolling_iter.next().unwrap();
-                let mut include_first = true;
+    fn preprocess_fasta<C>(
+        &mut self,
+        _global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+        file_info: &Self::FileInfo,
+        preprocess_info: &mut Self::PreprocessInfo,
+        _sequence: &FastaSequence,
+    ) {
+        *preprocess_info = *file_info;
+    }
 
-                for (index, min_hash) in rolling_iter.enumerate() {
-                    if min_hash != last_hash {
-                        let bucket =
-                            H::get_bucket(last_hash) % (context.buckets_count as BucketIndexType);
+    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData)>(
+        &mut self,
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+        preprocess_info: &Self::PreprocessInfo,
+        sequence: &[u8],
+        _range: Range<usize>,
+        mut push_sequence: F,
+    ) {
+        let hashes = H::new(&sequence[..], global_data.m);
 
-                        tmp_reads_buffer.add_read(
-                            KmersFlags(
-                                include_first as u8,
-                                CX::MinimizerBucketingSeqColorDataType::create(data.file_index),
-                            ),
-                            &seq[(max(1, last_index) - 1)..(index + context.k)],
-                            bucket,
-                        );
-                        last_index = index + 1;
-                        last_hash = min_hash;
-                        include_first = false;
-                    }
-                }
+        let mut rolling_iter = self
+            .minimizer_queue
+            .make_iter(hashes.iter().map(|x| x.to_unextendable()));
 
-                let start_index = max(1, last_index) - 1;
-                let include_last = true; // Always include the last element of the sequence in the last entry
-                tmp_reads_buffer.add_read(
-                    KmersFlags(
-                        include_first as u8 | ((include_last as u8) << 1),
-                        CX::MinimizerBucketingSeqColorDataType::create(data.file_index),
-                    ),
-                    &seq[start_index..seq.len()],
-                    H::get_bucket(last_hash) % (context.buckets_count as BucketIndexType),
+        let mut last_index = 0;
+        let mut last_hash = rolling_iter.next().unwrap();
+
+        for (index, min_hash) in rolling_iter.enumerate() {
+            if min_hash != last_hash {
+                let bucket =
+                    H::get_bucket(last_hash) % (global_data.buckets_count as BucketIndexType);
+
+                push_sequence(
+                    bucket,
+                    &sequence[last_index..(index + global_data.k - 1)],
+                    KmersReferenceData(CX::MinimizerBucketingSeqColorDataType::create(
+                        *preprocess_info,
+                    )),
                 );
-            });
 
-            if SEQ_COUNT.fetch_add(1, Ordering::Relaxed) % 100000000 == 0 {
-                TOT_BASES_COUNT.fetch_add(total_bases, Ordering::Relaxed);
-                VALID_BASES_COUNT.fetch_add(valid_bases, Ordering::Relaxed);
-                total_bases = 0;
-                valid_bases = 0;
-
-                println!(
-                    "Elaborated {} sequences! [{} | {:.2}%] quality bases {}",
-                    SEQ_COUNT.load(Ordering::Relaxed),
-                    VALID_BASES_COUNT.load(Ordering::Relaxed),
-                    (VALID_BASES_COUNT.load(Ordering::Relaxed) as f64)
-                        / (max(1, TOT_BASES_COUNT.load(Ordering::Relaxed)) as f64)
-                        * 100.0,
-                    PHASES_TIMES_MONITOR
-                        .read()
-                        .get_formatted_counter_without_memory()
-                );
+                last_index = index + 1;
+                last_hash = min_hash;
             }
         }
 
-        TOT_BASES_COUNT.fetch_add(total_bases, Ordering::Relaxed);
-        VALID_BASES_COUNT.fetch_add(valid_bases, Ordering::Relaxed);
-        manager.return_obj(data);
+        push_sequence(
+            H::get_bucket(last_hash) % (global_data.buckets_count as BucketIndexType),
+            &sequence[last_index..sequence.len()],
+            KmersReferenceData(CX::MinimizerBucketingSeqColorDataType::create(
+                *preprocess_info,
+            )),
+        );
     }
-    tmp_reads_buffer.finalize();
 }
 
 impl QueryPipeline {
     pub fn minimizer_bucketing<H: HashFunctionFactory, CX: ColorsManager>(
         input_files: Vec<PathBuf>,
         output_path: &Path,
+        output_suffix: &str,
         buckets_count: usize,
         threads_count: usize,
         k: usize,
         m: usize,
-        quality_threshold: Option<f64>,
     ) -> Vec<PathBuf> {
         PHASES_TIMES_MONITOR
             .write()
-            .start_phase("phase: reads bucketing".to_string());
-
-        let mut buckets = MultiThreadBuckets::<
-            IntermediateReadsWriter<KmersFlags<CX::MinimizerBucketingSeqColorDataType>>,
-        >::new(buckets_count, &output_path.join("bucket"), None);
+            .start_phase("phase: bucketing/".to_string() + output_suffix);
 
         let mut input_files: Vec<_> = input_files
             .into_iter()
@@ -214,43 +194,15 @@ impl QueryPipeline {
             .map(|(i, f)| (f, i as u64))
             .collect();
 
-        input_files.sort_by_cached_key(|(file, _)| {
-            std::fs::metadata(file)
-                .expect(&format!("Error while opening file {}", file.display()))
-                .len()
-        });
-        input_files.reverse();
-
-        let execution_context = MinimizerBucketingExecutionContext {
+        GenericMinimizerBucketing::do_bucketing::<QuerierMinimizerBucketingExecutor<H, CX>>(
+            input_files,
+            output_path,
+            buckets_count,
+            threads_count,
             k,
             m,
-            buckets_count,
-            buckets,
-            extra: ContextExtraData { quality_threshold },
-        };
-
-        ThreadPoolsChain::run_double(
-            input_files,
-            ThreadPoolDefinition::new(
-                &execution_context,
-                CHUNKS_SIZE,
-                String::from("minimizer-bucketing-reader"),
-                threads_count,
-                &AtomicUsize::new(threads_count),
-                WATERMARK_HIGH,
-                minb_reader,
-            ),
-            ThreadPoolDefinition::new(
-                &execution_context,
-                (),
-                String::from("minimizer-bucketing-writer"),
-                threads_count,
-                &AtomicUsize::new(threads_count),
-                WATERMARK_HIGH,
-                worker::<H, CX>,
-            ),
-        );
-
-        execution_context.buckets.finalize()
+            None,
+            (),
+        )
     }
 }

@@ -4,7 +4,6 @@ use rand::{thread_rng, RngCore};
 use rayon::iter::ParallelIterator;
 
 use crate::memory_data_size::*;
-use crate::Utils;
 use std::cmp::{max, min};
 use std::io::Write;
 use std::marker::PhantomData;
@@ -129,7 +128,7 @@ impl<const SIZE: usize> BucketWriter for [u8; SIZE] {
     type ExtraData = ();
     #[inline(always)]
     fn write_to(&self, mut bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
-        bucket.write(self);
+        bucket.write(self).unwrap();
     }
 
     #[inline(always)]

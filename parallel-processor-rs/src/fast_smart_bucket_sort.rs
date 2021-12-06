@@ -56,7 +56,7 @@ pub struct SortingData<'a, T> {
 }
 
 const RADIX_SIZE_LOG: u8 = 8;
-const RADIX_SIZE: usize = (1 << 8);
+const RADIX_SIZE: usize = 1 << 8;
 
 pub fn striped_parallel_smart_radix_sort_memfile<
     T: Ord + Send + Sync + Debug + 'static,
@@ -99,7 +99,7 @@ pub fn striped_parallel_smart_radix_sort<T: Ord + Send + Sync + Debug, F: SortKe
         for el in chunk.iter() {
             counts[((F::get_shifted(el, first_shift)) as usize + 1)] += 1usize;
         }
-        queue.push(counts);
+        queue.push(counts).unwrap();
     });
 
     let mut counters = [0; RADIX_SIZE + 1];
@@ -283,7 +283,8 @@ fn smart_radix_sort_<
                                                     if start_buckets[i] < end_buckets[i] {
                                                         bucket_queues[i]
                                                             .0
-                                                            .send(start_buckets[i]..end_buckets[i]);
+                                                            .send(start_buckets[i]..end_buckets[i])
+                                                            .unwrap();
                                                     }
                                                 }
                                                 return;
@@ -382,7 +383,7 @@ fn smart_radix_sort_<
 }
 
 mod tests {
-    use crate::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+    use crate::fast_smart_bucket_sort::SortKey;
     use rand::{thread_rng, Rng, RngCore};
     use rayon::prelude::*;
     use std::cmp::Ordering;

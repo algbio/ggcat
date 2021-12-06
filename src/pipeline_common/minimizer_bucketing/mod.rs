@@ -1,0 +1,195 @@
+mod queue_data;
+mod reader;
+mod sequences_splitter;
+
+use crate::assemble_pipeline::current_kmers_merge::KmersFlags;
+use crate::hashes::HashFunctionFactory;
+use crate::io::concurrent::intermediate_storage::{
+    IntermediateReadsWriter, IntermediateSequencesStorage, SequenceExtraData,
+};
+use crate::io::sequences_reader::FastaSequence;
+use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
+use crate::pipeline_common::minimizer_bucketing::reader::minb_reader;
+use crate::pipeline_common::minimizer_bucketing::sequences_splitter::SequencesSplitter;
+use crate::rolling::minqueue::RollingMinQueue;
+use crate::types::BucketIndexType;
+use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
+use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parallel_processor::threadpools_chain::{
+    ObjectsPoolManager, ThreadPoolDefinition, ThreadPoolsChain,
+};
+use std::cmp::max;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+pub trait MinimizerBucketingExecutor {
+    type GlobalData: Sync + Send;
+    type ExtraData: SequenceExtraData;
+    type PreprocessInfo: Default;
+    type FileInfo: Clone + Sync + Send + Default;
+
+    fn new<C>(
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+    ) -> Self;
+
+    fn preprocess_fasta<C>(
+        &mut self,
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+        file_info: &Self::FileInfo,
+        preprocess_info: &mut Self::PreprocessInfo,
+        sequence: &FastaSequence,
+    );
+    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData)>(
+        &mut self,
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+        preprocess_info: &Self::PreprocessInfo,
+        sequence: &[u8],
+        range: Range<usize>,
+        push_sequence: F,
+    );
+}
+
+pub struct MinimizerBucketingExecutionContext<
+    ReadAssociatedData: SequenceExtraData,
+    ExtraData,
+    GlobalData,
+> {
+    pub k: usize,
+    pub m: usize,
+    pub buckets_count: usize,
+    pub buckets: MultiThreadBuckets<IntermediateReadsWriter<ReadAssociatedData>>,
+    pub extra: ExtraData,
+    pub global_data: GlobalData,
+}
+
+pub struct GenericMinimizerBucketing;
+
+static SEQ_COUNT: AtomicU64 = AtomicU64::new(0);
+static TOT_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
+static VALID_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
+
+struct ContextExtraData {
+    quality_threshold: Option<f64>,
+}
+
+const CHUNKS_SIZE: usize = 1024 * 1024 * 16;
+const MAX_READING_THREADS: usize = 2;
+const WATERMARK_HIGH: usize = 64;
+
+fn worker<E: MinimizerBucketingExecutor>(
+    context: &MinimizerBucketingExecutionContext<E::ExtraData, ContextExtraData, E::GlobalData>,
+    manager: ObjectsPoolManager<(), MinimizerBucketingQueueData<E::FileInfo>>,
+) {
+    let mut tmp_reads_buffer =
+        IntermediateSequencesStorage::new(context.buckets_count, &context.buckets);
+
+    let mut buckets_processor = E::new(context);
+
+    while let Some(data) = manager.recv_obj() {
+        let mut total_bases = 0;
+        let mut sequences_splitter = SequencesSplitter::new(context.k);
+
+        let mut preprocess_info = E::PreprocessInfo::default();
+
+        for x in data.iter_sequences() {
+            total_bases += x.seq.len() as u64;
+            buckets_processor.preprocess_fasta(context, &data.file_info, &mut preprocess_info, &x);
+
+            sequences_splitter.process_sequences(&x, None, &mut |sequence: &[u8], range| {
+                buckets_processor.process_sequence(
+                    context,
+                    &preprocess_info,
+                    sequence,
+                    range,
+                    |bucket, seq, extra| {
+                        tmp_reads_buffer.add_read(extra, seq, bucket);
+                    },
+                );
+            });
+
+            if SEQ_COUNT.fetch_add(1, Ordering::Relaxed) % 100000000 == 0 {
+                TOT_BASES_COUNT.fetch_add(total_bases, Ordering::Relaxed);
+                VALID_BASES_COUNT.fetch_add(sequences_splitter.valid_bases, Ordering::Relaxed);
+                total_bases = 0;
+                sequences_splitter.valid_bases = 0;
+
+                println!(
+                    "Elaborated {} sequences! [{} | {:.2}%] quality bases {}",
+                    SEQ_COUNT.load(Ordering::Relaxed),
+                    VALID_BASES_COUNT.load(Ordering::Relaxed),
+                    (VALID_BASES_COUNT.load(Ordering::Relaxed) as f64)
+                        / (max(1, TOT_BASES_COUNT.load(Ordering::Relaxed)) as f64)
+                        * 100.0,
+                    PHASES_TIMES_MONITOR
+                        .read()
+                        .get_formatted_counter_without_memory()
+                );
+            }
+        }
+
+        TOT_BASES_COUNT.fetch_add(total_bases, Ordering::Relaxed);
+        VALID_BASES_COUNT.fetch_add(sequences_splitter.valid_bases, Ordering::Relaxed);
+        manager.return_obj(data);
+    }
+    tmp_reads_buffer.finalize();
+}
+
+impl GenericMinimizerBucketing {
+    pub fn do_bucketing<E: MinimizerBucketingExecutor>(
+        mut input_files: Vec<(PathBuf, E::FileInfo)>,
+        output_path: &Path,
+        buckets_count: usize,
+        threads_count: usize,
+        k: usize,
+        m: usize,
+        quality_threshold: Option<f64>,
+        global_data: E::GlobalData,
+    ) -> Vec<PathBuf> {
+        let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<E::ExtraData>>::new(
+            buckets_count,
+            &output_path.join("bucket"),
+            None,
+        );
+
+        input_files.sort_by_cached_key(|(file, _)| {
+            std::fs::metadata(file)
+                .expect(&format!("Error while opening file {}", file.display()))
+                .len()
+        });
+        input_files.reverse();
+
+        let execution_context = MinimizerBucketingExecutionContext {
+            k,
+            m,
+            buckets_count,
+            buckets,
+            extra: ContextExtraData { quality_threshold },
+            global_data,
+        };
+
+        ThreadPoolsChain::run_double(
+            input_files,
+            ThreadPoolDefinition::new(
+                &execution_context,
+                CHUNKS_SIZE,
+                String::from("assembler-minimizer-bucketing-reader"),
+                threads_count,
+                &AtomicUsize::new(threads_count),
+                WATERMARK_HIGH,
+                minb_reader,
+            ),
+            ThreadPoolDefinition::new(
+                &execution_context,
+                (),
+                String::from("assembler-minimizer-bucketing-writer"),
+                threads_count,
+                &AtomicUsize::new(threads_count),
+                WATERMARK_HIGH,
+                worker::<E>,
+            ),
+        );
+
+        execution_context.buckets.finalize()
+    }
+}

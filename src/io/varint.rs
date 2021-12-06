@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::mem::MaybeUninit;
 
 #[inline(always)]
+#[allow(clippy::uninit_assumed_init)]
 pub fn encode_varint<T>(mut write_bytes: impl FnOnce(&[u8]) -> T, mut value: u64) -> T {
     let mut bytes: [u8; 9] = unsafe { MaybeUninit::uninit().assume_init() };
     let mut index = 0;
@@ -20,6 +21,7 @@ pub fn encode_varint<T>(mut write_bytes: impl FnOnce(&[u8]) -> T, mut value: u64
 }
 
 #[inline(always)]
+#[allow(clippy::uninit_assumed_init)]
 pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, const FLAGS_COUNT: usize>(
     mut write_bytes: F,
     mut value: u64,

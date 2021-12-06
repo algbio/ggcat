@@ -3,10 +3,6 @@
 #![feature(const_fn_trait_bound)]
 #![feature(associated_type_defaults)]
 
-use crate::memory_data_size::MemoryDataSize;
-use core::cmp;
-use measurements::Measurement;
-
 #[macro_use]
 pub mod stats_logger;
 #[macro_use]

@@ -17,6 +17,7 @@ struct AsyncBuffer<T, P: ChunksWriter<TargetData = T>> {
 }
 
 impl<T, P: ChunksWriter<TargetData = T>> AsyncBuffer<T, P> {
+    #[allow(clippy::mut_from_ref)]
     fn get_buffer(&self) -> &mut [T] {
         unsafe { (*(self.data.as_ref().unwrap().get())).deref_mut() }
     }

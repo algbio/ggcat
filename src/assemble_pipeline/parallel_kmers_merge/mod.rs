@@ -326,19 +326,6 @@ impl AssemblePipeline {
         // Close all the results buckets
         drop(output_results_buckets);
 
-        // file_inputs.par_iter().for_each(|input| {
-        //     println!("Processing {}", input.display());
-        //
-        //     let bucket_index = Utils::get_bucket_index(&input);
-        //
-        //     let mut temp_bucket_writer =
-        //         IntermediateSequencesStorageSingleBucket::new(bucket_index, &reads_buckets);
-        //
-        //     let incr_bucket_index_val = incr_bucket_index.fetch_add(1, Ordering::Relaxed);
-
-        //
-        // });
-
         RetType {
             sequences,
             hashes: hashes_buckets.finalize(),

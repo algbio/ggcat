@@ -234,7 +234,7 @@ impl ChunksWriter for ColorsFlushProcessing {
     }
 
     fn flush_data(&self, tmp_data: &mut Self::ProcessingData, data: &[Self::TargetData]) {
-        tmp_data.0.write(data).unwrap();
+        tmp_data.0.write_all(data).unwrap();
         tmp_data.1 += data.len() as u64;
     }
 

@@ -11,6 +11,7 @@ unsafe impl Sync for ReadsReader {}
 
 trait UnsafeCellGetMutable {
     type Output;
+    #[allow(clippy::mut_from_ref)]
     fn uget(&self) -> &mut Self::Output;
 }
 

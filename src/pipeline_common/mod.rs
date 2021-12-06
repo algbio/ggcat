@@ -1,1 +1,2 @@
-pub mod common_minimizer_bucketing;
+pub mod kmers_transform;
+pub mod minimizer_bucketing;

@@ -236,7 +236,7 @@ impl AssemblePipeline {
                 }
 
                 ident_buffer.clear();
-                write!(ident_buffer, "> {} {}", bucket_index, "J");
+                write!(ident_buffer, "> {} J", bucket_index);
 
                 let writable_color = CX::ColorsMergeManagerType::<MH>::encode_part_unitigs_colors(&mut final_unitig_color);
                 CX::ColorsMergeManagerType::<MH>::print_color_data(&writable_color, &mut ident_buffer);
