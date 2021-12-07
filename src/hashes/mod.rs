@@ -29,14 +29,15 @@ pub trait UnextendableHashTraitType = Copy
     + Send
     + Sync
     + Serialize
-    + DeserializeOwned;
+    + DeserializeOwned
+    + 'static;
 
 pub trait ExtendableHashTraitType: Copy + Clone + Debug + Eq + Ord + Send + Sync {
     type HashTypeUnextendable: UnextendableHashTraitType;
     fn to_unextendable(self) -> Self::HashTypeUnextendable;
 }
 
-pub trait HashFunctionFactory: Ord + Sized + Clone + Debug {
+pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + 'static {
     type HashTypeUnextendable: UnextendableHashTraitType;
     type HashTypeExtendable: ExtendableHashTraitType<
         HashTypeUnextendable = Self::HashTypeUnextendable,

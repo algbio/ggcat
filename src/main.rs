@@ -4,7 +4,6 @@
 #![feature(llvm_asm)]
 #![feature(option_result_unwrap_unchecked)]
 #![feature(specialization)]
-#![feature(generic_const_exprs)]
 #![feature(generic_associated_types)]
 #![feature(const_fn_floating_point_arithmetic)]
 #![feature(trait_alias)]
@@ -41,6 +40,8 @@ mod querier;
 mod querier_generic_dispatcher;
 mod query_pipeline;
 mod rolling;
+
+use backtrace::Backtrace;
 
 pub const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 24;
 
@@ -247,6 +248,8 @@ fn main() {
         if let Some(s) = info.payload().downcast_ref::<&str>() {
             writeln!(err_lock, "Panic payload: {:?}", s);
         }
+
+        println!("Backtrace: {:?}", Backtrace::new());
 
         exit(1);
     }));

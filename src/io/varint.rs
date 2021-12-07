@@ -22,14 +22,15 @@ pub fn encode_varint<T>(mut write_bytes: impl FnOnce(&[u8]) -> T, mut value: u64
 
 #[inline(always)]
 #[allow(clippy::uninit_assumed_init)]
-pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, const FLAGS_COUNT: usize>(
+pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T>(
     mut write_bytes: F,
     mut value: u64,
+    flags_count: usize,
     flags: u8,
 ) -> T {
     let mut bytes: [u8; 10] = unsafe { MaybeUninit::uninit().assume_init() };
 
-    let useful_first_bits: usize = 8 - FLAGS_COUNT;
+    let useful_first_bits: usize = 8 - flags_count;
     let first_byte_max_value: u8 = ((1u16 << (useful_first_bits - 1)) - 1) as u8;
 
     let fr_rem = ((value > first_byte_max_value as u64) as u8) << (useful_first_bits - 1);
@@ -52,12 +53,13 @@ pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, const FLAGS_COUNT: usize>(
 }
 
 #[inline(always)]
-pub fn decode_varint_flags<F: FnMut() -> Option<u8>, const FLAGS_COUNT: usize>(
+pub fn decode_varint_flags<F: FnMut() -> Option<u8>>(
     mut read_byte: F,
+    flags_count: usize,
 ) -> Option<(u64, u8)> {
     let first_byte = read_byte()?;
 
-    let useful_first_bits: usize = 8 - FLAGS_COUNT;
+    let useful_first_bits: usize = 8 - flags_count;
     let first_byte_max_value: u8 = ((1u16 << (useful_first_bits - 1)) - 1) as u8;
 
     let flags = first_byte >> useful_first_bits;

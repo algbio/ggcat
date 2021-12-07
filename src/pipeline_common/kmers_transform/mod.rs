@@ -1,5 +1,5 @@
 mod process_subbucket;
-mod structs;
+pub mod structs;
 
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
@@ -25,43 +25,47 @@ pub const MERGE_BUCKETS_COUNT: usize = 256;
 const BUFFER_CHUNK_SIZE: usize = 1024 * 128;
 
 pub struct ReadDispatchInfo<E: SequenceExtraData> {
-    bucket: BucketIndexType,
-    hash: u64,
-    flags: u8,
-    extra_data: E,
+    pub bucket: BucketIndexType,
+    pub hash: u64,
+    pub flags: u8,
+    pub extra_data: E,
 }
 
-pub trait KmersTransformExecutor {
-    type GlobalExtraData: Send + Sync;
+pub trait KmersTransformExecutorFactory: Sized + 'static {
+    type GlobalExtraData<'a>: Send + Sync + 'a;
     type InputBucketExtraData: SequenceExtraData;
     type IntermediateExtraData: SequenceExtraData;
+    type ExecutorType<'a>: KmersTransformExecutor<'a, Self>;
+
     const FLAGS_COUNT: usize;
 
-    fn new(global_data: &Self::GlobalExtraData) -> Self;
+    fn new<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a>;
+}
 
+pub trait KmersTransformExecutor<'x, F: KmersTransformExecutorFactory> {
     fn preprocess_bucket(
         &mut self,
-        global_data: &Self::GlobalExtraData,
-        input_extra_data: Self::InputBucketExtraData,
+        global_data: &F::GlobalExtraData<'x>,
+        input_extra_data: F::InputBucketExtraData,
         read: CompressedRead,
-    ) -> ReadDispatchInfo<Self::IntermediateExtraData>;
+    ) -> ReadDispatchInfo<F::IntermediateExtraData>;
 
-    fn process_group(&mut self, global_data: &Self::GlobalExtraData, reads: &[ReadRef]);
+    fn maybe_swap_bucket(&mut self, global_data: &F::GlobalExtraData<'x>);
 
-    fn finalize(self, global_data: &Self::GlobalExtraData);
+    fn process_group(&mut self, global_data: &F::GlobalExtraData<'x>, reads: &[ReadRef]);
+
+    fn finalize(self, global_data: &F::GlobalExtraData<'x>);
 }
 
 pub struct KmersTransform;
 
 impl KmersTransform {
-    pub fn parallel_kmers_transform<E: KmersTransformExecutor>(
+    pub fn parallel_kmers_transform<'a, F: KmersTransformExecutorFactory>(
         file_inputs: Vec<PathBuf>,
         buckets_count: usize,
         threads_count: usize,
-        extra_data: E::GlobalExtraData,
-    ) where
-        [(); { E::FLAGS_COUNT }]: ,
-    {
+        extra_data: F::GlobalExtraData<'a>,
+    ) {
         static CURRENT_BUCKETS_COUNT: AtomicU64 = AtomicU64::new(0);
 
         let files_queue = ArrayQueue::new(file_inputs.len());
@@ -93,7 +97,7 @@ impl KmersTransform {
             }
 
             Some(Arc::new(structs::BucketProcessData::<
-                E::InputBucketExtraData,
+                F::InputBucketExtraData,
             >::new(
                 file,
                 vecs_pool.clone(),
@@ -111,11 +115,12 @@ impl KmersTransform {
             for i in 0..min(buckets_count, threads_count) {
                 s.spawn(|_| {
                     let mut buckets: Vec<ChunkedVector<u8>> = vec![];
-                    let mut executor = E::new(&extra_data);
+                    let mut executor = F::new(&extra_data);
 
-                    let mut process_pending_reads = |executor: &mut E| {
+                    let mut process_pending_reads = |executor: &mut F::ExecutorType<'a>| {
                         while let Some((seqs, memory_ref)) = vecs_process_queue.pop() {
-                            process_subbucket::process_subbucket(&extra_data, seqs, executor);
+                            executor.maybe_swap_bucket(&extra_data);
+                            process_subbucket::process_subbucket::<F>(&extra_data, seqs, executor);
                             drop(memory_ref);
                         }
                     };
@@ -154,9 +159,10 @@ impl KmersTransform {
                                     10 + bases_slice.len() + preprocess_info.extra_data.max_size(),
                                 );
 
-                                encode_varint_flags::<_, _, { E::FLAGS_COUNT }>(
+                                encode_varint_flags::<_, _>(
                                     |slice| buckets[bucket_index].push_contiguous_slice(slice),
                                     read.bases_count() as u64,
+                                    F::FLAGS_COUNT,
                                     preprocess_info.flags,
                                 );
                                 buckets[bucket_index].push_contiguous_slice(bases_slice);
@@ -181,21 +187,20 @@ impl KmersTransform {
 
                         drop(bucket);
 
-                        let mut wbucket = current_bucket.write();
-                        if wbucket
+                        let mut writable_bucket = current_bucket.write();
+                        if writable_bucket
                             .as_ref()
                             .map(|x| x.reader.is_finished())
                             .unwrap_or(false)
                         {
                             if let Some(bucket) = open_bucket() {
-                                *wbucket = Some(bucket);
+                                *writable_bucket = Some(bucket);
                             } else {
-                                wbucket.take();
+                                writable_bucket.take();
                                 reading_finished.store(true, Ordering::Relaxed);
                             }
                         }
                     }
-
                     executor.finalize(&extra_data);
                 });
             }

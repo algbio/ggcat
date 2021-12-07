@@ -1,7 +1,8 @@
-use crate::assemble_pipeline::current_kmers_merge::{KmersFlags, MERGE_BUCKETS_COUNT};
+use crate::assemble_pipeline::current_kmers_merge::KmersFlags;
 use crate::colors::colors_manager::ColorsManager;
 use crate::io::concurrent::intermediate_storage::{IntermediateReadsReader, SequenceExtraData};
 use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
+use crate::pipeline_common::kmers_transform::MERGE_BUCKETS_COUNT;
 use crate::types::BucketIndexType;
 use crate::utils::async_vec::AsyncVec;
 use crate::utils::chunked_vector::ChunkedVector;

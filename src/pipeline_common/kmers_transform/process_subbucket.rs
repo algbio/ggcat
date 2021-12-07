@@ -5,7 +5,9 @@ use crate::hashes::{ExtendableHashTraitType, HashFunctionFactory, HashableSequen
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::structs::hash_entry::{Direction, HashEntry};
 use crate::io::varint::decode_varint_flags;
-use crate::pipeline_common::kmers_transform::KmersTransformExecutor;
+use crate::pipeline_common::kmers_transform::{
+    KmersTransformExecutor, KmersTransformExecutorFactory,
+};
 use crate::types::BucketIndexType;
 use crate::utils::async_vec::AsyncVec;
 use crate::utils::compressed_read::CompressedRead;
@@ -18,10 +20,10 @@ use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThr
 use std::mem::size_of;
 use std::slice::from_raw_parts;
 
-pub fn process_subbucket<E: KmersTransformExecutor>(
-    global_data: &E::GlobalExtraData,
+pub fn process_subbucket<'a, F: KmersTransformExecutorFactory>(
+    global_data: &F::GlobalExtraData<'a>,
     cmp_read: AsyncVec<ReadRef>,
-    executor: &mut E,
+    executor: &mut F::ExecutorType<'a>,
 ) {
     let cmp_read_slice = cmp_read.as_slice_mut();
 

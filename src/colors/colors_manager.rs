@@ -34,7 +34,7 @@ pub trait ColorsMergeManager<H: HashFunctionFactory, C: ColorsManager>: Sized {
         min_multiplicity: usize,
     );
 
-    type PartialUnitigsColorStructure: SequenceExtraData + Clone;
+    type PartialUnitigsColorStructure: SequenceExtraData + Clone + 'static;
     type TempUnitigColorStructure;
 
     fn alloc_unitig_color_structure() -> Self::TempUnitigColorStructure;
@@ -68,10 +68,10 @@ pub trait ColorsMergeManager<H: HashFunctionFactory, C: ColorsManager>: Sized {
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]);
 }
 
-pub trait ColorsManager: Copy + Clone {
+pub trait ColorsManager: 'static + Sized {
     const COLORS_ENABLED: bool;
 
-    type GlobalColorsTable: Sync;
+    type GlobalColorsTable: Sync + 'static;
     fn create_colors_table(
         path: impl AsRef<Path>,
         color_names: Vec<String>,
