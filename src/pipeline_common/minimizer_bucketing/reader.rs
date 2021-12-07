@@ -32,10 +32,16 @@ pub fn minb_reader<
 
                 if unsafe { unlikely(!data.push_sequences(x)) } {
                     let mut tmp_data = manager.allocate();
+
+                    swap(&mut data, &mut tmp_data);
                     data.file_info = file_info.clone();
                     data.start_read_index = read_index;
 
-                    swap(&mut data, &mut tmp_data);
+                    assert!(
+                        tmp_data.start_read_index as usize + tmp_data.sequences.len()
+                            <= read_index as usize
+                    );
+
                     manager.send(tmp_data);
 
                     if !data.push_sequences(x) {

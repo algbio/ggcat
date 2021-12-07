@@ -78,14 +78,14 @@ impl AssemblePipeline {
                     const KEY_BITS: usize = size_of::<H::HashTypeUnextendable>() * 8;
 
                     #[inline(always)]
-                    fn get_shifted(value: &HashEntry<H::HashTypeUnextendable>, rhs: u8) -> u8 {
-                        H::get_shifted(value.hash, rhs) as u8
-                    }
-
-                    #[inline(always)]
                     fn compare(left: &HashEntry<<H as HashFunctionFactory>::HashTypeUnextendable>,
                                right: &HashEntry<<H as HashFunctionFactory>::HashTypeUnextendable>) -> std::cmp::Ordering {
                         left.hash.cmp(&right.hash)
+                    }
+
+                    #[inline(always)]
+                    fn get_shifted(value: &HashEntry<H::HashTypeUnextendable>, rhs: u8) -> u8 {
+                        H::get_shifted(value.hash, rhs) as u8
                     }
                 }
 

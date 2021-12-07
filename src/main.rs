@@ -95,7 +95,7 @@ arg_enum! {
     #[derive(Debug, PartialOrd, PartialEq)]
     pub enum QuerierStartingStep {
         MinimizerBucketing = 0,
-        KmersIntersection = 1,
+        KmersCounting = 1,
     }
 }
 

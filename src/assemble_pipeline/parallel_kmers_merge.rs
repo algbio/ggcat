@@ -1,5 +1,3 @@
-pub mod structs;
-
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use std::cmp::min;
 use std::fs::File;
@@ -14,8 +12,6 @@ use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
 
-use crate::assemble_pipeline::current_kmers_merge::structs::ResultsBucket;
-use crate::assemble_pipeline::parallel_kmers_merge::structs::{MapEntry, RetType};
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
@@ -62,9 +58,46 @@ use rand::thread_rng;
 use std::process::exit;
 use std::slice::from_raw_parts;
 use std::sync::Arc;
+use structs::*;
 
 pub const READ_FLAG_INCL_BEGIN: u8 = (1 << 0);
 pub const READ_FLAG_INCL_END: u8 = (1 << 1);
+
+pub mod structs {
+    use crate::io::concurrent::intermediate_storage::SequenceExtraData;
+    use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
+    use crate::types::BucketIndexType;
+    use std::path::PathBuf;
+
+    pub struct MapEntry<CHI> {
+        pub count: usize,
+        pub ignored: bool,
+        pub color_index: CHI,
+    }
+
+    pub struct ResultsBucket<'a, X: SequenceExtraData> {
+        pub read_index: u64,
+        pub bucket_ref: IntermediateSequencesStorageSingleBucket<'a, X>,
+    }
+
+    impl<'a, X: SequenceExtraData> ResultsBucket<'a, X> {
+        pub fn add_read(&mut self, el: X, read: &[u8]) -> u64 {
+            self.bucket_ref.add_read(el, read);
+            let read_index = self.read_index;
+            self.read_index += 1;
+            read_index
+        }
+
+        pub fn get_bucket_index(&self) -> BucketIndexType {
+            self.bucket_ref.get_bucket_index()
+        }
+    }
+
+    pub struct RetType {
+        pub sequences: Vec<PathBuf>,
+        pub hashes: Vec<PathBuf>,
+    }
+}
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct KmersFlags<CX: MinimizerBucketingSeqColorData>(pub u8, pub CX);
@@ -213,7 +246,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     fn process_group(
         &mut self,
         global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
-        reads: &[crate::pipeline_common::kmers_transform::structs::ReadRef],
+        reads: &[ReadRef],
     ) {
         let k = global_data.k;
         let bucket_index = self.current_bucket.get_bucket_index();
@@ -236,7 +269,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                     },
                     <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
                 )
-                .unwrap();
+                    .unwrap();
 
                 let read_bases_start = read_start;
                 let read_len = read_len as usize;
@@ -528,14 +561,13 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
 impl AssemblePipeline {
     pub fn parallel_kmers_merge<
-        'a,
         H: HashFunctionFactory,
         MH: HashFunctionFactory,
         CX: ColorsManager,
         P: AsRef<Path> + std::marker::Sync,
     >(
         file_inputs: Vec<PathBuf>,
-        colors_global_table: &'a CX::GlobalColorsTable,
+        colors_global_table: &CX::GlobalColorsTable,
         buckets_count: usize,
         min_multiplicity: usize,
         out_directory: P,

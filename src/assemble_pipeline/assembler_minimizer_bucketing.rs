@@ -42,6 +42,7 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         &mut self,
         _global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
         file_info: &Self::FileInfo,
+        _read_index: u64,
         preprocess_info: &mut Self::PreprocessInfo,
         _sequence: &FastaSequence,
     ) {

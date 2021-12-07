@@ -34,59 +34,40 @@ pub fn run_query<
     //     color_names,
     // );
 
-    let (graph_buckets, query_buckets) = if step <= QuerierStartingStep::MinimizerBucketing {
-        crossbeam::thread::scope(|s| {
-            let graph_bucketing_thread = s.spawn(|_| {
-                QueryPipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
-                    vec![graph_input],
-                    temp_dir.as_path(),
-                    "graph",
-                    BUCKETS_COUNT,
-                    threads_count,
-                    k,
-                    m,
-                )
-            });
-
-            let query_bucketing_thread = s.spawn(|_| {
-                QueryPipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
-                    vec![query_input],
-                    temp_dir.as_path(),
-                    "query",
-                    BUCKETS_COUNT,
-                    threads_count,
-                    k,
-                    m,
-                )
-            });
-
-            (
-                graph_bucketing_thread.join().unwrap(),
-                query_bucketing_thread.join().unwrap(),
-            )
-        })
-        .unwrap()
-    } else {
-        (
-            Utils::generate_bucket_names(temp_dir.join("bucket-graph"), BUCKETS_COUNT, Some("tmp")),
-            Utils::generate_bucket_names(temp_dir.join("bucket-query"), BUCKETS_COUNT, Some("tmp")),
+    let buckets = if step <= QuerierStartingStep::MinimizerBucketing {
+        QueryPipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
+            graph_input,
+            query_input.clone(),
+            temp_dir.as_path(),
+            BUCKETS_COUNT,
+            threads_count,
+            k,
+            m,
         )
+    } else {
+        Utils::generate_bucket_names(temp_dir.join("bucket"), BUCKETS_COUNT, Some("tmp"))
     };
-    //
-    // let RetType { sequences, hashes } = if step <= QuerierStartingStep::KmersMerge {
-    //     #[cfg(feature = "kpar")]
-    //     {
-    //         Pipeline::parallel_kmers_merge::<BucketingHash, MergingHash, AssemblerColorsManager, _>(
-    //             buckets,
-    //             &global_colors_table,
-    //             BUCKETS_COUNT,
-    //             min_multiplicity,
-    //             temp_dir.as_path(),
-    //             k,
-    //             m,
-    //             threads_count,
-    //         )
-    //     }
+
+    let counters_buckets = if step <= QuerierStartingStep::KmersCounting {
+        QueryPipeline::parallel_kmers_counting::<
+            BucketingHash,
+            MergingHash,
+            AssemblerColorsManager,
+            _,
+        >(
+            buckets,
+            BUCKETS_COUNT,
+            temp_dir.as_path(),
+            k,
+            m,
+            threads_count,
+        )
+    } else {
+        Utils::generate_bucket_names(temp_dir.join("counters"), BUCKETS_COUNT, Some("tmp"))
+    };
+
+    QueryPipeline::counters_sorting(k, query_input, counters_buckets, output_file.clone());
+
     //
     //     #[cfg(not(feature = "kpar"))]
     //     {
@@ -215,10 +196,10 @@ pub fn run_query<
     // std::fs::remove_dir(temp_dir.as_path());
     //
     // final_unitigs_file.into_inner().finalize();
-    //
-    // PHASES_TIMES_MONITOR
-    //     .write()
-    //     .print_stats("Compacted De Brujin graph construction completed.".to_string());
-    //
-    // println!("Final output saved to: {}", output_file.display());
+
+    PHASES_TIMES_MONITOR
+        .write()
+        .print_stats("Compacted De Brujin graph construction completed.".to_string());
+
+    println!("Final output saved to: {}", output_file.display());
 }

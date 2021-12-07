@@ -47,6 +47,7 @@ desse = "0.2.1"
 replace_with = "0.1.7"
 roaring = "0.7.0"
 backtrace = "0.3.63"
+csv = "1.1.6"
 
 [dependencies.flate2]
 default-features = false

@@ -1,4 +1,5 @@
 pub struct QueryPipeline;
 
-pub mod kmers_intersect;
+pub mod counters_sorting;
+pub mod parallel_kmers_query;
 pub mod querier_minimizer_bucketing;

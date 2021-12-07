@@ -37,6 +37,7 @@ pub trait MinimizerBucketingExecutor {
         &mut self,
         global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
         file_info: &Self::FileInfo,
+        read_index: u64,
         preprocess_info: &mut Self::PreprocessInfo,
         sequence: &FastaSequence,
     );
@@ -92,9 +93,15 @@ fn worker<E: MinimizerBucketingExecutor>(
 
         let mut preprocess_info = E::PreprocessInfo::default();
 
-        for x in data.iter_sequences() {
+        for (index, x) in data.iter_sequences().enumerate() {
             total_bases += x.seq.len() as u64;
-            buckets_processor.preprocess_fasta(context, &data.file_info, &mut preprocess_info, &x);
+            buckets_processor.preprocess_fasta(
+                context,
+                &data.file_info,
+                data.start_read_index + index as u64,
+                &mut preprocess_info,
+                &x,
+            );
 
             sequences_splitter.process_sequences(&x, None, &mut |sequence: &[u8], range| {
                 buckets_processor.process_sequence(
@@ -103,6 +110,11 @@ fn worker<E: MinimizerBucketingExecutor>(
                     sequence,
                     range,
                     |bucket, seq, extra| {
+                        // println!(
+                        //     "Sequence: {} /\t {}",
+                        //     std::str::from_utf8(seq).unwrap(),
+                        //     seq.len()
+                        // );
                         tmp_reads_buffer.add_read(extra, seq, bucket);
                     },
                 );
