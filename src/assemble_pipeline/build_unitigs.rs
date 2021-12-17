@@ -21,7 +21,6 @@ use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
 use hashbrown::HashMap;
 use nix::sys::ptrace::cont;
-use object_pool::Pool;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;

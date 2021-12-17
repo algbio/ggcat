@@ -1,6 +1,4 @@
 use crate::libdeflate::decompress_file;
-use bio::io::fastq;
-use bio::io::fastq::Record;
 use bstr::ByteSlice;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;

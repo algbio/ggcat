@@ -11,7 +11,6 @@ use filebuffer::FileBuffer;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
-use os_pipe::{PipeReader, PipeWriter};
 use parallel_processor::multi_thread_buckets::{BucketType, MultiThreadBuckets};
 use replace_with::replace_with_or_abort;
 use serde::{Deserialize, Serialize};

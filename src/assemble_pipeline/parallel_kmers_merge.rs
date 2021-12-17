@@ -39,7 +39,6 @@ use crate::utils::debug_utils::debug_increase;
 use crate::utils::flexible_pool::FlexiblePool;
 use crate::utils::Utils;
 use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
-use bitvec::ptr::Mut;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use crossbeam::queue::*;
 use hashbrown::HashMap;

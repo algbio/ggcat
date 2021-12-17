@@ -10,7 +10,6 @@ use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt}
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
-use os_pipe::{PipeReader, PipeWriter};
 use parallel_processor::multi_thread_buckets::{BucketType, MultiThreadBuckets};
 use std::cell::{Cell, UnsafeCell};
 use std::cmp::{max, min};
