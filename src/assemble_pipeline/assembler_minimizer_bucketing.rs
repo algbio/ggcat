@@ -1,4 +1,4 @@
-use crate::assemble_pipeline::current_kmers_merge::KmersFlags;
+use crate::assemble_pipeline::parallel_kmers_merge::KmersFlags;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use crate::hashes::ExtendableHashTraitType;

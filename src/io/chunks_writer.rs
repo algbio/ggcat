@@ -4,7 +4,9 @@ use std::io::Write;
 pub trait ChunksWriter {
     type ProcessingData;
     type TargetData;
-    type StreamType<'a>;
+    type StreamType<'a>
+    where
+        Self: 'a;
 
     fn start_processing(&self) -> Self::ProcessingData;
     fn flush_data(&self, tmp_data: &mut Self::ProcessingData, data: &[Self::TargetData]);

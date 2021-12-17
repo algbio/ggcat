@@ -58,4 +58,3 @@ path = "flate2-rs"
 debug = true
 
 [features]
-kpar = []

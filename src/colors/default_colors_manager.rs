@@ -1,4 +1,4 @@
-use crate::assemble_pipeline::current_kmers_merge::{structs::MapEntry, KmersFlags};
+use crate::assemble_pipeline::parallel_kmers_merge::{structs::MapEntry, KmersFlags};
 use crate::colors::colors_manager::{
     ColorsManager, ColorsMergeManager, MinimizerBucketingSeqColorData,
 };

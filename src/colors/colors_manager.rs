@@ -1,4 +1,4 @@
-use crate::assemble_pipeline::current_kmers_merge::structs::MapEntry;
+use crate::assemble_pipeline::parallel_kmers_merge::structs::MapEntry;
 use crate::hashes::HashFunctionFactory;
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use hashbrown::HashMap;

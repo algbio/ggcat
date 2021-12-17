@@ -2,7 +2,7 @@ mod queue_data;
 mod reader;
 mod sequences_splitter;
 
-use crate::assemble_pipeline::current_kmers_merge::KmersFlags;
+use crate::assemble_pipeline::parallel_kmers_merge::KmersFlags;
 use crate::hashes::HashFunctionFactory;
 use crate::io::concurrent::intermediate_storage::{
     IntermediateReadsWriter, IntermediateSequencesStorage, SequenceExtraData,

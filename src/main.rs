@@ -1,6 +1,6 @@
 #![feature(new_uninit, core_intrinsics, type_alias_impl_trait)]
 #![feature(is_sorted, thread_local, panic_info_message)]
-#![feature(slice_group_by, raw_vec_internals)]
+#![feature(slice_group_by)]
 #![feature(llvm_asm)]
 #![feature(option_result_unwrap_unchecked)]
 #![feature(specialization)]

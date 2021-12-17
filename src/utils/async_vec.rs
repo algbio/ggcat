@@ -1,17 +1,17 @@
 use crate::utils::flexible_pool::{FlexiblePool, PoolableObject};
-use alloc::raw_vec::RawVec;
 use parallel_processor::multi_thread_buckets::BucketType;
 use parking_lot::{RawRwLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::cell::UnsafeCell;
 use std::cmp::{max, min};
 use std::intrinsics::unlikely;
-use std::mem::size_of;
+use std::mem::{size_of, MaybeUninit};
 use std::path::PathBuf;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 struct AsyncVecInner<T> {
-    buffer: RawVec<T>,
+    buffer: UnsafeCell<Vec<MaybeUninit<T>>>,
     writing_length: AtomicUsize,
 }
 
@@ -73,7 +73,13 @@ impl<T> AsyncVec<T> {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             inner: RwLock::new(AsyncVecInner {
-                buffer: RawVec::with_capacity(max(32, capacity)),
+                buffer: UnsafeCell::new({
+                    let mut vec = Vec::with_capacity(max(32, capacity));
+                    unsafe {
+                        vec.set_len(vec.capacity());
+                    }
+                    vec
+                }),
                 writing_length: AtomicUsize::new(0),
             }),
             index: 0,
@@ -101,6 +107,8 @@ impl<T> AsyncVec<T> {
         let mut buf = self.inner.read();
         let position = buf.writing_length.fetch_add(value.len(), Ordering::Relaxed);
 
+        let buffer = unsafe { &mut *(buf.buffer.get()) };
+
         #[cold]
         fn reallocate_vec<'a, 'b: 'a, T>(
             buf: RwLockReadGuard<'a, AsyncVecInner<T>>,
@@ -111,20 +119,27 @@ impl<T> AsyncVec<T> {
             drop(buf);
 
             let mut wbuf = self_.inner.write();
-            let cap = wbuf.buffer.capacity();
-            wbuf.buffer.reserve(cap, max(cap, position + len) - cap);
+
+            let buffer = unsafe { &mut *(wbuf.buffer.get()) };
+
+            let cap = buffer.capacity();
+
+            buffer.reserve(max(cap, position + len) - cap);
+            unsafe {
+                buffer.set_len(buffer.capacity());
+            }
 
             RwLockWriteGuard::downgrade(wbuf)
         }
 
-        if buf.buffer.capacity() < (position + value.len()) {
+        if buffer.capacity() < (position + value.len()) {
             buf = reallocate_vec(buf, self, position, value.len());
         }
 
         unsafe {
             std::ptr::copy_nonoverlapping(
                 value.as_ptr(),
-                buf.buffer.ptr().add(position),
+                (buffer.as_mut_ptr() as *mut T).add(position),
                 value.len(),
             );
         }
@@ -136,7 +151,7 @@ impl<T> AsyncVec<T> {
 
         unsafe {
             from_raw_parts_mut(
-                inner.buffer.ptr(),
+                (*inner.buffer.get()).as_mut_ptr() as *mut T,
                 inner.writing_length.load(Ordering::Relaxed),
             )
         }

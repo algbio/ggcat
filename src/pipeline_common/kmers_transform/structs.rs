@@ -1,4 +1,4 @@
-use crate::assemble_pipeline::current_kmers_merge::KmersFlags;
+use crate::assemble_pipeline::parallel_kmers_merge::KmersFlags;
 use crate::colors::colors_manager::ColorsManager;
 use crate::io::concurrent::intermediate_storage::{IntermediateReadsReader, SequenceExtraData};
 use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;

@@ -1,4 +1,4 @@
-use crate::assemble_pipeline::current_kmers_merge::structs::RetType;
+use crate::assemble_pipeline::parallel_kmers_merge::structs::RetType;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsManager;
 use crate::colors::default_colors_manager::DefaultColorsManager;
@@ -59,37 +59,21 @@ pub fn run_assembler<
     };
 
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
-        #[cfg(feature = "kpar")]
-        {
-            AssemblePipeline::parallel_kmers_merge::<
-                BucketingHash,
-                MergingHash,
-                AssemblerColorsManager,
-                _,
-            >(
-                buckets,
-                &global_colors_table,
-                BUCKETS_COUNT,
-                min_multiplicity,
-                temp_dir.as_path(),
-                k,
-                m,
-                threads_count,
-            )
-        }
-
-        #[cfg(not(feature = "kpar"))]
-        {
-            AssemblePipeline::kmers_merge::<BucketingHash, MergingHash, AssemblerColorsManager, _>(
-                buckets,
-                &global_colors_table,
-                BUCKETS_COUNT,
-                min_multiplicity,
-                temp_dir.as_path(),
-                k,
-                m,
-            )
-        }
+        AssemblePipeline::parallel_kmers_merge::<
+            BucketingHash,
+            MergingHash,
+            AssemblerColorsManager,
+            _,
+        >(
+            buckets,
+            &global_colors_table,
+            BUCKETS_COUNT,
+            min_multiplicity,
+            temp_dir.as_path(),
+            k,
+            m,
+            threads_count,
+        )
     } else {
         RetType {
             sequences: Utils::generate_bucket_names(
