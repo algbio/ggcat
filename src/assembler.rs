@@ -24,6 +24,7 @@ pub fn run_assembler<
     k: usize,
     m: usize,
     step: AssemblerStartingStep,
+    last_step: AssemblerStartingStep,
     input: Vec<PathBuf>,
     output_file: PathBuf,
     temp_dir: PathBuf,
@@ -57,6 +58,9 @@ pub fn run_assembler<
     } else {
         Utils::generate_bucket_names(temp_dir.join("bucket"), BUCKETS_COUNT, Some("tmp"))
     };
+    if last_step <= AssemblerStartingStep::MinimizerBucketing {
+        return;
+    }
 
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
         AssemblePipeline::parallel_kmers_merge::<
@@ -84,6 +88,9 @@ pub fn run_assembler<
             hashes: Utils::generate_bucket_names(temp_dir.join("hashes"), BUCKETS_COUNT, None),
         }
     };
+    if last_step <= AssemblerStartingStep::KmersMerge {
+        return;
+    }
 
     AssemblerColorsManager::print_color_stats(&global_colors_table);
 
@@ -98,6 +105,9 @@ pub fn run_assembler<
     } else {
         Utils::generate_bucket_names(temp_dir.join("links"), BUCKETS_COUNT, None)
     };
+    if last_step <= AssemblerStartingStep::HashesSorting {
+        return;
+    }
 
     let mut loop_iteration = loopit_number.unwrap_or(0);
 
@@ -155,6 +165,10 @@ pub fn run_assembler<
         (unames, rnames)
     };
 
+    if last_step <= AssemblerStartingStep::LinksCompaction {
+        return;
+    }
+
     let mut final_unitigs_file = Mutex::new(match output_file.extension() {
         Some(ext) => match ext.to_string_lossy().to_string().as_str() {
             "lz4" => ReadsWriter::new_compressed_lz4(&output_file),
@@ -177,6 +191,10 @@ pub fn run_assembler<
     } else {
         Utils::generate_bucket_names(temp_dir.join("reads_bucket"), BUCKETS_COUNT, Some("lz4"))
     };
+
+    if last_step <= AssemblerStartingStep::ReorganizeReads {
+        return;
+    }
 
     if step <= AssemblerStartingStep::BuildUnitigs {
         AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(

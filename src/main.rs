@@ -186,6 +186,9 @@ struct AssemblerArgs {
     #[structopt(short = "x", long, default_value = "MinimizerBucketing")]
     pub step: AssemblerStartingStep,
 
+    #[structopt(long = "last-step", default_value = "BuildUnitigs")]
+    pub last_step: AssemblerStartingStep,
+
     #[structopt(flatten)]
     pub common_args: CommonArgs,
 }

@@ -39,6 +39,7 @@ fn run_assembler_from_args<
             .mlen
             .unwrap_or(min(12, (args.common_args.klen + 2) / 3)),
         args.step,
+        args.last_step,
         inputs,
         args.output_file,
         args.common_args.temp_dir,
