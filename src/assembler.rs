@@ -171,8 +171,8 @@ pub fn run_assembler<
 
     let mut final_unitigs_file = Mutex::new(match output_file.extension() {
         Some(ext) => match ext.to_string_lossy().to_string().as_str() {
-            "lz4" => ReadsWriter::new_compressed_lz4(&output_file),
-            "gz" => ReadsWriter::new_compressed_gzip(&output_file),
+            "lz4" => ReadsWriter::new_compressed_lz4(&output_file, 2),
+            "gz" => ReadsWriter::new_compressed_gzip(&output_file, 2),
             _ => ReadsWriter::new_plain(&output_file),
         },
         None => ReadsWriter::new_plain(&output_file),

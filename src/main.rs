@@ -33,6 +33,7 @@ mod types;
 mod utils;
 mod assembler;
 mod assembler_generic_dispatcher;
+mod cmd_utils;
 mod colors;
 mod io;
 mod pipeline_common;
@@ -54,6 +55,7 @@ fn outputs_arg_group() -> ArgGroup<'static> {
 
 use crate::assembler::run_assembler;
 use crate::assembler_generic_dispatcher::dispatch_assembler_hash_type;
+use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
 use crate::colors::colors_manager::ColorsManager;
 use crate::colors::default_colors_manager::DefaultColorsManager;
 use crate::colors::storage::run_length::RunLengthColorsSerializer;
@@ -115,6 +117,7 @@ enum CliArgs {
     Build(AssemblerArgs),
     Matches(MatchesArgs),
     Query(QueryArgs),
+    Utils(CmdUtilsArgs),
 }
 
 #[derive(StructOpt, Debug)]
@@ -285,6 +288,9 @@ fn main() {
             } else {
                 dispatch_querier_hash_type::<(), BUCKETS_COUNT>(args);
             }
+        }
+        CliArgs::Utils(args) => {
+            process_cmdutils(args);
         }
     }
 }

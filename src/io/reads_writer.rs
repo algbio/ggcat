@@ -32,10 +32,10 @@ pub struct ReadsWriter {
 }
 
 impl ReadsWriter {
-    pub fn new_compressed_gzip(path: impl AsRef<Path>) -> ReadsWriter {
+    pub fn new_compressed_gzip(path: impl AsRef<Path>, level: u32) -> ReadsWriter {
         let mut compress_stream = GzEncoder::new(
             BufWriter::with_capacity(1024 * 1024 * 16, File::create(&path).unwrap()),
-            Compression::new(2),
+            Compression::new(level),
         );
 
         ReadsWriter {
@@ -48,9 +48,9 @@ impl ReadsWriter {
         }
     }
 
-    pub fn new_compressed_lz4(path: impl AsRef<Path>) -> ReadsWriter {
+    pub fn new_compressed_lz4(path: impl AsRef<Path>, level: u32) -> ReadsWriter {
         let mut compress_stream = lz4::EncoderBuilder::new()
-            .level(2)
+            .level(level)
             .checksum(ContentChecksum::NoChecksum)
             .block_mode(BlockMode::Linked)
             .block_size(BlockSize::Max1MB)
