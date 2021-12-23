@@ -20,7 +20,8 @@ pub fn decompress_file(
         let mut buffer = Vec::with_capacity(buf_size);
         buffer.set_len(buf_size);
 
-        let mut file_map = filebuffer::FileBuffer::open(&file).unwrap();
+        let mut file_map = filebuffer::FileBuffer::open(&file)
+            .expect(&format!("Cannot find file {}", file.as_ref().display()));
 
         libc::madvise(
             file_map.as_ptr() as *mut c_void,

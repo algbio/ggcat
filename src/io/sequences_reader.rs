@@ -106,6 +106,7 @@ impl SequencesReader {
             |line: &[u8], finished| {
                 if finished || (line.len() > 0 && line[0] == b'>') {
                     if intermediate[SEQ_STATE].len() > 0 {
+                        Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
                         func(FastaSequence {
                             ident: &intermediate[IDENT_STATE],
                             seq: &intermediate[SEQ_STATE],
@@ -148,6 +149,7 @@ impl SequencesReader {
                             return;
                         }
 
+                        Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
                         func(FastaSequence {
                             ident: &intermediate[IDENT_STATE],
                             seq: &intermediate[SEQ_STATE],

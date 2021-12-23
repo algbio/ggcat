@@ -67,6 +67,7 @@ pub struct MinimizerBucketingExecutionContext<
 pub struct GenericMinimizerBucketing;
 
 static SEQ_COUNT: AtomicU64 = AtomicU64::new(0);
+static LAST_TOTAL_COUNT: AtomicU64 = AtomicU64::new(0);
 static TOT_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 static VALID_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 
@@ -92,6 +93,8 @@ fn worker<E: MinimizerBucketingExecutor>(
         let mut sequences_splitter = SequencesSplitter::new(context.k);
 
         let mut preprocess_info = E::PreprocessInfo::default();
+
+        let mut sequences_count = 0;
 
         for (index, x) in data.iter_sequences().enumerate() {
             total_bases += x.seq.len() as u64;
@@ -120,28 +123,40 @@ fn worker<E: MinimizerBucketingExecutor>(
                 );
             });
 
-            if SEQ_COUNT.fetch_add(1, Ordering::Relaxed) % 100000000 == 0 {
-                TOT_BASES_COUNT.fetch_add(total_bases, Ordering::Relaxed);
-                VALID_BASES_COUNT.fetch_add(sequences_splitter.valid_bases, Ordering::Relaxed);
-                total_bases = 0;
-                sequences_splitter.valid_bases = 0;
-
-                println!(
-                    "Elaborated {} sequences! [{} | {:.2}%] quality bases {}",
-                    SEQ_COUNT.load(Ordering::Relaxed),
-                    VALID_BASES_COUNT.load(Ordering::Relaxed),
-                    (VALID_BASES_COUNT.load(Ordering::Relaxed) as f64)
-                        / (max(1, TOT_BASES_COUNT.load(Ordering::Relaxed)) as f64)
-                        * 100.0,
-                    PHASES_TIMES_MONITOR
-                        .read()
-                        .get_formatted_counter_without_memory()
-                );
-            }
+            sequences_count += 1;
         }
 
-        TOT_BASES_COUNT.fetch_add(total_bases, Ordering::Relaxed);
+        SEQ_COUNT.fetch_add(sequences_count, Ordering::Relaxed);
+        let total_bases_count =
+            TOT_BASES_COUNT.fetch_add(total_bases, Ordering::Relaxed) + total_bases;
         VALID_BASES_COUNT.fetch_add(sequences_splitter.valid_bases, Ordering::Relaxed);
+
+        const TOTAL_BASES_DIFF_LOG: u64 = 10000000000;
+
+        let do_print_log = LAST_TOTAL_COUNT
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                if total_bases_count - x > TOTAL_BASES_DIFF_LOG {
+                    Some(total_bases_count)
+                } else {
+                    None
+                }
+            })
+            .is_ok();
+
+        if do_print_log {
+            println!(
+                "Elaborated {} sequences! [{} | {:.2}%] quality bases {}",
+                SEQ_COUNT.load(Ordering::Relaxed),
+                VALID_BASES_COUNT.load(Ordering::Relaxed),
+                (VALID_BASES_COUNT.load(Ordering::Relaxed) as f64)
+                    / (max(1, TOT_BASES_COUNT.load(Ordering::Relaxed)) as f64)
+                    * 100.0,
+                PHASES_TIMES_MONITOR
+                    .read()
+                    .get_formatted_counter_without_memory()
+            );
+        }
+
         manager.return_obj(data);
     }
     tmp_reads_buffer.finalize();
