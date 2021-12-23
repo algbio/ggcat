@@ -454,10 +454,6 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
         let mut vec_reader = VecReader::new(1024 * 1024, &mut self.sequential_reader);
 
         Self::read_single_stream(vec_reader, lambda);
-
-        if self.remove_file {
-            std::fs::remove_file(self.file_path);
-        }
     }
 
     pub fn is_finished(&self) -> bool {
@@ -481,5 +477,13 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
         Self::read_single_stream(vec_reader, lambda);
 
         return true;
+    }
+}
+
+impl<T: SequenceExtraData> Drop for IntermediateReadsReader<T> {
+    fn drop(&mut self) {
+        if self.remove_file {
+            std::fs::remove_file(&self.file_path);
+        }
     }
 }
