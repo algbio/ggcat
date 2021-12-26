@@ -16,13 +16,14 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::{Mutex, RwLock};
 use std::cmp::min;
 use std::path::{Path, PathBuf};
+use std::process::exit;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use structs::ReadRef;
 
 pub const MERGE_BUCKETS_COUNT: usize = 256;
-const BUFFER_CHUNK_SIZE: usize = 1024 * 128;
+const BUFFER_CHUNK_SIZE: usize = 1024 * 16;
 
 pub struct ReadDispatchInfo<E: SequenceExtraData> {
     pub bucket: BucketIndexType,
@@ -112,7 +113,7 @@ impl KmersTransform {
         const MAX_TEMP_SEQUENCES_SIZE: MemoryDataSize = MemoryDataSize::from_kibioctets(64.0);
 
         crossbeam::thread::scope(|s| {
-            for i in 0..min(buckets_count, threads_count) {
+            for _ in 0..min(buckets_count, threads_count) {
                 s.spawn(|_| {
                     let mut buckets: Vec<ChunkedVector<u8>> = vec![];
                     let mut executor = F::new(&extra_data);

@@ -62,6 +62,8 @@ pub struct MinimizerBucketingExecutionContext<
     pub buckets: MultiThreadBuckets<IntermediateReadsWriter<ReadAssociatedData>>,
     pub extra: ExtraData,
     pub global_data: GlobalData,
+    pub current_file: AtomicUsize,
+    pub total_files: usize,
 }
 
 pub struct GenericMinimizerBucketing;
@@ -144,13 +146,18 @@ fn worker<E: MinimizerBucketingExecutor>(
             .is_ok();
 
         if do_print_log {
+            let current_file = context.current_file.load(Ordering::Relaxed);
+
             println!(
-                "Elaborated {} sequences! [{} | {:.2}%] quality bases {}",
+                "Elaborated {} sequences! [{} | {:.2}% qb] ({}/{} => {:.2}%) {}",
                 SEQ_COUNT.load(Ordering::Relaxed),
                 VALID_BASES_COUNT.load(Ordering::Relaxed),
                 (VALID_BASES_COUNT.load(Ordering::Relaxed) as f64)
                     / (max(1, TOT_BASES_COUNT.load(Ordering::Relaxed)) as f64)
                     * 100.0,
+                current_file,
+                context.total_files,
+                current_file as f64 / max(1, context.total_files) as f64 * 100.0,
                 PHASES_TIMES_MONITOR
                     .read()
                     .get_formatted_counter_without_memory()
@@ -193,6 +200,8 @@ impl GenericMinimizerBucketing {
             buckets,
             extra: ContextExtraData { quality_threshold },
             global_data,
+            current_file: AtomicUsize::new(0),
+            total_files: input_files.len(),
         };
 
         ThreadPoolsChain::run_double(

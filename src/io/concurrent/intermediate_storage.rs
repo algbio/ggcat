@@ -264,7 +264,7 @@ impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
             .checksum(ContentChecksum::NoChecksum)
             .block_mode(BlockMode::Independent)
             .block_size(BlockSize::Default)
-            .build(BufWriter::with_capacity(1024 * 512, file))
+            .build(BufWriter::with_capacity(DEFAULT_BUFFER_SIZE, file))
             .unwrap();
 
         IntermediateReadsWriter {
@@ -414,7 +414,8 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
 
         Self {
             sequential_reader: SequentialReader {
-                reader: lz4::Decoder::new(BufReader::with_capacity(1024 * 1024 * 4, file)).unwrap(),
+                reader: lz4::Decoder::new(BufReader::with_capacity(DEFAULT_BUFFER_SIZE, file))
+                    .unwrap(),
                 index,
                 index_position: 0,
             },
@@ -451,7 +452,7 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
     }
 
     pub fn for_each(mut self, mut lambda: impl FnMut(T, CompressedRead)) {
-        let mut vec_reader = VecReader::new(1024 * 1024, &mut self.sequential_reader);
+        let mut vec_reader = VecReader::new(DEFAULT_BUFFER_SIZE, &mut self.sequential_reader);
 
         Self::read_single_stream(vec_reader, lambda);
     }
@@ -472,7 +473,7 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
 
         let cursor = Cursor::new(&self.parallel_reader[addr_start..]);
         let mut compressed_stream = lz4::Decoder::new(cursor).unwrap();
-        let mut vec_reader = VecReader::new(1024 * 1024, &mut compressed_stream);
+        let mut vec_reader = VecReader::new(DEFAULT_BUFFER_SIZE, &mut compressed_stream);
 
         Self::read_single_stream(vec_reader, lambda);
 

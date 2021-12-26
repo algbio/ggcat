@@ -15,7 +15,7 @@ use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::rolling::minqueue::RollingMinQueue;
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::utils::Utils;
-use crate::KEEP_FILES;
+use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
 use crossbeam::channel::*;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
@@ -75,7 +75,7 @@ impl AssemblePipeline {
 
         inputs.par_iter().for_each(|(read_file, unitigs_map_file)| {
             let mut tmp_final_unitigs_buffer =
-                FastaWriterConcurrentBuffer::new(&out_file, 1024 * 1024 * 8);
+                FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_BUFFER_SIZE);
 
             assert_eq!(
                 Utils::get_bucket_index(read_file),

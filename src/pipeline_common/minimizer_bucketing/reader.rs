@@ -6,6 +6,7 @@ use parallel_processor::threadpools_chain::ObjectsPoolManager;
 use std::intrinsics::unlikely;
 use std::mem::swap;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 
 pub fn minb_reader<
     ReadAssociatedData: SequenceExtraData,
@@ -22,6 +23,8 @@ pub fn minb_reader<
         data.start_read_index = 0;
 
         let mut read_index = 0;
+
+        context.current_file.fetch_add(1, Ordering::Relaxed);
 
         SequencesReader::process_file_extended(
             input,

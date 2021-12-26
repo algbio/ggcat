@@ -2,6 +2,7 @@ use crate::utils::flexible_pool::{FlexiblePool, PoolableObject};
 use std::io::{Error, ErrorKind, Write};
 use std::mem::MaybeUninit;
 use std::ops::DerefMut;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -55,7 +56,9 @@ impl<T: Copy> ChunkedVector<T> {
     }
 
     pub fn clear(&mut self) {
-        self.chunks.truncate(1);
+        self.chunks
+            .drain(1..)
+            .for_each(|chunk| self.pool.pool.release_object(chunk));
         self.current_data = self.chunks[0].as_mut_ptr() as *mut T;
         self.current_size_left = self.chunks[0].len();
     }
@@ -119,6 +122,14 @@ impl<T: Copy> ChunkedVector<T> {
                 )
             }
         }
+    }
+}
+
+impl<T: Copy> Drop for ChunkedVector<T> {
+    fn drop(&mut self) {
+        self.chunks
+            .drain(..)
+            .for_each(|chunk| self.pool.pool.release_object(chunk));
     }
 }
 
