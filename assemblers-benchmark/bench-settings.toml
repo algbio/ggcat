@@ -1,0 +1,73 @@
+
+#[[tools]]
+#name = "sysbench"
+#path = "sysbench"
+#arguments = "--test=cpu --num-threads=<THREADS> --cpu-max-prime=20000 run"
+
+[[tools]]
+name = "bifrost"
+path = "../others/bifrost/build/src/Bifrost"
+arguments = "build -k <KVALUE> -t <THREADS>  <INPUT_FILES_READS> <INPUT_FILES_SEQUENCES> -o <OUTPUT_FILE> --verbose --fasta"
+reads-arg-prefix = "-r"
+sequences-arg-prefix = "-s"
+
+[[tools]]
+name = "cuttlefish2-ref"
+path = "../others/cuttlefish2-t2/build/src/cuttlefish"
+arguments = "build --ref -l <INPUT_FILES_LIST> -k <KVALUE> -c <MULTIPLICITY> -t <THREADS> -o <OUTPUT_FILE>  -w <TEMP_DIR>"
+reads-arg-prefix = "-r"
+sequences-arg-prefix = "-s"
+
+[[tools]]
+name = "cuttlefish2-reads"
+path = "../others/cuttlefish2-t2/build/src/cuttlefish"
+arguments = "build --read -l <INPUT_FILES_LIST> -k <KVALUE> -c <MULTIPLICITY> -t <THREADS> -o <OUTPUT_FILE>  -w <TEMP_DIR>"
+reads-arg-prefix = "-r"
+sequences-arg-prefix = "-s"
+
+
+[[tools]]
+name = "bcalm"
+path = "../others/bcalm/build/bcalm"
+arguments = "-in <INPUT_FILES_LIST> -kmer-size <KVALUE> -nb-cores <THREADS> -abundance-min <MULTIPLICITY> -out-tmp <TEMP_DIR> -out <OUTPUT_FILE>"
+
+[[tools]]
+name = "biloki"
+path = "../target/release/BiLoki"
+arguments = "build -k <KVALUE> -j <THREADS> -s <MULTIPLICITY> <INPUT_FILES> -t <TEMP_DIR> -o <OUTPUT_FILE>"
+
+[[datasets]]
+name = "chr14"
+files = [
+    "../data/Chr14/frag_1.fastq.gz",
+    "../data/Chr14/frag_2.fastq.gz",
+]
+
+[[benchmarks]]
+name = "chromosome-14"
+datasets = ["chr14"]
+tools = ["biloki", "bcalm", "bifrost"]
+temp-dir = ".temp_dir"
+trim-before = true
+kvalues = [15, 31, 63]
+threads = [16]
+max-memory = 128
+min-multiplicity = 2
+size-check-time = 500
+
+[[benchmarks]]
+name = "test1"
+datasets = ["chr14"]
+tools = ["cuttlefish2-reads", "biloki"]
+temp-dir = ".temp_dir"
+trim-before = true
+kvalues = [31, 63]
+threads = [16]
+max-memory = 128
+min-multiplicity = 2
+size-check-time = 500
+
+
+[[output]]
+mode = "latex"
+columns = "name;gb;threads;rtime;utime"

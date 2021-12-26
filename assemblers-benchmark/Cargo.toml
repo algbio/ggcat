@@ -1,12 +1,13 @@
 [package]
 name = "assemblers-benchmark"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 cgroups-rs = "0.2.5"
+fdlimit = "0.2.1"
 fork = "0.1.18"
 libc = "0.2.97"
 num_cpus = "1.13.0"
@@ -16,3 +17,7 @@ serde_json = "1.0.64"
 structopt = "0.3.21"
 systemstat = "0.1.8"
 toml = "0.5.8"
+walkdir = "2.3.2"
+
+[features]
+cpu-limit = []
