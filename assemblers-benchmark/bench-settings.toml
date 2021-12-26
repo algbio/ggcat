@@ -34,7 +34,7 @@ arguments = "-in <INPUT_FILES_LIST> -kmer-size <KVALUE> -nb-cores <THREADS> -abu
 [[tools]]
 name = "biloki"
 path = "../target/release/BiLoki"
-arguments = "build -k <KVALUE> -j <THREADS> -s <MULTIPLICITY> <INPUT_FILES> -t <TEMP_DIR> -o <OUTPUT_FILE>"
+arguments = "build -k <KVALUE> -j <THREADS> -s <MULTIPLICITY> -l <INPUT_FILES_LIST> -t <TEMP_DIR> -o <OUTPUT_FILE>"
 
 [[datasets]]
 name = "chr14"
