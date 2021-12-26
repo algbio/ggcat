@@ -10,11 +10,21 @@ pub struct ChunkedVectorPool<T: Copy> {
     pool: FlexiblePool<Box<[MaybeUninit<T>]>>,
 }
 
+// static ALLOCATED_COUNT: AtomicU64 = AtomicU64::new(0);
+// static ALLOCATED_SIZE: AtomicU64 = AtomicU64::new(0);
+
 impl<T> PoolableObject for Box<[MaybeUninit<T>]> {
     type AllocData = usize;
 
     #[inline(always)]
     fn allocate(suggested_length: usize) -> Self {
+        // ALLOCATED_COUNT.fetch_add(1, Ordering::Relaxed);
+        // ALLOCATED_SIZE.fetch_add(suggested_length as u64, Ordering::Relaxed);
+        // println!(
+        //     "Count: {} size: {}",
+        //     ALLOCATED_COUNT.load(Ordering::Relaxed),
+        //     ALLOCATED_SIZE.load(Ordering::Relaxed)
+        // );
         unsafe { Box::new_uninit_slice(suggested_length) }
     }
 
