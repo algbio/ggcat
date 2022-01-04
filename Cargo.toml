@@ -37,6 +37,8 @@ replace_with = "0.1.7"
 roaring = "0.7.0"
 backtrace = "0.3.63"
 csv = "1.1.6"
+jemallocator = "0.3.2"
+jemalloc-ctl = "0.3.3"
 
 [dependencies.flate2]
 default-features = false
@@ -47,6 +49,7 @@ path = "flate2-rs"
 debug = true
 
 [features]
+mem-analysis = []
 
 [build-dependencies]
 make-cmd = "0.1.0"

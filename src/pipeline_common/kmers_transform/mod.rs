@@ -119,10 +119,16 @@ impl KmersTransform {
                     let mut executor = F::new(&extra_data);
 
                     let mut process_pending_reads = |executor: &mut F::ExecutorType<'a>| {
-                        while let Some((seqs, memory_ref)) = vecs_process_queue.pop() {
+                        while let Some((mut seqs, memory_ref)) = vecs_process_queue.pop() {
                             executor.maybe_swap_bucket(&extra_data);
-                            process_subbucket::process_subbucket::<F>(&extra_data, seqs, executor);
+                            process_subbucket::process_subbucket::<F>(
+                                &extra_data,
+                                &mut seqs,
+                                executor,
+                            );
+
                             drop(memory_ref);
+                            vecs_pool.release_object(seqs);
                         }
                     };
 
@@ -157,8 +163,12 @@ impl KmersTransform {
                                 let bucket_index = preprocess_info.bucket as usize;
 
                                 let pointer = buckets[bucket_index].ensure_reserve(
-                                    10 + bases_slice.len() + preprocess_info.extra_data.max_size(),
+                                    10 + bases_slice.len()
+                                        + preprocess_info.extra_data.max_size()
+                                        + 4,
                                 );
+
+                                buckets[bucket_index].push_contiguous_slice(&[0, 0, 0, 0]);
 
                                 encode_varint_flags::<_, _>(
                                     |slice| buckets[bucket_index].push_contiguous_slice(slice),
@@ -175,7 +185,7 @@ impl KmersTransform {
                                     preprocess_info.bucket,
                                     &(),
                                     ReadRef {
-                                        read_start: pointer,
+                                        read_start: unsafe { pointer.add(4) },
                                         hash: preprocess_info.hash,
                                     },
                                 );
@@ -187,6 +197,8 @@ impl KmersTransform {
                         cmp_reads.finalize();
 
                         drop(bucket);
+
+                        process_pending_reads(&mut executor);
 
                         let mut writable_bucket = current_bucket.write();
                         if writable_bucket

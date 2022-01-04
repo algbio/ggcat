@@ -1,7 +1,7 @@
-use crate::memory_fs::{MemoryFile, MemoryMode};
+use crate::memory_fs::file::internal::MemoryFileMode;
+use crate::memory_fs::file::writer::FileWriter;
 use crate::multi_thread_buckets::BucketType;
 use crate::stats_logger::{StatMode, DEFAULT_STATS_LOGGER};
-
 use rand::{thread_rng, RngCore};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -11,7 +11,7 @@ pub enum StorageMode {
     AppendOrCreate,
     Plain { buffer_size: usize },
     PlainUnbuffered,
-    MemoryFile { mode: MemoryMode },
+    MemoryFile { mode: MemoryFileMode },
     LZ4Compression { level: u8 },
     GZIPCompression { level: u8 },
 }
@@ -76,7 +76,7 @@ impl BucketType for BinaryWriter {
                 1024 * 256,
                 File::create(&path).unwrap(),
             )),
-            StorageMode::MemoryFile { mode } => Box::new(MemoryFile::create_writer(&path, mode)),
+            StorageMode::MemoryFile { mode } => Box::new(FileWriter::create(&path, mode)),
         };
 
         Self { writer, path }

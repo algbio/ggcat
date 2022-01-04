@@ -1,4 +1,3 @@
-use crate::memory_fs::buffer_manager::BUFFER_MANAGER;
 use parking_lot::Mutex;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
@@ -85,8 +84,6 @@ impl StatsLogger {
             }
             thread::spawn(move || loop {
                 sleep(Duration::from_millis(self.interval_ms as u64));
-
-                BUFFER_MANAGER.update_buffer_stats();
 
                 let mut entries: Vec<_>;
                 let mut map_lock = unsafe { (*self.stats.get()).as_mut().unwrap().lock() };

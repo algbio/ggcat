@@ -10,18 +10,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-use crossbeam::channel::*;
+use crate::memory_fs::file::flush::*;
 
-use flushable_buffer::{FlushMode, FlushableBuffer};
 use parking_lot::lock_api::RwLockReadGuard;
 use parking_lot::{Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 
-use crate::memory_fs::allocator::{AllocatedChunk, CHUNKS_ALLOCATOR};
-use crate::memory_fs::buffer_manager::BUFFER_MANAGER;
+use crate::memory_fs::allocator::{AllocatedChunk, ChunksAllocator, CHUNKS_ALLOCATOR};
+use crate::memory_fs::file::internal::SWAPPABLE_FILES;
 use crate::stats_logger::{StatMode, StatRaiiCounter};
+use measurements::Data;
 use std::mem::{replace, size_of};
-// use std::os::unix::fs::OpenOptionsExt;
-// use std::os::unix::io::AsRawFd;
 use std::panic::Location;
 use std::slice::from_raw_parts_mut;
 use std::time::Duration;
@@ -30,170 +28,24 @@ pub const O_DIRECT: i32 = 0x4000;
 
 #[macro_use]
 pub mod allocator;
-pub mod buffer_manager;
+pub mod file;
 pub mod flushable_buffer;
 
 const FLUSH_BUFFERS_COUNT: usize = 2;
 
-#[derive(Copy, Clone)]
-pub enum MemoryMode {
-    Chunks,
-    ChunksFileBuffer,
-}
-
-enum InternalMemoryMode {
-    Chunks {
-        memory: RwLock<Vec<AllocatedChunk>>,
-    },
-    ChunksFileBuffer {
-        current_buffer: RwLock<FlushableBuffer>,
-        file: Arc<(PathBuf, Mutex<File>)>,
-    },
-}
-
-static mut MEMORY_MAPPED_FILES: Option<Mutex<HashMap<PathBuf, Arc<MemoryFile>>>> = None;
-
 static mut FILES_FLUSH_HASH_MAP: Option<Mutex<HashMap<PathBuf, Vec<Arc<(PathBuf, Mutex<File>)>>>>> =
     None;
 
-static TAKE_FROM_QUEUE_MUTEX: Mutex<()> = Mutex::new(());
-static mut GLOBAL_FLUSH_QUEUE: Option<Sender<FlushableBuffer>> = None;
-static WRITING_CHECK: RwLock<()> = RwLock::new(());
-
 const JOIN_HANDLE_OPT: Option<JoinHandle<()>> = None;
-static mut FLUSH_THREADS: [Option<JoinHandle<()>>; 16] = [JOIN_HANDLE_OPT; 16];
 
-pub struct MemoryFile {
-    path: PathBuf,
-    data: UnsafeCell<InternalMemoryMode>,
-}
+pub struct MemoryFs;
 
-pub struct CMCIterator<'a, I: Iterator<Item = &'a mut [u8]>> {
-    iter: I,
-}
-
-impl<'a, I: Iterator<Item = &'a mut [u8]>> Iterator for CMCIterator<'a, I> {
-    type Item = &'a mut [u8];
-
-    #[inline(always)]
-    fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next()
-    }
-}
-
-struct RwLockIterator<'a, A, B, R: parking_lot::lock_api::RawRwLock, I: Iterator<Item = B>> {
-    lock: RwLockReadGuard<'a, R, A>,
-    iterator: I,
-}
-impl<'a, A, B, R: parking_lot::lock_api::RawRwLock, I: Iterator<Item = B>> Iterator
-    for RwLockIterator<'a, A, B, R, I>
-{
-    type Item = B;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.iterator.next()
-    }
-}
-
-unsafe impl Sync for MemoryFile {}
-unsafe impl Send for MemoryFile {}
-
-pub struct MemoryFileWriter {
-    file: Arc<MemoryFile>,
-}
-
-impl Write for MemoryFileWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.file.write_all(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.file.flush_async();
-        Ok(())
-    }
-}
-
-impl MemoryFile {
-    fn flush_buffer_and_replace(
-        &self,
-        buffer: &mut FlushableBuffer,
-        file: Arc<(PathBuf, Mutex<File>)>,
-        mode: FlushMode,
-    ) {
+impl MemoryFs {
+    pub fn init(memory_size: Data, flush_queue_size: usize, threads_count: usize) {
         unsafe {
-            GLOBAL_FLUSH_QUEUE
-                .as_mut()
-                .unwrap()
-                .send(std::ptr::read(buffer as *const FlushableBuffer))
-                .unwrap();
-            std::ptr::write(
-                buffer as *mut FlushableBuffer,
-                BUFFER_MANAGER.request_buffer(file, mode),
-            );
-        }
-    }
-
-    pub fn init(flush_queue_size: usize, threads_count: usize) {
-        unsafe {
-            MEMORY_MAPPED_FILES = Some(Mutex::new(HashMap::with_capacity(8192)));
+            CHUNKS_ALLOCATOR.initialize(memory_size);
             FILES_FLUSH_HASH_MAP = Some(Mutex::new(HashMap::with_capacity(8192)));
-
-            let (flush_channel_sender, flush_channel_receiver) = bounded(flush_queue_size);
-
-            GLOBAL_FLUSH_QUEUE = Some(flush_channel_sender);
-
-            for i in 0..max(1, threads_count) {
-                let flush_channel_receiver = flush_channel_receiver.clone();
-                FLUSH_THREADS[i] = Some(
-                    std::thread::Builder::new()
-                        .name(String::from("flushing-thread"))
-                        .spawn(move || {
-                            let mut queue_take_lock = TAKE_FROM_QUEUE_MUTEX.lock();
-                            while let Ok(file_to_flush) = flush_channel_receiver.recv() {
-                                // Here it's held an exclusive lock to ensure that sequential writes to a file are not processed concurrently
-                                let mut file_lock = file_to_flush.underlying_file.1.lock();
-                                let writing_check = WRITING_CHECK.read();
-                                drop(queue_take_lock);
-
-                                update_stat!(
-                                    "GLOBAL_WRITING_QUEUE_SIZE",
-                                    flush_channel_receiver.len() as f64,
-                                    StatMode::Replace
-                                );
-
-                                update_stat!("TOTAL_DISK_FLUSHES", 1.0, StatMode::Sum);
-
-                                match file_to_flush.flush_mode {
-                                    FlushMode::Append => {
-                                        let _stat =
-                                            StatRaiiCounter::create("FILE_DISK_WRITING_APPEND");
-                                        file_lock.write_all(file_to_flush.get_buffer());
-                                    }
-                                    FlushMode::WriteAt(offset) => {
-                                        let _stat = StatRaiiCounter::create("FILE_DISK_WRITEAT");
-                                        file_lock.seek(SeekFrom::Start(offset as u64));
-                                        file_lock.write_all(file_to_flush.get_buffer());
-                                    }
-                                }
-
-                                update_stat!(
-                                    "DISK_BYTES_WRITTEN",
-                                    file_to_flush.get_buffer().len() as f64,
-                                    StatMode::Sum
-                                );
-                                file_to_flush.clear_buffer();
-
-                                // Try lock the queue again
-                                drop(file_lock);
-                                drop(file_to_flush);
-                                drop(writing_check);
-                                queue_take_lock = TAKE_FROM_QUEUE_MUTEX.lock();
-                            }
-                        })
-                        .unwrap(),
-                );
-            }
+            GlobalFlush::init(flush_queue_size, threads_count);
         }
     }
 
@@ -207,298 +59,161 @@ impl MemoryFile {
         }
     }
 
-    pub fn schedule_disk_write(
-        file: Arc<(PathBuf, Mutex<File>)>,
-        buffer: AllocatedChunk,
-        flush_mode: FlushMode,
-    ) {
-        let flushable_buffer =
-            FlushableBuffer::from_existing_memory_ready_to_flush(file, buffer, flush_mode);
-        unsafe {
-            GLOBAL_FLUSH_QUEUE.as_mut().unwrap().send(flushable_buffer);
-        }
-    }
-
-    pub fn flush_to_disk() {
-        while !unsafe { GLOBAL_FLUSH_QUEUE.as_mut().unwrap().is_empty() } {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        // Ensure that no writers are still writing!
-        WRITING_CHECK.write();
+    pub fn flush_all_to_disk() {
+        GlobalFlush::flush_to_disk();
     }
 
     pub fn terminate() {
-        unsafe {
-            Self::flush_to_disk();
-            GLOBAL_FLUSH_QUEUE.take();
-            for thread in FLUSH_THREADS.iter_mut() {
-                if let Some(thread) = thread.take() {
-                    thread.join().unwrap();
-                }
-            }
-        };
+        GlobalFlush::terminate();
     }
 
-    pub fn has_only_one_chunk(&self) -> bool {
-        match unsafe { &mut *(self.data.get()) } {
-            InternalMemoryMode::Chunks { memory, .. } => memory.read().len() == 1,
-            InternalMemoryMode::ChunksFileBuffer { .. } => false,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        match unsafe { &mut *(self.data.get()) } {
-            InternalMemoryMode::Chunks { memory, .. } => {
-                memory.read().iter().map(|x| x.len()).sum::<usize>()
-            }
-            InternalMemoryMode::ChunksFileBuffer { .. } => panic!("Unsupported!"),
-        }
-    }
-
-    #[inline(always)]
-    pub fn get_chunks(&self) -> impl Iterator<Item = &[u8]> {
-        unsafe { self.get_chunks_mut().map(|c| &*c) }
-    }
-
-    pub unsafe fn get_typed_chunks_mut<T: 'static>(&self) -> impl Iterator<Item = &mut [T]> {
-        self.get_chunks_mut().map(|c| {
-            let elcnt = c.len() / size_of::<T>();
-            assert_eq!(c.len() % size_of::<T>(), 0);
-            from_raw_parts_mut(c.as_mut_ptr() as *mut T, elcnt)
-        })
-    }
-
-    pub unsafe fn get_chunks_mut(&self) -> impl Iterator<Item = &mut [u8]> {
-        CMCIterator {
-            iter: match unsafe { &mut *(self.data.get()) } {
-                InternalMemoryMode::Chunks { memory } => {
-                    let lock = memory.read();
-
-                    // Safe
-                    let data: &Vec<AllocatedChunk> = std::mem::transmute(lock.deref());
-
-                    let iterator = RwLockIterator {
-                        lock,
-                        iterator: data.iter(),
-                    };
-
-                    iterator.map(|c| unsafe { c.get_mut_slice() })
-                }
-                InternalMemoryMode::ChunksFileBuffer { .. } => {
-                    panic!("Read not supported for file buffer!");
-                }
-            },
-        }
-    }
-
-    fn get_map() -> MutexGuard<'static, HashMap<PathBuf, Arc<MemoryFile>>> {
-        unsafe { MEMORY_MAPPED_FILES.as_mut().unwrap().lock() }
-    }
-
-    fn internal_mode_from_underlying_file(file: Arc<(PathBuf, Mutex<File>)>) -> InternalMemoryMode {
-        InternalMemoryMode::ChunksFileBuffer {
-            current_buffer: RwLock::new(
-                BUFFER_MANAGER.request_buffer(file.clone(), FlushMode::Append),
-            ),
-            file,
-        }
-    }
-
-    pub fn new(path: impl AsRef<Path>, mode: MemoryMode) -> Self {
-        Self {
-            path: PathBuf::from(path.as_ref()),
-            data: UnsafeCell::new(match mode {
-                MemoryMode::Chunks => InternalMemoryMode::Chunks {
-                    memory: RwLock::new(vec![]),
-                },
-                MemoryMode::ChunksFileBuffer => {
-                    let underlying_file = Arc::new((
-                        path.as_ref().into(),
-                        Mutex::new(
-                            OpenOptions::new()
-                                .create(true)
-                                .write(true)
-                                .truncate(true)
-                                // .custom_flags(O_DIRECT)
-                                .open(path)
-                                .unwrap(),
-                        ),
-                    ));
-                    Self::internal_mode_from_underlying_file(underlying_file)
-                }
-            }),
-        }
-    }
-
-    pub fn get_path(&self) -> &Path {
-        self.path.as_ref()
-    }
-
-    pub fn create_writer(path: impl AsRef<Path>, mode: MemoryMode) -> MemoryFileWriter {
-        let mem_file = Self::create(path, mode);
-        MemoryFileWriter { file: mem_file }
-    }
-
-    pub fn create_from_joined_files(files: Vec<Arc<MemoryFile>>) -> Arc<MemoryFile> {
-        let new_file = MemoryFile::new("", MemoryMode::Chunks);
-        for file in files.into_iter() {
-            // Guaranteed
-            if let InternalMemoryMode::Chunks { memory } = unsafe { &mut *(file.data.get()) } {
-                memory.write();
-            }
-        }
-
-        Arc::new(new_file)
-    }
-
-    pub fn create_from_owned_memory(
-        path: impl AsRef<Path>,
-        owned_memory: Vec<AllocatedChunk>,
-    ) -> Arc<MemoryFile> {
-        let mem_file = Arc::new(MemoryFile::new(path.as_ref(), MemoryMode::Chunks));
-
-        // Guaranteed
-        if let InternalMemoryMode::Chunks { memory } = unsafe { &mut *(mem_file.data.get()) } {
-            let mut data = memory.write();
-            data.clear();
-            data.reserve(owned_memory.len());
-            for el in owned_memory {
-                data.push(el);
-            }
-        }
-
-        let mut map = Self::get_map();
-        map.insert(path.as_ref().to_path_buf(), mem_file.clone());
-
-        mem_file
-    }
-
-    pub fn create_buffer_from_existing(file: Arc<(PathBuf, Mutex<File>)>) -> Arc<MemoryFile> {
-        Arc::new(MemoryFile {
-            path: PathBuf::from(""),
-            data: UnsafeCell::new(Self::internal_mode_from_underlying_file(file)),
-        })
-    }
-
-    pub fn create(path: impl AsRef<Path>, mode: MemoryMode) -> Arc<MemoryFile> {
-        let mut map = Self::get_map();
-        let mem_file = Arc::new(MemoryFile::new(path.as_ref(), mode));
-        match mode {
-            MemoryMode::Chunks => {
-                map.insert(path.as_ref().to_path_buf(), mem_file.clone());
-            }
-            MemoryMode::ChunksFileBuffer { .. } => {}
-        }
-        mem_file
-    }
-
-    pub fn open(path: impl AsRef<Path>) -> Option<Arc<MemoryFile>> {
-        let map = Self::get_map();
-        map.get(&PathBuf::from(path.as_ref())).map(|x| x.clone())
-    }
-
-    pub fn get_and_remove(path: impl AsRef<Path>) -> Option<Arc<MemoryFile>> {
-        let mut map = Self::get_map();
-        map.remove(&PathBuf::from(path.as_ref()))
-    }
-
-    pub fn flush_async(&self) {
-        match unsafe { &mut *(self.data.get()) } {
-            InternalMemoryMode::ChunksFileBuffer {
-                current_buffer,
-                file,
-                ..
-            } => {
-                let mut current_buffer = current_buffer.write();
-                if current_buffer.get_buffer().len() > 0 {
-                    self.flush_buffer_and_replace(
-                        &mut current_buffer,
-                        file.clone(),
-                        FlushMode::Append,
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-
-    pub fn extend_with_full_allocated_chunk(&self, chunk: AllocatedChunk) {
-        match unsafe { &mut *(self.data.get()) } {
-            InternalMemoryMode::Chunks { memory } => {
-                let mut write_memory_guard = memory.write();
-                write_memory_guard.push(chunk);
-            }
-            InternalMemoryMode::ChunksFileBuffer { .. } => {
-                self.write_all(chunk.get());
-            }
-        }
-    }
-
-    pub fn write_all(&self, buf: &[u8]) {
-        match unsafe { &mut *(self.data.get()) } {
-            InternalMemoryMode::Chunks { memory } => {
-                let mut memory_guard = memory.read();
-                loop {
-                    if let Some(chunk) = memory_guard.last() {
-                        if chunk.write_bytes_noextend(buf) {
-                            return;
-                        }
-                    }
-                    // Extension needed
-                    drop(memory_guard);
-                    let mut write_memory_guard = memory.write();
-
-                    if let Some(last_chunk) = write_memory_guard.last() {
-                        if last_chunk.has_space_for(buf.len()) {
-                            memory_guard = RwLockWriteGuard::downgrade(write_memory_guard);
-                            continue;
-                        }
-                    }
-
-                    write_memory_guard.push(CHUNKS_ALLOCATOR.request_chunk(chunk_usage!(
-                        InMemoryFile {
-                            path: String::from(self.path.to_str().unwrap())
-                        }
-                    )));
-                    memory_guard = RwLockWriteGuard::downgrade(write_memory_guard);
-                }
-            }
-            InternalMemoryMode::ChunksFileBuffer {
-                current_buffer,
-                file,
-            } => {
-                let mut current_buffer_read_lock = current_buffer.read();
-
-                loop {
-                    if current_buffer_read_lock.write_bytes_noextend(buf) {
-                        return;
-                    }
-                    drop(current_buffer_read_lock);
-                    let mut current_buffer_write_lock = current_buffer.write();
-
-                    if current_buffer_write_lock.has_space_for(buf.len()) {
-                        drop(current_buffer_write_lock);
-                        current_buffer_read_lock = current_buffer.read();
-                        continue;
-                    }
-
-                    unsafe {
-                        self.flush_buffer_and_replace(
-                            current_buffer_write_lock.deref_mut(),
-                            file.clone(),
-                            FlushMode::Append,
-                        )
-                    }
-                    current_buffer_read_lock =
-                        RwLockWriteGuard::downgrade(current_buffer_write_lock);
+    pub fn reduce_pressure() -> bool {
+        let (current, max_size) = GlobalFlush::global_queue_occupation();
+        if current * 3 < max_size {
+            while let Some(file) = SWAPPABLE_FILES.pop() {
+                file.change_to_disk_only();
+                if file.flush_chunks(usize::MAX) > 0 {
+                    return true;
                 }
             }
         }
+
+        return !GlobalFlush::is_queue_empty();
     }
+
+    // pub fn create_from_joined_files(
+    //     files: Vec<Arc<MemoryFileInternal>>,
+    // ) -> Arc<MemoryFileInternal> {
+    //     let new_file = MemoryFileInternal::new("", MemoryMode::Chunks);
+    //     for file in files.into_iter() {
+    //         // Guaranteed
+    //         if let InternalMemoryMode::Chunks { memory } = unsafe { &mut *(file.data.get()) } {
+    //             memory.write();
+    //         }
+    //     }
+    //
+    //     Arc::new(new_file)
+    // }
+    //
+    // pub fn create_from_owned_memory(
+    //     path: impl AsRef<Path>,
+    //     owned_memory: Vec<AllocatedChunk>,
+    // ) -> Arc<MemoryFileInternal> {
+    //     let mem_file = Arc::new(MemoryFileInternal::new(path.as_ref(), MemoryMode::Chunks));
+    //
+    //     // Guaranteed
+    //     if let InternalMemoryMode::Chunks { memory } = unsafe { &mut *(mem_file.data.get()) } {
+    //         let mut data = memory.write();
+    //         data.clear();
+    //         data.reserve(owned_memory.len());
+    //         for el in owned_memory {
+    //             data.push(el);
+    //         }
+    //     }
+    //
+    //     let mut map = Self::get_map();
+    //     map.insert(path.as_ref().to_path_buf(), mem_file.clone());
+    //
+    //     mem_file
+    // }
+    //
+    // pub fn open(path: impl AsRef<Path>) -> Option<Arc<MemoryFileInternal>> {
+    //     let map = Self::get_map();
+    //     map.get(&PathBuf::from(path.as_ref())).map(|x| x.clone())
+    // }
+    //
+    // pub fn get_and_remove(path: impl AsRef<Path>) -> Option<Arc<MemoryFileInternal>> {
+    //     let mut map = Self::get_map();
+    //     map.remove(&PathBuf::from(path.as_ref()))
+    // }
+    //
+    // pub fn flush_async(&self) {
+    //     match unsafe { &mut *(self.data.get()) } {
+    //         InternalMemoryMode::ChunksFileBuffer {
+    //             current_buffer,
+    //             file,
+    //             ..
+    //         } => {
+    //             let mut current_buffer = current_buffer.write();
+    //             if current_buffer.get_buffer().len() > 0 {
+    //                 self.flush_buffer_and_replace(
+    //                     &mut current_buffer,
+    //                     file.clone(),
+    //                     FlushMode::Append,
+    //                 );
+    //             }
+    //         }
+    //         _ => {}
+    //     }
+    // }
+    //
+    // pub fn extend_with_full_allocated_chunk(&self, chunk: AllocatedChunk) {
+    //     match unsafe { &mut *(self.data.get()) } {
+    //         InternalMemoryMode::Chunks { memory } => {
+    //             let mut write_memory_guard = memory.write();
+    //             write_memory_guard.push(chunk);
+    //         }
+    //         InternalMemoryMode::ChunksFileBuffer { .. } => {
+    //             self.write_all(chunk.get());
+    //         }
+    //     }
+    // }
+    //
+    // }
 }
 
-impl Drop for MemoryFile {
-    fn drop(&mut self) {
-        self.flush_async();
+#[cfg(test)]
+mod tests {
+    use crate::memory_fs::file::flush::GlobalFlush;
+    use crate::memory_fs::file::internal::MemoryFileMode;
+    use crate::memory_fs::file::reader::FileReader;
+    use crate::memory_fs::file::writer::FileWriter;
+    use crate::memory_fs::MemoryFs;
+    use measurements::Data;
+    use rayon::prelude::*;
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    #[test]
+    pub fn memory_fs_test() {
+        MemoryFs::init(Data::from_mebioctets(100.0 * 1024.0), 1024, 3);
+        let mut data = (0..3337).map(|x| (x % 256) as u8).collect::<Vec<u8>>();
+
+        (0..400).into_par_iter().for_each(|i| {
+            println!("Writing file {}", i);
+            let mut file = FileWriter::create(
+                format!("/home/andrea/genome-assembly/test1234/{}.tmp", i),
+                MemoryFileMode::PreferMemory,
+            );
+            for _ in 0..(1024 * 64) {
+                file.write(data.as_slice());
+            }
+            drop(file);
+            let mut file2 =
+                FileReader::open(format!("/home/andrea/genome-assembly/test1234/{}.tmp", i))
+                    .unwrap();
+
+            file2.seek(SeekFrom::Start(17 + 3337 * 12374));
+            let mut buffer = [0; 4];
+            file2.read_exact(&mut buffer).unwrap();
+            assert_eq!(&buffer, &data[17..21]);
+        });
+
+        GlobalFlush::flush_to_disk();
+
+        (0..400).into_par_iter().for_each(|i| {
+            println!("Reading file {}", i);
+            let mut datar = vec![0; 3337];
+            let mut file =
+                FileReader::open(format!("/home/andrea/genome-assembly/test1234/{}.tmp", i))
+                    .unwrap();
+            for _ in 0..(1024 * 64) {
+                file.read_exact(datar.as_mut_slice()).unwrap();
+                assert_eq!(datar, data);
+            }
+            assert_eq!(file.read(datar.as_mut_slice()).unwrap(), 0);
+            println!("Read file {}", i);
+        });
+
+        MemoryFs::terminate();
     }
 }

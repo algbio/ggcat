@@ -32,7 +32,8 @@ const OCTET_TEBIOCTET_FACTOR: f64 = 1024.0 * 1024.0 * 1024.0 * 1024.0;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Copy, Clone, Debug)]
 pub struct Data {
-    octets: f64,
+    /// Number of octets
+    pub octets: f64,
 }
 
 impl Data {

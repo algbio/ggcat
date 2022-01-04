@@ -1,24 +1,25 @@
-use crate::memory_fs::{MemoryFile, MemoryMode};
 use crate::multi_thread_buckets::BucketType;
 use crate::stats_logger::{StatMode, StatRaiiCounter, DEFAULT_STATS_LOGGER};
 use crate::Utils;
 
 use rand::{thread_rng, RngCore};
 
+use crate::memory_fs::file::internal::MemoryFileMode;
+use crate::memory_fs::file::writer::FileWriter;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct LockFreeBinaryWriter {
-    writer: Arc<MemoryFile>,
+    writer: FileWriter,
 }
 unsafe impl Send for LockFreeBinaryWriter {}
 
 impl BucketType for LockFreeBinaryWriter {
-    type InitType = (PathBuf, MemoryMode);
+    type InitType = (PathBuf, MemoryFileMode);
     const SUPPORTS_LOCK_FREE: bool = true;
 
-    fn new((name, mut mode): &(PathBuf, MemoryMode), index: usize) -> Self {
+    fn new((name, mut mode): &(PathBuf, MemoryFileMode), index: usize) -> Self {
         let path = name.parent().unwrap().join(format!(
             "{}.{}",
             name.file_name().unwrap().to_str().unwrap(),
@@ -35,7 +36,7 @@ impl BucketType for LockFreeBinaryWriter {
         // }
 
         Self {
-            writer: MemoryFile::create(path, mode),
+            writer: FileWriter::create(path, mode),
         }
     }
 
@@ -45,12 +46,12 @@ impl BucketType for LockFreeBinaryWriter {
 
     fn write_data_lock_free(&self, bytes: &[u8]) {
         let stat_raii = StatRaiiCounter::create("THREADS_BUSY_WRITING");
-        self.writer.write_all(bytes);
+        self.writer.write_all_parallel(bytes, 1);
         drop(stat_raii);
     }
 
     fn get_path(&self) -> PathBuf {
-        self.writer.get_path().into()
+        self.writer.get_path()
     }
 
     fn finalize(self) {

@@ -1,4 +1,5 @@
 use crate::utils::flexible_pool::{FlexiblePool, PoolableObject};
+use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 use parallel_processor::multi_thread_buckets::BucketType;
 use parking_lot::{RawRwLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::cell::UnsafeCell;
@@ -11,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 struct AsyncVecInner<T> {
-    buffer: UnsafeCell<Vec<MaybeUninit<T>>>,
+    buffer: UnsafeCell<TrackedVec<MaybeUninit<T>>>,
     writing_length: AtomicUsize,
 }
 
@@ -74,9 +75,10 @@ impl<T> AsyncVec<T> {
         Self {
             inner: RwLock::new(AsyncVecInner {
                 buffer: UnsafeCell::new({
-                    let mut vec = Vec::with_capacity(max(32, capacity));
+                    let mut vec = TrackedVec::with_capacity(max(32, capacity));
                     unsafe {
-                        vec.set_len(vec.capacity());
+                        let capacity = vec.capacity();
+                        vec.set_len(capacity);
                     }
                     vec
                 }),
@@ -126,7 +128,8 @@ impl<T> AsyncVec<T> {
 
             buffer.reserve(max(cap, position + len) - cap);
             unsafe {
-                buffer.set_len(buffer.capacity());
+                let capacity = buffer.capacity();
+                buffer.set_len(capacity);
             }
 
             RwLockWriteGuard::downgrade(wbuf)
@@ -142,6 +145,8 @@ impl<T> AsyncVec<T> {
                 (buffer.as_mut_ptr() as *mut T).add(position),
                 value.len(),
             );
+            #[cfg(feature = "mem-analysis")]
+            buffer.update_maximum_usage(position + value.len());
         }
     }
 

@@ -1,4 +1,4 @@
-use crate::memory_fs::MemoryFile;
+use crate::memory_fs::file::reader::FileReader;
 use crate::multi_thread_buckets::BucketWriter;
 use rand::{thread_rng, RngCore};
 use rayon::prelude::*;
@@ -58,28 +58,28 @@ pub struct SortingData<'a, T> {
 const RADIX_SIZE_LOG: u8 = 8;
 const RADIX_SIZE: usize = 1 << 8;
 
-pub fn striped_parallel_smart_radix_sort_memfile<
-    T: Ord + Send + Sync + Debug + 'static,
-    F: SortKey<T>,
->(
-    mem_file: Arc<MemoryFile>,
-    dest_buffer: &mut Vec<T>,
-) -> usize {
-    let chunks: Vec<_> = unsafe { mem_file.get_typed_chunks_mut::<T>().collect() };
-    let tot_entries = chunks.iter().map(|x| x.len()).sum();
-
-    dest_buffer.clear();
-    dest_buffer.reserve(tot_entries);
-    unsafe { dest_buffer.set_len(tot_entries) };
-
-    striped_parallel_smart_radix_sort::<T, F>(chunks.as_slice(), dest_buffer.as_mut_slice());
-
-    assert_eq!(dest_buffer.len(), chunks.iter().map(|x| x.len()).sum());
-    assert_eq!(dest_buffer.len(), mem_file.len() / size_of::<T>());
-
-    drop(mem_file);
-    tot_entries
-}
+// pub fn striped_parallel_smart_radix_sort_memfile<
+//     T: Ord + Send + Sync + Debug + 'static,
+//     F: SortKey<T>,
+// >(
+//     mem_file: FileReader,
+//     dest_buffer: &mut Vec<T>,
+// ) -> usize {
+//     let chunks: Vec<_> = unsafe { mem_file.get_typed_chunks_mut::<T>().collect() };
+//     let tot_entries = chunks.iter().map(|x| x.len()).sum();
+//
+//     dest_buffer.clear();
+//     dest_buffer.reserve(tot_entries);
+//     unsafe { dest_buffer.set_len(tot_entries) };
+//
+//     striped_parallel_smart_radix_sort::<T, F>(chunks.as_slice(), dest_buffer.as_mut_slice());
+//
+//     assert_eq!(dest_buffer.len(), chunks.iter().map(|x| x.len()).sum());
+//     assert_eq!(dest_buffer.len(), mem_file.len() / size_of::<T>());
+//
+//     drop(mem_file);
+//     tot_entries
+// }
 
 pub fn striped_parallel_smart_radix_sort<T: Ord + Send + Sync + Debug, F: SortKey<T>>(
     striped_file: &[&mut [T]],
@@ -383,7 +383,7 @@ fn smart_radix_sort_<
 }
 
 mod tests {
-    use crate::fast_smart_bucket_sort::SortKey;
+    use crate::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
     use rand::{thread_rng, Rng, RngCore};
     use rayon::prelude::*;
     use std::cmp::Ordering;

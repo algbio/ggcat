@@ -2,6 +2,8 @@
 #![feature(is_sorted, specialization)]
 #![feature(const_fn_trait_bound)]
 #![feature(associated_type_defaults)]
+#![feature(new_uninit)]
+#![feature(drain_filter)]
 
 #[macro_use]
 pub mod stats_logger;
@@ -11,20 +13,12 @@ pub mod memory_fs;
 pub mod binary_writer;
 pub mod fast_smart_bucket_sort;
 pub mod lock_free_binary_writer;
+pub mod mem_tracker;
 pub mod memory_data_size;
 pub mod multi_thread_buckets;
 pub mod phase_times_monitor;
-pub mod semaphore;
 pub mod threadpools_chain;
 pub mod types;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
 
 pub struct Utils {}
 

@@ -44,6 +44,9 @@ use crossbeam::queue::*;
 use hashbrown::HashMap;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
+#[cfg(feature = "mem-analysis")]
+use parallel_processor::mem_tracker::MemoryInfo;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::multi_thread_buckets::{
     BucketType, BucketsThreadDispatcher, MultiThreadBuckets,
@@ -149,6 +152,12 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     const FLAGS_COUNT: usize = 2;
 
     fn new<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a> {
+        #[cfg(feature = "mem-analysis")]
+        let info = parallel_processor::mem_tracker::create_hashmap_entry(
+            std::panic::Location::caller(),
+            "HashMap",
+        );
+
         Self::ExecutorType::<'a> {
             results_buckets_counter: MERGE_BUCKETS_COUNT,
             current_bucket: global_data.output_results_buckets.pop().unwrap(),
@@ -160,8 +169,10 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             backward_seq: Vec::with_capacity(global_data.k),
             temp_colors: CX::ColorsMergeManagerType::<MH>::allocate_temp_buffer_structure(),
             unitigs_temp_colors: CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure(),
-            rcorrect_reads: vec![],
+            rcorrect_reads: TrackedVec::new(),
             rhash_map: HashMap::with_capacity(4096),
+            #[cfg(feature = "mem-analysis")]
+            hmap_meminfo: info,
             _phantom: PhantomData,
         }
     }
@@ -179,13 +190,15 @@ struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, C
     unitigs_temp_colors:
         <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::TempUnitigColorStructure,
 
-    rcorrect_reads: Vec<(MH::HashTypeExtendable, *const u8, u8, bool, bool)>,
+    rcorrect_reads: TrackedVec<(MH::HashTypeExtendable, *const u8, u8, bool, bool)>,
     rhash_map: HashMap<
         MH::HashTypeUnextendable,
         MapEntry<
             <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::HashMapTempColorIndex,
         >,
     >,
+    #[cfg(feature = "mem-analysis")]
+    hmap_meminfo: Arc<MemoryInfo>,
     _phantom: PhantomData<H>,
 }
 
@@ -320,6 +333,12 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                             begin_ignored,
                             end_ignored,
                         ));
+
+                        #[cfg(feature = "mem-analysis")]
+                        {
+                            let len = self.rcorrect_reads.len();
+                            self.rcorrect_reads.update_maximum_usage(len);
+                        }
                     }
                 }
                 assert!(did_max);
@@ -547,6 +566,14 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                         .add_element(bw_bucket_index, &(), bw_hash_sr);
                 }
             }
+
+            #[cfg(feature = "mem-analysis")]
+            self.hmap_meminfo.bytes.store(self.rhash_map.capacity() * (
+                std::mem::size_of::<MH::HashTypeUnextendable>() +
+                std::mem::size_of::<MapEntry<
+                    <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::HashMapTempColorIndex,
+                >>() + 8
+                ), Ordering::Relaxed)
         }
     }
 

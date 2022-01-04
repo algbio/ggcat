@@ -1,10 +1,8 @@
 use crate::memory_data_size::MemoryDataSize;
-use crate::memory_fs::{MemoryFile, FILES_FLUSH_HASH_MAP};
-use parking_lot::lock_api::Mutex;
+use crate::memory_fs::{MemoryFs, FILES_FLUSH_HASH_MAP};
 use parking_lot::RawMutex;
-use rayon::iter::{
-    IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelBridge, ParallelIterator,
-};
+use parking_lot::{Condvar, Mutex};
+use rayon::prelude::*;
 use std::alloc::{alloc, dealloc, Layout};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -13,7 +11,8 @@ use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-pub const ALLOCATED_CHUNK_USABLE_SIZE: usize = 1024 * 1024 * 4; // 4MB chunk buffer size
+const ALLOCATED_CHUNK_USABLE_SIZE_LOG: usize = 22; // 4MB chunk buffer size
+const ALLOCATED_CHUNK_USABLE_SIZE: usize = (1 << ALLOCATED_CHUNK_USABLE_SIZE_LOG);
 const ALLOCATED_CHUNK_PADDED_SIZE: usize = ALLOCATED_CHUNK_USABLE_SIZE
     + if cfg!(feature = "memory-guards") {
         4096
@@ -57,6 +56,8 @@ pub enum ChunkUsage_ {
 pub struct AllocatedChunk {
     memory: usize,
     len: AtomicUsize,
+    max_len_log2: usize,
+    dealloc_fn: fn(usize, usize),
     #[cfg(feature = "track-usage")]
     usage: ChunkUsage_,
 }
@@ -73,10 +74,19 @@ impl Clone for AllocatedChunk {
 }
 
 impl AllocatedChunk {
+    pub const INVALID: Self = Self {
+        memory: 0,
+        len: AtomicUsize::new(0),
+        max_len_log2: 0,
+        dealloc_fn: |_, _| {},
+        #[cfg(feature = "track-usage")]
+        usage: ChunkUsage_::TemporarySpace,
+    };
+
     #[inline(always)]
     fn zero_memory(&mut self) {
         unsafe {
-            std::ptr::write_bytes(self.memory as *mut u8, 0, ALLOCATED_CHUNK_USABLE_SIZE);
+            std::ptr::write_bytes(self.memory as *mut u8, 0, (1 << self.max_len_log2));
         }
     }
 
@@ -109,7 +119,7 @@ impl AllocatedChunk {
         let result = self
             .len
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-                if value + data.len() <= ALLOCATED_CHUNK_USABLE_SIZE {
+                if value + data.len() <= (1 << self.max_len_log2) {
                     Some(value + data.len())
                 } else {
                     None
@@ -133,7 +143,7 @@ impl AllocatedChunk {
 
     #[inline(always)]
     pub fn has_space_for(&self, len: usize) -> bool {
-        self.len.load(Ordering::Relaxed) + len <= ALLOCATED_CHUNK_USABLE_SIZE
+        self.len.load(Ordering::Relaxed) + len <= (1 << self.max_len_log2)
     }
 
     #[inline(always)]
@@ -157,8 +167,13 @@ impl AllocatedChunk {
     }
 
     #[inline(always)]
+    pub fn max_len(&self) -> usize {
+        1 << self.max_len_log2
+    }
+
+    #[inline(always)]
     pub fn remaining_bytes(&self) -> usize {
-        ALLOCATED_CHUNK_USABLE_SIZE - self.len.load(Ordering::Relaxed)
+        (1 << self.max_len_log2) - self.len.load(Ordering::Relaxed)
     }
 
     #[inline(always)]
@@ -179,35 +194,27 @@ impl AllocatedChunk {
 
 impl Drop for AllocatedChunk {
     fn drop(&mut self) {
-        CHUNKS_ALLOCATOR.chunks.lock().push(self.memory);
-
-        #[cfg(feature = "track-usage")]
-        {
-            USAGE_MAP
-                .lock()
-                .as_mut()
-                .unwrap()
-                .entry(self.usage.clone())
-                .and_modify(|x| *x -= 1);
-        }
+        (self.dealloc_fn)(self.memory, self.max_len_log2);
     }
 }
 
 pub struct ChunksAllocator {
     big_buffer_start_addr: AtomicUsize,
-    chunks: Mutex<RawMutex, Vec<usize>>,
+    chunks_wait_condvar: Condvar,
+    chunks: Mutex<Vec<usize>>,
     chunks_total_count: AtomicUsize,
 }
 unsafe impl Sync for ChunksAllocator {}
 unsafe impl Send for ChunksAllocator {}
 
 #[cfg(feature = "track-usage")]
-static USAGE_MAP: Mutex<RawMutex, Option<HashMap<ChunkUsage_, usize>>> = Mutex::new(None);
+static USAGE_MAP: Mutex<Option<HashMap<ChunkUsage_, usize>>> = Mutex::new(None);
 
 impl ChunksAllocator {
     const fn new() -> ChunksAllocator {
         ChunksAllocator {
             big_buffer_start_addr: AtomicUsize::new(0),
+            chunks_wait_condvar: Condvar::new(),
             chunks: Mutex::new(Vec::new()),
             chunks_total_count: AtomicUsize::new(0),
         }
@@ -257,7 +264,7 @@ impl ChunksAllocator {
     }
 
     pub fn giveback_memory(&self) {
-        MemoryFile::flush_to_disk();
+        MemoryFs::flush_all_to_disk();
 
         loop {
             {
@@ -284,42 +291,68 @@ impl ChunksAllocator {
         #[cfg(feature = "track-usage")] usage: ChunkUsage_,
         #[cfg(not(feature = "track-usage"))] _: (),
     ) -> AllocatedChunk {
-        match self.chunks.lock().pop().map(|chunk| AllocatedChunk {
-            memory: chunk,
-            len: AtomicUsize::new(0),
-            #[cfg(feature = "track-usage")]
-            usage: usage.clone(),
-        }) {
-            None => {
-                #[cfg(feature = "track-usage")]
-                {
-                    panic!(
-                        "Usages: {:?}",
-                        USAGE_MAP
-                            .lock()
-                            .as_ref()
-                            .unwrap()
-                            .iter()
-                            .filter(|x| *x.1 != 0)
-                            .map(|x| format!("{:?}", x))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    )
-                }
-                panic!("Out of memory!");
-            }
-            Some(chunk) => {
-                #[cfg(feature = "track-usage")]
-                {
-                    *USAGE_MAP
-                        .lock()
-                        .as_mut()
-                        .unwrap()
-                        .entry(usage.clone())
-                        .or_insert(0) += 1;
-                }
+        let mut tries_count = 0;
+        let mut chunks_lock = self.chunks.lock();
 
-                chunk
+        loop {
+            let el = chunks_lock.pop();
+            drop(chunks_lock);
+
+            match el.map(|chunk| AllocatedChunk {
+                memory: chunk,
+                len: AtomicUsize::new(0),
+                max_len_log2: ALLOCATED_CHUNK_USABLE_SIZE_LOG,
+                #[cfg(feature = "track-usage")]
+                usage: usage.clone(),
+                dealloc_fn: |ptr, size_log2| {
+                    CHUNKS_ALLOCATOR.chunks.lock().push(ptr);
+                    CHUNKS_ALLOCATOR.chunks_wait_condvar.notify_one();
+                },
+            }) {
+                None => {
+                    if MemoryFs::reduce_pressure() {
+                        chunks_lock = self.chunks.lock();
+                        if chunks_lock.len() == 0 {
+                            self.chunks_wait_condvar.wait(&mut chunks_lock);
+                        }
+                    } else {
+                        tries_count += 1;
+                        std::thread::sleep(Duration::from_millis(50));
+                        chunks_lock = self.chunks.lock();
+                    }
+
+                    if tries_count > 20 {
+                        #[cfg(feature = "track-usage")]
+                        {
+                            panic!(
+                                "Usages: {:?}",
+                                USAGE_MAP
+                                    .lock()
+                                    .as_ref()
+                                    .unwrap()
+                                    .iter()
+                                    .filter(|x| *x.1 != 0)
+                                    .map(|x| format!("{:?}", x))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            )
+                        }
+                        panic!("Out of memory!");
+                    }
+                }
+                Some(chunk) => {
+                    #[cfg(feature = "track-usage")]
+                    {
+                        *USAGE_MAP
+                            .lock()
+                            .as_mut()
+                            .unwrap()
+                            .entry(usage.clone())
+                            .or_insert(0) += 1;
+                    }
+
+                    return chunk;
+                }
             }
         }
     }
@@ -384,6 +417,7 @@ fn allocate_memory() {
         let mut allocated_chunks: Vec<_> = std::iter::from_fn(move || {
             Some(CHUNKS_ALLOCATOR.request_chunk(chunk_usage!(TemporarySpace)))
         })
+        .take(1024 * 2)
         .collect();
 
         allocated_chunks.par_iter_mut().for_each(|x| {

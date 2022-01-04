@@ -22,7 +22,7 @@ use std::slice::from_raw_parts;
 
 pub fn process_subbucket<'a, F: KmersTransformExecutorFactory>(
     global_data: &F::GlobalExtraData<'a>,
-    cmp_read: AsyncVec<ReadRef>,
+    cmp_read: &mut AsyncVec<ReadRef>,
     executor: &mut F::ExecutorType<'a>,
 ) {
     let cmp_read_slice = cmp_read.as_slice_mut();

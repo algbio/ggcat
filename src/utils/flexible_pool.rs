@@ -57,6 +57,7 @@ impl<T: PoolableObject> FlexiblePool<T> {
         }
     }
 
+    #[cfg_attr(feature = "mem-analysis", track_caller)]
     pub fn take_object(&self) -> FlexiblePoolReference<T> {
         FlexiblePoolReference {
             pool: self.clone(),
@@ -72,6 +73,7 @@ impl<T: PoolableObject> FlexiblePool<T> {
         self.objects.0.push(el);
     }
 
+    #[cfg_attr(feature = "mem-analysis", track_caller)]
     pub fn take_object_owned(&self) -> T {
         match self.objects.0.pop() {
             None => T::allocate(self.objects.1),

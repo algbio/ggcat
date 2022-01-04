@@ -44,7 +44,7 @@ mod rolling;
 
 use backtrace::Backtrace;
 
-pub const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 512;
+pub const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 4;
 
 fn outputs_arg_group() -> ArgGroup<'static> {
     // As the attributes of the struct are executed before the struct
@@ -111,6 +111,11 @@ arg_enum! {
         RabinKarp128 = 4
     }
 }
+
+use jemallocator::Jemalloc;
+
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 #[derive(StructOpt, Debug)]
 enum CliArgs {
@@ -235,6 +240,12 @@ fn initialize(args: &CommonArgs) {
 
 fn main() {
     let args: CliArgs = CliArgs::from_args();
+
+    {
+        parallel_processor::mem_tracker::init_memory_info();
+        // #[cfg(feature = "mem-analysis")]
+        parallel_processor::mem_tracker::start_info_logging();
+    }
 
     panic::set_hook(Box::new(move |info| {
         let stdout = std::io::stdout();

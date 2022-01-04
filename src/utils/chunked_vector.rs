@@ -1,4 +1,5 @@
 use crate::utils::flexible_pool::{FlexiblePool, PoolableObject};
+use parallel_processor::mem_tracker::tracked_box::TrackedBox;
 use std::io::{Error, ErrorKind, Write};
 use std::mem::MaybeUninit;
 use std::ops::DerefMut;
@@ -7,13 +8,13 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ChunkedVectorPool<T: Copy> {
-    pool: FlexiblePool<Box<[MaybeUninit<T>]>>,
+    pool: FlexiblePool<TrackedBox<[MaybeUninit<T>]>>,
 }
 
 // static ALLOCATED_COUNT: AtomicU64 = AtomicU64::new(0);
 // static ALLOCATED_SIZE: AtomicU64 = AtomicU64::new(0);
 
-impl<T> PoolableObject for Box<[MaybeUninit<T>]> {
+impl<T> PoolableObject for TrackedBox<[MaybeUninit<T>]> {
     type AllocData = usize;
 
     #[inline(always)]
@@ -25,7 +26,7 @@ impl<T> PoolableObject for Box<[MaybeUninit<T>]> {
         //     ALLOCATED_COUNT.load(Ordering::Relaxed),
         //     ALLOCATED_SIZE.load(Ordering::Relaxed)
         // );
-        unsafe { Box::new_uninit_slice(suggested_length) }
+        unsafe { TrackedBox::new_uninit_slice(suggested_length) }
     }
 
     #[inline(always)]
@@ -42,7 +43,7 @@ impl<T: Copy> ChunkedVectorPool<T> {
 
 pub struct ChunkedVector<T: Copy> {
     pool: ChunkedVectorPool<T>,
-    pub chunks: Vec<Box<[MaybeUninit<T>]>>,
+    pub chunks: Vec<TrackedBox<[MaybeUninit<T>]>>,
     current_data: *mut T,
     pub current_size_left: usize,
 }
@@ -80,7 +81,7 @@ impl<T: Copy> ChunkedVector<T> {
 
             if new_chunk.len() < size {
                 replace_with::replace_with_or_abort(&mut new_chunk, |_b| unsafe {
-                    Box::new_uninit_slice(size)
+                    TrackedBox::new_uninit_slice(size)
                 })
             }
 
@@ -97,17 +98,30 @@ impl<T: Copy> ChunkedVector<T> {
         unsafe {
             std::ptr::copy_nonoverlapping(data as *const T, self.current_data, 1);
             self.current_data = self.current_data.add(1);
+            #[cfg(feature = "mem-analysis")]
+            self.chunks
+                .last_mut()
+                .unwrap()
+                .notify_maximum_usage(self.current_data as *const _);
             self.current_size_left -= 1;
         }
     }
 
     #[inline(always)]
+    #[cfg_attr(feature = "mem-analysis", track_caller)]
     pub fn push_contiguous_slice(&mut self, data: &[T]) {
         assert!(data.len() <= self.current_size_left);
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), self.current_data, data.len());
             self.current_data = self.current_data.add(data.len());
             self.current_size_left -= data.len();
+
+            #[cfg(feature = "mem-analysis")]
+            self.chunks
+                .last_mut()
+                .unwrap()
+                .notify_maximum_usage(self.current_data as *const _);
+
             if self.current_data as usize
                 > (self
                     .chunks

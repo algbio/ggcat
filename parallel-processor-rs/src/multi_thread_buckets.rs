@@ -114,7 +114,7 @@ impl<T: Copy> BucketWriter<T> for T {
     type ExtraData = ();
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Vec<T>, extra_data: &Self::ExtraData) {
+    fn write_to(&self, bucket: &mut Vec<T>, _extra_data: &Self::ExtraData) {
         bucket.push(*self);
     }
 
