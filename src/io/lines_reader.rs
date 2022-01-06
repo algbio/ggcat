@@ -10,41 +10,48 @@ pub struct LinesReader {}
 
 impl LinesReader {
     #[inline(always)]
-    fn read_stream_buffered(mut stream: impl Read, mut callback: impl FnMut(&[u8])) {
+    fn read_stream_buffered(mut stream: impl Read, mut callback: impl FnMut(&[u8])) -> Result<(), ()> {
         let mut buffer = [0; 1024 * 512];
         while let Ok(count) = stream.read(&mut buffer) {
             if count == 0 {
                 callback(&[]);
-                break;
+                return Ok(());
             }
             callback(&buffer[0..count]);
         }
+        Err(())
     }
 
-    fn read_binary_file(file: impl AsRef<Path>, mut callback: impl FnMut(&[u8]), remove: bool) {
-        if file.as_ref().extension().filter(|x| *x == "gz").is_some() {
-            decompress_file(
-                &file,
+    fn read_binary_file(path: impl AsRef<Path>, mut callback: impl FnMut(&[u8]), remove: bool) {
+        if path.as_ref().extension().filter(|x| *x == "gz").is_some() {
+            if let Err(_err) = decompress_file(
+                &path,
                 |data| {
                     callback(data);
                 },
                 1024 * 512,
-            );
+            ) {
+                println!("WARNING: Error while reading file {}", path.as_ref().display());
+            }
             callback(&[]);
-        } else if file.as_ref().extension().filter(|x| *x == "lz4").is_some() {
+        } else if path.as_ref().extension().filter(|x| *x == "lz4").is_some() {
             let mut file = lz4::Decoder::new(
-                File::open(&file).expect(&format!("Cannot open file {}", file.as_ref().display())),
+                File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display())),
             )
             .unwrap();
-            Self::read_stream_buffered(file, callback);
+            Self::read_stream_buffered(file, callback).unwrap_or_else(|_| {
+                println!("WARNING: Error while reading file {}", path.as_ref().display());
+            });
         } else {
             let mut file =
-                File::open(&file).expect(&format!("Cannot open file {}", file.as_ref().display()));
-            Self::read_stream_buffered(file, callback);
+                File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display()));
+            Self::read_stream_buffered(file, callback).unwrap_or_else(|_| {
+                println!("WARNING: Error while reading file {}", path.as_ref().display());
+            });
         }
 
         if remove {
-            std::fs::remove_file(file);
+            std::fs::remove_file(path);
         }
     }
 

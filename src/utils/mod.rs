@@ -1,15 +1,12 @@
 pub mod async_slice_queue;
-pub mod async_vec;
-pub mod chunked_vector;
 pub mod compressed_read;
 pub mod debug_functions;
 pub mod debug_utils;
 pub mod fast_rand_bool;
-pub mod flexible_pool;
 pub mod progress;
 pub mod vec_slice;
 
-use crate::types::BucketIndexType;
+use crate::config::BucketIndexType;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::JoinHandle;

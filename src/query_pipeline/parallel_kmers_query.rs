@@ -1,9 +1,11 @@
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
+use crate::config::BucketIndexType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
 use crate::hashes::{ExtendableHashTraitType, HashableSequence};
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::varint::{decode_varint, decode_varint_flags, encode_varint};
+use crate::io::DataReader;
 use crate::pipeline_common::kmers_transform::structs::ReadRef;
 use crate::pipeline_common::kmers_transform::{
     KmersTransform, KmersTransformExecutor, KmersTransformExecutorFactory, ReadDispatchInfo,
@@ -11,7 +13,6 @@ use crate::pipeline_common::kmers_transform::{
 };
 use crate::query_pipeline::counters_sorting::CounterEntry;
 use crate::query_pipeline::QueryPipeline;
-use crate::types::BucketIndexType;
 use crate::utils::compressed_read::CompressedRead;
 use crate::DEFAULT_BUFFER_SIZE;
 use byteorder::{ReadBytesExt, WriteBytesExt};
@@ -127,7 +128,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         let minimizer = hashes
             .iter()
-            .min_by_key(|k| H::get_minimizer(k.to_unextendable()))
+            .min_by_key(|k| H::get_full_minimizer(k.to_unextendable()))
             .unwrap();
 
         let bucket = H::get_second_bucket(minimizer.to_unextendable())
@@ -135,7 +136,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         ReadDispatchInfo {
             bucket,
-            hash: H::get_u64(minimizer.to_unextendable()),
+            hash: H::get_sorting_hash(minimizer.to_unextendable()),
             flags: 0,
             extra_data: input_extra_data,
         }
@@ -151,6 +152,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         &mut self,
         global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
         reads: &[ReadRef],
+        memory: &[u8],
     ) {
         let k = global_data.k;
 
@@ -158,30 +160,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         self.query_reads.clear();
         self.query_map.clear();
 
-        for &ReadRef { mut read_start, .. } in reads {
-            let (read_len, _) = decode_varint_flags::<_>(
-                    || {
-                        let x = unsafe { *read_start };
-                        read_start = unsafe { read_start.add(1) };
-                        Some(x)
-                    },
-                    <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
-                )
-                    .unwrap();
-
-            let read_bases_start = read_start;
-            let read_len = read_len as usize;
-            let read_len_bytes = (read_len + 3) / 4;
-
-            let read_slice = unsafe { from_raw_parts(read_bases_start, read_len_bytes) };
-
-            let read = CompressedRead::new_from_compressed(read_slice, read_len);
-
-            let sequence_type = unsafe {
-                let color_slice_ptr = read_bases_start.add(read_len_bytes);
-                QueryKmersReferenceData::<CX::MinimizerBucketingSeqColorDataType>::decode_from_pointer(color_slice_ptr)
-                        .unwrap()
-            };
+        for packed_read in reads {
+            let (_, read, sequence_type) = packed_read
+                .unpack::<QueryKmersReferenceData::<CX::MinimizerBucketingSeqColorDataType>>
+                (memory, <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT);
 
             let hashes = MH::new(read, k);
 
@@ -209,7 +191,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             self.counters_tmp.add_element(
                 (query_index % 0xFF) as BucketIndexType,
                 &(),
-                CounterEntry {
+                &CounterEntry {
                     query_index,
                     counter,
                 },
@@ -231,6 +213,7 @@ impl QueryPipeline {
         MH: HashFunctionFactory,
         CX: ColorsManager,
         P: AsRef<Path> + std::marker::Sync,
+        R: DataReader,
     >(
         file_inputs: Vec<PathBuf>,
         buckets_count: usize,
@@ -261,7 +244,7 @@ impl QueryPipeline {
             counters_buckets: &counters_buckets,
         };
 
-        KmersTransform::parallel_kmers_transform::<ParallelKmersQueryFactory<H, MH, CX>>(
+        KmersTransform::parallel_kmers_transform::<ParallelKmersQueryFactory<H, MH, CX>, R>(
             file_inputs,
             buckets_count,
             threads_count,

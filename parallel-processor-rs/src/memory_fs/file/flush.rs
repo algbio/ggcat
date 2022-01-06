@@ -60,6 +60,7 @@ impl GlobalFlush {
                     if let FileChunk::OnMemory { chunk } = file_chunk.deref_mut() {
                         let _stat = StatRaiiCounter::create("FILE_DISK_WRITING_APPEND");
                         let offset = file_lock.stream_position().unwrap();
+
                         file_lock.write_all(chunk.get()).unwrap();
                         let len = chunk.len();
                         *file_chunk = FileChunk::OnDisk { offset, len };

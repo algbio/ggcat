@@ -5,6 +5,7 @@ use crate::colors::default_colors_manager::DefaultColorsManager;
 use crate::hashes::HashFunctionFactory;
 use crate::io::reads_reader::ReadsReader;
 use crate::io::reads_writer::ReadsWriter;
+use crate::io::{DataReader, DataWriter};
 use crate::utils::debug_utils::debug_print;
 use crate::utils::Utils;
 use crate::{AssemblerStartingStep, KEEP_FILES};
@@ -19,6 +20,8 @@ pub fn run_assembler<
     BucketingHash: HashFunctionFactory,
     MergingHash: HashFunctionFactory,
     AssemblerColorsManager: ColorsManager,
+    Reader: DataReader,
+    Writer: DataWriter,
     const BUCKETS_COUNT: usize,
 >(
     k: usize,
@@ -46,7 +49,7 @@ pub fn run_assembler<
     );
 
     let buckets = if step <= AssemblerStartingStep::MinimizerBucketing {
-        AssemblePipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
+        AssemblePipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager, Writer>(
             input,
             temp_dir.as_path(),
             BUCKETS_COUNT,
@@ -68,6 +71,8 @@ pub fn run_assembler<
             MergingHash,
             AssemblerColorsManager,
             _,
+            Reader,
+            Writer,
         >(
             buckets,
             &global_colors_table,
@@ -179,7 +184,7 @@ pub fn run_assembler<
     });
 
     let reorganized_reads = if step <= AssemblerStartingStep::ReorganizeReads {
-        AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
+        AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager, Reader, Writer>(
             sequences,
             reads_map,
             temp_dir.as_path(),
@@ -197,7 +202,7 @@ pub fn run_assembler<
     }
 
     if step <= AssemblerStartingStep::BuildUnitigs {
-        AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(
+        AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager, Reader>(
             reorganized_reads,
             unitigs_map,
             temp_dir.as_path(),

@@ -407,14 +407,16 @@ mod tests {
         b.iter(|| {
             ser_vec.clear();
             for test in test_vec.iter() {
-                encode_varint_flags::<_, _, 2>(
+                encode_varint_flags::<_, _>(
                     |b| ser_vec.write_all(b),
                     test.x as u64,
+                    2,
                     (test.x % 4) as u8,
                 );
-                encode_varint_flags::<_, _, 2>(
+                encode_varint_flags::<_, _>(
                     |b| ser_vec.write_all(b),
                     test.y as u64,
+                    2,
                     (test.y % 4) as u8,
                 );
             }

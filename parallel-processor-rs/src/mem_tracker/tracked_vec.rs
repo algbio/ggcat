@@ -1,3 +1,4 @@
+#[cfg(feature = "track-usage")]
 use crate::mem_tracker::{create_hashmap_entry, MemoryInfo};
 use std::cmp::max;
 use std::mem::{size_of, MaybeUninit};
@@ -9,6 +10,7 @@ use std::sync::Arc;
 // #[repr(transparent)]
 pub struct TrackedVec<T> {
     value: Vec<T>,
+    #[cfg(feature = "track-usage")]
     mem_info: Arc<MemoryInfo>,
 }
 
@@ -16,31 +18,35 @@ impl<T> TrackedVec<T> {
     #[inline(always)]
     #[track_caller]
     pub fn new() -> Self {
-        let location = Location::caller();
-        let mem_info = create_hashmap_entry(location, std::any::type_name::<T>());
-
         Self {
             value: Vec::new(),
-            mem_info,
+            #[cfg(feature = "track-usage")]
+            mem_info: {
+                let location = Location::caller();
+                create_hashmap_entry(location, std::any::type_name::<T>())
+            },
         }
     }
 
     #[inline(always)]
     #[track_caller]
     pub fn with_capacity(capacity: usize) -> Self {
-        let location = Location::caller();
-        let last_size = capacity * size_of::<T>();
-
-        let mem_info = create_hashmap_entry(location, std::any::type_name::<T>());
-        mem_info.bytes.store(last_size, Ordering::Relaxed);
-
         Self {
             value: Vec::with_capacity(capacity),
-            mem_info,
+            #[cfg(feature = "track-usage")]
+            mem_info: {
+                let location = Location::caller();
+                let last_size = capacity * size_of::<T>();
+
+                let mem_info = create_hashmap_entry(location, std::any::type_name::<T>());
+                mem_info.bytes.store(last_size, Ordering::Relaxed);
+                mem_info
+            },
         }
     }
 
     #[inline(always)]
+    #[cfg(feature = "track-usage")]
     pub fn update_maximum_usage(&mut self, resident: usize) {
         let new_last_size = self.capacity() * size_of::<T>();
         let new_resident_bytes = max(

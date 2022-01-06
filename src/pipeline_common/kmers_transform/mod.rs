@@ -4,13 +4,14 @@ pub mod structs;
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
-use crate::io::varint::encode_varint_flags;
-use crate::types::BucketIndexType;
-use crate::utils::chunked_vector::{ChunkedVector, ChunkedVectorPool};
+use crate::io::varint::{encode_varint, encode_varint_flags};
+use crate::io::DataReader;
+use crate::config::{BucketIndexType, SortingHashType};
 use crate::utils::compressed_read::CompressedRead;
-use crate::utils::flexible_pool::FlexiblePool;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use parallel_processor::memory_data_size::MemoryDataSize;
+use parallel_processor::memory_fs::file::reader::FileReader;
+use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::BucketsThreadDispatcher;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::{Mutex, RwLock};
@@ -27,7 +28,7 @@ const BUFFER_CHUNK_SIZE: usize = 1024 * 16;
 
 pub struct ReadDispatchInfo<E: SequenceExtraData> {
     pub bucket: BucketIndexType,
-    pub hash: u64,
+    pub hash: SortingHashType,
     pub flags: u8,
     pub extra_data: E,
 }
@@ -53,7 +54,12 @@ pub trait KmersTransformExecutor<'x, F: KmersTransformExecutorFactory> {
 
     fn maybe_swap_bucket(&mut self, global_data: &F::GlobalExtraData<'x>);
 
-    fn process_group(&mut self, global_data: &F::GlobalExtraData<'x>, reads: &[ReadRef]);
+    fn process_group(
+        &mut self,
+        global_data: &F::GlobalExtraData<'x>,
+        reads: &[ReadRef],
+        memory: &[u8],
+    );
 
     fn finalize(self, global_data: &F::GlobalExtraData<'x>);
 }
@@ -61,7 +67,7 @@ pub trait KmersTransformExecutor<'x, F: KmersTransformExecutorFactory> {
 pub struct KmersTransform;
 
 impl KmersTransform {
-    pub fn parallel_kmers_transform<'a, F: KmersTransformExecutorFactory>(
+    pub fn parallel_kmers_transform<'a, F: KmersTransformExecutorFactory, R: DataReader>(
         file_inputs: Vec<PathBuf>,
         buckets_count: usize,
         threads_count: usize,
@@ -74,7 +80,6 @@ impl KmersTransform {
             .into_iter()
             .for_each(|f| files_queue.push(f).unwrap());
 
-        let vecs_pool = FlexiblePool::new(8192);
         let vecs_process_queue = Arc::new(SegQueue::new());
 
         let mut last_info_log = Mutex::new(Instant::now());
@@ -86,28 +91,40 @@ impl KmersTransform {
 
             let mut last_info_log = last_info_log.lock();
             if last_info_log.elapsed() > MINIMUM_LOG_DELTA_TIME {
+                let monitor = PHASES_TIMES_MONITOR.read();
+
+                let processed_count = buckets_count - files_queue.len();
+
+                let eta = Duration::from_secs(
+                    (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
+                        * (files_queue.len() as f64)) as u64,
+                );
+
+                let est_tot = Duration::from_secs(
+                    (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
+                        * (buckets_count as f64)) as u64,
+                );
+
                 println!(
-                    "Processing bucket {} of {} {}",
-                    buckets_count - files_queue.len(),
+                    "Processing bucket {} of {} {} phase eta: {:.0?} est.tot: {:.0?}",
+                    processed_count,
                     buckets_count,
-                    PHASES_TIMES_MONITOR
-                        .read()
-                        .get_formatted_counter_without_memory()
+                    monitor.get_formatted_counter_without_memory(),
+                    eta,
+                    est_tot
                 );
                 *last_info_log = Instant::now();
             }
 
             Some(Arc::new(structs::BucketProcessData::<
                 F::InputBucketExtraData,
+                R,
             >::new(
-                file,
-                vecs_pool.clone(),
-                vecs_process_queue.clone(),
+                file, vecs_process_queue.clone()
             )))
         };
 
         let current_bucket = RwLock::new(open_bucket());
-        let chunked_pool = ChunkedVectorPool::new(BUFFER_CHUNK_SIZE);
         let reading_finished = AtomicBool::new(false);
         const MAX_HASHES_FOR_FLUSH: MemoryDataSize = MemoryDataSize::from_kibioctets(64.0);
         const MAX_TEMP_SEQUENCES_SIZE: MemoryDataSize = MemoryDataSize::from_kibioctets(64.0);
@@ -115,33 +132,36 @@ impl KmersTransform {
         crossbeam::thread::scope(|s| {
             for _ in 0..min(buckets_count, threads_count) {
                 s.spawn(|_| {
-                    let mut buckets: Vec<ChunkedVector<u8>> = vec![];
                     let mut executor = F::new(&extra_data);
+                    let mut temp_readref_vec = Vec::new();
+                    let mut temp_data_vec = Vec::new();
 
                     let mut process_pending_reads = |executor: &mut F::ExecutorType<'a>| {
-                        while let Some((mut seqs, memory_ref)) = vecs_process_queue.pop() {
+                        while let Some(queue_path) = vecs_process_queue.pop() {
+                            let mut reader = FileReader::open(&queue_path).unwrap();
+
                             executor.maybe_swap_bucket(&extra_data);
-                            process_subbucket::process_subbucket::<F>(
+
+                            process_subbucket::process_subbucket::<F, FileReader>(
                                 &extra_data,
-                                &mut seqs,
+                                &mut reader,
+                                &mut temp_readref_vec,
+                                &mut temp_data_vec,
                                 executor,
                             );
 
-                            drop(memory_ref);
-                            vecs_pool.release_object(seqs);
+                            drop(reader);
+                            MemoryFs::remove_file(queue_path);
                         }
                     };
+
+                    const HASH_SIZE: usize = std::mem::size_of::<SortingHashType>();
 
                     'outer_loop: loop {
                         if reading_finished.load(Ordering::Relaxed) {
                             process_pending_reads(&mut executor);
                             break 'outer_loop;
                         }
-
-                        buckets.clear();
-                        buckets.resize_with(MERGE_BUCKETS_COUNT, || {
-                            ChunkedVector::new(chunked_pool.clone())
-                        });
 
                         let mut bucket = match current_bucket.read().clone() {
                             None => continue,
@@ -151,54 +171,60 @@ impl KmersTransform {
                             BucketsThreadDispatcher::new(MAX_TEMP_SEQUENCES_SIZE, &bucket.buckets);
 
                         let mut continue_read = true;
+                        let mut tmp_data = Vec::with_capacity(256);
 
                         while continue_read {
                             process_pending_reads(&mut executor);
 
+                            const TMP_DATA_OFFSET: usize = 32;
+
                             continue_read = bucket.reader.read_parallel(|read_extra_data, read| {
+                                unsafe {
+                                    tmp_data.set_len(TMP_DATA_OFFSET);
+                                }
+                                let mut backward_offset = TMP_DATA_OFFSET;
+
                                 let preprocess_info =
                                     executor.preprocess_bucket(&extra_data, read_extra_data, read);
                                 let bases_slice = read.get_compr_slice();
 
-                                let bucket_index = preprocess_info.bucket as usize;
-
-                                let pointer = buckets[bucket_index].ensure_reserve(
-                                    10 + bases_slice.len()
-                                        + preprocess_info.extra_data.max_size()
-                                        + 4,
-                                );
-
-                                buckets[bucket_index].push_contiguous_slice(&[0, 0, 0, 0]);
+                                let bucket_index = preprocess_info.bucket;
 
                                 encode_varint_flags::<_, _>(
-                                    |slice| buckets[bucket_index].push_contiguous_slice(slice),
+                                    |slice| tmp_data.extend_from_slice(slice),
                                     read.bases_count() as u64,
                                     F::FLAGS_COUNT,
                                     preprocess_info.flags,
                                 );
-                                buckets[bucket_index].push_contiguous_slice(bases_slice);
-                                preprocess_info
-                                    .extra_data
-                                    .encode(&mut buckets[bucket_index]);
+                                tmp_data.extend_from_slice(bases_slice);
+                                preprocess_info.extra_data.encode(&mut tmp_data);
+
+                                let element_size = (tmp_data.len() - TMP_DATA_OFFSET) as u64;
+
+                                encode_varint(
+                                    |bytes| {
+                                        let end_pos = backward_offset;
+                                        backward_offset -= bytes.len();
+                                        tmp_data[backward_offset..end_pos].copy_from_slice(bytes);
+                                    },
+                                    element_size,
+                                );
+
+                                tmp_data[(backward_offset - HASH_SIZE)..backward_offset]
+                                    .copy_from_slice(&preprocess_info.hash.to_ne_bytes());
+                                backward_offset -= HASH_SIZE;
 
                                 cmp_reads.add_element(
-                                    preprocess_info.bucket,
+                                    bucket_index,
                                     &(),
-                                    ReadRef {
-                                        read_start: unsafe { pointer.add(4) },
-                                        hash: preprocess_info.hash,
-                                    },
+                                    &tmp_data[backward_offset..],
                                 );
                             });
-                            break;
                         }
 
-                        bucket.add_chunks_refs(&mut buckets);
                         cmp_reads.finalize();
 
                         drop(bucket);
-
-                        process_pending_reads(&mut executor);
 
                         let mut writable_bucket = current_bucket.write();
                         if writable_bucket
@@ -206,10 +232,17 @@ impl KmersTransform {
                             .map(|x| x.reader.is_finished())
                             .unwrap_or(false)
                         {
+                            writable_bucket.take();
+                        }
+
+                        drop(writable_bucket);
+                        process_pending_reads(&mut executor);
+
+                        writable_bucket = current_bucket.write();
+                        if writable_bucket.is_none() {
                             if let Some(bucket) = open_bucket() {
                                 *writable_bucket = Some(bucket);
                             } else {
-                                writable_bucket.take();
                                 reading_finished.store(true, Ordering::Relaxed);
                             }
                         }

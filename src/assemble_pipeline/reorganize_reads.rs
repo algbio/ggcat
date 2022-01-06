@@ -12,6 +12,7 @@ use crate::io::reads_writer::ReadsWriter;
 
 use crate::io::sequences_reader::{FastaSequence, SequencesReader};
 use crate::io::structs::unitig_link::UnitigIndex;
+use crate::io::{DataReader, DataWriter};
 use crate::rolling::minqueue::RollingMinQueue;
 use crate::utils::Utils;
 use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
@@ -65,7 +66,12 @@ impl<CX: SequenceExtraData> SequenceExtraData for ReorganizedReadsExtraData<CX> 
 }
 
 impl AssemblePipeline {
-    pub fn reorganize_reads<MH: HashFunctionFactory, CX: ColorsManager>(
+    pub fn reorganize_reads<
+        MH: HashFunctionFactory,
+        CX: ColorsManager,
+        R: DataReader,
+        W: DataWriter,
+    >(
         mut reads: Vec<PathBuf>,
         mut mapping_files: Vec<PathBuf>,
         temp_path: &Path,
@@ -82,7 +88,7 @@ impl AssemblePipeline {
             IntermediateReadsWriter<ReorganizedReadsExtraData<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
                 MH,
                 CX,
-            >>::PartialUnitigsColorStructure>>,
+            >>::PartialUnitigsColorStructure>, W>,
         >::new(buckets_count, &temp_path.join("reads_bucket"), None);
 
         reads.sort();
@@ -140,7 +146,7 @@ impl AssemblePipeline {
             IntermediateReadsReader::<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
                 MH,
                 CX,
-            >>::PartialUnitigsColorStructure>::new(read_file, !KEEP_FILES.load(Ordering::Relaxed))
+            >>::PartialUnitigsColorStructure, R>::new(read_file, !KEEP_FILES.load(Ordering::Relaxed))
                 .for_each(|color, seq| {
 
                     if seq.bases_count() > decompress_buffer.len() {

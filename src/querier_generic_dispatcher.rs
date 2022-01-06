@@ -3,6 +3,7 @@ use crate::colors::colors_manager::ColorsManager;
 use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
 use crate::hashes::fw_nthash::ForwardNtHashIteratorFactory;
 use crate::hashes::{cn_rkhash, cn_seqhash, fw_rkhash, fw_seqhash, HashFunctionFactory};
+use crate::io::{DataReader, DataWriter};
 use crate::querier::run_query;
 use crate::{HashType, QueryArgs};
 use std::cmp::min;
@@ -15,11 +16,13 @@ fn run_querier_from_args<
     BucketingHash: HashFunctionFactory,
     MergingHash: HashFunctionFactory,
     ColorsImpl: ColorsManager,
+    Reader: DataReader,
+    Writer: DataWriter,
     const BUCKETS_COUNT: usize,
 >(
     args: QueryArgs,
 ) {
-    run_query::<BucketingHash, MergingHash, ColorsImpl, BUCKETS_COUNT>(
+    run_query::<BucketingHash, MergingHash, ColorsImpl, Reader, Writer, BUCKETS_COUNT>(
         args.common_args.klen,
         args.common_args
             .mlen
@@ -33,7 +36,12 @@ fn run_querier_from_args<
     );
 }
 
-pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKETS_COUNT: usize>(
+pub(crate) fn dispatch_querier_hash_type<
+    ColorsImpl: ColorsManager,
+    Reader: DataReader,
+    Writer: DataWriter,
+    const BUCKETS_COUNT: usize,
+>(
     args: QueryArgs,
 ) {
     let hash_type = match args.common_args.hash_type {
@@ -59,6 +67,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u16::CanonicalSeqHashFactory,
                         ColorsImpl,
+                        Reader,
+                        Writer,
                         BUCKETS_COUNT,
                     >(args);
                 } else {
@@ -66,6 +76,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u16::CanonicalSeqHashFactory,
                         ColorsImpl,
+                        Reader,
+                        Writer,
                         BUCKETS_COUNT,
                     >(args)
                 }
@@ -75,6 +87,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                         ForwardNtHashIteratorFactory,
                         fw_seqhash::u32::ForwardSeqHashFactory,
                         ColorsImpl,
+                        Reader,
+                        Writer,
                         BUCKETS_COUNT,
                     >(args);
                 } else {
@@ -82,6 +96,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u32::CanonicalSeqHashFactory,
                         ColorsImpl,
+                        Reader,
+                        Writer,
                         BUCKETS_COUNT,
                     >(args)
                 }
@@ -91,6 +107,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                         ForwardNtHashIteratorFactory,
                         fw_seqhash::u64::ForwardSeqHashFactory,
                         ColorsImpl,
+                        Reader,
+                        Writer,
                         BUCKETS_COUNT,
                     >(args);
                 } else {
@@ -98,6 +116,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u64::CanonicalSeqHashFactory,
                         ColorsImpl,
+                        Reader,
+                        Writer,
                         BUCKETS_COUNT,
                     >(args)
                 }
@@ -107,6 +127,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                         ForwardNtHashIteratorFactory,
                         fw_seqhash::u128::ForwardSeqHashFactory,
                         ColorsImpl,
+                        Reader,
+                        Writer,
                         BUCKETS_COUNT,
                     >(args);
                 } else {
@@ -114,6 +136,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u128::CanonicalSeqHashFactory,
                         ColorsImpl,
+                        Reader,
+                        Writer,
                         BUCKETS_COUNT,
                     >(args)
                 }
@@ -127,6 +151,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                     ForwardNtHashIteratorFactory,
                     fw_rkhash::u32::ForwardRabinKarpHashFactory,
                     ColorsImpl,
+                    Reader,
+                    Writer,
                     BUCKETS_COUNT,
                 >(args);
             } else {
@@ -134,6 +160,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                     CanonicalNtHashIteratorFactory,
                     cn_rkhash::u32::CanonicalRabinKarpHashFactory,
                     ColorsImpl,
+                    Reader,
+                    Writer,
                     BUCKETS_COUNT,
                 >(args)
             }
@@ -144,6 +172,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                     ForwardNtHashIteratorFactory,
                     fw_rkhash::u64::ForwardRabinKarpHashFactory,
                     ColorsImpl,
+                    Reader,
+                    Writer,
                     BUCKETS_COUNT,
                 >(args);
             } else {
@@ -151,6 +181,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                     CanonicalNtHashIteratorFactory,
                     cn_rkhash::u64::CanonicalRabinKarpHashFactory,
                     ColorsImpl,
+                    Reader,
+                    Writer,
                     BUCKETS_COUNT,
                 >(args)
             }
@@ -161,6 +193,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                     ForwardNtHashIteratorFactory,
                     fw_rkhash::u128::ForwardRabinKarpHashFactory,
                     ColorsImpl,
+                    Reader,
+                    Writer,
                     BUCKETS_COUNT,
                 >(args);
             } else {
@@ -168,6 +202,8 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                     CanonicalNtHashIteratorFactory,
                     cn_rkhash::u128::CanonicalRabinKarpHashFactory,
                     ColorsImpl,
+                    Reader,
+                    Writer,
                     BUCKETS_COUNT,
                 >(args)
             }

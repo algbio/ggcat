@@ -16,7 +16,7 @@ use crate::hashes::fw_nthash::ForwardNtHashIterator;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::types::{BucketIndexType, MinimizerType};
+use crate::config::{BucketIndexType, MinimizerType, SortingHashType};
 
 pub trait UnextendableHashTraitType = Copy
     + Clone
@@ -51,9 +51,18 @@ pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + 'static {
 
     fn new<N: HashableSequence>(seq: N, k: usize) -> Self::HashIterator<N>;
 
-    fn get_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType;
+    /// Gets the first buckets count, used in MinimizerBucketing phase
+    fn get_first_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType;
+
+    /// Gets the second buckets count, used in KmersMerge phase to further split reads
     fn get_second_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType;
-    fn get_minimizer(hash: Self::HashTypeUnextendable) -> MinimizerType;
+
+    /// Gets the final sorting hash, that groups all the reads by their full minimizer
+    fn get_sorting_hash(hash: Self::HashTypeUnextendable) -> SortingHashType;
+
+    /// Gets the full minimizer, that is split in first and second buckets and the final sorting hash
+    fn get_full_minimizer(hash: Self::HashTypeUnextendable) -> MinimizerType;
+
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8;
     fn get_u64(hash: Self::HashTypeUnextendable) -> u64;
 
@@ -115,7 +124,7 @@ pub mod tests {
     use super::HashFunction;
     use super::HashFunctionFactory;
     use crate::utils::Utils;
-    use rand::RngCore;
+    use rand::{RngCore, SeedableRng};
 
     // From rand test library
     /// Construct a deterministic RNG with the given seed
@@ -123,7 +132,7 @@ pub mod tests {
         // For tests, we want a statistically good, fast, reproducible RNG.
         // PCG32 will do fine, and will be easy to embed if we ever need to.
         const INC: u64 = 11634580027462260723;
-        rand_pcg::Pcg32::new(seed, INC)
+        pcg_rand::Pcg32::seed_from_u64(seed)
     }
 
     fn to_compressed(bases: &[u8]) -> Vec<u8> {

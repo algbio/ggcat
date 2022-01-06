@@ -1,4 +1,3 @@
-use crate::types::BucketIndexType;
 use parking_lot::RwLock;
 use rand::{thread_rng, RngCore};
 use rayon::iter::ParallelIterator;
@@ -71,11 +70,11 @@ impl<B: BucketType> MultiThreadBuckets<B> {
         MultiThreadBuckets { buckets }
     }
 
-    pub fn get_path(&self, bucket: BucketIndexType) -> PathBuf {
+    pub fn get_path(&self, bucket: u16) -> PathBuf {
         self.buckets[bucket as usize].read().get_path()
     }
 
-    pub fn add_data(&self, index: BucketIndexType, data: &[B::DataType]) {
+    pub fn add_data(&self, index: u16, data: &[B::DataType]) {
         if B::SUPPORTS_LOCK_FREE {
             let bucket = self.buckets[index as usize].read();
             bucket.write_data_lock_free(data);
@@ -85,17 +84,18 @@ impl<B: BucketType> MultiThreadBuckets<B> {
         }
     }
 
-    pub fn finalize(self) -> Vec<PathBuf> {
-        self.buckets.iter().map(|b| b.read().get_path()).collect()
+    pub fn finalize(&mut self) -> Vec<PathBuf> {
+        let paths = self.buckets.iter().map(|b| b.read().get_path()).collect();
+        self.buckets.drain(..).for_each(|bucket| {
+            bucket.into_inner().finalize();
+        });
+        paths
     }
 }
 
 impl<B: BucketType> Drop for MultiThreadBuckets<B> {
     fn drop(&mut self) {
-        let mut buckets = Vec::new();
-        swap(&mut self.buckets, &mut buckets);
-
-        buckets.into_iter().for_each(|bucket| {
+        self.buckets.drain(..).for_each(|bucket| {
             bucket.into_inner().finalize();
         });
     }
@@ -137,14 +137,27 @@ impl<const SIZE: usize> BucketWriter for [u8; SIZE] {
     }
 }
 
-pub struct BucketsThreadDispatcher<'a, B: BucketType, T: BucketWriter<B::DataType> + Clone> {
+impl BucketWriter for [u8] {
+    type ExtraData = ();
+    #[inline(always)]
+    fn write_to(&self, mut bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
+        bucket.write(self).unwrap();
+    }
+
+    #[inline(always)]
+    fn get_size(&self) -> usize {
+        self.len()
+    }
+}
+
+pub struct BucketsThreadDispatcher<'a, B: BucketType, T: BucketWriter<B::DataType> + ?Sized> {
     mtb: &'a MultiThreadBuckets<B>,
     thread_data: Vec<Vec<B::DataType>>,
     max_bucket_size: usize,
     _phantom: PhantomData<T>,
 }
 
-impl<'a, B: BucketType, T: BucketWriter<B::DataType> + Clone> BucketsThreadDispatcher<'a, B, T> {
+impl<'a, B: BucketType, T: BucketWriter<B::DataType> + ?Sized> BucketsThreadDispatcher<'a, B, T> {
     pub fn new(
         max_buffersize: MemoryDataSize,
         mtb: &'a MultiThreadBuckets<B>,
@@ -173,7 +186,7 @@ impl<'a, B: BucketType, T: BucketWriter<B::DataType> + Clone> BucketsThreadDispa
     }
 
     #[inline]
-    pub fn add_element(&mut self, bucket: BucketIndexType, extra_data: &T::ExtraData, element: T) {
+    pub fn add_element(&mut self, bucket: u16, extra_data: &T::ExtraData, element: &T) {
         let bucket_buf = &mut self.thread_data[bucket as usize];
         if element.get_size() + bucket_buf.len() > min(bucket_buf.capacity(), self.max_bucket_size)
         {
@@ -186,7 +199,7 @@ impl<'a, B: BucketType, T: BucketWriter<B::DataType> + Clone> BucketsThreadDispa
     pub fn finalize(self) {}
 }
 
-impl<'a, B: BucketType, T: BucketWriter<B::DataType> + Clone> Drop
+impl<'a, B: BucketType, T: BucketWriter<B::DataType> + ?Sized> Drop
     for BucketsThreadDispatcher<'a, B, T>
 {
     fn drop(&mut self) {
@@ -194,7 +207,7 @@ impl<'a, B: BucketType, T: BucketWriter<B::DataType> + Clone> Drop
             if vec.len() == 0 {
                 continue;
             }
-            self.mtb.add_data(index as BucketIndexType, vec.as_slice());
+            self.mtb.add_data(index as u16, vec.as_slice());
         }
         self.thread_data.clear();
     }

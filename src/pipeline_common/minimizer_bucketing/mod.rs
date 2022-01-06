@@ -8,17 +8,19 @@ use crate::io::concurrent::intermediate_storage::{
     IntermediateReadsWriter, IntermediateSequencesStorage, SequenceExtraData,
 };
 use crate::io::sequences_reader::FastaSequence;
+use crate::io::DataWriter;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::reader::minb_reader;
 use crate::pipeline_common::minimizer_bucketing::sequences_splitter::SequencesSplitter;
 use crate::rolling::minqueue::RollingMinQueue;
-use crate::types::BucketIndexType;
+use crate::config::BucketIndexType;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::threadpools_chain::{
     ObjectsPoolManager, ThreadPoolDefinition, ThreadPoolsChain,
 };
 use std::cmp::max;
+use std::io::Write;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -29,21 +31,21 @@ pub trait MinimizerBucketingExecutor {
     type PreprocessInfo: Default;
     type FileInfo: Clone + Sync + Send + Default;
 
-    fn new<C>(
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+    fn new<C, W: DataWriter>(
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
     ) -> Self;
 
-    fn preprocess_fasta<C>(
+    fn preprocess_fasta<C, W: DataWriter>(
         &mut self,
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
         file_info: &Self::FileInfo,
         read_index: u64,
         preprocess_info: &mut Self::PreprocessInfo,
         sequence: &FastaSequence,
     );
-    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData)>(
+    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData), W: DataWriter>(
         &mut self,
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
         preprocess_info: &Self::PreprocessInfo,
         sequence: &[u8],
         range: Range<usize>,
@@ -55,11 +57,12 @@ pub struct MinimizerBucketingExecutionContext<
     ReadAssociatedData: SequenceExtraData,
     ExtraData,
     GlobalData,
+    W: DataWriter,
 > {
     pub k: usize,
     pub m: usize,
     pub buckets_count: usize,
-    pub buckets: MultiThreadBuckets<IntermediateReadsWriter<ReadAssociatedData>>,
+    pub buckets: MultiThreadBuckets<IntermediateReadsWriter<ReadAssociatedData, W>>,
     pub extra: ExtraData,
     pub global_data: GlobalData,
     pub current_file: AtomicUsize,
@@ -81,8 +84,8 @@ const CHUNKS_SIZE: usize = 1024 * 1024 * 16;
 const MAX_READING_THREADS: usize = 2;
 const WATERMARK_HIGH: usize = 64;
 
-fn worker<E: MinimizerBucketingExecutor>(
-    context: &MinimizerBucketingExecutionContext<E::ExtraData, ContextExtraData, E::GlobalData>,
+fn worker<E: MinimizerBucketingExecutor, W: DataWriter>(
+    context: &MinimizerBucketingExecutionContext<E::ExtraData, ContextExtraData, E::GlobalData, W>,
     manager: ObjectsPoolManager<(), MinimizerBucketingQueueData<E::FileInfo>>,
 ) {
     let mut tmp_reads_buffer =
@@ -170,7 +173,7 @@ fn worker<E: MinimizerBucketingExecutor>(
 }
 
 impl GenericMinimizerBucketing {
-    pub fn do_bucketing<E: MinimizerBucketingExecutor>(
+    pub fn do_bucketing<E: MinimizerBucketingExecutor, W: DataWriter>(
         mut input_files: Vec<(PathBuf, E::FileInfo)>,
         output_path: &Path,
         buckets_count: usize,
@@ -180,7 +183,7 @@ impl GenericMinimizerBucketing {
         quality_threshold: Option<f64>,
         global_data: E::GlobalData,
     ) -> Vec<PathBuf> {
-        let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<E::ExtraData>>::new(
+        let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<E::ExtraData, W>>::new(
             buckets_count,
             &output_path.join("bucket"),
             None,
@@ -193,7 +196,7 @@ impl GenericMinimizerBucketing {
         });
         input_files.reverse();
 
-        let execution_context = MinimizerBucketingExecutionContext {
+        let mut execution_context = MinimizerBucketingExecutionContext {
             k,
             m,
             buckets_count,
@@ -222,7 +225,7 @@ impl GenericMinimizerBucketing {
                 threads_count,
                 &AtomicUsize::new(threads_count),
                 WATERMARK_HIGH,
-                worker::<E>,
+                worker::<E, W>,
             ),
         );
 

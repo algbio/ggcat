@@ -39,17 +39,14 @@ backtrace = "0.3.63"
 csv = "1.1.6"
 jemallocator = "0.3.2"
 jemalloc-ctl = "0.3.3"
-
-[dependencies.flate2]
-default-features = false
-features = ["cloudflare_zlib"]
-path = "flate2-rs"
+flate2 = { default-features = false, features = ["cloudflare_zlib"], version = "1.0.22" }
+static_assertions = "1.1.0"
 
 [profile.release]
 debug = true
 
 [features]
-mem-analysis = []
+mem-analysis = ["parallel-processor/track-usage"]
 
 [build-dependencies]
 make-cmd = "0.1.0"

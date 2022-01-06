@@ -2,7 +2,7 @@ use crate::hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     UnextendableHashTraitType,
 };
-use crate::types::MinimizerType;
+use crate::config::{BucketIndexType, MinimizerType, SortingHashType};
 use std::cmp::min;
 use std::mem::size_of;
 
@@ -97,8 +97,6 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
     type HashTypeUnextendable = HashIntegerType;
     type HashTypeExtendable = ExtCanonicalSeqHash;
     type HashIterator<N: HashableSequence> = CanonicalSeqHashIterator<N>;
-    const NULL_BASE: u8 = 0;
-
     type PreferredRandomState = ahash::RandomState;
 
     #[inline(always)]
@@ -106,23 +104,25 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
         ahash::RandomState::new()
     }
 
+    const NULL_BASE: u8 = 0;
+
     fn new<N: HashableSequence>(seq: N, k: usize) -> Self::HashIterator<N> {
         CanonicalSeqHashIterator::new(seq, k).unwrap()
     }
 
-    fn get_bucket(hash: Self::HashTypeUnextendable) -> u32 {
-        let mut x = hash;
-        // x ^= x >> 12; // a
-        // x ^= x << 25; // b
-        // x ^= x >> 27; // c
-        x as u32
+    fn get_first_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType {
+        hash as BucketIndexType
     }
 
-    fn get_second_bucket(hash: Self::HashTypeUnextendable) -> u32 {
+    fn get_second_bucket(_hash: Self::HashTypeUnextendable) -> BucketIndexType {
         panic!("Not supported!")
     }
 
-    fn get_minimizer(hash: Self::HashTypeUnextendable) -> MinimizerType {
+    fn get_sorting_hash(_hash: Self::HashTypeUnextendable) -> SortingHashType {
+        panic!("Not supported!")
+    }
+
+    fn get_full_minimizer(_hash: Self::HashTypeUnextendable) -> MinimizerType {
         panic!("Not supported!")
     }
 

@@ -2,7 +2,7 @@ use crate::hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     UnextendableHashTraitType,
 };
-use crate::types::MinimizerType;
+use crate::config::MinimizerType;
 use std::cmp::min;
 use std::mem::size_of;
 

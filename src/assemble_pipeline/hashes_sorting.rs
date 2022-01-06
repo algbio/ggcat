@@ -121,7 +121,7 @@ impl AssemblePipeline {
                             links_tmp.add_element(
                                 x[fw].bucket,
                                 &unitigs_vec,
-                                UnitigLink {
+                                &UnitigLink {
                                     entry: x[fw].entry,
                                     flags: UnitigFlags::new_direction(true, reverse_complemented[fw]),
                                     entries: slice_fw,
@@ -131,7 +131,7 @@ impl AssemblePipeline {
                             links_tmp.add_element(
                                 x[bw].bucket,
                                 &unitigs_vec,
-                                UnitigLink {
+                                &UnitigLink {
                                     entry: x[bw].entry,
                                     flags: UnitigFlags::new_direction(false, reverse_complemented[bw]),
                                     entries: slice_bw,

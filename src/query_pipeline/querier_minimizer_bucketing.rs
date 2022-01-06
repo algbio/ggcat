@@ -8,6 +8,7 @@ use crate::io::concurrent::intermediate_storage::{
 };
 use crate::io::sequences_reader::{FastaSequence, SequencesReader};
 use crate::io::varint::{decode_varint, encode_varint};
+use crate::io::DataWriter;
 use crate::pipeline_common::minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingExecutionContext, MinimizerBucketingExecutor,
 };
@@ -16,7 +17,7 @@ use crate::query_pipeline::QueryPipeline;
 use crate::rolling::kseq_iterator::{RollingKseqImpl, RollingKseqIterator};
 use crate::rolling::minqueue::RollingMinQueue;
 use crate::rolling::quality_check::{RollingQualityCheck, LOGPROB_MULTIPLIER, SCORES_INDEX};
-use crate::types::BucketIndexType;
+use crate::config::BucketIndexType;
 use crate::KEEP_FILES;
 use bstr::ByteSlice;
 use byteorder::{ReadBytesExt, WriteBytesExt};
@@ -115,8 +116,8 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
     type PreprocessInfo = ReadType;
     type FileInfo = FileType;
 
-    fn new<C>(
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+    fn new<C, W: DataWriter>(
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
     ) -> Self {
         Self {
             minimizer_queue: RollingMinQueue::new(global_data.k - global_data.m + 1),
@@ -124,9 +125,9 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         }
     }
 
-    fn preprocess_fasta<C>(
+    fn preprocess_fasta<C, W: DataWriter>(
         &mut self,
-        _global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+        _global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
         file_info: &Self::FileInfo,
         read_index: u64,
         preprocess_info: &mut Self::PreprocessInfo,
@@ -138,9 +139,9 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         }
     }
 
-    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData)>(
+    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData), W: DataWriter>(
         &mut self,
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
         preprocess_info: &Self::PreprocessInfo,
         sequence: &[u8],
         _range: Range<usize>,
@@ -158,7 +159,7 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         for (index, min_hash) in rolling_iter.enumerate() {
             if min_hash != last_hash {
                 let bucket =
-                    H::get_bucket(last_hash) % (global_data.buckets_count as BucketIndexType);
+                    H::get_first_bucket(last_hash) % (global_data.buckets_count as BucketIndexType);
 
                 push_sequence(
                     bucket,
@@ -180,7 +181,7 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         }
 
         push_sequence(
-            H::get_bucket(last_hash) % (global_data.buckets_count as BucketIndexType),
+            H::get_first_bucket(last_hash) % (global_data.buckets_count as BucketIndexType),
             &sequence[last_index..sequence.len()],
             match preprocess_info {
                 ReadType::Graph => {
@@ -196,7 +197,7 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
 }
 
 impl QueryPipeline {
-    pub fn minimizer_bucketing<H: HashFunctionFactory, CX: ColorsManager>(
+    pub fn minimizer_bucketing<H: HashFunctionFactory, CX: ColorsManager, W: DataWriter>(
         graph_file: PathBuf,
         query_file: PathBuf,
         output_path: &Path,
@@ -211,7 +212,7 @@ impl QueryPipeline {
 
         let mut input_files = vec![(graph_file, FileType::Graph), (query_file, FileType::Query)];
 
-        GenericMinimizerBucketing::do_bucketing::<QuerierMinimizerBucketingExecutor<H, CX>>(
+        GenericMinimizerBucketing::do_bucketing::<QuerierMinimizerBucketingExecutor<H, CX>, W>(
             input_files,
             output_path,
             buckets_count,

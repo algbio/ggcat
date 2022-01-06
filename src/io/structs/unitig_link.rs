@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use crate::io::concurrent::intermediate_storage::{SequenceExtraData, VecReader};
 use crate::io::structs::hash_entry::Direction;
 use crate::io::varint::{decode_varint, encode_varint};
-use crate::types::BucketIndexType;
+use crate::config::BucketIndexType;
 use crate::utils::vec_slice::VecSlice;
 use parallel_processor::binary_writer::BinaryWriter;
 use parallel_processor::multi_thread_buckets::BucketWriter;
@@ -163,7 +163,7 @@ pub struct UnitigIndex {
 
 impl Hash for UnitigIndex {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u32(self.bucket());
+        state.write_u16(self.bucket());
         state.write_usize(self.index());
     }
 }

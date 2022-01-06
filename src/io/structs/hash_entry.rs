@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use crate::io::concurrent::intermediate_storage::VecReader;
 use crate::io::varint::{decode_varint, encode_varint};
-use crate::types::BucketIndexType;
+use crate::config::BucketIndexType;
 use crate::utils::vec_slice::VecSlice;
 use bincode::serialize_into;
 use parallel_processor::binary_writer::BinaryWriter;

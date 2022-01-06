@@ -49,7 +49,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
                 self.queue.get_unchecked_mut(i).1 = min_by_key(
                     self.queue.get_unchecked_mut(i).1,
                     self.queue.get_unchecked_mut((i + 1) & self.capacity_mask).1,
-                    |x| H::get_minimizer(*x),
+                    |x| H::get_full_minimizer(*x),
                 );
             }
             i = i.wrapping_sub(1) & self.capacity_mask;
@@ -76,7 +76,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
             self.minimum = min_by_key(
                 self.minimum,
                 (x, (self.index + self.size) & self.capacity_mask),
-                |x| H::get_minimizer(x.0),
+                |x| H::get_full_minimizer(x.0),
             );
             self.index = (self.index + 1) & self.capacity_mask;
 
@@ -89,7 +89,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
                 self.queue
                     .get_unchecked_mut((self.index.wrapping_sub(self.size)) & self.capacity_mask)
                     .1,
-                |x| H::get_minimizer(*x),
+                |x| H::get_full_minimizer(*x),
             )
         })
     }
@@ -111,7 +111,7 @@ mod tests {
         let mut items = Vec::new();
         items.reserve(SIZE);
 
-        let mut random = rand_pcg::Pcg64::seed_from_u64(2);
+        let mut random = pcg_rand::Pcg64::seed_from_u64(2);
 
         for i in 0..SIZE {
             let value = random.next_u64();

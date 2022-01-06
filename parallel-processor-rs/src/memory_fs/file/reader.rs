@@ -17,6 +17,9 @@ pub struct FileReader {
     current_len: usize,
 }
 
+unsafe impl Sync for FileReader {}
+unsafe impl Send for FileReader {}
+
 impl FileReader {
     fn set_chunk_info(&mut self, index: usize) {
         let chunk = self.file.get_chunk(index);

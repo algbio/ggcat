@@ -12,7 +12,7 @@ use crate::assemble_pipeline::AssemblePipeline;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::io::varint::{decode_varint, encode_varint};
-use crate::types::BucketIndexType;
+use crate::config::BucketIndexType;
 use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::vec_slice::VecSlice;
 use crate::utils::Utils;
@@ -280,7 +280,7 @@ impl AssemblePipeline {
                                 final_links_tmp.add_element(
                                     bucket_index,
                                     &final_unitigs_vec,
-                                    UnitigLink {
+                                    &UnitigLink {
                                         entry: entry.entry,
                                         flags,
                                         entries,
@@ -290,7 +290,7 @@ impl AssemblePipeline {
                                 results_tmp.add_element(
                                     bucket_index,
                                     &(),
-                                    LinkMapping {
+                                    &LinkMapping {
                                         entry: entry.entry as u64,
                                         bucket: bucket_index,
                                     },
@@ -300,7 +300,7 @@ impl AssemblePipeline {
                                     results_tmp.add_element(
                                         link.bucket(),
                                         &(),
-                                        LinkMapping {
+                                        &LinkMapping {
                                             entry: link.index() as u64,
                                             bucket: bucket_index,
                                         },
@@ -330,7 +330,7 @@ impl AssemblePipeline {
                             final_links_tmp.add_element(
                                 bucket_index,
                                 &final_unitigs_vec,
-                                UnitigLink {
+                                &UnitigLink {
                                     entry: entry.entry,
                                     flags,
                                     entries,
@@ -341,7 +341,7 @@ impl AssemblePipeline {
                                 results_tmp.add_element(
                                     link.bucket(),
                                     &(),
-                                    LinkMapping {
+                                    &LinkMapping {
                                         entry: link.index() as u64,
                                         bucket: bucket_index,
                                     },
@@ -401,9 +401,9 @@ impl AssemblePipeline {
                     };
                     rem_links += 1;
 
-                    links_tmp.add_element(link1.0, &current_unitigs_vec, link1.1);
+                    links_tmp.add_element(link1.0, &current_unitigs_vec, &link1.1);
                     if let Some(link2) = link2 {
-                        links_tmp.add_element(link2.0, &current_unitigs_vec, link2.1);
+                        links_tmp.add_element(link2.0, &current_unitigs_vec, &link2.1);
                     }
                 }
 

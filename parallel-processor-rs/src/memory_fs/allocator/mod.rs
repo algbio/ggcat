@@ -202,6 +202,7 @@ pub struct ChunksAllocator {
     big_buffer_start_addr: AtomicUsize,
     chunks_wait_condvar: Condvar,
     chunks: Mutex<Vec<usize>>,
+    min_free_chunks: AtomicUsize,
     chunks_total_count: AtomicUsize,
 }
 unsafe impl Sync for ChunksAllocator {}
@@ -216,6 +217,7 @@ impl ChunksAllocator {
             big_buffer_start_addr: AtomicUsize::new(0),
             chunks_wait_condvar: Condvar::new(),
             chunks: Mutex::new(Vec::new()),
+            min_free_chunks: AtomicUsize::new(0),
             chunks_total_count: AtomicUsize::new(0),
         }
     }
@@ -235,6 +237,8 @@ impl ChunksAllocator {
 
         self.chunks_total_count
             .store(chunks_count, Ordering::Relaxed);
+
+        self.min_free_chunks.store(chunks_count, Ordering::Relaxed);
 
         let data = unsafe {
             alloc(Layout::from_size_align_unchecked(
@@ -296,6 +300,7 @@ impl ChunksAllocator {
 
         loop {
             let el = chunks_lock.pop();
+            let free_count = chunks_lock.len();
             drop(chunks_lock);
 
             match el.map(|chunk| AllocatedChunk {
@@ -341,6 +346,8 @@ impl ChunksAllocator {
                     }
                 }
                 Some(chunk) => {
+                    self.min_free_chunks
+                        .fetch_min(free_count, Ordering::Relaxed);
                     #[cfg(feature = "track-usage")]
                     {
                         *USAGE_MAP
@@ -359,6 +366,14 @@ impl ChunksAllocator {
 
     pub fn get_free_memory(&self) -> MemoryDataSize {
         MemoryDataSize::from_octets((self.chunks.lock().len() * ALLOCATED_CHUNK_USABLE_SIZE) as f64)
+    }
+
+    pub fn get_reserved_memory(&self) -> MemoryDataSize {
+        MemoryDataSize::from_octets(
+            ((self.chunks_total_count.load(Ordering::Relaxed)
+                - self.min_free_chunks.load(Ordering::Relaxed))
+                * ALLOCATED_CHUNK_USABLE_SIZE) as f64,
+        )
     }
 
     pub fn get_total_memory(&self) -> MemoryDataSize {

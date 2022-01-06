@@ -4,6 +4,7 @@
 #![feature(associated_type_defaults)]
 #![feature(new_uninit)]
 #![feature(drain_filter)]
+#![feature(const_fn_floating_point_arithmetic)]
 
 #[macro_use]
 pub mod stats_logger;
@@ -18,7 +19,6 @@ pub mod memory_data_size;
 pub mod multi_thread_buckets;
 pub mod phase_times_monitor;
 pub mod threadpools_chain;
-pub mod types;
 
 pub struct Utils {}
 

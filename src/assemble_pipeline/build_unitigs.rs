@@ -12,6 +12,7 @@ use crate::io::reads_reader::ReadsReader;
 use crate::io::reads_writer::ReadsWriter;
 use crate::io::sequences_reader::{FastaSequence, SequencesReader};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
+use crate::io::DataReader;
 use crate::rolling::minqueue::RollingMinQueue;
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::utils::Utils;
@@ -52,7 +53,7 @@ struct FinalUnitigExtraData<CI: SequenceExtraData> {
 }
 
 impl AssemblePipeline {
-    pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
+    pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager, R: DataReader>(
         mut read_buckets_files: Vec<PathBuf>,
         mut unitig_map_files: Vec<PathBuf>,
         temp_path: &Path,
@@ -156,7 +157,7 @@ impl AssemblePipeline {
             IntermediateReadsReader::<ReorganizedReadsExtraData<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
                 MH,
                 CX,
-            >>::PartialUnitigsColorStructure>>::new(
+            >>::PartialUnitigsColorStructure>, R>::new(
                 read_file,
                 !KEEP_FILES.load(Ordering::Relaxed),
             )

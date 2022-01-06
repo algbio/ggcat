@@ -124,6 +124,7 @@ mod tests {
     use std::io::{Cursor, Write};
     use std::iter::FromIterator;
     use std::panic::resume_unwind;
+    use crate::io::{FileOnlyDataReader, FileOnlyDataWriter};
 
     #[test]
     fn varints() {
@@ -144,12 +145,12 @@ mod tests {
 
         for i in 0..100000 {
             result.clear();
-            encode_varint_flags::<_, _, 2>(|b| result.write_all(b), i, (i % 4) as u8);
+            encode_varint_flags::<_, _>(|b| result.write_all(b), i, 2, (i % 4) as u8);
             let mut cursor = Cursor::new(&result);
             let mut vecreader = VecReader::new(4096, &mut cursor);
             assert_eq!(
                 (i, (i % 4) as u8),
-                decode_varint_flags::<_, 2>(|| Some(vecreader.read_byte())).unwrap()
+                decode_varint_flags::<_>(|| Some(vecreader.read_byte()), 2).unwrap()
             );
         }
     }
@@ -176,7 +177,7 @@ mod tests {
 
         let mut tmp = Vec::new();
 
-        let mut writer = IntermediateReadsWriter::<()>::new("/tmp/test-encoding".as_ref(), 0);
+        let mut writer = IntermediateReadsWriter::<(), FileOnlyDataWriter>::new("/tmp/test-encoding".as_ref(), 0);
         for read in sequences.iter() {
             tmp.clear();
             CompressedRead::from_plain_write_directly_to_buffer(read.as_bytes(), &mut tmp);
@@ -185,7 +186,7 @@ mod tests {
         writer.finalize();
 
         let mut reader =
-            IntermediateReadsReader::<()>::new("/tmp/test-encoding.0.lz4".to_string(), false);
+            IntermediateReadsReader::<(), FileOnlyDataReader>::new("/tmp/test-encoding.0.lz4".to_string(), false);
 
         let mut index = 0;
         reader.for_each(|_, x| {

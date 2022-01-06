@@ -1,5 +1,6 @@
 use crate::colors::colors_manager::ColorsManager;
 use crate::hashes::HashFunctionFactory;
+use crate::io::{DataReader, DataWriter};
 use crate::query_pipeline::QueryPipeline;
 use crate::utils::debug_utils::debug_print;
 use crate::utils::Utils;
@@ -16,6 +17,8 @@ pub fn run_query<
     BucketingHash: HashFunctionFactory,
     MergingHash: HashFunctionFactory,
     AssemblerColorsManager: ColorsManager,
+    Reader: DataReader,
+    Writer: DataWriter,
     const BUCKETS_COUNT: usize,
 >(
     k: usize,
@@ -35,7 +38,7 @@ pub fn run_query<
     // );
 
     let buckets = if step <= QuerierStartingStep::MinimizerBucketing {
-        QueryPipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
+        QueryPipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager, Writer>(
             graph_input,
             query_input.clone(),
             temp_dir.as_path(),
@@ -54,6 +57,7 @@ pub fn run_query<
             MergingHash,
             AssemblerColorsManager,
             _,
+            Reader,
         >(
             buckets,
             BUCKETS_COUNT,

@@ -1,9 +1,2 @@
 target
-**/*.rs.bk
-*.gz
-*.fastq
 .idea
-*.bin
-*.xbin
-*cmake*
-.trash

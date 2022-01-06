@@ -16,13 +16,13 @@ use parking_lot::lock_api::RwLockReadGuard;
 use parking_lot::{Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 
 use crate::memory_fs::allocator::{AllocatedChunk, ChunksAllocator, CHUNKS_ALLOCATOR};
-use crate::memory_fs::file::internal::SWAPPABLE_FILES;
+use crate::memory_fs::file::internal::{MemoryFileInternal, SWAPPABLE_FILES};
 use crate::stats_logger::{StatMode, StatRaiiCounter};
-use measurements::Data;
 use std::mem::{replace, size_of};
 use std::panic::Location;
 use std::slice::from_raw_parts_mut;
 use std::time::Duration;
+use crate::memory_data_size::MemoryDataSize;
 
 pub const O_DIRECT: i32 = 0x4000;
 
@@ -41,11 +41,19 @@ const JOIN_HANDLE_OPT: Option<JoinHandle<()>> = None;
 pub struct MemoryFs;
 
 impl MemoryFs {
-    pub fn init(memory_size: Data, flush_queue_size: usize, threads_count: usize) {
+    pub fn init(memory_size: MemoryDataSize, flush_queue_size: usize, threads_count: usize) {
         unsafe {
             CHUNKS_ALLOCATOR.initialize(memory_size);
             FILES_FLUSH_HASH_MAP = Some(Mutex::new(HashMap::with_capacity(8192)));
             GlobalFlush::init(flush_queue_size, threads_count);
+        }
+    }
+
+    pub fn remove_file(file: impl AsRef<Path>) -> Result<(), ()> {
+        if MemoryFileInternal::delete(file) {
+            Ok(())
+        } else {
+            Err(())
         }
     }
 
@@ -68,12 +76,15 @@ impl MemoryFs {
     }
 
     pub fn reduce_pressure() -> bool {
+        println!("Reducing pressure!");
         let (current, max_size) = GlobalFlush::global_queue_occupation();
         if current * 3 < max_size {
             while let Some(file) = SWAPPABLE_FILES.pop() {
-                file.change_to_disk_only();
-                if file.flush_chunks(usize::MAX) > 0 {
-                    return true;
+                if let Some(file) = file.upgrade() {
+                    file.change_to_disk_only();
+                    if file.flush_chunks(usize::MAX) > 0 {
+                        return true;
+                    }
                 }
             }
         }

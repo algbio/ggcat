@@ -17,13 +17,13 @@ use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::slice::from_raw_parts_mut;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 lazy_static! {
     static ref MEMORY_MAPPED_FILES: DashMap<PathBuf, Arc<MemoryFileInternal>> = DashMap::new();
 }
 
-pub static SWAPPABLE_FILES: SegQueue<Arc<MemoryFileInternal>> = SegQueue::new();
+pub static SWAPPABLE_FILES: SegQueue<Weak<MemoryFileInternal>> = SegQueue::new();
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum MemoryFileMode {
@@ -83,7 +83,7 @@ impl FileChunk {
             match self {
                 FileChunk::OnDisk { offset, .. } => {
                     if let UnderlyingFile::ReadMode(file) = file {
-                        file.as_ptr().add(*offset as usize)
+                        file.as_ref().unwrap().as_ptr().add(*offset as usize)
                     } else {
                         panic!("Error, wrong underlying file!");
                     }
@@ -97,11 +97,12 @@ impl FileChunk {
 pub enum UnderlyingFile {
     NotOpened,
     MemoryOnly,
+    MemoryPreferred,
     WriteMode {
         file: Arc<(PathBuf, Mutex<File>)>,
         chunk_position: usize,
     },
-    ReadMode(FileBuffer),
+    ReadMode(Option<FileBuffer>),
 }
 
 pub struct MemoryFileInternal {
@@ -133,7 +134,7 @@ impl MemoryFileInternal {
         MEMORY_MAPPED_FILES.insert(path.as_ref().into(), new_file.clone());
 
         if mode == MemoryFileMode::PreferMemory {
-            SWAPPABLE_FILES.push(new_file.clone())
+            SWAPPABLE_FILES.push(Arc::downgrade(&new_file))
         }
 
         new_file
@@ -159,6 +160,40 @@ impl MemoryFileInternal {
         MEMORY_MAPPED_FILES.get(path.as_ref()).map(|f| f.clone())
     }
 
+    pub fn active_files_count() -> usize {
+        MEMORY_MAPPED_FILES.len()
+    }
+
+    pub fn delete(path: impl AsRef<Path>) -> bool {
+        if let Some(file) = MEMORY_MAPPED_FILES.remove(path.as_ref()) {
+            if let MemoryFileMode::DiskOnly = *file.1.memory_mode.read() {
+                remove_file(path);
+            }
+
+            true
+        } else {
+            false
+        }
+    }
+
+    fn create_writing_underlying_file(&self) -> UnderlyingFile {
+        UnderlyingFile::WriteMode {
+            file: Arc::new((
+                self.path.clone(),
+                Mutex::new(
+                    OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .append(true)
+                        // .custom_flags(O_DIRECT)
+                        .open(&self.path)
+                        .unwrap(),
+                ),
+            )),
+            chunk_position: 0,
+        }
+    }
+
     pub fn open(&self, mode: OpenMode) -> Result<(), String> {
         if let Some(mut lock) = self.open_mode.try_lock() {
             if lock.0 == mode {
@@ -174,37 +209,23 @@ impl MemoryFileInternal {
                 OpenMode::None => UnderlyingFile::NotOpened,
                 OpenMode::Read => {
                     lock.1 = 1;
-                    if *self.memory_mode.read() == MemoryFileMode::AlwaysMemory {
+                    if *self.memory_mode.read() != MemoryFileMode::DiskOnly {
                         UnderlyingFile::MemoryOnly
                     } else {
                         // Ensure that all chunks are not pending
                         for chunk in self.memory.read().iter() {
-                            chunk.read();
+                            drop(chunk.read());
                         }
 
-                        UnderlyingFile::ReadMode(FileBuffer::open(&self.path).unwrap())
+                        UnderlyingFile::ReadMode(FileBuffer::open(&self.path).ok())
                     }
                 }
                 OpenMode::Write => {
                     lock.1 = 1;
-                    if *self.memory_mode.read() == MemoryFileMode::AlwaysMemory {
-                        UnderlyingFile::MemoryOnly
-                    } else {
-                        UnderlyingFile::WriteMode {
-                            file: Arc::new((
-                                self.path.clone(),
-                                Mutex::new(
-                                    OpenOptions::new()
-                                        .create(true)
-                                        .write(true)
-                                        .append(true)
-                                        // .custom_flags(O_DIRECT)
-                                        .open(&self.path)
-                                        .unwrap(),
-                                ),
-                            )),
-                            chunk_position: 0,
-                        }
+                    match *self.memory_mode.read() {
+                        MemoryFileMode::AlwaysMemory => UnderlyingFile::MemoryOnly,
+                        MemoryFileMode::PreferMemory => UnderlyingFile::MemoryPreferred,
+                        MemoryFileMode::DiskOnly => self.create_writing_underlying_file(),
                     }
                 }
             };
@@ -272,7 +293,7 @@ impl MemoryFileInternal {
                 }
                 drop(mem_lock);
                 chunk = CHUNKS_ALLOCATOR.request_chunk(chunk_usage!(FileBuffer {
-                    path: Location::caller().to_string()
+                    path: std::panic::Location::caller().to_string()
                 }));
             } else {
                 if let Some(space) = space {
@@ -293,25 +314,14 @@ impl MemoryFileInternal {
     }
 
     pub fn flush_chunks(&self, limit: usize) -> usize {
-        let needs_reopen = self
-            .file
-            .try_read()
-            .map(|x| {
-                if let UnderlyingFile::NotOpened = *x {
-                    true
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false);
-
-        if needs_reopen {
-            if self.open(OpenMode::Write).is_ok() {
-                self.close();
-            }
-        }
-
         if let Some(mut file) = self.file.try_write() {
+            match &*file {
+                UnderlyingFile::NotOpened | UnderlyingFile::MemoryPreferred => {
+                    *file = self.create_writing_underlying_file();
+                }
+                _ => {}
+            }
+
             if let UnderlyingFile::WriteMode {
                 file,
                 chunk_position,
@@ -352,6 +362,7 @@ impl MemoryFileInternal {
             UnderlyingFile::WriteMode { chunk_position, .. } => {
                 self.get_chunks_count() - *chunk_position
             }
+            UnderlyingFile::MemoryPreferred => self.get_chunks_count(),
         }
     }
 

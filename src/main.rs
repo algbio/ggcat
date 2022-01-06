@@ -1,3 +1,14 @@
+//TODO:
+//
+// FIXME: The final groups must be grouped by full minimizer!
+// Find new file-based merge bottleneck
+// Fix FileReader for null
+// Fix unwanted files writing when on PreferredMemory
+//
+//
+//
+
+
 #![feature(new_uninit, core_intrinsics, type_alias_impl_trait)]
 #![feature(is_sorted, thread_local, panic_info_message)]
 #![feature(slice_group_by)]
@@ -14,6 +25,9 @@
 extern crate alloc;
 extern crate test;
 
+#[macro_use]
+extern crate static_assertions;
+
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::utils::Utils;
 use rayon::ThreadPoolBuilder;
@@ -28,7 +42,7 @@ mod assemble_pipeline;
 mod benchmarks;
 mod hashes;
 pub mod libdeflate;
-mod types;
+mod config;
 #[macro_use]
 mod utils;
 mod assembler;
@@ -113,6 +127,7 @@ arg_enum! {
 }
 
 use jemallocator::Jemalloc;
+use parallel_processor::memory_fs::MemoryFs;
 
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
@@ -236,14 +251,20 @@ fn initialize(args: &CommonArgs) {
         .build_global();
 
     create_dir_all(&args.temp_dir);
+
+    MemoryFs::init(
+        parallel_processor::memory_data_size::MemoryDataSize::from_gibioctets(16.0),
+        512,
+        3,
+    );
 }
 
 fn main() {
     let args: CliArgs = CliArgs::from_args();
 
+    #[cfg(feature = "mem-analysis")]
     {
         parallel_processor::mem_tracker::init_memory_info();
-        // #[cfg(feature = "mem-analysis")]
         parallel_processor::mem_tracker::start_info_logging();
     }
 
@@ -271,15 +292,23 @@ fn main() {
         exit(1);
     }));
 
-    const BUCKETS_COUNT: usize = 512;
+    type CurrentReader = crate::io::FileOnlyDataReader;
+    type CurrentWriter = crate::io::FileOnlyDataWriter;
 
     match args {
         CliArgs::Build(args) => {
             initialize(&args.common_args);
             if args.colors {
-                dispatch_assembler_hash_type::<DefaultColorsManager, BUCKETS_COUNT>(args);
+                dispatch_assembler_hash_type::<
+                    DefaultColorsManager,
+                    CurrentReader,
+                    CurrentWriter,
+                    { config::FIRST_BUCKETS_COUNT },
+                >(args);
             } else {
-                dispatch_assembler_hash_type::<(), BUCKETS_COUNT>(args);
+                dispatch_assembler_hash_type::<(), CurrentReader, CurrentWriter, { config::FIRST_BUCKETS_COUNT }>(
+                    args,
+                );
             }
         }
         CliArgs::Matches(args) => {
@@ -295,9 +324,14 @@ fn main() {
         CliArgs::Query(args) => {
             initialize(&args.common_args);
             if args.colors {
-                dispatch_querier_hash_type::<DefaultColorsManager, BUCKETS_COUNT>(args);
+                dispatch_querier_hash_type::<
+                    DefaultColorsManager,
+                    CurrentReader,
+                    CurrentWriter,
+                    { config::FIRST_BUCKETS_COUNT },
+                >(args);
             } else {
-                dispatch_querier_hash_type::<(), BUCKETS_COUNT>(args);
+                dispatch_querier_hash_type::<(), CurrentReader, CurrentWriter, { config::FIRST_BUCKETS_COUNT }>(args);
             }
         }
         CliArgs::Utils(args) => {

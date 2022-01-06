@@ -1,9 +1,11 @@
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::sequences_reader::SequencesReader;
+use crate::io::DataWriter;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutionContext;
 use parallel_processor::threadpools_chain::ObjectsPoolManager;
 use std::intrinsics::unlikely;
+use std::io::Write;
 use std::mem::swap;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -13,8 +15,9 @@ pub fn minb_reader<
     ExtraData,
     GlobalData,
     FileInfo: Clone + Sync + Send + Default,
+    W: DataWriter,
 >(
-    context: &MinimizerBucketingExecutionContext<ReadAssociatedData, ExtraData, GlobalData>,
+    context: &MinimizerBucketingExecutionContext<ReadAssociatedData, ExtraData, GlobalData, W>,
     manager: ObjectsPoolManager<MinimizerBucketingQueueData<FileInfo>, (PathBuf, FileInfo)>,
 ) {
     while let Some((input, file_info)) = manager.recv_obj() {

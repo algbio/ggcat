@@ -1,7 +1,8 @@
 use crate::hashes::HashableSequence;
 use crate::io::sequences_reader::FastaSequence;
 use crate::io::varint::{decode_varint, encode_varint};
-use crate::types::BucketIndexType;
+use crate::io::{DataReader, DataWriter};
+use crate::config::BucketIndexType;
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::utils::{cast_static, cast_static_mut, Utils};
 use crate::DEFAULT_BUFFER_SIZE;
@@ -11,6 +12,7 @@ use filebuffer::FileBuffer;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
+use parallel_processor::memory_fs::file::writer::FileWriter;
 use parallel_processor::multi_thread_buckets::{BucketType, MultiThreadBuckets};
 use replace_with::replace_with_or_abort;
 use serde::{Deserialize, Serialize};
@@ -98,21 +100,25 @@ struct IntermediateReadsIndex {
     index: Vec<u64>,
 }
 
-pub struct IntermediateReadsWriter<T> {
-    writer: lz4::Encoder<BufWriter<File>>,
+pub type IntermediateReadsWriterFile<T> = IntermediateReadsWriter<T, BufWriter<File>>;
+
+pub type IntermediateReadsWriterMemFs<T> = IntermediateReadsWriter<T, FileWriter>;
+
+pub struct IntermediateReadsWriter<T, W: DataWriter> {
+    writer: lz4::Encoder<W>,
     chunk_size: u64,
     index: IntermediateReadsIndex,
     path: PathBuf,
     _phantom: PhantomData<T>,
 }
 
-struct SequentialReader {
-    reader: lz4::Decoder<BufReader<File>>,
+struct SequentialReader<R: DataReader> {
+    reader: lz4::Decoder<R>,
     index: IntermediateReadsIndex,
     index_position: u64,
 }
 
-impl Read for SequentialReader {
+impl<R: DataReader> Read for SequentialReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         loop {
             match self.reader.read(buf) {
@@ -147,30 +153,30 @@ impl Read for SequentialReader {
     }
 }
 
-pub struct IntermediateReadsReader<T: SequenceExtraData> {
+pub struct IntermediateReadsReader<T: SequenceExtraData, R: DataReader> {
     remove_file: bool,
-    sequential_reader: SequentialReader,
+    sequential_reader: SequentialReader<R>,
     parallel_reader: FileBuffer,
     parallel_index: AtomicU64,
     file_path: PathBuf,
     _phantom: PhantomData<T>,
 }
 
-unsafe impl<T: SequenceExtraData> Sync for IntermediateReadsReader<T> {}
+unsafe impl<T: SequenceExtraData, R: DataReader> Sync for IntermediateReadsReader<T, R> {}
 
-pub struct IntermediateSequencesStorage<'a, T: SequenceExtraData> {
-    buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T>>,
+pub struct IntermediateSequencesStorage<'a, T: SequenceExtraData, W: DataWriter> {
+    buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T, W>>,
     buffers: Vec<Vec<u8>>,
 }
-impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
+impl<'a, T: SequenceExtraData, W: DataWriter> IntermediateSequencesStorage<'a, T, W> {
     const ALLOWED_LEN: usize = 65536;
 
     pub fn new(
         buckets_count: usize,
-        buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T>>,
+        buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T, W>>,
     ) -> Self {
         let mut buffers = Vec::with_capacity(buckets_count);
-        for i in 0..buckets_count {
+        for _ in 0..buckets_count {
             buffers.push(Vec::with_capacity(parallel_processor::Utils::multiply_by(
                 Self::ALLOWED_LEN,
                 1.05,
@@ -214,7 +220,7 @@ impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
     pub fn finalize(self) {}
 }
 
-impl<'a, T: SequenceExtraData> Drop for IntermediateSequencesStorage<'a, T> {
+impl<'a, T: SequenceExtraData, W: DataWriter> Drop for IntermediateSequencesStorage<'a, T, W> {
     fn drop(&mut self) {
         for bucket in 0..self.buffers.len() {
             if self.buffers[bucket].len() > 0 {
@@ -224,7 +230,7 @@ impl<'a, T: SequenceExtraData> Drop for IntermediateSequencesStorage<'a, T> {
     }
 }
 
-impl<T: SequenceExtraData> IntermediateReadsWriter<T> {
+impl<T: SequenceExtraData, W: DataWriter> IntermediateReadsWriter<T, W> {
     fn create_new_block(&mut self) {
         replace_with_or_abort(&mut self.writer, |writer| {
             let (mut file_buf, res) = writer.finish();
@@ -241,7 +247,7 @@ impl<T: SequenceExtraData> IntermediateReadsWriter<T> {
 
 const MAXIMUM_CHUNK_SIZE: u64 = 1024 * 1024 * 16;
 
-impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
+impl<T: SequenceExtraData, W: DataWriter> BucketType for IntermediateReadsWriter<T, W> {
     type InitType = Path;
     const SUPPORTS_LOCK_FREE: bool = false;
 
@@ -252,8 +258,7 @@ impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
             index
         ));
 
-        let mut file =
-            File::create(&path).expect(&format!("Failed to open file: {}", path.display()));
+        let mut file = W::create_default(&path);
 
         // Write empty header
         file.write_all(&IntermediateReadsHeader::default().serialize()[..]);
@@ -264,7 +269,7 @@ impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
             .checksum(ContentChecksum::NoChecksum)
             .block_mode(BlockMode::Independent)
             .block_size(BlockSize::Default)
-            .build(BufWriter::with_capacity(DEFAULT_BUFFER_SIZE, file))
+            .build(file)
             .unwrap();
 
         IntermediateReadsWriter {
@@ -299,8 +304,8 @@ impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
         let index_position = file.stream_position().unwrap();
         bincode::serialize_into(&mut file, &self.index).unwrap();
 
-        file.seek(SeekFrom::Start(0));
-        file.write_all(
+        file.write_all_at(
+            0,
             &IntermediateReadsHeader {
                 magic: INTERMEDIATE_READS_MAGIC,
                 index_offset: index_position,
@@ -395,10 +400,9 @@ impl<'a, R: Read> Read for VecReader<'a, R> {
         Ok(self.read_bytes(buf)).map(|_| ())
     }
 }
-impl<T: SequenceExtraData> IntermediateReadsReader<T> {
+impl<T: SequenceExtraData, R: DataReader> IntermediateReadsReader<T, R> {
     pub fn new(name: impl AsRef<Path>, remove_file: bool) -> Self {
-        let mut file = File::open(&name)
-            .unwrap_or_else(|_| panic!("Cannot open file {}", name.as_ref().display()));
+        let mut file = R::open_file(&name);
 
         let mut header_buffer = [0; IntermediateReadsHeader::SIZE];
         file.read_exact(&mut header_buffer);
@@ -414,8 +418,7 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
 
         Self {
             sequential_reader: SequentialReader {
-                reader: lz4::Decoder::new(BufReader::with_capacity(DEFAULT_BUFFER_SIZE, file))
-                    .unwrap(),
+                reader: lz4::Decoder::new(file).unwrap(),
                 index,
                 index_position: 0,
             },
@@ -481,7 +484,7 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
     }
 }
 
-impl<T: SequenceExtraData> Drop for IntermediateReadsReader<T> {
+impl<T: SequenceExtraData, R: DataReader> Drop for IntermediateReadsReader<T, R> {
     fn drop(&mut self) {
         if self.remove_file {
             std::fs::remove_file(&self.file_path);

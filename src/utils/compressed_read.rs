@@ -144,6 +144,11 @@ impl<'a> CompressedRead<'a> {
                 .map(|i| unsafe { Utils::decompress_base(self.get_base_unchecked(i)) as char }),
         )
     }
+
+    #[inline(always)]
+    pub fn as_ptr(&self) -> *const u8 {
+        self.data
+    }
 }
 
 impl<'a> HashableSequence for CompressedRead<'a> {

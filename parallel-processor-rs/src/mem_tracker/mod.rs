@@ -1,3 +1,5 @@
+use crate::memory_fs::allocator::CHUNKS_ALLOCATOR;
+use crate::memory_fs::file::internal::MemoryFileInternal;
 use jemalloc_ctl::{epoch, stats};
 use parking_lot::{Mutex, MutexGuard};
 use std::collections::HashMap;
@@ -7,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::Duration;
+use crate::memory_data_size::MemoryDataSize;
 
 pub mod tracked_box;
 pub mod tracked_vec;
@@ -24,6 +27,7 @@ pub fn init_memory_info() {
     *MEMORY_INFO.lock() = Some(HashMap::new());
 }
 
+#[cfg(feature = "track-usage")]
 pub fn create_hashmap_entry(
     location: &'static Location,
     type_name: &'static str,
@@ -78,8 +82,8 @@ pub fn print_memory_info() {
         println!(
             "Allocation: {:?} => alloc: {:.2} resident: {:.2} [tot {} objects]",
             pos.0,
-            measurements::Data::from_octets(reserved as f64),
-            measurements::Data::from_octets(resident as f64),
+            MemoryDataSize::from_octets(reserved as f64),
+            MemoryDataSize::from_octets(resident as f64),
             objects_count
         );
 
@@ -90,8 +94,8 @@ pub fn print_memory_info() {
 
     println!(
         "********* GLOBAL STATS: alloc: {:.2} resident: {:.2} [tot {} objects] *********",
-        measurements::Data::from_octets(tot_reserved as f64),
-        measurements::Data::from_octets(tot_resident as f64),
+        MemoryDataSize::from_octets(tot_reserved as f64),
+        MemoryDataSize::from_octets(tot_resident as f64),
         tot_objects_count
     );
 
@@ -103,8 +107,16 @@ pub fn print_memory_info() {
 
     println!(
         "********* ALLOCATOR STATS: alloc: {:.2} resident: {:.2} [tot {} objects] *********",
-        measurements::Data::from_octets(allocated as f64),
-        measurements::Data::from_octets(resident as f64),
+        MemoryDataSize::from_octets(allocated as f64),
+        MemoryDataSize::from_octets(resident as f64),
         tot_objects_count
+    );
+
+    println!(
+        "********* MEMORY FS STATS: alloc: {:.2} reserved: {:.2} resident: {:.2} files count: {} *********",
+        CHUNKS_ALLOCATOR.get_total_memory(),
+        CHUNKS_ALLOCATOR.get_reserved_memory(),
+        CHUNKS_ALLOCATOR.get_total_memory() - CHUNKS_ALLOCATOR.get_free_memory(),
+        MemoryFileInternal::active_files_count()
     );
 }

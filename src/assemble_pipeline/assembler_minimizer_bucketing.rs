@@ -5,13 +5,15 @@ use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
 use crate::io::sequences_reader::FastaSequence;
+use crate::io::DataWriter;
 use crate::pipeline_common::minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingExecutionContext, MinimizerBucketingExecutor,
 };
 use crate::rolling::minqueue::RollingMinQueue;
-use crate::types::BucketIndexType;
+use crate::config::BucketIndexType;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::max;
+use std::io::Write;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -29,8 +31,8 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
     type PreprocessInfo = u64;
     type FileInfo = u64;
 
-    fn new<C>(
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+    fn new<C, W: DataWriter>(
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
     ) -> Self {
         Self {
             minimizer_queue: RollingMinQueue::new(global_data.k - global_data.m),
@@ -38,9 +40,9 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         }
     }
 
-    fn preprocess_fasta<C>(
+    fn preprocess_fasta<C, W: DataWriter>(
         &mut self,
-        _global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+        _global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
         file_info: &Self::FileInfo,
         _read_index: u64,
         preprocess_info: &mut Self::PreprocessInfo,
@@ -49,9 +51,9 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         *preprocess_info = *file_info;
     }
 
-    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData)>(
+    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData), W: DataWriter>(
         &mut self,
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
         preprocess_info: &Self::PreprocessInfo,
         sequence: &[u8],
         _range: Range<usize>,
@@ -70,7 +72,7 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         for (index, min_hash) in rolling_iter.enumerate() {
             if min_hash != last_hash {
                 let bucket =
-                    H::get_bucket(last_hash) % (global_data.buckets_count as BucketIndexType);
+                    H::get_first_bucket(last_hash) % (global_data.buckets_count as BucketIndexType);
 
                 push_sequence(
                     bucket,
@@ -89,7 +91,7 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         let start_index = max(1, last_index) - 1;
         let include_last = true; // Always include the last element of the sequence in the last entry
         push_sequence(
-            H::get_bucket(last_hash) % (global_data.buckets_count as BucketIndexType),
+            H::get_first_bucket(last_hash) % (global_data.buckets_count as BucketIndexType),
             &sequence[start_index..sequence.len()],
             KmersFlags(
                 include_first as u8 | ((include_last as u8) << 1),
@@ -100,7 +102,7 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
 }
 
 impl AssemblePipeline {
-    pub fn minimizer_bucketing<H: HashFunctionFactory, CX: ColorsManager>(
+    pub fn minimizer_bucketing<H: HashFunctionFactory, CX: ColorsManager, Writer: DataWriter>(
         input_files: Vec<PathBuf>,
         output_path: &Path,
         buckets_count: usize,
@@ -119,7 +121,7 @@ impl AssemblePipeline {
             .map(|(i, f)| (f, i as u64))
             .collect();
 
-        GenericMinimizerBucketing::do_bucketing::<AssemblerMinimizerBucketingExecutor<H, CX>>(
+        GenericMinimizerBucketing::do_bucketing::<AssemblerMinimizerBucketingExecutor<H, CX>, Writer>(
             input_files,
             output_path,
             buckets_count,
