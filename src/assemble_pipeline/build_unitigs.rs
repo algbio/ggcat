@@ -22,6 +22,8 @@ use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
 use hashbrown::HashMap;
 use nix::sys::ptrace::cont;
+use parallel_processor::memory_fs::file::reader::FileReader;
+use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
@@ -85,8 +87,7 @@ impl AssemblePipeline {
 
             let bucket_index = Utils::get_bucket_index(read_file);
 
-            let mappings_file = filebuffer::FileBuffer::open(unitigs_map_file).unwrap();
-            let mut reader = Cursor::new(mappings_file.deref());
+            let mut reader = FileReader::open(&unitigs_map_file).unwrap();
 
             let mut unitigs_hashmap = HashMap::new();
             let mut unitigs_tmp_vec = Vec::new();
@@ -145,10 +146,9 @@ impl AssemblePipeline {
                 unitigs_tmp_vec.clear();
             }
 
-            drop(mappings_file);
-            if !KEEP_FILES.load(Ordering::Relaxed) {
-                std::fs::remove_file(&unitigs_map_file);
-            }
+            drop(reader);
+            MemoryFs::remove_file(&unitigs_map_file, !KEEP_FILES.load(Ordering::Relaxed));
+
 
             let mut final_sequences = Vec::with_capacity(counter);
             let mut temp_storage = Vec::new();
@@ -170,9 +170,7 @@ impl AssemblePipeline {
                 ));
             });
 
-            if !KEEP_FILES.load(Ordering::Relaxed) {
-                std::fs::remove_file(&read_file);
-            }
+            MemoryFs::remove_file(&read_file, !KEEP_FILES.load(Ordering::Relaxed));
 
             let mut temp_sequence = Vec::new();
             let mut ident_buffer = Vec::new();

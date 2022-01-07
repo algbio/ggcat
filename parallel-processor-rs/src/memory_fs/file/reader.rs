@@ -20,6 +20,23 @@ pub struct FileReader {
 unsafe impl Sync for FileReader {}
 unsafe impl Send for FileReader {}
 
+impl Clone for FileReader {
+    fn clone(&self) -> Self {
+        Self {
+            path: self.path.clone(),
+            file: self.file.clone(),
+            current_chunk_ref: self
+                .current_chunk_ref
+                .as_ref()
+                .map(|c| ArcRwLockReadGuard::rwlock(&c).read_arc()),
+            current_chunk_index: self.current_chunk_index,
+            chunks_count: self.chunks_count,
+            current_ptr: self.current_ptr,
+            current_len: self.current_len,
+        }
+    }
+}
+
 impl FileReader {
     fn set_chunk_info(&mut self, index: usize) {
         let chunk = self.file.get_chunk(index);
@@ -33,7 +50,10 @@ impl FileReader {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Option<Self> {
-        let file = MemoryFileInternal::retrieve_reference(&path)?;
+        let file = match MemoryFileInternal::retrieve_reference(&path) {
+            None => MemoryFileInternal::create_from_fs(&path)?,
+            Some(x) => x,
+        };
 
         file.open(OpenMode::Read).unwrap();
 

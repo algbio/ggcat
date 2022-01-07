@@ -8,8 +8,12 @@ use crate::io::reads_writer::ReadsWriter;
 use crate::io::{DataReader, DataWriter};
 use crate::utils::debug_utils::debug_print;
 use crate::utils::Utils;
-use crate::{AssemblerStartingStep, KEEP_FILES};
+use crate::{AssemblerStartingStep, KEEP_FILES, SAVE_MEMORY};
 use itertools::Itertools;
+use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
+use parallel_processor::memory_fs::file::internal::MemoryFileMode;
+use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
 use std::fs::remove_file;
@@ -82,13 +86,14 @@ pub fn run_assembler<
             k,
             m,
             threads_count,
+            SAVE_MEMORY.load(Ordering::Relaxed),
         )
     } else {
         RetType {
             sequences: Utils::generate_bucket_names(
                 temp_dir.join("result"),
                 BUCKETS_COUNT,
-                Some("lz4"),
+                Some("tmp"),
             ),
             hashes: Utils::generate_bucket_names(temp_dir.join("hashes"), BUCKETS_COUNT, None),
         }
@@ -128,6 +133,18 @@ pub fn run_assembler<
             remove_file(file);
         }
 
+        let mut result_map_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+            BUCKETS_COUNT,
+            &(temp_dir.join("results_map"), MemoryFileMode::PreferMemory),
+            None,
+        );
+
+        let mut final_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+            BUCKETS_COUNT,
+            &(temp_dir.join("unitigs_map"), MemoryFileMode::PreferMemory),
+            None,
+        );
+
         if loop_iteration != 0 {
             links = Utils::generate_bucket_names(
                 temp_dir.join(format!("linksi{}", loop_iteration - 1)),
@@ -143,27 +160,24 @@ pub fn run_assembler<
         let result = loop {
             println!("Iteration: {}", loop_iteration);
 
-            let (new_links, result) = AssemblePipeline::links_compaction(
+            let (new_links, is_finished) = AssemblePipeline::links_compaction(
                 links,
                 temp_dir.as_path(),
                 BUCKETS_COUNT,
                 loop_iteration,
+                &mut result_map_buckets,
+                &mut final_buckets,
             );
             links = new_links;
-            match result {
-                None => {}
-                Some(result) => {
-                    println!("Completed compaction with {} iters", loop_iteration);
-                    break result;
-                }
+            if is_finished {
+                println!("Completed compaction with {} iters", loop_iteration);
+                break (final_buckets.finalize(), result_map_buckets.finalize());
             }
             loop_iteration += 1;
         };
 
-        if !KEEP_FILES.load(Ordering::Relaxed) {
-            for link_file in links {
-                std::fs::remove_file(&link_file);
-            }
+        for link_file in links {
+            MemoryFs::remove_file(&link_file, !KEEP_FILES.load(Ordering::Relaxed));
         }
         result
     } else {

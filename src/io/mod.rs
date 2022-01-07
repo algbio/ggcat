@@ -17,7 +17,8 @@ pub mod varint;
 
 pub trait DataWriter: Write + Send + Sync + 'static {
     fn create_default(path: impl AsRef<Path>) -> Self;
-    fn write_all_at(&mut self, position: u64, data: &[u8]) -> Result<(), ()>;
+    /// Overwrites bytes at the start of the file, the data field should not be longer than 128 bytes
+    fn overwrite_at_start(&mut self, data: &[u8]) -> Result<(), ()>;
     fn stream_position(&mut self) -> std::io::Result<u64>;
 }
 pub trait DataReader: Read + Seek + Send + Sync + 'static {
@@ -41,7 +42,8 @@ impl DataReader for FileOnlyDataReader {
 }
 impl DataReader for MemoryFsDataReader {
     fn open_file(path: impl AsRef<Path>) -> Self {
-        todo!()
+        FileReader::open(&path)
+            .unwrap_or_else(|| panic!("Cannot open file {}", path.as_ref().display()))
     }
 }
 
@@ -54,9 +56,9 @@ impl DataWriter for FileOnlyDataWriter {
         )
     }
 
-    fn write_all_at(&mut self, position: u64, data: &[u8]) -> Result<(), ()> {
+    fn overwrite_at_start(&mut self, data: &[u8]) -> Result<(), ()> {
         let orig_position = <Self as Seek>::stream_position(self).map_err(|_| ())?;
-        self.seek(SeekFrom::Start(position)).map_err(|_| ())?;
+        self.seek(SeekFrom::Start(0)).map_err(|_| ())?;
         self.write_all(&data).map_err(|_| ())?;
 
         self.seek(SeekFrom::Start(orig_position)).map_err(|_| ())?;
@@ -73,11 +75,11 @@ impl DataWriter for MemoryFsDataWriter {
         FileWriter::create(path, MemoryFileMode::PreferMemory)
     }
 
-    fn write_all_at(&mut self, position: u64, data: &[u8]) -> Result<(), ()> {
-        todo!()
+    fn overwrite_at_start(&mut self, data: &[u8]) -> Result<(), ()> {
+        self.write_at_start(data)
     }
 
     fn stream_position(&mut self) -> std::io::Result<u64> {
-        todo!()
+        Ok(self.len() as u64)
     }
 }

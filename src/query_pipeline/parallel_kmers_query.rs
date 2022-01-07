@@ -221,6 +221,7 @@ impl QueryPipeline {
         k: usize,
         m: usize,
         threads_count: usize,
+        save_memory: bool,
     ) -> Vec<PathBuf> {
         PHASES_TIMES_MONITOR
             .write()
@@ -249,6 +250,7 @@ impl QueryPipeline {
             buckets_count,
             threads_count,
             global_data,
+            save_memory,
         );
 
         counters_buckets.finalize()

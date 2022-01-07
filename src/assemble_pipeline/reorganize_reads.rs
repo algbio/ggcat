@@ -22,6 +22,8 @@ use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
 use nix::sys::ptrace::cont;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::memory_fs::file::reader::FileReader;
+use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
@@ -110,16 +112,15 @@ impl AssemblePipeline {
 
             let bucket_index = Utils::get_bucket_index(read_file);
 
-            let mappings_file = filebuffer::FileBuffer::open(mapping_file).unwrap();
-            let mut reader = Cursor::new(mappings_file.deref());
+
+            let mut reader = FileReader::open(&mapping_file).unwrap();
+
             while let Some(link) = LinkMapping::from_stream(&mut reader) {
                 mappings.push(link);
             }
 
-            drop(mappings_file);
-            if !KEEP_FILES.load(Ordering::Relaxed) {
-                std::fs::remove_file(mapping_file);
-            }
+            drop(reader);
+            MemoryFs::remove_file(&mapping_file, !KEEP_FILES.load(Ordering::Relaxed));
 
             struct Compare {}
             impl SortKey<LinkMapping> for Compare {

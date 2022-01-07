@@ -37,8 +37,6 @@ replace_with = "0.1.7"
 roaring = "0.7.0"
 backtrace = "0.3.63"
 csv = "1.1.6"
-jemallocator = "0.3.2"
-jemalloc-ctl = "0.3.3"
 flate2 = { default-features = false, features = ["cloudflare_zlib"], version = "1.0.22" }
 static_assertions = "1.1.0"
 

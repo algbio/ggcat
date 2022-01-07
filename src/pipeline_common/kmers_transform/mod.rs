@@ -1,12 +1,12 @@
 mod process_subbucket;
 pub mod structs;
 
+use crate::config::{BucketIndexType, SortingHashType};
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
 use crate::io::varint::{encode_varint, encode_varint_flags};
 use crate::io::DataReader;
-use crate::config::{BucketIndexType, SortingHashType};
 use crate::utils::compressed_read::CompressedRead;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use parallel_processor::memory_data_size::MemoryDataSize;
@@ -14,7 +14,7 @@ use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::BucketsThreadDispatcher;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Condvar, Mutex, RwLock};
 use std::cmp::min;
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -72,6 +72,7 @@ impl KmersTransform {
         buckets_count: usize,
         threads_count: usize,
         extra_data: F::GlobalExtraData<'a>,
+        save_memory: bool,
     ) {
         static CURRENT_BUCKETS_COUNT: AtomicU64 = AtomicU64::new(0);
 
@@ -129,6 +130,9 @@ impl KmersTransform {
         const MAX_HASHES_FOR_FLUSH: MemoryDataSize = MemoryDataSize::from_kibioctets(64.0);
         const MAX_TEMP_SEQUENCES_SIZE: MemoryDataSize = MemoryDataSize::from_kibioctets(64.0);
 
+        let data_wait_condvar = Condvar::new();
+        let data_wait_mutex = Mutex::new(());
+
         crossbeam::thread::scope(|s| {
             for _ in 0..min(buckets_count, threads_count) {
                 s.spawn(|_| {
@@ -151,22 +155,31 @@ impl KmersTransform {
                             );
 
                             drop(reader);
-                            MemoryFs::remove_file(queue_path);
+                            MemoryFs::remove_file(queue_path, true);
                         }
                     };
 
                     const HASH_SIZE: usize = std::mem::size_of::<SortingHashType>();
 
                     'outer_loop: loop {
+                        process_pending_reads(&mut executor);
+
                         if reading_finished.load(Ordering::Relaxed) {
-                            process_pending_reads(&mut executor);
                             break 'outer_loop;
                         }
+                        let mut bucket = {
+                            let current_bucket_read_guard = current_bucket.read();
 
-                        let mut bucket = match current_bucket.read().clone() {
-                            None => continue,
-                            Some(val) => val,
+                            match current_bucket_read_guard.clone() {
+                                None => {
+                                    drop(current_bucket_read_guard);
+                                    data_wait_condvar.wait(&mut data_wait_mutex.lock());
+                                    continue;
+                                }
+                                Some(val) => val,
+                            }
                         };
+
                         let mut cmp_reads =
                             BucketsThreadDispatcher::new(MAX_TEMP_SEQUENCES_SIZE, &bucket.buckets);
 
@@ -229,22 +242,36 @@ impl KmersTransform {
                         let mut writable_bucket = current_bucket.write();
                         if writable_bucket
                             .as_ref()
-                            .map(|x| x.reader.is_finished())
+                            .map(|x| {
+                                x.reader.is_finished()
+                                    && (!save_memory || (Arc::strong_count(x) == 1))
+                            })
                             .unwrap_or(false)
                         {
                             writable_bucket.take();
+                            data_wait_condvar.notify_all();
                         }
 
                         drop(writable_bucket);
-                        process_pending_reads(&mut executor);
 
-                        writable_bucket = current_bucket.write();
-                        if writable_bucket.is_none() {
-                            if let Some(bucket) = open_bucket() {
-                                *writable_bucket = Some(bucket);
-                            } else {
-                                reading_finished.store(true, Ordering::Relaxed);
+                        loop {
+                            process_pending_reads(&mut executor);
+
+                            writable_bucket = current_bucket.write();
+                            if vecs_process_queue.len() > 0 {
+                                drop(writable_bucket);
+                                continue;
                             }
+
+                            if writable_bucket.is_none() {
+                                if let Some(bucket) = open_bucket() {
+                                    *writable_bucket = Some(bucket);
+                                    data_wait_condvar.notify_all();
+                                } else {
+                                    reading_finished.store(true, Ordering::Relaxed);
+                                }
+                            }
+                            break;
                         }
                     }
                     executor.finalize(&extra_data);

@@ -7,6 +7,7 @@ pub mod progress;
 pub mod vec_slice;
 
 use crate::config::BucketIndexType;
+use parking_lot::{Condvar, Mutex, RwLockReadGuard};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::JoinHandle;

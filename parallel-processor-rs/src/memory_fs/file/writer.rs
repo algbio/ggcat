@@ -1,10 +1,12 @@
 use crate::memory_fs::allocator::{AllocatedChunk, CHUNKS_ALLOCATOR};
-use crate::memory_fs::file::internal::{MemoryFileInternal, MemoryFileMode, OpenMode};
+use crate::memory_fs::file::internal::{
+    FileChunk, MemoryFileInternal, MemoryFileMode, OpenMode, UnderlyingFile,
+};
 use parking_lot::{Mutex, RwLock};
 use std::cmp::min;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
-use std::ops::DerefMut;
+use std::io::{Seek, SeekFrom, Write};
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -26,6 +28,52 @@ impl FileWriter {
                 file.open(OpenMode::Write).unwrap();
                 file
             },
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.file.len() + self.current_buffer.read().len()
+    }
+
+    pub fn write_at_start(&mut self, data: &[u8]) -> Result<(), ()> {
+        if data.len() > 128 {
+            return Err(());
+        }
+
+        unsafe {
+            if self.file.get_chunks_count() > 0 {
+                match self.file.get_chunk(0).read().deref() {
+                    FileChunk::OnDisk { .. } => {
+                        if let UnderlyingFile::WriteMode { file, .. } =
+                            self.file.get_underlying_file().deref()
+                        {
+                            let mut file_lock = file.1.lock();
+                            let position = file_lock.stream_position().unwrap();
+                            file_lock.seek(SeekFrom::Start(0)).unwrap();
+                            file_lock.write_all(data).unwrap();
+                            file_lock.seek(SeekFrom::Start(position)).unwrap();
+                            Ok(())
+                        } else {
+                            Err(())
+                        }
+                    }
+                    FileChunk::OnMemory { chunk } => {
+                        std::ptr::copy_nonoverlapping(
+                            data.as_ptr(),
+                            chunk.get_mut_ptr(),
+                            data.len(),
+                        );
+                        Ok(())
+                    }
+                }
+            } else {
+                std::ptr::copy_nonoverlapping(
+                    data.as_ptr(),
+                    self.current_buffer.read().get_mut_ptr(),
+                    data.len(),
+                );
+                Ok(())
+            }
         }
     }
 

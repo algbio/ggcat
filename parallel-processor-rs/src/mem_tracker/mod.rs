@@ -1,6 +1,6 @@
+use crate::memory_data_size::MemoryDataSize;
 use crate::memory_fs::allocator::CHUNKS_ALLOCATOR;
 use crate::memory_fs::file::internal::MemoryFileInternal;
-use jemalloc_ctl::{epoch, stats};
 use parking_lot::{Mutex, MutexGuard};
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::Duration;
-use crate::memory_data_size::MemoryDataSize;
 
 pub mod tracked_box;
 pub mod tracked_vec;
@@ -99,18 +98,18 @@ pub fn print_memory_info() {
         tot_objects_count
     );
 
-    // many statistics are cached and only updated when the epoch is advanced.
-    epoch::advance().unwrap();
-
-    let allocated = stats::allocated::read().unwrap();
-    let resident = stats::resident::read().unwrap();
-
-    println!(
-        "********* ALLOCATOR STATS: alloc: {:.2} resident: {:.2} [tot {} objects] *********",
-        MemoryDataSize::from_octets(allocated as f64),
-        MemoryDataSize::from_octets(resident as f64),
-        tot_objects_count
-    );
+    // // many statistics are cached and only updated when the epoch is advanced.
+    // epoch::advance().unwrap();
+    //
+    // let allocated = stats::allocated::read().unwrap();
+    // let resident = stats::resident::read().unwrap();
+    //
+    // println!(
+    //     "********* ALLOCATOR STATS: alloc: {:.2} resident: {:.2} [tot {} objects] *********",
+    //     MemoryDataSize::from_octets(allocated as f64),
+    //     MemoryDataSize::from_octets(resident as f64),
+    //     tot_objects_count
+    // );
 
     println!(
         "********* MEMORY FS STATS: alloc: {:.2} reserved: {:.2} resident: {:.2} files count: {} *********",

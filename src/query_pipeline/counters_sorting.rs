@@ -6,6 +6,7 @@ use crate::query_pipeline::QueryPipeline;
 use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::BucketWriter;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IndexedParallelIterator;
@@ -97,9 +98,7 @@ impl QueryPipeline {
                 }
 
                 drop(file);
-                if !KEEP_FILES.load(Ordering::Relaxed) {
-                    std::fs::remove_file(&input);
-                }
+                MemoryFs::remove_file(&input, !KEEP_FILES.load(Ordering::Relaxed));
 
                 struct Compare;
                 impl SortKey<CounterEntry> for Compare {

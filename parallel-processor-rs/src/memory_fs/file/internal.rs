@@ -140,6 +140,28 @@ impl MemoryFileInternal {
         new_file
     }
 
+    pub fn create_from_fs(path: impl AsRef<Path>) -> Option<Arc<Self>> {
+        if !path.as_ref().exists() || !path.as_ref().is_file() {
+            return None;
+        }
+        let len = path.as_ref().metadata().ok()?.len() as usize;
+
+        let new_file = Arc::new(Self {
+            path: path.as_ref().into(),
+            file: RwLock::new(UnderlyingFile::NotOpened),
+            memory_mode: RwLock::new(MemoryFileMode::DiskOnly),
+            open_mode: Mutex::new((OpenMode::None, 0)),
+            memory: RwLock::new(vec![Arc::new(RwLock::new(FileChunk::OnDisk {
+                offset: 0,
+                len,
+            }))]),
+        });
+
+        MEMORY_MAPPED_FILES.insert(path.as_ref().into(), new_file.clone());
+
+        Some(new_file)
+    }
+
     pub fn is_on_disk(&self) -> bool {
         *self.memory_mode.read() == MemoryFileMode::DiskOnly
     }
@@ -164,12 +186,13 @@ impl MemoryFileInternal {
         MEMORY_MAPPED_FILES.len()
     }
 
-    pub fn delete(path: impl AsRef<Path>) -> bool {
+    pub fn delete(path: impl AsRef<Path>, remove_fs: bool) -> bool {
         if let Some(file) = MEMORY_MAPPED_FILES.remove(path.as_ref()) {
-            if let MemoryFileMode::DiskOnly = *file.1.memory_mode.read() {
-                remove_file(path);
+            if remove_fs {
+                if let MemoryFileMode::DiskOnly = *file.1.memory_mode.read() {
+                    remove_file(path);
+                }
             }
-
             true
         } else {
             false
@@ -184,7 +207,7 @@ impl MemoryFileInternal {
                     OpenOptions::new()
                         .create(true)
                         .write(true)
-                        .append(true)
+                        .append(false)
                         // .custom_flags(O_DIRECT)
                         .open(&self.path)
                         .unwrap(),

@@ -15,6 +15,7 @@ use crate::memory_fs::file::flush::*;
 use parking_lot::lock_api::RwLockReadGuard;
 use parking_lot::{Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 
+use crate::memory_data_size::MemoryDataSize;
 use crate::memory_fs::allocator::{AllocatedChunk, ChunksAllocator, CHUNKS_ALLOCATOR};
 use crate::memory_fs::file::internal::{MemoryFileInternal, SWAPPABLE_FILES};
 use crate::stats_logger::{StatMode, StatRaiiCounter};
@@ -22,7 +23,6 @@ use std::mem::{replace, size_of};
 use std::panic::Location;
 use std::slice::from_raw_parts_mut;
 use std::time::Duration;
-use crate::memory_data_size::MemoryDataSize;
 
 pub const O_DIRECT: i32 = 0x4000;
 
@@ -41,16 +41,29 @@ const JOIN_HANDLE_OPT: Option<JoinHandle<()>> = None;
 pub struct MemoryFs;
 
 impl MemoryFs {
-    pub fn init(memory_size: MemoryDataSize, flush_queue_size: usize, threads_count: usize) {
+    pub fn init(
+        memory_size: MemoryDataSize,
+        flush_queue_size: usize,
+        threads_count: usize,
+        min_chunks_count: usize,
+    ) {
         unsafe {
-            CHUNKS_ALLOCATOR.initialize(memory_size);
+            let chunk_size = (memory_size / (min_chunks_count as f64)).as_bytes();
+
+            let mut suggested_chunk_size_log = 1;
+
+            while (1 << (suggested_chunk_size_log + 1)) <= chunk_size {
+                suggested_chunk_size_log += 1;
+            }
+
+            CHUNKS_ALLOCATOR.initialize(memory_size, suggested_chunk_size_log, min_chunks_count);
             FILES_FLUSH_HASH_MAP = Some(Mutex::new(HashMap::with_capacity(8192)));
             GlobalFlush::init(flush_queue_size, threads_count);
         }
     }
 
-    pub fn remove_file(file: impl AsRef<Path>) -> Result<(), ()> {
-        if MemoryFileInternal::delete(file) {
+    pub fn remove_file(file: impl AsRef<Path>, remove_fs: bool) -> Result<(), ()> {
+        if MemoryFileInternal::delete(file, remove_fs) {
             Ok(())
         } else {
             Err(())
@@ -73,10 +86,11 @@ impl MemoryFs {
 
     pub fn terminate() {
         GlobalFlush::terminate();
+        CHUNKS_ALLOCATOR.deinitialize();
     }
 
     pub fn reduce_pressure() -> bool {
-        println!("Reducing pressure!");
+        // println!("Reducing pressure!");
         let (current, max_size) = GlobalFlush::global_queue_occupation();
         if current * 3 < max_size {
             while let Some(file) = SWAPPABLE_FILES.pop() {
@@ -186,7 +200,7 @@ mod tests {
 
     #[test]
     pub fn memory_fs_test() {
-        MemoryFs::init(Data::from_mebioctets(100.0 * 1024.0), 1024, 3);
+        MemoryFs::init(Data::from_mebioctets(100.0 * 1024.0), 1024, 3, 0);
         let mut data = (0..3337).map(|x| (x % 256) as u8).collect::<Vec<u8>>();
 
         (0..400).into_par_iter().for_each(|i| {

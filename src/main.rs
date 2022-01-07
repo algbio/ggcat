@@ -1,13 +1,10 @@
 //TODO:
 //
-// FIXME: The final groups must be grouped by full minimizer!
-// Find new file-based merge bottleneck
 // Fix FileReader for null
 // Fix unwanted files writing when on PreferredMemory
+// Give files different disk-writing priorities
 //
 //
-//
-
 
 #![feature(new_uninit, core_intrinsics, type_alias_impl_trait)]
 #![feature(is_sorted, thread_local, panic_info_message)]
@@ -40,9 +37,9 @@ use structopt::{clap::ArgGroup, StructOpt};
 
 mod assemble_pipeline;
 mod benchmarks;
+mod config;
 mod hashes;
 pub mod libdeflate;
-mod config;
 #[macro_use]
 mod utils;
 mod assembler;
@@ -126,11 +123,7 @@ arg_enum! {
     }
 }
 
-use jemallocator::Jemalloc;
 use parallel_processor::memory_fs::MemoryFs;
-
-#[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
 
 #[derive(StructOpt, Debug)]
 enum CliArgs {
@@ -156,7 +149,7 @@ struct CommonArgs {
     pub klen: usize,
 
     /// Specifies the m-mers (minimizers) length, defaults to min(12, ceil(K / 2))
-    #[structopt(short)]
+    #[structopt(long)]
     pub mlen: Option<usize>,
 
     /// Directory for temporary files (default .temp_files)
@@ -177,6 +170,10 @@ struct CommonArgs {
     /// Treats reverse complementary kmers as different
     #[structopt(short = "f", long)]
     pub forward_only: bool,
+
+    /// Maximum memory usage (GB)
+    #[structopt(short = "m", long, default_value = "8")]
+    pub memory: f64,
 }
 
 #[derive(StructOpt, Debug)]
@@ -206,7 +203,7 @@ struct AssemblerArgs {
     #[structopt(short = "o", long = "output-file", default_value = "output.fasta.lz4")]
     pub output_file: PathBuf,
 
-    #[structopt(short = "x", long, default_value = "MinimizerBucketing")]
+    #[structopt(short = "p", long, default_value = "MinimizerBucketing")]
     pub step: AssemblerStartingStep,
 
     #[structopt(long = "last-step", default_value = "BuildUnitigs")]
@@ -253,11 +250,14 @@ fn initialize(args: &CommonArgs) {
     create_dir_all(&args.temp_dir);
 
     MemoryFs::init(
-        parallel_processor::memory_data_size::MemoryDataSize::from_gibioctets(16.0),
+        parallel_processor::memory_data_size::MemoryDataSize::from_gibioctets(args.memory),
         512,
         3,
+        2560,
     );
 }
+
+pub static SAVE_MEMORY: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     let args: CliArgs = CliArgs::from_args();
@@ -292,8 +292,8 @@ fn main() {
         exit(1);
     }));
 
-    type CurrentReader = crate::io::FileOnlyDataReader;
-    type CurrentWriter = crate::io::FileOnlyDataWriter;
+    type CurrentReader = crate::io::MemoryFsDataReader;
+    type CurrentWriter = crate::io::MemoryFsDataWriter;
 
     match args {
         CliArgs::Build(args) => {
@@ -306,9 +306,12 @@ fn main() {
                     { config::FIRST_BUCKETS_COUNT },
                 >(args);
             } else {
-                dispatch_assembler_hash_type::<(), CurrentReader, CurrentWriter, { config::FIRST_BUCKETS_COUNT }>(
-                    args,
-                );
+                dispatch_assembler_hash_type::<
+                    (),
+                    CurrentReader,
+                    CurrentWriter,
+                    { config::FIRST_BUCKETS_COUNT },
+                >(args);
             }
         }
         CliArgs::Matches(args) => {
@@ -331,11 +334,18 @@ fn main() {
                     { config::FIRST_BUCKETS_COUNT },
                 >(args);
             } else {
-                dispatch_querier_hash_type::<(), CurrentReader, CurrentWriter, { config::FIRST_BUCKETS_COUNT }>(args);
+                dispatch_querier_hash_type::<
+                    (),
+                    CurrentReader,
+                    CurrentWriter,
+                    { config::FIRST_BUCKETS_COUNT },
+                >(args);
             }
         }
         CliArgs::Utils(args) => {
             process_cmdutils(args);
         }
     }
+
+    MemoryFs::terminate();
 }

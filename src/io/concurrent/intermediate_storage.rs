@@ -1,8 +1,8 @@
+use crate::config::BucketIndexType;
 use crate::hashes::HashableSequence;
 use crate::io::sequences_reader::FastaSequence;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::io::{DataReader, DataWriter};
-use crate::config::BucketIndexType;
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::utils::{cast_static, cast_static_mut, Utils};
 use crate::DEFAULT_BUFFER_SIZE;
@@ -12,7 +12,9 @@ use filebuffer::FileBuffer;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
+use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::file::writer::FileWriter;
+use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::{BucketType, MultiThreadBuckets};
 use replace_with::replace_with_or_abort;
 use serde::{Deserialize, Serialize};
@@ -156,7 +158,7 @@ impl<R: DataReader> Read for SequentialReader<R> {
 pub struct IntermediateReadsReader<T: SequenceExtraData, R: DataReader> {
     remove_file: bool,
     sequential_reader: SequentialReader<R>,
-    parallel_reader: FileBuffer,
+    parallel_reader: FileReader,
     parallel_index: AtomicU64,
     file_path: PathBuf,
     _phantom: PhantomData<T>,
@@ -304,8 +306,7 @@ impl<T: SequenceExtraData, W: DataWriter> BucketType for IntermediateReadsWriter
         let index_position = file.stream_position().unwrap();
         bincode::serialize_into(&mut file, &self.index).unwrap();
 
-        file.write_all_at(
-            0,
+        file.overwrite_at_start(
             &IntermediateReadsHeader {
                 magic: INTERMEDIATE_READS_MAGIC,
                 index_offset: index_position,
@@ -422,7 +423,7 @@ impl<T: SequenceExtraData, R: DataReader> IntermediateReadsReader<T, R> {
                 index,
                 index_position: 0,
             },
-            parallel_reader: FileBuffer::open(&name).unwrap(),
+            parallel_reader: FileReader::open(&name).unwrap(),
             parallel_index: AtomicU64::new(0),
             remove_file,
             file_path: name.as_ref().to_path_buf(),
@@ -474,8 +475,10 @@ impl<T: SequenceExtraData, R: DataReader> IntermediateReadsReader<T, R> {
 
         let addr_start = self.sequential_reader.index.index[index] as usize;
 
-        let cursor = Cursor::new(&self.parallel_reader[addr_start..]);
-        let mut compressed_stream = lz4::Decoder::new(cursor).unwrap();
+        let mut reader = self.parallel_reader.clone();
+        reader.seek(SeekFrom::Start(addr_start as u64));
+
+        let mut compressed_stream = lz4::Decoder::new(reader).unwrap();
         let mut vec_reader = VecReader::new(DEFAULT_BUFFER_SIZE, &mut compressed_stream);
 
         Self::read_single_stream(vec_reader, lambda);
@@ -487,7 +490,7 @@ impl<T: SequenceExtraData, R: DataReader> IntermediateReadsReader<T, R> {
 impl<T: SequenceExtraData, R: DataReader> Drop for IntermediateReadsReader<T, R> {
     fn drop(&mut self) {
         if self.remove_file {
-            std::fs::remove_file(&self.file_path);
+            MemoryFs::remove_file(&self.file_path, self.remove_file);
         }
     }
 }

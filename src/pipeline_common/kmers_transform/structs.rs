@@ -28,7 +28,7 @@ impl ReadRef {
     #[inline(always)]
     pub fn unpack<'a, 'b, E: SequenceExtraData>(
         &'a self,
-        memory: &'b[u8],
+        memory: &'b [u8],
         flags_count: usize,
     ) -> (u8, CompressedRead<'b>, E) {
         let mut read_start = self.read_start;

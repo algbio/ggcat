@@ -15,6 +15,7 @@ use rayon::prelude::*;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
+use crate::config::BucketIndexType;
 use crate::hashes::{ExtendableHashTraitType, HashFunction};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::intermediate_storage::{
@@ -33,7 +34,6 @@ use crate::pipeline_common::kmers_transform::{
     MERGE_BUCKETS_COUNT,
 };
 use crate::rolling::minqueue::RollingMinQueue;
-use crate::config::BucketIndexType;
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::utils::debug_utils::debug_increase;
 use crate::utils::Utils;
@@ -43,10 +43,12 @@ use crossbeam::queue::*;
 use hashbrown::HashMap;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 #[cfg(feature = "mem-analysis")]
 use parallel_processor::mem_tracker::MemoryInfo;
 use parallel_processor::memory_data_size::MemoryDataSize;
+use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::multi_thread_buckets::{
     BucketType, BucketsThreadDispatcher, MultiThreadBuckets,
 };
@@ -65,10 +67,10 @@ pub const READ_FLAG_INCL_BEGIN: u8 = (1 << 0);
 pub const READ_FLAG_INCL_END: u8 = (1 << 1);
 
 pub mod structs {
+    use crate::config::BucketIndexType;
     use crate::io::concurrent::intermediate_storage::SequenceExtraData;
     use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
     use crate::io::DataWriter;
-    use crate::config::BucketIndexType;
     use std::io::Write;
     use std::path::PathBuf;
 
@@ -130,7 +132,7 @@ struct GlobalMergeData<'a, MH: HashFunctionFactory, CX: ColorsManager, W: DataWr
     min_multiplicity: usize,
     colors_global_table: &'a CX::GlobalColorsTable,
     output_results_buckets: SegQueue<ResultsBucketType<'a, MH, CX, W>>,
-    hashes_buckets: &'a MultiThreadBuckets<BinaryWriter>,
+    hashes_buckets: &'a MultiThreadBuckets<LockFreeBinaryWriter>,
 }
 
 pub type ResultsBucketType<'a, MH: HashFunctionFactory, CX: ColorsManager, W: DataWriter> = ResultsBucket<
@@ -195,7 +197,8 @@ struct ParallelKmersMerge<
 > {
     results_buckets_counter: usize,
     current_bucket: ResultsBucketType<'x, MH, CX, W>,
-    hashes_tmp: BucketsThreadDispatcher<'x, BinaryWriter, HashEntry<MH::HashTypeUnextendable>>,
+    hashes_tmp:
+        BucketsThreadDispatcher<'x, LockFreeBinaryWriter, HashEntry<MH::HashTypeUnextendable>>,
 
     forward_seq: Vec<u8>,
     backward_seq: Vec<u8>,
@@ -288,11 +291,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager, W: 
             let mut tot_chars = 0;
 
             for packed_read in reads {
-
                 let (kmer_flags, read, color) = packed_read
                     .unpack(memory, <ParallelKmersMergeFactory<H, MH, CX, W> as KmersTransformExecutorFactory>::FLAGS_COUNT);
-
-
 
                 let hashes = MH::new(read, k);
 
@@ -599,18 +599,17 @@ impl AssemblePipeline {
         k: usize,
         m: usize,
         threads_count: usize,
+        save_memory: bool,
     ) -> RetType {
         PHASES_TIMES_MONITOR
             .write()
             .start_phase("phase: kmers merge".to_string());
 
-        let mut hashes_buckets = MultiThreadBuckets::<BinaryWriter>::new(
+        let mut hashes_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             &(
                 out_directory.as_ref().join("hashes"),
-                StorageMode::Plain {
-                    buffer_size: DEFAULT_BUFFER_SIZE,
-                },
+                MemoryFileMode::PreferMemory,
             ),
             None,
         );
@@ -657,6 +656,7 @@ impl AssemblePipeline {
             buckets_count,
             threads_count,
             global_data,
+            save_memory,
         );
 
         RetType {

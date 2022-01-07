@@ -11,7 +11,10 @@ use crate::utils::vec_slice::VecSlice;
 use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
+use parallel_processor::memory_fs::file::internal::MemoryFileMode;
+use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rand::{thread_rng, RngCore};
@@ -23,6 +26,7 @@ use serde::Serialize;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::atomic::Ordering;
+use parallel_processor::memory_fs::MemoryFs;
 
 impl AssemblePipeline {
     pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
@@ -34,13 +38,11 @@ impl AssemblePipeline {
             .write()
             .start_phase("phase: hashes sorting".to_string());
 
-        let mut links_buckets = MultiThreadBuckets::<BinaryWriter>::new(
+        let mut links_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             &(
                 output_dir.as_ref().join("links"),
-                StorageMode::Plain {
-                    buffer_size: DEFAULT_BUFFER_SIZE,
-                },
+                MemoryFileMode::PreferMemory,
             ),
             None,
         );
@@ -56,19 +58,16 @@ impl AssemblePipeline {
 
                 let mut rand_bool = FastRandBool::new();
 
-                let file = filebuffer::FileBuffer::open(input).unwrap();
+                let mut reader = FileReader::open(input).unwrap();
 
-                let mut reader = Cursor::new(file.deref());
                 let mut vec: Vec<HashEntry<H::HashTypeUnextendable>> = Vec::new();
 
                 while let Ok(value) = bincode::deserialize_from(&mut reader) {
                     vec.push(value);
                 }
 
-                drop(file);
-                if !KEEP_FILES.load(Ordering::Relaxed) {
-                    std::fs::remove_file(&input);
-                }
+                drop(reader);
+                MemoryFs::remove_file(&input, !KEEP_FILES.load(Ordering::Relaxed));
 
                 struct Compare<H: HashFunctionFactory> {
                     _phantom: PhantomData<H>,

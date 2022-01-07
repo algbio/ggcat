@@ -9,10 +9,10 @@ use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 
 use crate::assemble_pipeline::AssemblePipeline;
+use crate::config::BucketIndexType;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::io::varint::{decode_varint, encode_varint};
-use crate::config::BucketIndexType;
 use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::vec_slice::VecSlice;
 use crate::utils::Utils;
@@ -22,7 +22,11 @@ use hashbrown::HashMap;
 use hashbrown::HashSet;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
+use parallel_processor::memory_fs::file::internal::MemoryFileMode;
+use parallel_processor::memory_fs::file::reader::FileReader;
+use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::{
     BucketWriter, BucketsThreadDispatcher, MultiThreadBuckets,
 };
@@ -65,37 +69,19 @@ impl AssemblePipeline {
         output_dir: impl AsRef<Path>,
         buckets_count: usize,
         elab_index: usize,
-    ) -> (Vec<PathBuf>, Option<(Vec<PathBuf>, Vec<PathBuf>)>) {
+        result_map_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
+        final_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
+    ) -> (Vec<PathBuf>, bool) {
         let totsum = AtomicU64::new(0);
 
-        let mut links_buckets = MultiThreadBuckets::<BinaryWriter>::new(
+        let mut links_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             &(
                 output_dir
                     .as_ref()
                     .to_path_buf()
                     .join(format!("linksi{}", elab_index)),
-                StorageMode::Plain {
-                    buffer_size: DEFAULT_BUFFER_SIZE,
-                },
-            ),
-            None,
-        );
-
-        let mut result_map_buckets = MultiThreadBuckets::<BinaryWriter>::new(
-            buckets_count,
-            &(
-                output_dir.as_ref().to_path_buf().join("results_map"),
-                StorageMode::AppendOrCreate,
-            ),
-            None,
-        );
-
-        let mut final_buckets = MultiThreadBuckets::<BinaryWriter>::new(
-            buckets_count,
-            &(
-                output_dir.as_ref().to_path_buf().join("unitigs_map"),
-                StorageMode::AppendOrCreate,
+                MemoryFileMode::PreferMemory,
             ),
             None,
         );
@@ -121,10 +107,9 @@ impl AssemblePipeline {
 
                 let mut rand_bool = FastRandBool::new();
 
-                let file = filebuffer::FileBuffer::open(&input).unwrap();
+                let mut reader = FileReader::open(&input).unwrap();
                 let mut vec = Vec::new();
 
-                let mut reader = Cursor::new(file.deref());
                 let mut last_unitigs_vec = Vec::new();
                 let mut current_unitigs_vec = Vec::new();
                 let mut final_unitigs_vec = Vec::new();
@@ -133,10 +118,8 @@ impl AssemblePipeline {
                     vec.push(entry);
                 }
 
-                drop(file);
-                if !KEEP_FILES.load(Ordering::Relaxed) {
-                    std::fs::remove_file(&input);
-                }
+                drop(reader);
+                MemoryFs::remove_file(&input, !KEEP_FILES.load(Ordering::Relaxed));
 
                 struct Compare {}
                 impl SortKey<UnitigLink> for Compare {
@@ -413,9 +396,6 @@ impl AssemblePipeline {
                 results_tmp.finalize();
             });
 
-        let final_buckets = final_buckets.finalize();
-        let result_map_buckets = result_map_buckets.finalize();
-
         println!(
             "Remaining: {} {}",
             totsum.load(Ordering::Relaxed),
@@ -425,10 +405,7 @@ impl AssemblePipeline {
         );
         (
             links_buckets.finalize(),
-            match totsum.load(Ordering::Relaxed) {
-                0 => Some((final_buckets, result_map_buckets)),
-                _ => None,
-            },
+            totsum.load(Ordering::Relaxed) == 0,
         )
     }
 }
