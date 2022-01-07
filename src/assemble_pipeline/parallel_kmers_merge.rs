@@ -15,7 +15,7 @@ use rayon::prelude::*;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::BucketIndexType;
+use crate::config::{BucketIndexType, SwapPriority};
 use crate::hashes::{ExtendableHashTraitType, HashFunction};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::intermediate_storage::{
@@ -609,7 +609,9 @@ impl AssemblePipeline {
             buckets_count,
             &(
                 out_directory.as_ref().join("hashes"),
-                MemoryFileMode::PreferMemory,
+                MemoryFileMode::PreferMemory {
+                    swap_priority: SwapPriority::HashBuckets,
+                },
             ),
             None,
         );

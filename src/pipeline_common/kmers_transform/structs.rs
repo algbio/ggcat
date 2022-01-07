@@ -1,6 +1,6 @@
 use crate::assemble_pipeline::parallel_kmers_merge::KmersFlags;
 use crate::colors::colors_manager::ColorsManager;
-use crate::config::{BucketIndexType, SortingHashType};
+use crate::config::{BucketIndexType, SortingHashType, SwapPriority};
 use crate::io::concurrent::intermediate_storage::{IntermediateReadsReader, SequenceExtraData};
 use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
 use crate::io::varint::decode_varint_flags;
@@ -85,7 +85,9 @@ impl<E: SequenceExtraData, R: DataReader> BucketProcessData<E, R> {
                         "vec{}",
                         QUEUE_IDENTIFIER.fetch_add(1, Ordering::Relaxed)
                     )),
-                    MemoryFileMode::AlwaysMemory,
+                    MemoryFileMode::PreferMemory {
+                        swap_priority: SwapPriority::KmersMergeBuckets,
+                    },
                 ),
                 None,
             ),

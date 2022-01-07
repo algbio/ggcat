@@ -9,7 +9,7 @@ use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::config::BucketIndexType;
+use crate::config::{BucketIndexType, SwapPriority};
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::io::varint::{decode_varint, encode_varint};
@@ -81,7 +81,9 @@ impl AssemblePipeline {
                     .as_ref()
                     .to_path_buf()
                     .join(format!("linksi{}", elab_index)),
-                MemoryFileMode::PreferMemory,
+                MemoryFileMode::PreferMemory {
+                    swap_priority: SwapPriority::LinksBuckets as usize,
+                },
             ),
             None,
         );

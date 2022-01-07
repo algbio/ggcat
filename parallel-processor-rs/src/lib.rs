@@ -5,6 +5,10 @@
 #![feature(new_uninit)]
 #![feature(drain_filter)]
 #![feature(const_fn_floating_point_arithmetic)]
+#![feature(const_btree_new)]
+#![feature(allocator_api)]
+#![feature(backtrace)]
+#![feature(thread_local)]
 
 #[macro_use]
 pub mod stats_logger;
@@ -12,6 +16,7 @@ pub mod stats_logger;
 pub mod memory_fs;
 
 pub mod binary_writer;
+pub mod debug_allocator;
 pub mod fast_smart_bucket_sort;
 pub mod lock_free_binary_writer;
 pub mod mem_tracker;

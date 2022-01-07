@@ -93,13 +93,25 @@ impl MemoryFs {
         // println!("Reducing pressure!");
         let (current, max_size) = GlobalFlush::global_queue_occupation();
         if current * 3 < max_size {
-            while let Some(file) = SWAPPABLE_FILES.pop() {
+            let mut map_lock = SWAPPABLE_FILES.lock();
+
+            let mut file_ref = None;
+
+            for (key, file) in map_lock.iter() {
                 if let Some(file) = file.upgrade() {
-                    file.change_to_disk_only();
-                    if file.flush_chunks(usize::MAX) > 0 {
-                        return true;
+                    if file.is_memory_preferred() && file.has_flush_pending_chunks() {
+                        file_ref = Some((key.clone(), file));
+                        break;
                     }
                 }
+            }
+
+            if let Some((key, file)) = file_ref {
+                map_lock.remove(&key);
+                drop(map_lock);
+                file.change_to_disk_only();
+                file.flush_chunks(usize::MAX);
+                return true;
             }
         }
 

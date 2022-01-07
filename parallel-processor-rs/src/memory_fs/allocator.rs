@@ -342,18 +342,23 @@ impl ChunksAllocator {
                 },
             }) {
                 None => {
-                    if MemoryFs::reduce_pressure() {
-                        chunks_lock = self.chunks.lock();
-                        if chunks_lock.len() == 0 {
-                            self.chunks_wait_condvar.wait(&mut chunks_lock);
-                        }
-                    } else {
+                    if !MemoryFs::reduce_pressure() {
                         tries_count += 1;
-                        std::thread::sleep(Duration::from_millis(50));
-                        chunks_lock = self.chunks.lock();
                     }
 
-                    if tries_count > 20 {
+                    chunks_lock = self.chunks.lock();
+                    if chunks_lock.len() == 0 {
+                        if !self
+                            .chunks_wait_condvar
+                            .wait_for(&mut chunks_lock, Duration::from_millis(500))
+                            .timed_out()
+                        {
+                            tries_count = 0;
+                            continue;
+                        }
+                    }
+
+                    if tries_count > 10 {
                         #[cfg(feature = "track-usage")]
                         {
                             panic!(

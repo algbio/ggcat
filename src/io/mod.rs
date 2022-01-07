@@ -1,3 +1,4 @@
+use crate::config::SwapPriority;
 use crate::DEFAULT_BUFFER_SIZE;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
@@ -72,7 +73,12 @@ impl DataWriter for FileOnlyDataWriter {
 
 impl DataWriter for MemoryFsDataWriter {
     fn create_default(path: impl AsRef<Path>) -> Self {
-        FileWriter::create(path, MemoryFileMode::PreferMemory)
+        FileWriter::create(
+            path,
+            MemoryFileMode::PreferMemory {
+                swap_priority: SwapPriority::Default,
+            },
+        )
     }
 
     fn overwrite_at_start(&mut self, data: &[u8]) -> Result<(), ()> {

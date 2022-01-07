@@ -3,6 +3,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 use crate::assemble_pipeline::AssemblePipeline;
+use crate::config::SwapPriority;
 use crate::hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use crate::io::structs::hash_entry::{Direction, HashEntry};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
@@ -15,6 +16,7 @@ use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
+use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rand::{thread_rng, RngCore};
@@ -26,7 +28,6 @@ use serde::Serialize;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::atomic::Ordering;
-use parallel_processor::memory_fs::MemoryFs;
 
 impl AssemblePipeline {
     pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
@@ -42,7 +43,9 @@ impl AssemblePipeline {
             buckets_count,
             &(
                 output_dir.as_ref().join("links"),
-                MemoryFileMode::PreferMemory,
+                MemoryFileMode::PreferMemory {
+                    swap_priority: SwapPriority::LinksBuckets as usize,
+                },
             ),
             None,
         );

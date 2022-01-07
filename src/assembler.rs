@@ -2,6 +2,7 @@ use crate::assemble_pipeline::parallel_kmers_merge::structs::RetType;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsManager;
 use crate::colors::default_colors_manager::DefaultColorsManager;
+use crate::config::SwapPriority;
 use crate::hashes::HashFunctionFactory;
 use crate::io::reads_reader::ReadsReader;
 use crate::io::reads_writer::ReadsWriter;
@@ -135,13 +136,23 @@ pub fn run_assembler<
 
         let mut result_map_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             BUCKETS_COUNT,
-            &(temp_dir.join("results_map"), MemoryFileMode::PreferMemory),
+            &(
+                temp_dir.join("results_map"),
+                MemoryFileMode::PreferMemory {
+                    swap_priority: SwapPriority::FinalMaps as usize,
+                },
+            ),
             None,
         );
 
         let mut final_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             BUCKETS_COUNT,
-            &(temp_dir.join("unitigs_map"), MemoryFileMode::PreferMemory),
+            &(
+                temp_dir.join("unitigs_map"),
+                MemoryFileMode::PreferMemory {
+                    swap_priority: SwapPriority::FinalMaps as usize,
+                },
+            ),
             None,
         );
 

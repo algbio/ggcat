@@ -9,6 +9,7 @@ use lazy_static::lazy_static;
 use parking_lot::lock_api::{ArcRwLockReadGuard, ArcRwLockWriteGuard};
 use parking_lot::{Mutex, RawRwLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::cmp::min;
+use std::collections::BTreeMap;
 use std::fs::{remove_file, File, OpenOptions};
 use std::hint::unreachable_unchecked;
 use std::io::Write;
@@ -23,12 +24,13 @@ lazy_static! {
     static ref MEMORY_MAPPED_FILES: DashMap<PathBuf, Arc<MemoryFileInternal>> = DashMap::new();
 }
 
-pub static SWAPPABLE_FILES: SegQueue<Weak<MemoryFileInternal>> = SegQueue::new();
+pub static SWAPPABLE_FILES: Mutex<BTreeMap<(usize, PathBuf), Weak<MemoryFileInternal>>> =
+    Mutex::new(BTreeMap::new());
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum MemoryFileMode {
     AlwaysMemory,
-    PreferMemory,
+    PreferMemory { swap_priority: usize },
     DiskOnly,
 }
 
@@ -116,6 +118,10 @@ pub struct MemoryFileInternal {
     open_mode: Mutex<(OpenMode, usize)>,
     /// Actual memory mapping
     memory: RwLock<Vec<Arc<RwLock<FileChunk>>>>,
+    /// True if it's in the swap list
+    on_swap_list: AtomicBool,
+    /// True if more chunks can be flushed
+    can_flush: AtomicBool,
 }
 
 impl MemoryFileInternal {
@@ -129,13 +135,11 @@ impl MemoryFileInternal {
             memory_mode: RwLock::new(mode),
             open_mode: Mutex::new((OpenMode::None, 0)),
             memory: RwLock::new(Vec::new()),
+            on_swap_list: AtomicBool::new(false),
+            can_flush: AtomicBool::new(true),
         });
 
         MEMORY_MAPPED_FILES.insert(path.as_ref().into(), new_file.clone());
-
-        if mode == MemoryFileMode::PreferMemory {
-            SWAPPABLE_FILES.push(Arc::downgrade(&new_file))
-        }
 
         new_file
     }
@@ -155,6 +159,8 @@ impl MemoryFileInternal {
                 offset: 0,
                 len,
             }))]),
+            on_swap_list: AtomicBool::new(false),
+            can_flush: AtomicBool::new(false),
         });
 
         MEMORY_MAPPED_FILES.insert(path.as_ref().into(), new_file.clone());
@@ -167,7 +173,11 @@ impl MemoryFileInternal {
     }
 
     pub fn is_memory_preferred(&self) -> bool {
-        *self.memory_mode.read() == MemoryFileMode::PreferMemory
+        if let MemoryFileMode::PreferMemory { .. } = *self.memory_mode.read() {
+            true
+        } else {
+            false
+        }
     }
 
     pub fn get_chunk(&self, index: usize) -> Arc<RwLock<FileChunk>> {
@@ -228,30 +238,41 @@ impl MemoryFileInternal {
                 return Err(format!("File {} is already opened!", self.path.display()));
             }
 
-            *self.file.write() = match mode {
-                OpenMode::None => UnderlyingFile::NotOpened,
-                OpenMode::Read => {
-                    lock.1 = 1;
-                    if *self.memory_mode.read() != MemoryFileMode::DiskOnly {
-                        UnderlyingFile::MemoryOnly
-                    } else {
-                        // Ensure that all chunks are not pending
-                        for chunk in self.memory.read().iter() {
-                            drop(chunk.read());
-                        }
+            {
+                let mut file_lock = self.file.write();
 
-                        UnderlyingFile::ReadMode(FileBuffer::open(&self.path).ok())
+                *file_lock = match mode {
+                    OpenMode::None => UnderlyingFile::NotOpened,
+                    OpenMode::Read => {
+                        lock.1 = 1;
+                        self.can_flush.store(false, Ordering::SeqCst);
+
+                        if *self.memory_mode.read() != MemoryFileMode::DiskOnly {
+                            UnderlyingFile::MemoryOnly
+                        } else {
+                            // Ensure that all chunks are not pending
+                            for chunk in self.memory.read().iter() {
+                                drop(chunk.read());
+                            }
+
+                            if let UnderlyingFile::WriteMode { file, .. } = file_lock.deref_mut() {
+                                file.1.lock().flush();
+                                *file_lock = UnderlyingFile::NotOpened
+                            }
+
+                            UnderlyingFile::ReadMode(FileBuffer::open(&self.path).ok())
+                        }
                     }
-                }
-                OpenMode::Write => {
-                    lock.1 = 1;
-                    match *self.memory_mode.read() {
-                        MemoryFileMode::AlwaysMemory => UnderlyingFile::MemoryOnly,
-                        MemoryFileMode::PreferMemory => UnderlyingFile::MemoryPreferred,
-                        MemoryFileMode::DiskOnly => self.create_writing_underlying_file(),
+                    OpenMode::Write => {
+                        lock.1 = 1;
+                        match *self.memory_mode.read() {
+                            MemoryFileMode::AlwaysMemory => UnderlyingFile::MemoryOnly,
+                            MemoryFileMode::PreferMemory { .. } => UnderlyingFile::MemoryPreferred,
+                            MemoryFileMode::DiskOnly => self.create_writing_underlying_file(),
+                        }
                     }
-                }
-            };
+                };
+            }
 
             lock.0 = mode;
             drop(lock);
@@ -282,8 +303,18 @@ impl MemoryFileInternal {
         }
     }
 
+    fn put_on_swappable_list(self: &Arc<Self>) {
+        if let MemoryFileMode::PreferMemory { swap_priority } = self.memory_mode.read().deref() {
+            if !self.on_swap_list.swap(true, Ordering::Relaxed) {
+                SWAPPABLE_FILES
+                    .lock()
+                    .insert((*swap_priority, self.path.clone()), Arc::downgrade(self));
+            }
+        }
+    }
+
     pub fn reserve_space(
-        &self,
+        self: &Arc<Self>,
         last_chunk: AllocatedChunk,
         out_chunks: &mut Vec<(Option<ArcRwLockReadGuard<RawRwLock, FileChunk>>, &mut [u8])>,
         mut size: usize,
@@ -309,12 +340,15 @@ impl MemoryFileInternal {
             if size > 0 {
                 let mut mem_lock = self.memory.write();
                 mem_lock.push(Arc::new(RwLock::new(FileChunk::OnMemory { chunk })));
+
                 if let Some(space) = space {
                     let chunk_lock = mem_lock.last().unwrap().clone();
                     let chunk_guard = chunk_lock.read_arc();
                     out_chunks.push((Some(chunk_guard), space));
                 }
                 drop(mem_lock);
+                self.put_on_swappable_list();
+
                 chunk = CHUNKS_ALLOCATOR.request_chunk(chunk_usage!(FileBuffer {
                     path: std::panic::Location::caller().to_string()
                 }));
@@ -331,13 +365,19 @@ impl MemoryFileInternal {
         self.file.read()
     }
 
-    pub fn add_chunk(&self, chunk: AllocatedChunk) {
+    pub fn add_chunk(self: &Arc<Self>, chunk: AllocatedChunk) {
         let mut memory = self.memory.write();
-        memory.push(Arc::new(RwLock::new(FileChunk::OnMemory { chunk })))
+        memory.push(Arc::new(RwLock::new(FileChunk::OnMemory { chunk })));
+        drop(memory);
+        self.put_on_swappable_list();
     }
 
     pub fn flush_chunks(&self, limit: usize) -> usize {
         if let Some(mut file) = self.file.try_write() {
+            if !self.can_flush.load(Ordering::SeqCst) {
+                return 0;
+            }
+
             match &*file {
                 UnderlyingFile::NotOpened | UnderlyingFile::MemoryPreferred => {
                     *file = self.create_writing_underlying_file();

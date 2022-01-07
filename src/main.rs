@@ -91,6 +91,7 @@ use parking_lot::Mutex;
 use std::io::{BufRead, BufReader, Write};
 use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 arg_enum! {
     #[derive(Debug, PartialOrd, PartialEq)]
@@ -237,6 +238,11 @@ struct QueryArgs {
 
 static KEEP_FILES: AtomicBool = AtomicBool::new(false);
 
+// use parallel_processor::debug_allocator::{debug_print_allocations, DebugAllocator};
+
+// #[global_allocator]
+// static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
+
 fn initialize(args: &CommonArgs) {
     // Increase the maximum allowed number of open files
     fdlimit::raise_fd_limit();
@@ -255,6 +261,8 @@ fn initialize(args: &CommonArgs) {
         3,
         2560,
     );
+
+    // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
 }
 
 pub static SAVE_MEMORY: AtomicBool = AtomicBool::new(false);
