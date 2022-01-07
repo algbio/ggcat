@@ -1,7 +1,7 @@
 mod process_subbucket;
 pub mod structs;
 
-use crate::config::{BucketIndexType, SortingHashType};
+use crate::config::{BucketIndexType, SortingHashType, DEFAULT_PER_CPU_BUFFER_SIZE};
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
@@ -67,7 +67,7 @@ pub trait KmersTransformExecutor<'x, F: KmersTransformExecutorFactory> {
 pub struct KmersTransform;
 
 impl KmersTransform {
-    pub fn parallel_kmers_transform<'a, F: KmersTransformExecutorFactory, R: DataReader>(
+    pub fn parallel_kmers_transform<'a, F: KmersTransformExecutorFactory>(
         file_inputs: Vec<PathBuf>,
         buckets_count: usize,
         threads_count: usize,
@@ -119,7 +119,6 @@ impl KmersTransform {
 
             Some(Arc::new(structs::BucketProcessData::<
                 F::InputBucketExtraData,
-                R,
             >::new(
                 file, vecs_process_queue.clone()
             )))
@@ -127,8 +126,6 @@ impl KmersTransform {
 
         let current_bucket = RwLock::new(open_bucket());
         let reading_finished = AtomicBool::new(false);
-        const MAX_HASHES_FOR_FLUSH: MemoryDataSize = MemoryDataSize::from_kibioctets(64.0);
-        const MAX_TEMP_SEQUENCES_SIZE: MemoryDataSize = MemoryDataSize::from_kibioctets(64.0);
 
         let data_wait_condvar = Condvar::new();
         let data_wait_mutex = Mutex::new(());
@@ -146,7 +143,7 @@ impl KmersTransform {
 
                             executor.maybe_swap_bucket(&extra_data);
 
-                            process_subbucket::process_subbucket::<F, FileReader>(
+                            process_subbucket::process_subbucket::<F>(
                                 &extra_data,
                                 &mut reader,
                                 &mut temp_readref_vec,
@@ -180,8 +177,10 @@ impl KmersTransform {
                             }
                         };
 
-                        let mut cmp_reads =
-                            BucketsThreadDispatcher::new(MAX_TEMP_SEQUENCES_SIZE, &bucket.buckets);
+                        let mut cmp_reads = BucketsThreadDispatcher::new(
+                            DEFAULT_PER_CPU_BUFFER_SIZE,
+                            &bucket.buckets,
+                        );
 
                         let mut continue_read = true;
                         let mut tmp_data = Vec::with_capacity(256);

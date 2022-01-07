@@ -18,20 +18,35 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+const HASH_OFFSET: usize = std::mem::size_of::<u64>() - std::mem::size_of::<SortingHashType>();
+
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
-pub struct ReadRef {
-    pub read_start: usize,
-    pub hash: SortingHashType,
-}
+pub struct ReadRef(u64);
 
 impl ReadRef {
+    pub fn new(index: usize, hash: SortingHashType) -> Self {
+        Self {
+            0: ((hash as u64) << HASH_OFFSET) | (index as u64),
+        }
+    }
+
+    #[inline(always)]
+    pub fn get_hash(&self) -> SortingHashType {
+        (self.0 >> HASH_OFFSET) as SortingHashType
+    }
+
+    #[inline(always)]
+    fn get_offset(&self) -> usize {
+        (self.0 & ((1 << HASH_OFFSET) - 1)) as usize
+    }
+
     #[inline(always)]
     pub fn unpack<'a, 'b, E: SequenceExtraData>(
         &'a self,
         memory: &'b [u8],
         flags_count: usize,
     ) -> (u8, CompressedRead<'b>, E) {
-        let mut read_start = self.read_start;
+        let mut read_start = self.get_offset();
         let (read_len, flags) = decode_varint_flags::<_>(
             || {
                 let x = unsafe { memory[read_start] };
@@ -62,22 +77,19 @@ impl ReadRef {
 unsafe impl Sync for ReadRef {}
 unsafe impl Send for ReadRef {}
 
-pub struct BucketProcessData<E: SequenceExtraData, R: DataReader> {
-    pub reader: IntermediateReadsReader<E, R>,
+pub struct BucketProcessData<E: SequenceExtraData> {
+    pub reader: IntermediateReadsReader<E>,
     pub buckets: MultiThreadBuckets<LockFreeBinaryWriter>,
     vecs_queue: Arc<SegQueue<PathBuf>>,
 }
 
 static QUEUE_IDENTIFIER: AtomicU64 = AtomicU64::new(0);
 
-impl<E: SequenceExtraData, R: DataReader> BucketProcessData<E, R> {
+impl<E: SequenceExtraData> BucketProcessData<E> {
     pub fn new(path: impl AsRef<Path>, vecs_queue: Arc<SegQueue<PathBuf>>) -> Self {
         let tmp_dir = path.as_ref().parent().unwrap_or(Path::new("."));
         Self {
-            reader: IntermediateReadsReader::<E, R>::new(
-                &path,
-                !KEEP_FILES.load(Ordering::Relaxed),
-            ),
+            reader: IntermediateReadsReader::<E>::new(&path, !KEEP_FILES.load(Ordering::Relaxed)),
             buckets: MultiThreadBuckets::new(
                 MERGE_BUCKETS_COUNT,
                 &(
@@ -96,7 +108,7 @@ impl<E: SequenceExtraData, R: DataReader> BucketProcessData<E, R> {
     }
 }
 
-impl<E: SequenceExtraData, R: DataReader> Drop for BucketProcessData<E, R> {
+impl<E: SequenceExtraData> Drop for BucketProcessData<E> {
     fn drop(&mut self) {
         for path in self.buckets.finalize() {
             self.vecs_queue.push(path);

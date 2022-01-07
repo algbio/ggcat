@@ -9,7 +9,7 @@ use crate::io::structs::hash_entry::{Direction, HashEntry};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::vec_slice::VecSlice;
-use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
+use crate::KEEP_FILES;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;

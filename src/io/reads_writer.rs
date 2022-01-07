@@ -1,5 +1,5 @@
+use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::io::sequences_reader::FastaSequence;
-use crate::DEFAULT_BUFFER_SIZE;
 use byteorder::WriteBytesExt;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -35,13 +35,13 @@ pub struct ReadsWriter {
 impl ReadsWriter {
     pub fn new_compressed_gzip(path: impl AsRef<Path>, level: u32) -> ReadsWriter {
         let mut compress_stream = GzEncoder::new(
-            BufWriter::with_capacity(DEFAULT_BUFFER_SIZE, File::create(&path).unwrap()),
+            BufWriter::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE, File::create(&path).unwrap()),
             Compression::new(level),
         );
 
         ReadsWriter {
             writer: WriterChannels::CompressedFileGzip(BufWriter::with_capacity(
-                DEFAULT_BUFFER_SIZE,
+                DEFAULT_OUTPUT_BUFFER_SIZE,
                 compress_stream,
             )),
             path: path.as_ref().to_path_buf(),
@@ -56,14 +56,14 @@ impl ReadsWriter {
             .block_mode(BlockMode::Linked)
             .block_size(BlockSize::Max1MB)
             .build(BufWriter::with_capacity(
-                DEFAULT_BUFFER_SIZE,
+                DEFAULT_OUTPUT_BUFFER_SIZE,
                 File::create(&path).unwrap(),
             ))
             .unwrap();
 
         ReadsWriter {
             writer: WriterChannels::CompressedFileLZ4(BufWriter::with_capacity(
-                DEFAULT_BUFFER_SIZE,
+                DEFAULT_OUTPUT_BUFFER_SIZE,
                 compress_stream,
             )),
             path: path.as_ref().to_path_buf(),
@@ -74,7 +74,7 @@ impl ReadsWriter {
     pub fn new_plain(path: impl AsRef<Path>) -> ReadsWriter {
         ReadsWriter {
             writer: WriterChannels::File(BufWriter::with_capacity(
-                DEFAULT_BUFFER_SIZE,
+                DEFAULT_OUTPUT_BUFFER_SIZE,
                 File::create(&path).unwrap(),
             )),
             path: path.as_ref().to_path_buf(),

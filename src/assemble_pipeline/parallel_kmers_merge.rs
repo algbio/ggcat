@@ -15,7 +15,7 @@ use rayon::prelude::*;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::{BucketIndexType, SwapPriority};
+use crate::config::{BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
 use crate::hashes::{ExtendableHashTraitType, HashFunction};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::intermediate_storage::{
@@ -37,7 +37,7 @@ use crate::rolling::minqueue::RollingMinQueue;
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::utils::debug_utils::debug_increase;
 use crate::utils::Utils;
-use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
+use crate::KEEP_FILES;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use crossbeam::queue::*;
 use hashbrown::HashMap;
@@ -80,12 +80,12 @@ pub mod structs {
         pub color_index: CHI,
     }
 
-    pub struct ResultsBucket<'a, X: SequenceExtraData, W: DataWriter> {
+    pub struct ResultsBucket<'a, X: SequenceExtraData> {
         pub read_index: u64,
-        pub bucket_ref: IntermediateSequencesStorageSingleBucket<'a, X, W>,
+        pub bucket_ref: IntermediateSequencesStorageSingleBucket<'a, X>,
     }
 
-    impl<'a, X: SequenceExtraData, W: DataWriter> ResultsBucket<'a, X, W> {
+    impl<'a, X: SequenceExtraData> ResultsBucket<'a, X> {
         pub fn add_read(&mut self, el: X, read: &[u8]) -> u64 {
             self.bucket_ref.add_read(el, read);
             let read_index = self.read_index;
@@ -125,39 +125,32 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraData for KmersFlags<CX> {
     }
 }
 
-struct GlobalMergeData<'a, MH: HashFunctionFactory, CX: ColorsManager, W: DataWriter> {
+struct GlobalMergeData<'a, MH: HashFunctionFactory, CX: ColorsManager> {
     k: usize,
     m: usize,
     buckets_count: usize,
     min_multiplicity: usize,
     colors_global_table: &'a CX::GlobalColorsTable,
-    output_results_buckets: SegQueue<ResultsBucketType<'a, MH, CX, W>>,
+    output_results_buckets: SegQueue<ResultsBucketType<'a, MH, CX>>,
     hashes_buckets: &'a MultiThreadBuckets<LockFreeBinaryWriter>,
 }
 
-pub type ResultsBucketType<'a, MH: HashFunctionFactory, CX: ColorsManager, W: DataWriter> = ResultsBucket<
+pub type ResultsBucketType<'a, MH: HashFunctionFactory, CX: ColorsManager> = ResultsBucket<
     'a,
-    <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::PartialUnitigsColorStructure, W
+    <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::PartialUnitigsColorStructure,
 >;
 
-struct ParallelKmersMergeFactory<
-    H: HashFunctionFactory,
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-    W: DataWriter + 'static,
->(PhantomData<(H, MH, CX, W)>);
+struct ParallelKmersMergeFactory<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>(
+    PhantomData<(H, MH, CX)>,
+);
 
-impl<
-        H: HashFunctionFactory,
-        MH: HashFunctionFactory,
-        CX: ColorsManager,
-        W: DataWriter + 'static,
-    > KmersTransformExecutorFactory for ParallelKmersMergeFactory<H, MH, CX, W>
+impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+    KmersTransformExecutorFactory for ParallelKmersMergeFactory<H, MH, CX>
 {
-    type GlobalExtraData<'a> = GlobalMergeData<'a, MH, CX, W>;
+    type GlobalExtraData<'a> = GlobalMergeData<'a, MH, CX>;
     type InputBucketExtraData = KmersFlags<CX::MinimizerBucketingSeqColorDataType>;
     type IntermediateExtraData = CX::MinimizerBucketingSeqColorDataType;
-    type ExecutorType<'a> = ParallelKmersMerge<'a, H, MH, CX, W>;
+    type ExecutorType<'a> = ParallelKmersMerge<'a, H, MH, CX>;
 
     const FLAGS_COUNT: usize = 2;
 
@@ -172,7 +165,7 @@ impl<
             results_buckets_counter: MERGE_BUCKETS_COUNT,
             current_bucket: global_data.output_results_buckets.pop().unwrap(),
             hashes_tmp: BucketsThreadDispatcher::new(
-                MAX_HASHES_FOR_FLUSH,
+                DEFAULT_PER_CPU_BUFFER_SIZE,
                 &global_data.hashes_buckets,
             ),
             forward_seq: Vec::with_capacity(global_data.k),
@@ -188,15 +181,9 @@ impl<
     }
 }
 
-struct ParallelKmersMerge<
-    'x,
-    H: HashFunctionFactory,
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-    W: DataWriter,
-> {
+struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> {
     results_buckets_counter: usize,
-    current_bucket: ResultsBucketType<'x, MH, CX, W>,
+    current_bucket: ResultsBucketType<'x, MH, CX>,
     hashes_tmp:
         BucketsThreadDispatcher<'x, LockFreeBinaryWriter, HashEntry<MH::HashTypeUnextendable>>,
 
@@ -219,20 +206,17 @@ struct ParallelKmersMerge<
     _phantom: PhantomData<H>,
 }
 
-const MAX_HASHES_FOR_FLUSH: MemoryDataSize = MemoryDataSize::from_kibioctets(64.0);
-const MAX_TEMP_SEQUENCES_SIZE: MemoryDataSize = MemoryDataSize::from_kibioctets(64.0);
-
-impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager, W: DataWriter>
-    KmersTransformExecutor<'x, ParallelKmersMergeFactory<H, MH, CX, W>>
-    for ParallelKmersMerge<'x, H, MH, CX, W>
+impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+    KmersTransformExecutor<'x, ParallelKmersMergeFactory<H, MH, CX>>
+    for ParallelKmersMerge<'x, H, MH, CX>
 {
     fn preprocess_bucket(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX, W> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
-        input_extra_data: <ParallelKmersMergeFactory<H, MH, CX, W> as KmersTransformExecutorFactory>::InputBucketExtraData,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        input_extra_data: <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::InputBucketExtraData,
         read: CompressedRead,
     ) -> ReadDispatchInfo<
-        <ParallelKmersMergeFactory<H, MH, CX, W> as KmersTransformExecutorFactory>::IntermediateExtraData,
+        <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::IntermediateExtraData,
     >{
         let decr_val = ((read.bases_count() == global_data.k)
             && (input_extra_data.0 & READ_FLAG_INCL_END) == 0) as usize;
@@ -260,7 +244,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager, W: 
 
     fn maybe_swap_bucket(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX, W> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
     ) {
         if self.results_buckets_counter == 0 {
             self.results_buckets_counter = MERGE_BUCKETS_COUNT;
@@ -274,7 +258,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager, W: 
 
     fn process_group(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX, W> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
         reads: &[ReadRef],
         memory: &[u8],
     ) {
@@ -292,7 +276,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager, W: 
 
             for packed_read in reads {
                 let (kmer_flags, read, color) = packed_read
-                    .unpack(memory, <ParallelKmersMergeFactory<H, MH, CX, W> as KmersTransformExecutorFactory>::FLAGS_COUNT);
+                    .unpack(memory, <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT);
 
                 let hashes = MH::new(read, k);
 
@@ -576,7 +560,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager, W: 
 
     fn finalize(
         self,
-        _global_data: &<ParallelKmersMergeFactory<H, MH, CX, W> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        _global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
     ) {
         self.hashes_tmp.finalize();
     }
@@ -625,13 +609,12 @@ impl AssemblePipeline {
                         MH,
                         CX,
                     >>::PartialUnitigsColorStructure,
-                    W
                 >,
             >::new(buckets_count, &out_directory.as_ref().join("result"), None);
 
         let output_results_buckets = SegQueue::new();
         for bucket_index in 0..buckets_count {
-            let bucket_read = ResultsBucketType::<MH, CX, W> {
+            let bucket_read = ResultsBucketType::<MH, CX> {
                 read_index: 0,
                 bucket_ref: IntermediateSequencesStorageSingleBucket::new(
                     bucket_index as BucketIndexType,
@@ -643,7 +626,7 @@ impl AssemblePipeline {
             output_results_buckets.push(bucket_read);
         }
 
-        let global_data = GlobalMergeData::<MH, CX, W> {
+        let global_data = GlobalMergeData::<MH, CX> {
             k,
             m,
             buckets_count,
@@ -653,7 +636,7 @@ impl AssemblePipeline {
             hashes_buckets: &hashes_buckets,
         };
 
-        KmersTransform::parallel_kmers_transform::<ParallelKmersMergeFactory<H, MH, CX, W>, R>(
+        KmersTransform::parallel_kmers_transform::<ParallelKmersMergeFactory<H, MH, CX>>(
             file_inputs,
             buckets_count,
             threads_count,

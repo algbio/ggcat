@@ -15,9 +15,8 @@ pub fn minb_reader<
     ExtraData,
     GlobalData,
     FileInfo: Clone + Sync + Send + Default,
-    W: DataWriter,
 >(
-    context: &MinimizerBucketingExecutionContext<ReadAssociatedData, ExtraData, GlobalData, W>,
+    context: &MinimizerBucketingExecutionContext<ReadAssociatedData, ExtraData, GlobalData>,
     manager: ObjectsPoolManager<MinimizerBucketingQueueData<FileInfo>, (PathBuf, FileInfo)>,
 ) {
     while let Some((input, file_info)) = manager.recv_obj() {

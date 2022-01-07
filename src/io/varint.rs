@@ -124,7 +124,6 @@ mod tests {
     use std::io::{Cursor, Write};
     use std::iter::FromIterator;
     use std::panic::resume_unwind;
-    use crate::io::{FileOnlyDataReader, FileOnlyDataWriter};
 
     #[test]
     fn varints() {
@@ -177,7 +176,10 @@ mod tests {
 
         let mut tmp = Vec::new();
 
-        let mut writer = IntermediateReadsWriter::<(), FileOnlyDataWriter>::new("/tmp/test-encoding".as_ref(), 0);
+        let mut writer = IntermediateReadsWriter::<(), FileOnlyDataWriter>::new(
+            "/tmp/test-encoding".as_ref(),
+            0,
+        );
         for read in sequences.iter() {
             tmp.clear();
             CompressedRead::from_plain_write_directly_to_buffer(read.as_bytes(), &mut tmp);
@@ -185,8 +187,10 @@ mod tests {
         }
         writer.finalize();
 
-        let mut reader =
-            IntermediateReadsReader::<(), FileOnlyDataReader>::new("/tmp/test-encoding.0.lz4".to_string(), false);
+        let mut reader = IntermediateReadsReader::<(), FileOnlyDataReader>::new(
+            "/tmp/test-encoding.0.lz4".to_string(),
+            false,
+        );
 
         let mut index = 0;
         reader.for_each(|_, x| {

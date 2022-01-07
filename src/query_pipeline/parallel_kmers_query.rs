@@ -1,5 +1,5 @@
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::BucketIndexType;
+use crate::config::{BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE};
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
 use crate::hashes::{ExtendableHashTraitType, HashableSequence};
@@ -14,7 +14,6 @@ use crate::pipeline_common::kmers_transform::{
 use crate::query_pipeline::counters_sorting::CounterEntry;
 use crate::query_pipeline::QueryPipeline;
 use crate::utils::compressed_read::CompressedRead;
-use crate::DEFAULT_BUFFER_SIZE;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use itertools::Itertools;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
@@ -232,7 +231,7 @@ impl QueryPipeline {
             &(
                 out_directory.as_ref().join("counters"),
                 StorageMode::Plain {
-                    buffer_size: DEFAULT_BUFFER_SIZE,
+                    buffer_size: DEFAULT_OUTPUT_BUFFER_SIZE,
                 },
             ),
             None,
@@ -245,7 +244,7 @@ impl QueryPipeline {
             counters_buckets: &counters_buckets,
         };
 
-        KmersTransform::parallel_kmers_transform::<ParallelKmersQueryFactory<H, MH, CX>, R>(
+        KmersTransform::parallel_kmers_transform::<ParallelKmersQueryFactory<H, MH, CX>>(
             file_inputs,
             buckets_count,
             threads_count,

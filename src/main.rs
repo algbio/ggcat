@@ -55,8 +55,6 @@ mod rolling;
 
 use backtrace::Backtrace;
 
-pub const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 4;
-
 fn outputs_arg_group() -> ArgGroup<'static> {
     // As the attributes of the struct are executed before the struct
     // fields, we can't use .args(...), but we can use the group

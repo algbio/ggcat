@@ -38,7 +38,7 @@ pub fn run_query<
     // );
 
     let buckets = if step <= QuerierStartingStep::MinimizerBucketing {
-        QueryPipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager, Writer>(
+        QueryPipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
             graph_input,
             query_input.clone(),
             temp_dir.as_path(),

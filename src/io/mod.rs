@@ -1,5 +1,4 @@
-use crate::config::SwapPriority;
-use crate::DEFAULT_BUFFER_SIZE;
+use crate::config::{SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE};
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::file::writer::FileWriter;
@@ -26,48 +25,13 @@ pub trait DataReader: Read + Seek + Send + Sync + 'static {
     fn open_file(path: impl AsRef<Path>) -> Self;
 }
 
-pub type FileOnlyDataReader = BufReader<File>;
-pub type FileOnlyDataWriter = BufWriter<File>;
-
 pub type MemoryFsDataReader = FileReader;
 pub type MemoryFsDataWriter = FileWriter;
 
-impl DataReader for FileOnlyDataReader {
-    fn open_file(path: impl AsRef<Path>) -> Self {
-        BufReader::with_capacity(
-            DEFAULT_BUFFER_SIZE,
-            File::open(&path)
-                .unwrap_or_else(|_| panic!("Cannot open file {}", path.as_ref().display())),
-        )
-    }
-}
 impl DataReader for MemoryFsDataReader {
     fn open_file(path: impl AsRef<Path>) -> Self {
         FileReader::open(&path)
             .unwrap_or_else(|| panic!("Cannot open file {}", path.as_ref().display()))
-    }
-}
-
-impl DataWriter for FileOnlyDataWriter {
-    fn create_default(path: impl AsRef<Path>) -> Self {
-        BufWriter::with_capacity(
-            DEFAULT_BUFFER_SIZE,
-            File::create(&path)
-                .expect(&format!("Failed to open file: {}", path.as_ref().display())),
-        )
-    }
-
-    fn overwrite_at_start(&mut self, data: &[u8]) -> Result<(), ()> {
-        let orig_position = <Self as Seek>::stream_position(self).map_err(|_| ())?;
-        self.seek(SeekFrom::Start(0)).map_err(|_| ())?;
-        self.write_all(&data).map_err(|_| ())?;
-
-        self.seek(SeekFrom::Start(orig_position)).map_err(|_| ())?;
-        Ok(())
-    }
-
-    fn stream_position(&mut self) -> std::io::Result<u64> {
-        <Self as Seek>::stream_position(self)
     }
 }
 

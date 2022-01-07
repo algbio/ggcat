@@ -1,6 +1,7 @@
 use crate::assemble_pipeline::parallel_kmers_merge::KmersFlags;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
+use crate::config::BucketIndexType;
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
@@ -10,7 +11,6 @@ use crate::pipeline_common::minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingExecutionContext, MinimizerBucketingExecutor,
 };
 use crate::rolling::minqueue::RollingMinQueue;
-use crate::config::BucketIndexType;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::max;
 use std::io::Write;
@@ -31,8 +31,8 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
     type PreprocessInfo = u64;
     type FileInfo = u64;
 
-    fn new<C, W: DataWriter>(
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
+    fn new<C>(
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
     ) -> Self {
         Self {
             minimizer_queue: RollingMinQueue::new(global_data.k - global_data.m),
@@ -40,9 +40,9 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         }
     }
 
-    fn preprocess_fasta<C, W: DataWriter>(
+    fn preprocess_fasta<C>(
         &mut self,
-        _global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
+        _global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
         file_info: &Self::FileInfo,
         _read_index: u64,
         preprocess_info: &mut Self::PreprocessInfo,
@@ -51,9 +51,9 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         *preprocess_info = *file_info;
     }
 
-    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData), W: DataWriter>(
+    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData)>(
         &mut self,
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
         preprocess_info: &Self::PreprocessInfo,
         sequence: &[u8],
         _range: Range<usize>,
@@ -102,7 +102,7 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
 }
 
 impl AssemblePipeline {
-    pub fn minimizer_bucketing<H: HashFunctionFactory, CX: ColorsManager, Writer: DataWriter>(
+    pub fn minimizer_bucketing<H: HashFunctionFactory, CX: ColorsManager>(
         input_files: Vec<PathBuf>,
         output_path: &Path,
         buckets_count: usize,
@@ -121,7 +121,7 @@ impl AssemblePipeline {
             .map(|(i, f)| (f, i as u64))
             .collect();
 
-        GenericMinimizerBucketing::do_bucketing::<AssemblerMinimizerBucketingExecutor<H, CX>, Writer>(
+        GenericMinimizerBucketing::do_bucketing::<AssemblerMinimizerBucketingExecutor<H, CX>>(
             input_files,
             output_path,
             buckets_count,

@@ -1,7 +1,7 @@
 use crate::colors::storage::ColorsSerializerImpl;
 use crate::colors::ColorIndexType;
+use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::io::chunks_writer::ChunksWriter;
-use crate::DEFAULT_BUFFER_SIZE;
 use bincode::Options;
 use desse::{Desse, DesseSized};
 use parking_lot::Mutex;
@@ -228,7 +228,7 @@ impl ChunksWriter for ColorsFlushProcessing {
         (
             lz4::EncoderBuilder::new()
                 .level(4)
-                .build(Vec::with_capacity(DEFAULT_BUFFER_SIZE))
+                .build(Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE))
                 .unwrap(),
             0,
         )

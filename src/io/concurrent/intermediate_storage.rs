@@ -1,11 +1,10 @@
-use crate::config::BucketIndexType;
+use crate::config::{BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE};
 use crate::hashes::HashableSequence;
 use crate::io::sequences_reader::FastaSequence;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::io::{DataReader, DataWriter};
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::utils::{cast_static, cast_static_mut, Utils};
-use crate::DEFAULT_BUFFER_SIZE;
 use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use desse::{Desse, DesseSized};
 use filebuffer::FileBuffer;
@@ -102,12 +101,8 @@ struct IntermediateReadsIndex {
     index: Vec<u64>,
 }
 
-pub type IntermediateReadsWriterFile<T> = IntermediateReadsWriter<T, BufWriter<File>>;
-
-pub type IntermediateReadsWriterMemFs<T> = IntermediateReadsWriter<T, FileWriter>;
-
-pub struct IntermediateReadsWriter<T, W: DataWriter> {
-    writer: lz4::Encoder<W>,
+pub struct IntermediateReadsWriter<T> {
+    writer: lz4::Encoder<FileWriter>,
     chunk_size: u64,
     index: IntermediateReadsIndex,
     path: PathBuf,
@@ -155,27 +150,27 @@ impl<R: DataReader> Read for SequentialReader<R> {
     }
 }
 
-pub struct IntermediateReadsReader<T: SequenceExtraData, R: DataReader> {
+pub struct IntermediateReadsReader<T: SequenceExtraData> {
     remove_file: bool,
-    sequential_reader: SequentialReader<R>,
+    sequential_reader: SequentialReader<FileReader>,
     parallel_reader: FileReader,
     parallel_index: AtomicU64,
     file_path: PathBuf,
     _phantom: PhantomData<T>,
 }
 
-unsafe impl<T: SequenceExtraData, R: DataReader> Sync for IntermediateReadsReader<T, R> {}
+unsafe impl<T: SequenceExtraData> Sync for IntermediateReadsReader<T> {}
 
-pub struct IntermediateSequencesStorage<'a, T: SequenceExtraData, W: DataWriter> {
-    buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T, W>>,
+pub struct IntermediateSequencesStorage<'a, T: SequenceExtraData> {
+    buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T>>,
     buffers: Vec<Vec<u8>>,
 }
-impl<'a, T: SequenceExtraData, W: DataWriter> IntermediateSequencesStorage<'a, T, W> {
+impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
     const ALLOWED_LEN: usize = 65536;
 
     pub fn new(
         buckets_count: usize,
-        buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T, W>>,
+        buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T>>,
     ) -> Self {
         let mut buffers = Vec::with_capacity(buckets_count);
         for _ in 0..buckets_count {
@@ -222,7 +217,7 @@ impl<'a, T: SequenceExtraData, W: DataWriter> IntermediateSequencesStorage<'a, T
     pub fn finalize(self) {}
 }
 
-impl<'a, T: SequenceExtraData, W: DataWriter> Drop for IntermediateSequencesStorage<'a, T, W> {
+impl<'a, T: SequenceExtraData> Drop for IntermediateSequencesStorage<'a, T> {
     fn drop(&mut self) {
         for bucket in 0..self.buffers.len() {
             if self.buffers[bucket].len() > 0 {
@@ -232,7 +227,7 @@ impl<'a, T: SequenceExtraData, W: DataWriter> Drop for IntermediateSequencesStor
     }
 }
 
-impl<T: SequenceExtraData, W: DataWriter> IntermediateReadsWriter<T, W> {
+impl<T: SequenceExtraData> IntermediateReadsWriter<T> {
     fn create_new_block(&mut self) {
         replace_with_or_abort(&mut self.writer, |writer| {
             let (mut file_buf, res) = writer.finish();
@@ -249,7 +244,7 @@ impl<T: SequenceExtraData, W: DataWriter> IntermediateReadsWriter<T, W> {
 
 const MAXIMUM_CHUNK_SIZE: u64 = 1024 * 1024 * 16;
 
-impl<T: SequenceExtraData, W: DataWriter> BucketType for IntermediateReadsWriter<T, W> {
+impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
     type InitType = Path;
     const SUPPORTS_LOCK_FREE: bool = false;
 
@@ -260,7 +255,7 @@ impl<T: SequenceExtraData, W: DataWriter> BucketType for IntermediateReadsWriter
             index
         ));
 
-        let mut file = W::create_default(&path);
+        let mut file = FileWriter::create_default(&path);
 
         // Write empty header
         file.write_all(&IntermediateReadsHeader::default().serialize()[..]);
@@ -401,9 +396,9 @@ impl<'a, R: Read> Read for VecReader<'a, R> {
         Ok(self.read_bytes(buf)).map(|_| ())
     }
 }
-impl<T: SequenceExtraData, R: DataReader> IntermediateReadsReader<T, R> {
+impl<T: SequenceExtraData> IntermediateReadsReader<T> {
     pub fn new(name: impl AsRef<Path>, remove_file: bool) -> Self {
-        let mut file = R::open_file(&name);
+        let mut file = FileReader::open_file(&name);
 
         let mut header_buffer = [0; IntermediateReadsHeader::SIZE];
         file.read_exact(&mut header_buffer);
@@ -456,7 +451,8 @@ impl<T: SequenceExtraData, R: DataReader> IntermediateReadsReader<T, R> {
     }
 
     pub fn for_each(mut self, mut lambda: impl FnMut(T, CompressedRead)) {
-        let mut vec_reader = VecReader::new(DEFAULT_BUFFER_SIZE, &mut self.sequential_reader);
+        let mut vec_reader =
+            VecReader::new(DEFAULT_OUTPUT_BUFFER_SIZE, &mut self.sequential_reader);
 
         Self::read_single_stream(vec_reader, lambda);
     }
@@ -479,7 +475,7 @@ impl<T: SequenceExtraData, R: DataReader> IntermediateReadsReader<T, R> {
         reader.seek(SeekFrom::Start(addr_start as u64));
 
         let mut compressed_stream = lz4::Decoder::new(reader).unwrap();
-        let mut vec_reader = VecReader::new(DEFAULT_BUFFER_SIZE, &mut compressed_stream);
+        let mut vec_reader = VecReader::new(DEFAULT_OUTPUT_BUFFER_SIZE, &mut compressed_stream);
 
         Self::read_single_stream(vec_reader, lambda);
 
@@ -487,7 +483,7 @@ impl<T: SequenceExtraData, R: DataReader> IntermediateReadsReader<T, R> {
     }
 }
 
-impl<T: SequenceExtraData, R: DataReader> Drop for IntermediateReadsReader<T, R> {
+impl<T: SequenceExtraData> Drop for IntermediateReadsReader<T> {
     fn drop(&mut self) {
         if self.remove_file {
             MemoryFs::remove_file(&self.file_path, self.remove_file);

@@ -9,14 +9,14 @@ use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::config::{BucketIndexType, SwapPriority};
+use crate::config::{BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::vec_slice::VecSlice;
 use crate::utils::Utils;
-use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
+use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
 use hashbrown::HashMap;
 use hashbrown::HashSet;
@@ -92,18 +92,12 @@ impl AssemblePipeline {
             .par_iter()
             .enumerate()
             .for_each(|(index, input)| {
-                let mut links_tmp = BucketsThreadDispatcher::new(
-                    MemoryDataSize::from_kibioctets(64.0),
-                    &links_buckets,
-                );
-                let mut final_links_tmp = BucketsThreadDispatcher::new(
-                    MemoryDataSize::from_kibioctets(16.0),
-                    &final_buckets,
-                );
-                let mut results_tmp = BucketsThreadDispatcher::new(
-                    MemoryDataSize::from_kibioctets(16.0),
-                    &result_map_buckets,
-                );
+                let mut links_tmp =
+                    BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &links_buckets);
+                let mut final_links_tmp =
+                    BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &final_buckets);
+                let mut results_tmp =
+                    BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &result_map_buckets);
 
                 let bucket_index = Utils::get_bucket_index(input);
 

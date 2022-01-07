@@ -10,12 +10,13 @@ use crate::io::concurrent::intermediate_storage::{
 use crate::io::reads_reader::ReadsReader;
 use crate::io::reads_writer::ReadsWriter;
 
+use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::io::sequences_reader::{FastaSequence, SequencesReader};
 use crate::io::structs::unitig_link::UnitigIndex;
 use crate::io::{DataReader, DataWriter};
 use crate::rolling::minqueue::RollingMinQueue;
 use crate::utils::Utils;
-use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
+use crate::KEEP_FILES;
 use bstr::ByteSlice;
 use crossbeam::channel::*;
 use crossbeam::queue::{ArrayQueue, SegQueue};
@@ -68,12 +69,7 @@ impl<CX: SequenceExtraData> SequenceExtraData for ReorganizedReadsExtraData<CX> 
 }
 
 impl AssemblePipeline {
-    pub fn reorganize_reads<
-        MH: HashFunctionFactory,
-        CX: ColorsManager,
-        R: DataReader,
-        W: DataWriter,
-    >(
+    pub fn reorganize_reads<MH: HashFunctionFactory, CX: ColorsManager>(
         mut reads: Vec<PathBuf>,
         mut mapping_files: Vec<PathBuf>,
         temp_path: &Path,
@@ -90,7 +86,7 @@ impl AssemblePipeline {
             IntermediateReadsWriter<ReorganizedReadsExtraData<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
                 MH,
                 CX,
-            >>::PartialUnitigsColorStructure>, W>,
+            >>::PartialUnitigsColorStructure>>,
         >::new(buckets_count, &temp_path.join("reads_bucket"), None);
 
         reads.sort();
@@ -101,7 +97,7 @@ impl AssemblePipeline {
         inputs.par_iter().for_each(|(read_file, mapping_file)| {
             let mut tmp_reads_buffer = IntermediateSequencesStorage::new(buckets_count, &buckets);
             let mut tmp_lonely_unitigs_buffer =
-                FastaWriterConcurrentBuffer::new(out_file, DEFAULT_BUFFER_SIZE);
+                FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE);
 
             let mut mappings = Vec::new();
 
@@ -147,7 +143,7 @@ impl AssemblePipeline {
             IntermediateReadsReader::<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
                 MH,
                 CX,
-            >>::PartialUnitigsColorStructure, R>::new(read_file, !KEEP_FILES.load(Ordering::Relaxed))
+            >>::PartialUnitigsColorStructure>::new(read_file, !KEEP_FILES.load(Ordering::Relaxed))
                 .for_each(|color, seq| {
 
                     if seq.bases_count() > decompress_buffer.len() {

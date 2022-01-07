@@ -1,5 +1,6 @@
 use crate::assemble_pipeline::parallel_kmers_merge::KmersFlags;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
+use crate::config::BucketIndexType;
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
@@ -17,7 +18,6 @@ use crate::query_pipeline::QueryPipeline;
 use crate::rolling::kseq_iterator::{RollingKseqImpl, RollingKseqIterator};
 use crate::rolling::minqueue::RollingMinQueue;
 use crate::rolling::quality_check::{RollingQualityCheck, LOGPROB_MULTIPLIER, SCORES_INDEX};
-use crate::config::BucketIndexType;
 use crate::KEEP_FILES;
 use bstr::ByteSlice;
 use byteorder::{ReadBytesExt, WriteBytesExt};
@@ -54,10 +54,6 @@ static TOT_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 static VALID_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 
 struct ContextExtraData {}
-
-const CHUNKS_SIZE: usize = 1024 * 1024 * 16;
-const MAX_READING_THREADS: usize = 2;
-const WATERMARK_HIGH: usize = 64;
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct KmersQueryData(pub u64);
@@ -116,8 +112,8 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
     type PreprocessInfo = ReadType;
     type FileInfo = FileType;
 
-    fn new<C, W: DataWriter>(
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
+    fn new<C>(
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
     ) -> Self {
         Self {
             minimizer_queue: RollingMinQueue::new(global_data.k - global_data.m + 1),
@@ -125,9 +121,9 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         }
     }
 
-    fn preprocess_fasta<C, W: DataWriter>(
+    fn preprocess_fasta<C>(
         &mut self,
-        _global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
+        _global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
         file_info: &Self::FileInfo,
         read_index: u64,
         preprocess_info: &mut Self::PreprocessInfo,
@@ -139,9 +135,9 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         }
     }
 
-    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData), W: DataWriter>(
+    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData)>(
         &mut self,
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
         preprocess_info: &Self::PreprocessInfo,
         sequence: &[u8],
         _range: Range<usize>,
@@ -197,7 +193,7 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
 }
 
 impl QueryPipeline {
-    pub fn minimizer_bucketing<H: HashFunctionFactory, CX: ColorsManager, W: DataWriter>(
+    pub fn minimizer_bucketing<H: HashFunctionFactory, CX: ColorsManager>(
         graph_file: PathBuf,
         query_file: PathBuf,
         output_path: &Path,
@@ -212,7 +208,7 @@ impl QueryPipeline {
 
         let mut input_files = vec![(graph_file, FileType::Graph), (query_file, FileType::Query)];
 
-        GenericMinimizerBucketing::do_bucketing::<QuerierMinimizerBucketingExecutor<H, CX>, W>(
+        GenericMinimizerBucketing::do_bucketing::<QuerierMinimizerBucketingExecutor<H, CX>>(
             input_files,
             output_path,
             buckets_count,

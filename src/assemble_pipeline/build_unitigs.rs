@@ -2,6 +2,7 @@ use crate::assemble_pipeline::links_compaction::LinkMapping;
 use crate::assemble_pipeline::reorganize_reads::ReorganizedReadsExtraData;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{ColorsManager, ColorsMergeManager};
+use crate::config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
 use crate::io::concurrent::intermediate_storage::{
@@ -16,7 +17,7 @@ use crate::io::DataReader;
 use crate::rolling::minqueue::RollingMinQueue;
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::utils::Utils;
-use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
+use crate::KEEP_FILES;
 use crossbeam::channel::*;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::{scope, thread};
@@ -55,7 +56,7 @@ struct FinalUnitigExtraData<CI: SequenceExtraData> {
 }
 
 impl AssemblePipeline {
-    pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager, R: DataReader>(
+    pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
         mut read_buckets_files: Vec<PathBuf>,
         mut unitig_map_files: Vec<PathBuf>,
         temp_path: &Path,
@@ -78,7 +79,7 @@ impl AssemblePipeline {
 
         inputs.par_iter().for_each(|(read_file, unitigs_map_file)| {
             let mut tmp_final_unitigs_buffer =
-                FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_BUFFER_SIZE);
+                FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_OUTPUT_BUFFER_SIZE);
 
             assert_eq!(
                 Utils::get_bucket_index(read_file),
@@ -157,7 +158,7 @@ impl AssemblePipeline {
             IntermediateReadsReader::<ReorganizedReadsExtraData<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
                 MH,
                 CX,
-            >>::PartialUnitigsColorStructure>, R>::new(
+            >>::PartialUnitigsColorStructure>>::new(
                 read_file,
                 !KEEP_FILES.load(Ordering::Relaxed),
             )

@@ -54,7 +54,7 @@ pub fn run_assembler<
     );
 
     let buckets = if step <= AssemblerStartingStep::MinimizerBucketing {
-        AssemblePipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager, Writer>(
+        AssemblePipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
             input,
             temp_dir.as_path(),
             BUCKETS_COUNT,
@@ -209,7 +209,7 @@ pub fn run_assembler<
     });
 
     let reorganized_reads = if step <= AssemblerStartingStep::ReorganizeReads {
-        AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager, Reader, Writer>(
+        AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
             sequences,
             reads_map,
             temp_dir.as_path(),
@@ -227,7 +227,7 @@ pub fn run_assembler<
     }
 
     if step <= AssemblerStartingStep::BuildUnitigs {
-        AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager, Reader>(
+        AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(
             reorganized_reads,
             unitigs_map,
             temp_dir.as_path(),

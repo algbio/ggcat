@@ -3,17 +3,16 @@ mod reader;
 mod sequences_splitter;
 
 use crate::assemble_pipeline::parallel_kmers_merge::KmersFlags;
+use crate::config::{BucketIndexType, READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_SIZE};
 use crate::hashes::HashFunctionFactory;
 use crate::io::concurrent::intermediate_storage::{
     IntermediateReadsWriter, IntermediateSequencesStorage, SequenceExtraData,
 };
 use crate::io::sequences_reader::FastaSequence;
-use crate::io::DataWriter;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::reader::minb_reader;
 use crate::pipeline_common::minimizer_bucketing::sequences_splitter::SequencesSplitter;
 use crate::rolling::minqueue::RollingMinQueue;
-use crate::config::BucketIndexType;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::threadpools_chain::{
@@ -31,21 +30,21 @@ pub trait MinimizerBucketingExecutor {
     type PreprocessInfo: Default;
     type FileInfo: Clone + Sync + Send + Default;
 
-    fn new<C, W: DataWriter>(
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
+    fn new<C>(
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
     ) -> Self;
 
-    fn preprocess_fasta<C, W: DataWriter>(
+    fn preprocess_fasta<C>(
         &mut self,
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
         file_info: &Self::FileInfo,
         read_index: u64,
         preprocess_info: &mut Self::PreprocessInfo,
         sequence: &FastaSequence,
     );
-    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData), W: DataWriter>(
+    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData)>(
         &mut self,
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData, W>,
+        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
         preprocess_info: &Self::PreprocessInfo,
         sequence: &[u8],
         range: Range<usize>,
@@ -57,12 +56,11 @@ pub struct MinimizerBucketingExecutionContext<
     ReadAssociatedData: SequenceExtraData,
     ExtraData,
     GlobalData,
-    W: DataWriter,
 > {
     pub k: usize,
     pub m: usize,
     pub buckets_count: usize,
-    pub buckets: MultiThreadBuckets<IntermediateReadsWriter<ReadAssociatedData, W>>,
+    pub buckets: MultiThreadBuckets<IntermediateReadsWriter<ReadAssociatedData>>,
     pub extra: ExtraData,
     pub global_data: GlobalData,
     pub current_file: AtomicUsize,
@@ -80,12 +78,8 @@ struct ContextExtraData {
     quality_threshold: Option<f64>,
 }
 
-const CHUNKS_SIZE: usize = 1024 * 1024 * 16;
-const MAX_READING_THREADS: usize = 2;
-const WATERMARK_HIGH: usize = 64;
-
-fn worker<E: MinimizerBucketingExecutor, W: DataWriter>(
-    context: &MinimizerBucketingExecutionContext<E::ExtraData, ContextExtraData, E::GlobalData, W>,
+fn worker<E: MinimizerBucketingExecutor>(
+    context: &MinimizerBucketingExecutionContext<E::ExtraData, ContextExtraData, E::GlobalData>,
     manager: ObjectsPoolManager<(), MinimizerBucketingQueueData<E::FileInfo>>,
 ) {
     let mut tmp_reads_buffer =
@@ -173,7 +167,7 @@ fn worker<E: MinimizerBucketingExecutor, W: DataWriter>(
 }
 
 impl GenericMinimizerBucketing {
-    pub fn do_bucketing<E: MinimizerBucketingExecutor, W: DataWriter>(
+    pub fn do_bucketing<E: MinimizerBucketingExecutor>(
         mut input_files: Vec<(PathBuf, E::FileInfo)>,
         output_path: &Path,
         buckets_count: usize,
@@ -183,7 +177,7 @@ impl GenericMinimizerBucketing {
         quality_threshold: Option<f64>,
         global_data: E::GlobalData,
     ) -> Vec<PathBuf> {
-        let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<E::ExtraData, W>>::new(
+        let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<E::ExtraData>>::new(
             buckets_count,
             &output_path.join("bucket"),
             None,
@@ -211,11 +205,11 @@ impl GenericMinimizerBucketing {
             input_files,
             ThreadPoolDefinition::new(
                 &execution_context,
-                CHUNKS_SIZE,
+                READ_INTERMEDIATE_CHUNKS_SIZE,
                 String::from("assembler-minimizer-bucketing-reader"),
                 threads_count,
                 &AtomicUsize::new(threads_count),
-                WATERMARK_HIGH,
+                READ_INTERMEDIATE_QUEUE_SIZE.load(Ordering::Relaxed),
                 minb_reader,
             ),
             ThreadPoolDefinition::new(
@@ -224,8 +218,8 @@ impl GenericMinimizerBucketing {
                 String::from("assembler-minimizer-bucketing-writer"),
                 threads_count,
                 &AtomicUsize::new(threads_count),
-                WATERMARK_HIGH,
-                worker::<E, W>,
+                READ_INTERMEDIATE_QUEUE_SIZE.load(Ordering::Relaxed),
+                worker::<E>,
             ),
         );
 

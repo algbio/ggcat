@@ -1,11 +1,12 @@
 use crate::colors::storage::serializer::{ColorsFlushProcessing, ColorsIndexEntry};
 use crate::colors::storage::ColorsSerializerImpl;
 use crate::colors::ColorIndexType;
+use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::hashes::dummy_hasher::{DummyHasher, DummyHasherBuilder};
 use crate::io::chunks_writer::ChunksWriter;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::utils::async_slice_queue::AsyncSliceQueue;
-use crate::{DEFAULT_BUFFER_SIZE, KEEP_FILES};
+use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
 use dashmap::DashMap;
 use desse::{Desse, DesseSized};
@@ -139,7 +140,7 @@ impl ColorsSerializerImpl for RunLengthColorsSerializer {
     fn new(writer: ColorsFlushProcessing, checkpoint_distance: usize, _colors_count: u64) -> Self {
         Self {
             async_buffer: AsyncSliceQueue::new(
-                DEFAULT_BUFFER_SIZE,
+                DEFAULT_OUTPUT_BUFFER_SIZE,
                 rayon::current_num_threads(),
                 checkpoint_distance,
                 writer,
