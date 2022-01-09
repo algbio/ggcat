@@ -13,7 +13,6 @@ use crate::io::reads_writer::ReadsWriter;
 use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::io::sequences_reader::{FastaSequence, SequencesReader};
 use crate::io::structs::unitig_link::UnitigIndex;
-use crate::io::{DataReader, DataWriter};
 use crate::rolling::minqueue::RollingMinQueue;
 use crate::utils::Utils;
 use crate::KEEP_FILES;

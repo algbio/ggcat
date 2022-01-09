@@ -3,7 +3,7 @@ use crate::colors::colors_manager::ColorsManager;
 use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
 use crate::hashes::fw_nthash::ForwardNtHashIteratorFactory;
 use crate::hashes::{cn_rkhash, cn_seqhash, fw_rkhash, fw_seqhash, HashFunctionFactory};
-use crate::io::{DataReader, DataWriter};
+use crate::utils::compute_best_m;
 use crate::{AssemblerArgs, HashType};
 use std::cmp::min;
 use std::fs::File;
@@ -15,8 +15,6 @@ fn run_assembler_from_args<
     BucketingHash: HashFunctionFactory,
     MergingHash: HashFunctionFactory,
     ColorsImpl: ColorsManager,
-    Reader: DataReader,
-    Writer: DataWriter,
     const BUCKETS_COUNT: usize,
 >(
     args: AssemblerArgs,
@@ -36,11 +34,11 @@ fn run_assembler_from_args<
         exit(1);
     }
 
-    run_assembler::<BucketingHash, MergingHash, ColorsImpl, Reader, Writer, BUCKETS_COUNT>(
+    run_assembler::<BucketingHash, MergingHash, ColorsImpl, BUCKETS_COUNT>(
         args.common_args.klen,
         args.common_args
             .mlen
-            .unwrap_or(min(12, (args.common_args.klen + 2) / 3)),
+            .unwrap_or(compute_best_m(args.common_args.klen)),
         args.step,
         args.last_step,
         inputs,
@@ -55,8 +53,6 @@ fn run_assembler_from_args<
 
 pub(crate) fn dispatch_assembler_hash_type<
     ColorsImpl: ColorsManager,
-    Reader: DataReader,
-    Writer: DataWriter,
     const BUCKETS_COUNT: usize,
 >(
     args: AssemblerArgs,
@@ -84,8 +80,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u16::CanonicalSeqHashFactory,
                         ColorsImpl,
-                        Reader,
-                        Writer,
                         BUCKETS_COUNT,
                     >(args);
                 } else {
@@ -93,8 +87,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u16::CanonicalSeqHashFactory,
                         ColorsImpl,
-                        Reader,
-                        Writer,
                         BUCKETS_COUNT,
                     >(args)
                 }
@@ -104,8 +96,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                         ForwardNtHashIteratorFactory,
                         fw_seqhash::u32::ForwardSeqHashFactory,
                         ColorsImpl,
-                        Reader,
-                        Writer,
                         BUCKETS_COUNT,
                     >(args);
                 } else {
@@ -113,8 +103,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u32::CanonicalSeqHashFactory,
                         ColorsImpl,
-                        Reader,
-                        Writer,
                         BUCKETS_COUNT,
                     >(args)
                 }
@@ -124,8 +112,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                         ForwardNtHashIteratorFactory,
                         fw_seqhash::u64::ForwardSeqHashFactory,
                         ColorsImpl,
-                        Reader,
-                        Writer,
                         BUCKETS_COUNT,
                     >(args);
                 } else {
@@ -133,8 +119,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u64::CanonicalSeqHashFactory,
                         ColorsImpl,
-                        Reader,
-                        Writer,
                         BUCKETS_COUNT,
                     >(args)
                 }
@@ -144,8 +128,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                         ForwardNtHashIteratorFactory,
                         fw_seqhash::u128::ForwardSeqHashFactory,
                         ColorsImpl,
-                        Reader,
-                        Writer,
                         BUCKETS_COUNT,
                     >(args);
                 } else {
@@ -153,8 +135,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u128::CanonicalSeqHashFactory,
                         ColorsImpl,
-                        Reader,
-                        Writer,
                         BUCKETS_COUNT,
                     >(args)
                 }
@@ -168,8 +148,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                     ForwardNtHashIteratorFactory,
                     fw_rkhash::u32::ForwardRabinKarpHashFactory,
                     ColorsImpl,
-                    Reader,
-                    Writer,
                     BUCKETS_COUNT,
                 >(args);
             } else {
@@ -177,8 +155,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                     CanonicalNtHashIteratorFactory,
                     cn_rkhash::u32::CanonicalRabinKarpHashFactory,
                     ColorsImpl,
-                    Reader,
-                    Writer,
                     BUCKETS_COUNT,
                 >(args)
             }
@@ -189,8 +165,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                     ForwardNtHashIteratorFactory,
                     fw_rkhash::u64::ForwardRabinKarpHashFactory,
                     ColorsImpl,
-                    Reader,
-                    Writer,
                     BUCKETS_COUNT,
                 >(args);
             } else {
@@ -198,8 +172,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                     CanonicalNtHashIteratorFactory,
                     cn_rkhash::u64::CanonicalRabinKarpHashFactory,
                     ColorsImpl,
-                    Reader,
-                    Writer,
                     BUCKETS_COUNT,
                 >(args)
             }
@@ -210,8 +182,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                     ForwardNtHashIteratorFactory,
                     fw_rkhash::u128::ForwardRabinKarpHashFactory,
                     ColorsImpl,
-                    Reader,
-                    Writer,
                     BUCKETS_COUNT,
                 >(args);
             } else {
@@ -219,8 +189,6 @@ pub(crate) fn dispatch_assembler_hash_type<
                     CanonicalNtHashIteratorFactory,
                     cn_rkhash::u128::CanonicalRabinKarpHashFactory,
                     ColorsImpl,
-                    Reader,
-                    Writer,
                     BUCKETS_COUNT,
                 >(args)
             }

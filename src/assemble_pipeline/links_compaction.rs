@@ -15,7 +15,7 @@ use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::vec_slice::VecSlice;
-use crate::utils::Utils;
+use crate::utils::{get_memory_mode, Utils};
 use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
 use hashbrown::HashMap;
@@ -81,9 +81,7 @@ impl AssemblePipeline {
                     .as_ref()
                     .to_path_buf()
                     .join(format!("linksi{}", elab_index)),
-                MemoryFileMode::PreferMemory {
-                    swap_priority: SwapPriority::LinksBuckets as usize,
-                },
+                get_memory_mode(SwapPriority::LinksBuckets as usize),
             ),
             None,
         );

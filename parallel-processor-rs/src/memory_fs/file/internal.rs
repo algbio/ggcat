@@ -168,6 +168,20 @@ impl MemoryFileInternal {
         Some(new_file)
     }
 
+    pub fn debug_dump_files() {
+        for file in MEMORY_MAPPED_FILES.iter() {
+            println!(
+                "File '{}' => chunks: {}",
+                file.path.display(),
+                file.memory
+                    .try_read()
+                    .map(|mem| mem.len())
+                    .map(|x| x.to_string())
+                    .unwrap_or(String::from("cannot read"))
+            );
+        }
+    }
+
     pub fn is_on_disk(&self) -> bool {
         *self.memory_mode.read() == MemoryFileMode::DiskOnly
     }

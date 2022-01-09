@@ -6,7 +6,9 @@ use crate::hashes::HashableSequence;
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
 use crate::io::varint::{encode_varint, encode_varint_flags};
-use crate::io::DataReader;
+use crate::pipeline_common::kmers_transform::structs::{
+    OPENED_BUCKETS_CONDVAR, OPENED_BUCKETS_COUNT,
+};
 use crate::utils::compressed_read::CompressedRead;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use parallel_processor::memory_data_size::MemoryDataSize;
@@ -87,7 +89,19 @@ impl KmersTransform {
 
         const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(15);
 
+        let data_wait_condvar = Arc::new(Condvar::new());
+        let data_wait_mutex = Mutex::new(());
+
+        let max_opened_buckets = if save_memory { 1 } else { 8 };
+
         let open_bucket = || {
+            {
+                let mut opened_count = OPENED_BUCKETS_COUNT.lock();
+                if *opened_count >= max_opened_buckets {
+                    OPENED_BUCKETS_CONDVAR.wait(&mut opened_count);
+                }
+            }
+
             let file = files_queue.pop()?;
 
             let mut last_info_log = last_info_log.lock();
@@ -120,15 +134,14 @@ impl KmersTransform {
             Some(Arc::new(structs::BucketProcessData::<
                 F::InputBucketExtraData,
             >::new(
-                file, vecs_process_queue.clone()
+                file,
+                vecs_process_queue.clone(),
+                data_wait_condvar.clone(),
             )))
         };
 
         let current_bucket = RwLock::new(open_bucket());
         let reading_finished = AtomicBool::new(false);
-
-        let data_wait_condvar = Condvar::new();
-        let data_wait_mutex = Mutex::new(());
 
         crossbeam::thread::scope(|s| {
             for _ in 0..min(buckets_count, threads_count) {
@@ -170,7 +183,10 @@ impl KmersTransform {
                             match current_bucket_read_guard.clone() {
                                 None => {
                                     drop(current_bucket_read_guard);
-                                    data_wait_condvar.wait(&mut data_wait_mutex.lock());
+                                    data_wait_condvar.wait_for(
+                                        &mut data_wait_mutex.lock(),
+                                        Duration::from_millis(100),
+                                    );
                                     continue;
                                 }
                                 Some(val) => val,
@@ -248,7 +264,6 @@ impl KmersTransform {
                             .unwrap_or(false)
                         {
                             writable_bucket.take();
-                            data_wait_condvar.notify_all();
                         }
 
                         drop(writable_bucket);
@@ -265,10 +280,10 @@ impl KmersTransform {
                             if writable_bucket.is_none() {
                                 if let Some(bucket) = open_bucket() {
                                     *writable_bucket = Some(bucket);
-                                    data_wait_condvar.notify_all();
                                 } else {
                                     reading_finished.store(true, Ordering::Relaxed);
                                 }
+                                data_wait_condvar.notify_all();
                             }
                             break;
                         }

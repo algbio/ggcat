@@ -6,7 +6,6 @@ use crate::hashes::{ExtendableHashTraitType, HashFunctionFactory, HashableSequen
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::structs::hash_entry::{Direction, HashEntry};
 use crate::io::varint::{decode_varint, decode_varint_flags};
-use crate::io::DataReader;
 use crate::pipeline_common::kmers_transform::{
     KmersTransformExecutor, KmersTransformExecutorFactory,
 };

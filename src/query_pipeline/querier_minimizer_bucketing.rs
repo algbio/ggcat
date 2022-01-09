@@ -9,7 +9,6 @@ use crate::io::concurrent::intermediate_storage::{
 };
 use crate::io::sequences_reader::{FastaSequence, SequencesReader};
 use crate::io::varint::{decode_varint, encode_varint};
-use crate::io::DataWriter;
 use crate::pipeline_common::minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingExecutionContext, MinimizerBucketingExecutor,
 };

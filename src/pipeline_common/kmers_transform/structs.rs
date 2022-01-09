@@ -4,7 +4,6 @@ use crate::config::{BucketIndexType, SortingHashType, SwapPriority};
 use crate::io::concurrent::intermediate_storage::{IntermediateReadsReader, SequenceExtraData};
 use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
 use crate::io::varint::decode_varint_flags;
-use crate::io::{DataReader, DataWriter};
 use crate::pipeline_common::kmers_transform::MERGE_BUCKETS_COUNT;
 use crate::{CompressedRead, KEEP_FILES};
 use crossbeam::queue::SegQueue;
@@ -12,16 +11,20 @@ use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::writer::FileWriter;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-const HASH_OFFSET: usize = std::mem::size_of::<u64>() - std::mem::size_of::<SortingHashType>();
+const HASH_OFFSET: usize =
+    (std::mem::size_of::<u64>() - std::mem::size_of::<SortingHashType>()) * 8;
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct ReadRef(u64);
+
+pub static OPENED_BUCKETS_COUNT: Mutex<usize> = Mutex::new(0);
+pub static OPENED_BUCKETS_CONDVAR: Condvar = Condvar::new();
 
 impl ReadRef {
     pub fn new(index: usize, hash: SortingHashType) -> Self {
@@ -81,12 +84,19 @@ pub struct BucketProcessData<E: SequenceExtraData> {
     pub reader: IntermediateReadsReader<E>,
     pub buckets: MultiThreadBuckets<LockFreeBinaryWriter>,
     vecs_queue: Arc<SegQueue<PathBuf>>,
+    notify_condvar: Arc<Condvar>,
 }
 
 static QUEUE_IDENTIFIER: AtomicU64 = AtomicU64::new(0);
 
 impl<E: SequenceExtraData> BucketProcessData<E> {
-    pub fn new(path: impl AsRef<Path>, vecs_queue: Arc<SegQueue<PathBuf>>) -> Self {
+    pub fn new(
+        path: impl AsRef<Path>,
+        vecs_queue: Arc<SegQueue<PathBuf>>,
+        notify_condvar: Arc<Condvar>,
+    ) -> Self {
+        *OPENED_BUCKETS_COUNT.lock() += 1;
+
         let tmp_dir = path.as_ref().parent().unwrap_or(Path::new("."));
         Self {
             reader: IntermediateReadsReader::<E>::new(&path, !KEEP_FILES.load(Ordering::Relaxed)),
@@ -104,6 +114,7 @@ impl<E: SequenceExtraData> BucketProcessData<E> {
                 None,
             ),
             vecs_queue,
+            notify_condvar,
         }
     }
 }
@@ -113,5 +124,9 @@ impl<E: SequenceExtraData> Drop for BucketProcessData<E> {
         for path in self.buckets.finalize() {
             self.vecs_queue.push(path);
         }
+        self.notify_condvar.notify_all();
+
+        *OPENED_BUCKETS_COUNT.lock() -= 1;
+        OPENED_BUCKETS_CONDVAR.notify_all();
     }
 }

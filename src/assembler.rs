@@ -6,9 +6,8 @@ use crate::config::SwapPriority;
 use crate::hashes::HashFunctionFactory;
 use crate::io::reads_reader::ReadsReader;
 use crate::io::reads_writer::ReadsWriter;
-use crate::io::{DataReader, DataWriter};
 use crate::utils::debug_utils::debug_print;
-use crate::utils::Utils;
+use crate::utils::{get_memory_mode, Utils};
 use crate::{AssemblerStartingStep, KEEP_FILES, SAVE_MEMORY};
 use itertools::Itertools;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
@@ -25,8 +24,6 @@ pub fn run_assembler<
     BucketingHash: HashFunctionFactory,
     MergingHash: HashFunctionFactory,
     AssemblerColorsManager: ColorsManager,
-    Reader: DataReader,
-    Writer: DataWriter,
     const BUCKETS_COUNT: usize,
 >(
     k: usize,
@@ -76,8 +73,6 @@ pub fn run_assembler<
             MergingHash,
             AssemblerColorsManager,
             _,
-            Reader,
-            Writer,
         >(
             buckets,
             &global_colors_table,
@@ -138,9 +133,7 @@ pub fn run_assembler<
             BUCKETS_COUNT,
             &(
                 temp_dir.join("results_map"),
-                MemoryFileMode::PreferMemory {
-                    swap_priority: SwapPriority::FinalMaps as usize,
-                },
+                get_memory_mode(SwapPriority::FinalMaps as usize),
             ),
             None,
         );
@@ -149,9 +142,7 @@ pub fn run_assembler<
             BUCKETS_COUNT,
             &(
                 temp_dir.join("unitigs_map"),
-                MemoryFileMode::PreferMemory {
-                    swap_priority: SwapPriority::FinalMaps as usize,
-                },
+                get_memory_mode(SwapPriority::FinalMaps as usize),
             ),
             None,
         );

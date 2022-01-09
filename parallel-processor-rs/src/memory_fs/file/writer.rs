@@ -35,6 +35,7 @@ impl FileWriter {
         self.file.len() + self.current_buffer.read().len()
     }
 
+    /// Overwrites bytes at the start of the file, the data field should not be longer than 128 bytes
     pub fn write_at_start(&mut self, data: &[u8]) -> Result<(), ()> {
         if data.len() > 128 {
             return Err(());

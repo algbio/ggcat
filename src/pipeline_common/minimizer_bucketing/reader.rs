@@ -1,6 +1,5 @@
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::sequences_reader::SequencesReader;
-use crate::io::DataWriter;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutionContext;
 use parallel_processor::threadpools_chain::ObjectsPoolManager;

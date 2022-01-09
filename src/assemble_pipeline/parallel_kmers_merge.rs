@@ -27,7 +27,6 @@ use crate::io::sequences_reader::FastaSequence;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::hash_entry::HashEntry;
 use crate::io::varint::{decode_varint, decode_varint_flags, encode_varint_flags};
-use crate::io::{DataReader, DataWriter};
 use crate::pipeline_common::kmers_transform::structs::ReadRef;
 use crate::pipeline_common::kmers_transform::{
     KmersTransform, KmersTransformExecutor, KmersTransformExecutorFactory, ReadDispatchInfo,
@@ -36,7 +35,7 @@ use crate::pipeline_common::kmers_transform::{
 use crate::rolling::minqueue::RollingMinQueue;
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::utils::debug_utils::debug_increase;
-use crate::utils::Utils;
+use crate::utils::{get_memory_mode, Utils};
 use crate::KEEP_FILES;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use crossbeam::queue::*;
@@ -70,7 +69,6 @@ pub mod structs {
     use crate::config::BucketIndexType;
     use crate::io::concurrent::intermediate_storage::SequenceExtraData;
     use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
-    use crate::io::DataWriter;
     use std::io::Write;
     use std::path::PathBuf;
 
@@ -572,8 +570,6 @@ impl AssemblePipeline {
         MH: HashFunctionFactory,
         CX: ColorsManager,
         P: AsRef<Path> + std::marker::Sync,
-        R: DataReader,
-        W: DataWriter,
     >(
         file_inputs: Vec<PathBuf>,
         colors_global_table: &CX::GlobalColorsTable,
@@ -593,9 +589,7 @@ impl AssemblePipeline {
             buckets_count,
             &(
                 out_directory.as_ref().join("hashes"),
-                MemoryFileMode::PreferMemory {
-                    swap_priority: SwapPriority::HashBuckets,
-                },
+                get_memory_mode(SwapPriority::HashBuckets),
             ),
             None,
         );

@@ -3,7 +3,6 @@ use crate::hashes::HashableSequence;
 use crate::io::concurrent::intermediate_storage::{IntermediateReadsWriter, SequenceExtraData};
 use crate::io::sequences_reader::FastaSequence;
 use crate::io::varint::{decode_varint, encode_varint};
-use crate::io::DataWriter;
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::utils::{cast_static, cast_static_mut, Utils};
 use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};

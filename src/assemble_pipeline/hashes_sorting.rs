@@ -8,6 +8,7 @@ use crate::hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use crate::io::structs::hash_entry::{Direction, HashEntry};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::utils::fast_rand_bool::FastRandBool;
+use crate::utils::get_memory_mode;
 use crate::utils::vec_slice::VecSlice;
 use crate::KEEP_FILES;
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
@@ -43,9 +44,7 @@ impl AssemblePipeline {
             buckets_count,
             &(
                 output_dir.as_ref().join("links"),
-                MemoryFileMode::PreferMemory {
-                    swap_priority: SwapPriority::LinksBuckets as usize,
-                },
+                get_memory_mode(SwapPriority::LinksBuckets as usize),
             ),
             None,
         );

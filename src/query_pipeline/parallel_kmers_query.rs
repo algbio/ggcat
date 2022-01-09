@@ -5,7 +5,6 @@ use crate::hashes::HashFunctionFactory;
 use crate::hashes::{ExtendableHashTraitType, HashableSequence};
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::varint::{decode_varint, decode_varint_flags, encode_varint};
-use crate::io::DataReader;
 use crate::pipeline_common::kmers_transform::structs::ReadRef;
 use crate::pipeline_common::kmers_transform::{
     KmersTransform, KmersTransformExecutor, KmersTransformExecutorFactory, ReadDispatchInfo,
@@ -212,7 +211,6 @@ impl QueryPipeline {
         MH: HashFunctionFactory,
         CX: ColorsManager,
         P: AsRef<Path> + std::marker::Sync,
-        R: DataReader,
     >(
         file_inputs: Vec<PathBuf>,
         buckets_count: usize,

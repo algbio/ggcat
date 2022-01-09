@@ -167,4 +167,21 @@ impl Seek for FileReader {
             }
         }
     }
+
+    fn stream_position(&mut self) -> io::Result<u64> {
+        let mut position = 0;
+
+        for i in 0..self.current_chunk_index {
+            position += self.file.get_chunk(i).read().get_length();
+        }
+
+        position += self
+            .file
+            .get_chunk(self.current_chunk_index)
+            .read()
+            .get_length()
+            - self.current_len;
+
+        Ok(position as u64)
+    }
 }

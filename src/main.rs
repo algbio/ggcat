@@ -147,7 +147,7 @@ struct CommonArgs {
     #[structopt(short, default_value = "32")]
     pub klen: usize,
 
-    /// Specifies the m-mers (minimizers) length, defaults to min(12, ceil(K / 2))
+    /// Specifies the m-mers (minimizers) length, defaults to min(3, ceil((K + 2) / 3))
     #[structopt(long)]
     pub mlen: Option<usize>,
 
@@ -171,8 +171,12 @@ struct CommonArgs {
     pub forward_only: bool,
 
     /// Maximum memory usage (GB)
-    #[structopt(short = "m", long, default_value = "8")]
+    #[structopt(short = "m", long, default_value = "2")]
     pub memory: f64,
+
+    /// Use all the given memory before writing to disk
+    #[structopt(short = "p", long = "prefer-memory")]
+    pub prefer_memory: bool,
 }
 
 #[derive(StructOpt, Debug)]
@@ -202,7 +206,7 @@ struct AssemblerArgs {
     #[structopt(short = "o", long = "output-file", default_value = "output.fasta.lz4")]
     pub output_file: PathBuf,
 
-    #[structopt(short = "p", long, default_value = "MinimizerBucketing")]
+    #[structopt(long, default_value = "MinimizerBucketing")]
     pub step: AssemblerStartingStep,
 
     #[structopt(long = "last-step", default_value = "BuildUnitigs")]
@@ -235,6 +239,7 @@ struct QueryArgs {
 }
 
 static KEEP_FILES: AtomicBool = AtomicBool::new(false);
+static PREFER_MEMORY: AtomicBool = AtomicBool::new(false);
 
 // use parallel_processor::debug_allocator::{debug_print_allocations, DebugAllocator};
 
@@ -247,6 +252,8 @@ fn initialize(args: &CommonArgs) {
 
     KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
 
+    PREFER_MEMORY.store(args.prefer_memory, Ordering::Relaxed);
+
     ThreadPoolBuilder::new()
         .num_threads(args.threads_count)
         .build_global();
@@ -257,7 +264,7 @@ fn initialize(args: &CommonArgs) {
         parallel_processor::memory_data_size::MemoryDataSize::from_gibioctets(args.memory),
         512,
         3,
-        2560,
+        4096,
     );
 
     // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
@@ -298,26 +305,15 @@ fn main() {
         exit(1);
     }));
 
-    type CurrentReader = crate::io::MemoryFsDataReader;
-    type CurrentWriter = crate::io::MemoryFsDataWriter;
-
     match args {
         CliArgs::Build(args) => {
             initialize(&args.common_args);
             if args.colors {
-                dispatch_assembler_hash_type::<
-                    DefaultColorsManager,
-                    CurrentReader,
-                    CurrentWriter,
-                    { config::FIRST_BUCKETS_COUNT },
-                >(args);
+                dispatch_assembler_hash_type::<DefaultColorsManager, { config::FIRST_BUCKETS_COUNT }>(
+                    args,
+                );
             } else {
-                dispatch_assembler_hash_type::<
-                    (),
-                    CurrentReader,
-                    CurrentWriter,
-                    { config::FIRST_BUCKETS_COUNT },
-                >(args);
+                dispatch_assembler_hash_type::<(), { config::FIRST_BUCKETS_COUNT }>(args);
             }
         }
         CliArgs::Matches(args) => {
@@ -333,19 +329,11 @@ fn main() {
         CliArgs::Query(args) => {
             initialize(&args.common_args);
             if args.colors {
-                dispatch_querier_hash_type::<
-                    DefaultColorsManager,
-                    CurrentReader,
-                    CurrentWriter,
-                    { config::FIRST_BUCKETS_COUNT },
-                >(args);
+                dispatch_querier_hash_type::<DefaultColorsManager, { config::FIRST_BUCKETS_COUNT }>(
+                    args,
+                );
             } else {
-                dispatch_querier_hash_type::<
-                    (),
-                    CurrentReader,
-                    CurrentWriter,
-                    { config::FIRST_BUCKETS_COUNT },
-                >(args);
+                dispatch_querier_hash_type::<(), { config::FIRST_BUCKETS_COUNT }>(args);
             }
         }
         CliArgs::Utils(args) => {

@@ -13,7 +13,6 @@ use crate::io::reads_reader::ReadsReader;
 use crate::io::reads_writer::ReadsWriter;
 use crate::io::sequences_reader::{FastaSequence, SequencesReader};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
-use crate::io::DataReader;
 use crate::rolling::minqueue::RollingMinQueue;
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::utils::Utils;

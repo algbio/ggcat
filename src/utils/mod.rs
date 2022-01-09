@@ -7,7 +7,10 @@ pub mod progress;
 pub mod vec_slice;
 
 use crate::config::BucketIndexType;
+use crate::PREFER_MEMORY;
+use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parking_lot::{Condvar, Mutex, RwLockReadGuard};
+use std::cmp::min;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::JoinHandle;
@@ -26,6 +29,22 @@ macro_rules! panic_debug {
         #[cfg(not(feature = "debug"))]
         unsafe { std::hint::unreachable_unchecked() }
     };
+}
+
+pub fn get_memory_mode(swap_priority: usize) -> MemoryFileMode {
+    if PREFER_MEMORY.load(Ordering::Relaxed) {
+        MemoryFileMode::PreferMemory { swap_priority }
+    } else {
+        MemoryFileMode::DiskOnly
+    }
+}
+
+pub fn compute_best_m(k: usize) -> usize {
+    if k < 27 {
+        min(k - 1, ((k + 5) as f64 / 3.0).round() as usize)
+    } else {
+        ((k + 2) as f64 / 3.0).round() as usize
+    }
 }
 
 impl Utils {

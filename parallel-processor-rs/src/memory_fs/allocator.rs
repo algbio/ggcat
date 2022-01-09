@@ -1,4 +1,5 @@
 use crate::memory_data_size::MemoryDataSize;
+use crate::memory_fs::file::internal::MemoryFileInternal;
 use crate::memory_fs::{MemoryFs, FILES_FLUSH_HASH_MAP};
 use parking_lot::RawMutex;
 use parking_lot::{Condvar, Mutex};
@@ -13,7 +14,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 const ALLOCATOR_ALIGN: usize = 4096;
-const MAXIMUM_CHUNK_SIZE_LOG: usize = 22;
+const MAXIMUM_CHUNK_SIZE_LOG: usize = 18;
 const MINIMUM_CHUNK_SIZE_LOG: usize = 8;
 
 #[macro_export]
@@ -361,6 +362,7 @@ impl ChunksAllocator {
                     if tries_count > 10 {
                         #[cfg(feature = "track-usage")]
                         {
+                            MemoryFileInternal::debug_dump_files();
                             panic!(
                                 "Usages: {:?}",
                                 USAGE_MAP

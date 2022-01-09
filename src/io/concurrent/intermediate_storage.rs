@@ -1,16 +1,16 @@
-use crate::config::{BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE};
+use crate::config::{BucketIndexType, SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE};
 use crate::hashes::HashableSequence;
 use crate::io::sequences_reader::FastaSequence;
 use crate::io::varint::{decode_varint, encode_varint};
-use crate::io::{DataReader, DataWriter};
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
-use crate::utils::{cast_static, cast_static_mut, Utils};
+use crate::utils::{cast_static, cast_static_mut, get_memory_mode, Utils};
 use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use desse::{Desse, DesseSized};
 use filebuffer::FileBuffer;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
+use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::file::writer::FileWriter;
 use parallel_processor::memory_fs::MemoryFs;
@@ -109,13 +109,13 @@ pub struct IntermediateReadsWriter<T> {
     _phantom: PhantomData<T>,
 }
 
-struct SequentialReader<R: DataReader> {
-    reader: lz4::Decoder<R>,
+struct SequentialReader {
+    reader: lz4::Decoder<FileReader>,
     index: IntermediateReadsIndex,
     index_position: u64,
 }
 
-impl<R: DataReader> Read for SequentialReader<R> {
+impl Read for SequentialReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         loop {
             match self.reader.read(buf) {
@@ -152,7 +152,7 @@ impl<R: DataReader> Read for SequentialReader<R> {
 
 pub struct IntermediateReadsReader<T: SequenceExtraData> {
     remove_file: bool,
-    sequential_reader: SequentialReader<FileReader>,
+    sequential_reader: SequentialReader,
     parallel_reader: FileReader,
     parallel_index: AtomicU64,
     file_path: PathBuf,
@@ -233,8 +233,8 @@ impl<T: SequenceExtraData> IntermediateReadsWriter<T> {
             let (mut file_buf, res) = writer.finish();
             res.unwrap();
 
-            let checkpoint_pos = file_buf.stream_position().unwrap();
-            self.index.index.push(checkpoint_pos);
+            let checkpoint_pos = file_buf.len();
+            self.index.index.push(checkpoint_pos as u64);
 
             lz4::EncoderBuilder::new().level(0).build(file_buf).unwrap()
         });
@@ -255,12 +255,12 @@ impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
             index
         ));
 
-        let mut file = FileWriter::create_default(&path);
+        let mut file = FileWriter::create(&path, get_memory_mode(SwapPriority::Default));
 
         // Write empty header
         file.write_all(&IntermediateReadsHeader::default().serialize()[..]);
 
-        let first_block_pos = file.stream_position().unwrap();
+        let first_block_pos = file.len() as u64;
         let mut compress_stream = lz4::EncoderBuilder::new()
             .level(0)
             .checksum(ContentChecksum::NoChecksum)
@@ -298,10 +298,10 @@ impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
         res.unwrap();
 
         file.flush();
-        let index_position = file.stream_position().unwrap();
+        let index_position = file.len() as u64;
         bincode::serialize_into(&mut file, &self.index).unwrap();
 
-        file.overwrite_at_start(
+        file.write_at_start(
             &IntermediateReadsHeader {
                 magic: INTERMEDIATE_READS_MAGIC,
                 index_offset: index_position,
@@ -398,7 +398,8 @@ impl<'a, R: Read> Read for VecReader<'a, R> {
 }
 impl<T: SequenceExtraData> IntermediateReadsReader<T> {
     pub fn new(name: impl AsRef<Path>, remove_file: bool) -> Self {
-        let mut file = FileReader::open_file(&name);
+        let mut file = FileReader::open(&name)
+            .unwrap_or_else(|| panic!("Cannot open file {}", name.as_ref().display()));
 
         let mut header_buffer = [0; IntermediateReadsHeader::SIZE];
         file.read_exact(&mut header_buffer);
