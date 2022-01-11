@@ -8,6 +8,7 @@ fn main() {
     println!("cargo:rerun-if-changed=libdeflate/");
 
     make_cmd::make()
+        .env("CFLAGS", "-fPIC")
         .current_dir(canonicalize("libdeflate").unwrap())
         .spawn()
         .unwrap();
