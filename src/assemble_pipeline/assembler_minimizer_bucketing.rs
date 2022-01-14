@@ -69,7 +69,7 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         let mut include_first = true;
 
         for (index, min_hash) in rolling_iter.enumerate() {
-            if min_hash != last_hash {
+            if H::get_full_minimizer(min_hash) != H::get_full_minimizer(last_hash) {
                 let bucket =
                     H::get_first_bucket(last_hash) % (global_data.buckets_count as BucketIndexType);
 
