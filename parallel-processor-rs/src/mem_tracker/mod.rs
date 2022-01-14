@@ -1,5 +1,6 @@
 use crate::memory_data_size::MemoryDataSize;
 use crate::memory_fs::allocator::CHUNKS_ALLOCATOR;
+use crate::memory_fs::file::flush::GlobalFlush;
 use crate::memory_fs::file::internal::MemoryFileInternal;
 use parking_lot::{Mutex, MutexGuard};
 use std::collections::HashMap;
@@ -83,7 +84,7 @@ pub fn print_memory_info() {
             pos.0,
             MemoryDataSize::from_octets(reserved as f64),
             MemoryDataSize::from_octets(resident as f64),
-            objects_count
+            objects_count,
         );
 
         tot_reserved += reserved;
@@ -92,10 +93,11 @@ pub fn print_memory_info() {
     }
 
     println!(
-        "********* GLOBAL STATS: alloc: {:.2} resident: {:.2} [tot {} objects] *********",
+        "********* GLOBAL STATS: alloc: {:.2} resident: {:.2} [tot {} objects]  FLUSH QUEUE: {:?} *********",
         MemoryDataSize::from_octets(tot_reserved as f64),
         MemoryDataSize::from_octets(tot_resident as f64),
-        tot_objects_count
+        tot_objects_count,
+        if GlobalFlush::is_initialized() { GlobalFlush::global_queue_occupation() } else { (0, 0) }
     );
 
     // // many statistics are cached and only updated when the epoch is advanced.

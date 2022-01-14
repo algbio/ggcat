@@ -88,6 +88,10 @@ impl GlobalFlush {
         }
     }
 
+    pub fn is_initialized() -> bool {
+        return unsafe { GLOBAL_FLUSH_QUEUE.is_some() };
+    }
+
     pub fn init(flush_queue_size: usize, threads_count: usize) {
         let (flush_channel_sender, flush_channel_receiver) = bounded(flush_queue_size);
 

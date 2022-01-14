@@ -76,6 +76,10 @@ impl FileReader {
         Some(reader)
     }
 
+    pub fn total_file_size(&mut self) -> usize {
+        self.file.len()
+    }
+
     // pub fn get_typed_chunks_mut<T>(&mut self) -> Option<impl Iterator<Item = &mut [T]>> {
     //     todo!();
     //     Some((0..1).into_iter().map(|_| &mut [0, 1][..]))

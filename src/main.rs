@@ -18,6 +18,7 @@
 #![allow(warnings)]
 #![feature(test)]
 #![feature(slice_partition_dedup)]
+#![feature(seek_stream_len)]
 
 extern crate alloc;
 extern crate test;
@@ -39,7 +40,6 @@ mod assemble_pipeline;
 mod benchmarks;
 mod config;
 mod hashes;
-pub mod libdeflate;
 #[macro_use]
 mod utils;
 mod assembler;
@@ -241,10 +241,12 @@ struct QueryArgs {
 static KEEP_FILES: AtomicBool = AtomicBool::new(false);
 static PREFER_MEMORY: AtomicBool = AtomicBool::new(false);
 
-// use parallel_processor::debug_allocator::{debug_print_allocations, DebugAllocator};
+#[cfg(feature = "mem-analysis")]
+use parallel_processor::debug_allocator::{debug_print_allocations, DebugAllocator};
 
-// #[global_allocator]
-// static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
+#[cfg_attr(feature = "mem-analysis", global_allocator)]
+#[cfg(feature = "mem-analysis")]
+static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
 
 fn initialize(args: &CommonArgs) {
     // Increase the maximum allowed number of open files
@@ -260,6 +262,8 @@ fn initialize(args: &CommonArgs) {
 
     create_dir_all(&args.temp_dir);
 
+    parallel_processor::stats_logger::DEFAULT_STATS_LOGGER.init(args.temp_dir.join("stats.txt"));
+
     MemoryFs::init(
         parallel_processor::memory_data_size::MemoryDataSize::from_gibioctets(args.memory),
         512,
@@ -267,7 +271,8 @@ fn initialize(args: &CommonArgs) {
         4096,
     );
 
-    // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
+    #[cfg(feature = "mem-analysis")]
+    debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
 }
 
 pub static SAVE_MEMORY: AtomicBool = AtomicBool::new(false);

@@ -55,6 +55,7 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::threadpools_chain::{
     ObjectsPoolManager, ThreadChainObject, ThreadPoolDefinition, ThreadPoolsChain,
 };
+use parallel_processor::{stats_logger::StatMode, update_stat};
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
 use std::process::exit;
@@ -266,11 +267,31 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         {
             CX::ColorsMergeManagerType::<MH>::reinit_temp_buffer_structure(&mut self.temp_colors);
-            self.rhash_map.clear();
+            // self.rhash_map.clear();
+            self.rhash_map = HashMap::with_capacity(4096);
             self.rcorrect_reads.clear();
 
             let mut tot_reads = 0;
             let mut tot_chars = 0;
+
+            static MAX_READS: AtomicUsize = AtomicUsize::new(0);
+            static MAX_MEMORY: AtomicUsize = AtomicUsize::new(0);
+
+            update_stat!("TOTAL_PROCESSED_GROUPS", 1.0, StatMode::Sum);
+
+            MAX_MEMORY.fetch_max(memory.len(), Ordering::Relaxed);
+            MAX_READS.fetch_max(reads.len(), Ordering::Relaxed);
+
+            update_stat!(
+                "MERGE_MAX_MEMORY",
+                MAX_MEMORY.load(Ordering::Relaxed) as f64,
+                StatMode::Replace
+            );
+            update_stat!(
+                "MERGE_MAX_READS",
+                MAX_READS.load(Ordering::Relaxed) as f64,
+                StatMode::Replace
+            );
 
             for packed_read in reads {
                 let (kmer_flags, read, color) = packed_read

@@ -1,5 +1,5 @@
-use crate::libdeflate::decompress_file;
 use bstr::ByteSlice;
+use libdeflate_rs::decompress_file_buffered;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -10,7 +10,10 @@ pub struct LinesReader {}
 
 impl LinesReader {
     #[inline(always)]
-    fn read_stream_buffered(mut stream: impl Read, mut callback: impl FnMut(&[u8])) -> Result<(), ()> {
+    fn read_stream_buffered(
+        mut stream: impl Read,
+        mut callback: impl FnMut(&[u8]),
+    ) -> Result<(), ()> {
         let mut buffer = [0; 1024 * 512];
         while let Ok(count) = stream.read(&mut buffer) {
             if count == 0 {
@@ -24,14 +27,18 @@ impl LinesReader {
 
     fn read_binary_file(path: impl AsRef<Path>, mut callback: impl FnMut(&[u8]), remove: bool) {
         if path.as_ref().extension().filter(|x| *x == "gz").is_some() {
-            if let Err(_err) = decompress_file(
+            if let Err(_err) = decompress_file_buffered(
                 &path,
                 |data| {
                     callback(data);
+                    Ok(())
                 },
                 1024 * 512,
             ) {
-                println!("WARNING: Error while reading file {}", path.as_ref().display());
+                println!(
+                    "WARNING: Error while reading file {}",
+                    path.as_ref().display()
+                );
             }
             callback(&[]);
         } else if path.as_ref().extension().filter(|x| *x == "lz4").is_some() {
@@ -40,13 +47,19 @@ impl LinesReader {
             )
             .unwrap();
             Self::read_stream_buffered(file, callback).unwrap_or_else(|_| {
-                println!("WARNING: Error while reading file {}", path.as_ref().display());
+                println!(
+                    "WARNING: Error while reading file {}",
+                    path.as_ref().display()
+                );
             });
         } else {
             let mut file =
                 File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display()));
             Self::read_stream_buffered(file, callback).unwrap_or_else(|_| {
-                println!("WARNING: Error while reading file {}", path.as_ref().display());
+                println!(
+                    "WARNING: Error while reading file {}",
+                    path.as_ref().display()
+                );
             });
         }
 

@@ -1,5 +1,4 @@
 use crate::io::lines_reader::LinesReader;
-use crate::libdeflate::decompress_file;
 use bstr::ByteSlice;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;

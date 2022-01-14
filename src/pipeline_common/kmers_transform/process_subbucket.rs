@@ -29,6 +29,9 @@ pub fn process_subbucket<'a, F: KmersTransformExecutorFactory>(
     tmp_data_vec: &mut Vec<u8>,
     executor: &mut F::ExecutorType<'a>,
 ) {
+    assert_eq!(tmp_data_vec.len(), 0);
+    assert_eq!(tmp_ref_vec.len(), 0);
+
     while let Ok(hash) = bucket_stream.read_u16::<LittleEndian>() {
         let size = decode_varint(|| bucket_stream.read_u8().ok()).unwrap() as usize;
 
@@ -65,6 +68,7 @@ pub fn process_subbucket<'a, F: KmersTransformExecutorFactory>(
     for slice in tmp_ref_vec.group_by(|a, b| a.get_hash() == b.get_hash()) {
         executor.process_group(global_data, slice, tmp_data_vec);
     }
+
     tmp_ref_vec.clear();
     tmp_data_vec.clear();
 }

@@ -1,0 +1,20 @@
+[package]
+name = "libdeflate-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+crc32fast = "1.3.0"
+filebuffer = "0.4.0"
+static_assertions = "1.1.0"
+structopt = "0.3.25"
+
+
+[[bin]]
+name = "gzipd"
+path = "src/bin/gzipd.rs"
+
+[profile.release]
+debug = true

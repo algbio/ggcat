@@ -213,8 +213,16 @@ impl MemoryFileInternal {
     pub fn delete(path: impl AsRef<Path>, remove_fs: bool) -> bool {
         if let Some(file) = MEMORY_MAPPED_FILES.remove(path.as_ref()) {
             if remove_fs {
-                if let MemoryFileMode::DiskOnly = *file.1.memory_mode.read() {
-                    remove_file(path);
+                match *file.1.memory_mode.read() {
+                    MemoryFileMode::AlwaysMemory => {}
+                    MemoryFileMode::PreferMemory { swap_priority } => {
+                        SWAPPABLE_FILES
+                            .lock()
+                            .remove(&(swap_priority, path.as_ref().to_path_buf()));
+                    }
+                    MemoryFileMode::DiskOnly => {
+                        remove_file(path);
+                    }
                 }
             }
             true
