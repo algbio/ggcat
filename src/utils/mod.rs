@@ -43,7 +43,7 @@ pub fn compute_best_m(k: usize) -> usize {
     if k < 27 {
         min(k - 1, ((k + 5) as f64 / 3.0).round() as usize)
     } else {
-        12 // ((k + 2) as f64 / 3.0).round() as usize
+        ((k + 2) as f64 / 3.0).round() as usize
     }
 }
 
