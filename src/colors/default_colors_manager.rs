@@ -1,4 +1,4 @@
-use crate::assemble_pipeline::parallel_kmers_merge::{structs::MapEntry, KmersFlags};
+use crate::assemble_pipeline::parallel_kmers_merge::structs::MapEntry;
 use crate::colors::colors_manager::{
     ColorsManager, ColorsMergeManager, MinimizerBucketingSeqColorData,
 };
@@ -38,7 +38,7 @@ impl ColorsManager for DefaultColorsManager {
     type ColorsMergeManagerType<H: HashFunctionFactory> = DefaultColorsMergeManager<H>;
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
 pub struct MinBkSingleColor(ColorIndexType);
 
 impl SequenceExtraData for MinBkSingleColor {
@@ -61,11 +61,11 @@ impl SequenceExtraData for MinBkSingleColor {
         .map(|x| Self(x as ColorIndexType))
     }
 
-    fn decode(mut reader: impl Read) -> Option<Self> {
+    fn decode<'a>(mut reader: &'a mut impl Read) -> Option<Self> {
         decode_varint(|| reader.read_u8().ok()).map(|x| Self(x as ColorIndexType))
     }
 
-    fn encode(&self, mut writer: impl Write) {
+    fn encode<'a>(&self, mut writer: &'a mut impl Write) {
         encode_varint(|b| writer.write_all(b), self.0 as u64);
     }
 
@@ -108,7 +108,7 @@ pub struct UnitigColorDataSerializer {
 static mut DESERIALIZED_TEMP_COLOR_DATA: Option<DefaultUnitigsTempColorData> = None;
 
 impl SequenceExtraData for UnitigColorDataSerializer {
-    fn decode(mut reader: impl Read) -> Option<Self> {
+    fn decode<'a>(mut reader: &'a mut impl Read) -> Option<Self> {
         let temp_data = unsafe {
             if DESERIALIZED_TEMP_COLOR_DATA.is_none() {
                 DESERIALIZED_TEMP_COLOR_DATA = Some(DefaultUnitigsTempColorData {
@@ -137,7 +137,7 @@ impl SequenceExtraData for UnitigColorDataSerializer {
         })
     }
 
-    fn encode(&self, mut writer: impl Write) {
+    fn encode<'a>(&self, mut writer: &'a mut impl Write) {
         let colors_count = self.slice.1 - self.slice.0;
         encode_varint(|b| writer.write_all(b), colors_count as u64);
 

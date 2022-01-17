@@ -40,6 +40,7 @@ backtrace = "0.3.63"
 csv = "1.1.6"
 flate2 = { default-features = false, features = ["cloudflare_zlib"], version = "1.0.22" }
 static_assertions = "1.1.0"
+typenum = "1.15.0"
 
 [profile.release]
 debug = true

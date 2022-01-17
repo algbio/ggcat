@@ -1,15 +1,17 @@
-use crate::assemble_pipeline::parallel_kmers_merge::KmersFlags;
 use crate::colors::colors_manager::ColorsManager;
 use crate::config::{BucketIndexType, SortingHashType, SwapPriority};
+use crate::hashes::HashableSequence;
 use crate::io::concurrent::intermediate_storage::{IntermediateReadsReader, SequenceExtraData};
 use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
-use crate::io::varint::decode_varint_flags;
+use crate::io::varint::{decode_varint_flags, encode_varint, encode_varint_flags};
 use crate::pipeline_common::kmers_transform::MERGE_BUCKETS_COUNT;
 use crate::{CompressedRead, KEEP_FILES};
 use crossbeam::queue::SegQueue;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
+use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::writer::FileWriter;
+use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parking_lot::{Condvar, Mutex};
 use std::io::{Read, Write};
@@ -19,14 +21,14 @@ use std::sync::Arc;
 
 const HASH_OFFSET: usize =
     (std::mem::size_of::<u64>() - std::mem::size_of::<SortingHashType>()) * 8;
+const HASH_SIZE: usize = std::mem::size_of::<SortingHashType>();
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct ReadRef(u64);
 
-pub static OPENED_BUCKETS_COUNT: Mutex<usize> = Mutex::new(0);
-pub static OPENED_BUCKETS_CONDVAR: Condvar = Condvar::new();
-
 impl ReadRef {
+    pub const TMP_DATA_OFFSET: usize = 32;
+
     pub fn new(index: usize, hash: SortingHashType) -> Self {
         Self {
             0: ((hash as u64) << HASH_OFFSET) | (index as u64),
@@ -44,20 +46,55 @@ impl ReadRef {
     }
 
     #[inline(always)]
-    pub fn unpack<'a, 'b, E: SequenceExtraData>(
+    pub fn pack<'a, E: SequenceExtraData, FLAGS_COUNT: typenum::Unsigned>(
+        hash: SortingHashType,
+        flags: u8,
+        read: CompressedRead,
+        extra: &E,
+        memory: &'a mut Vec<u8>,
+    ) -> &'a [u8] {
+        unsafe {
+            memory.set_len(Self::TMP_DATA_OFFSET);
+        }
+        let mut backward_offset = Self::TMP_DATA_OFFSET;
+
+        encode_varint_flags::<_, _, FLAGS_COUNT>(
+            |slice| memory.extend_from_slice(slice),
+            read.bases_count() as u64,
+            flags,
+        );
+        read.copy_to_buffer(memory);
+
+        extra.encode(memory);
+
+        let element_size = (memory.len() - Self::TMP_DATA_OFFSET) as u64;
+
+        encode_varint(
+            |bytes| {
+                let end_pos = backward_offset;
+                backward_offset -= bytes.len();
+                memory[backward_offset..end_pos].copy_from_slice(bytes);
+            },
+            element_size,
+        );
+
+        memory[(backward_offset - HASH_SIZE)..backward_offset].copy_from_slice(&hash.to_ne_bytes());
+        backward_offset -= HASH_SIZE;
+
+        &memory[backward_offset..]
+    }
+
+    #[inline(always)]
+    pub fn unpack<'a, 'b, E: SequenceExtraData, FLAGS_COUNT: typenum::Unsigned>(
         &'a self,
         memory: &'b [u8],
-        flags_count: usize,
     ) -> (u8, CompressedRead<'b>, E) {
         let mut read_start = self.get_offset();
-        let (read_len, flags) = decode_varint_flags::<_>(
-            || {
-                let x = unsafe { memory[read_start] };
-                read_start += 1;
-                Some(x)
-            },
-            flags_count,
-        )
+        let (read_len, flags) = decode_varint_flags::<_, FLAGS_COUNT>(|| {
+            let x = unsafe { memory[read_start] };
+            read_start += 1;
+            Some(x)
+        })
         .unwrap();
 
         let read_bases_start = read_start;
@@ -83,7 +120,8 @@ unsafe impl Send for ReadRef {}
 pub struct BucketProcessData<E: SequenceExtraData> {
     pub reader: IntermediateReadsReader<E>,
     pub buckets: MultiThreadBuckets<LockFreeBinaryWriter>,
-    vecs_queue: Arc<SegQueue<PathBuf>>,
+    vecs_queue: Arc<SegQueue<(PathBuf, bool)>>,
+    instances_count: Arc<AtomicUsize>,
     notify_condvar: Arc<Condvar>,
 }
 
@@ -92,10 +130,11 @@ static QUEUE_IDENTIFIER: AtomicU64 = AtomicU64::new(0);
 impl<E: SequenceExtraData> BucketProcessData<E> {
     pub fn new(
         path: impl AsRef<Path>,
-        vecs_queue: Arc<SegQueue<PathBuf>>,
+        vecs_queue: Arc<SegQueue<(PathBuf, bool)>>,
+        instances_count: Arc<AtomicUsize>,
         notify_condvar: Arc<Condvar>,
     ) -> Self {
-        *OPENED_BUCKETS_COUNT.lock() += 1;
+        instances_count.fetch_add(1, Ordering::Relaxed);
 
         let tmp_dir = path.as_ref().parent().unwrap_or(Path::new("."));
         Self {
@@ -114,6 +153,7 @@ impl<E: SequenceExtraData> BucketProcessData<E> {
                 None,
             ),
             vecs_queue,
+            instances_count,
             notify_condvar,
         }
     }
@@ -122,11 +162,9 @@ impl<E: SequenceExtraData> BucketProcessData<E> {
 impl<E: SequenceExtraData> Drop for BucketProcessData<E> {
     fn drop(&mut self) {
         for path in self.buckets.finalize() {
-            self.vecs_queue.push(path);
+            self.vecs_queue.push((path, true));
         }
+        self.instances_count.fetch_sub(1, Ordering::Relaxed);
         self.notify_condvar.notify_all();
-
-        *OPENED_BUCKETS_COUNT.lock() -= 1;
-        OPENED_BUCKETS_CONDVAR.notify_all();
     }
 }

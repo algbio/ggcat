@@ -35,7 +35,6 @@ pub fn run_assembler<
     temp_dir: PathBuf,
     threads_count: usize,
     min_multiplicity: usize,
-    quality_threshold: Option<f64>,
     loopit_number: Option<usize>,
 ) {
     PHASES_TIMES_MONITOR.write().init();
@@ -58,7 +57,6 @@ pub fn run_assembler<
             threads_count,
             k,
             m,
-            quality_threshold,
         )
     } else {
         Utils::generate_bucket_names(temp_dir.join("bucket"), BUCKETS_COUNT, Some("tmp"))

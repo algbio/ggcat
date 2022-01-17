@@ -1,5 +1,8 @@
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::{BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE};
+use crate::config::{
+    BucketIndexType, DEFAULT_MINIMIZER_MASK, DEFAULT_OUTPUT_BUFFER_SIZE,
+    RESPLITTING_MAX_K_M_DIFFERENCE,
+};
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
 use crate::hashes::{ExtendableHashTraitType, HashableSequence};
@@ -10,7 +13,13 @@ use crate::pipeline_common::kmers_transform::{
     KmersTransform, KmersTransformExecutor, KmersTransformExecutorFactory, ReadDispatchInfo,
     MERGE_BUCKETS_COUNT,
 };
+use crate::pipeline_common::minimizer_bucketing::{
+    MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory,
+};
 use crate::query_pipeline::counters_sorting::CounterEntry;
+use crate::query_pipeline::querier_minimizer_bucketing::{
+    QuerierMinimizerBucketingExecutor, QuerierMinimizerBucketingExecutorFactory,
+};
 use crate::query_pipeline::QueryPipeline;
 use crate::utils::compressed_read::CompressedRead;
 use byteorder::{ReadBytesExt, WriteBytesExt};
@@ -19,11 +28,13 @@ use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use std::cmp::min;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::slice::from_raw_parts;
+use typenum::Unsigned;
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub enum QueryKmersReferenceData<CX: MinimizerBucketingSeqColorData> {
@@ -33,7 +44,7 @@ pub enum QueryKmersReferenceData<CX: MinimizerBucketingSeqColorData> {
 
 impl<CX: MinimizerBucketingSeqColorData> SequenceExtraData for QueryKmersReferenceData<CX> {
     #[inline(always)]
-    fn decode(mut reader: impl Read) -> Option<Self> {
+    fn decode<'a>(mut reader: &'a mut impl Read) -> Option<Self> {
         match reader.read_u8().ok()? {
             0 => Some(Self::Graph(CX::decode(reader)?)),
             _ => Some(Self::Query(
@@ -43,7 +54,7 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraData for QueryKmersReferen
     }
 
     #[inline(always)]
-    fn encode(&self, mut writer: impl Write) {
+    fn encode<'a>(&self, mut writer: &'a mut impl Write) {
         match self {
             Self::Graph(cx) => {
                 writer.write_u8(0);
@@ -70,6 +81,7 @@ struct GlobalQueryMergeData<'a> {
     m: usize,
     buckets_count: usize,
     counters_buckets: &'a MultiThreadBuckets<BinaryWriter>,
+    global_resplit_data: MinimizerBucketingCommonData<()>,
 }
 
 struct ParallelKmersQueryFactory<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>(
@@ -79,12 +91,20 @@ struct ParallelKmersQueryFactory<H: HashFunctionFactory, MH: HashFunctionFactory
 impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutorFactory for ParallelKmersQueryFactory<H, MH, CX>
 {
+    type SequencesResplitterFactory = QuerierMinimizerBucketingExecutorFactory<H, CX>;
     type GlobalExtraData<'a> = GlobalQueryMergeData<'a>;
-    type InputBucketExtraData = QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>;
-    type IntermediateExtraData = QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>;
+    type AssociatedExtraData = QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>;
     type ExecutorType<'a> = ParallelKmersQuery<'a, H, MH, CX>;
 
-    const FLAGS_COUNT: usize = 0;
+    #[allow(non_camel_case_types)]
+    type FLAGS_COUNT = typenum::U0;
+
+    fn new_resplitter<'a, 'b: 'a>(
+        global_data: &'a Self::GlobalExtraData<'b>,
+    ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType<'a>
+    {
+        QuerierMinimizerBucketingExecutorFactory::new(&global_data.global_resplit_data)
+    }
 
     fn new<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a> {
         Self::ExecutorType::<'a> {
@@ -117,16 +137,19 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     fn preprocess_bucket(
         &mut self,
         global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
-        input_extra_data: <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::InputBucketExtraData,
+        _flags: u8,
+        input_extra_data: <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraData,
         read: CompressedRead,
     ) -> ReadDispatchInfo<
-        <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::IntermediateExtraData,
+        <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraData,
     >{
         let hashes = H::new(read.sub_slice(0..global_data.k), global_data.m);
 
         let minimizer = hashes
             .iter()
-            .min_by_key(|k| H::get_full_minimizer(k.to_unextendable()))
+            .min_by_key(|k| {
+                H::get_full_minimizer::<{ DEFAULT_MINIMIZER_MASK }>(k.to_unextendable())
+            })
             .unwrap();
 
         let bucket = H::get_second_bucket(minimizer.to_unextendable())
@@ -160,8 +183,9 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         for packed_read in reads {
             let (_, read, sequence_type) = packed_read
-                .unpack::<QueryKmersReferenceData::<CX::MinimizerBucketingSeqColorDataType>>
-                (memory, <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT);
+                .unpack::<QueryKmersReferenceData::<CX::MinimizerBucketingSeqColorDataType>,
+                    <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT>
+                (memory);
 
             let hashes = MH::new(read, k);
 
@@ -240,6 +264,16 @@ impl QueryPipeline {
             m,
             buckets_count,
             counters_buckets: &counters_buckets,
+            global_resplit_data: MinimizerBucketingCommonData {
+                k,
+                m: if k > RESPLITTING_MAX_K_M_DIFFERENCE + 1 {
+                    k - RESPLITTING_MAX_K_M_DIFFERENCE
+                } else {
+                    min(m, 2)
+                },
+                buckets_count,
+                global_data: (),
+            },
         };
 
         KmersTransform::parallel_kmers_transform::<ParallelKmersQueryFactory<H, MH, CX>>(

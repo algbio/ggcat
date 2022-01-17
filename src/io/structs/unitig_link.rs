@@ -5,10 +5,10 @@ use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use serde::ser::SerializeTuple;
 use serde::{Deserialize, Serialize, Serializer};
 
+use crate::config::BucketIndexType;
 use crate::io::concurrent::intermediate_storage::{SequenceExtraData, VecReader};
 use crate::io::structs::hash_entry::Direction;
 use crate::io::varint::{decode_varint, encode_varint};
-use crate::config::BucketIndexType;
 use crate::utils::vec_slice::VecSlice;
 use parallel_processor::binary_writer::BinaryWriter;
 use parallel_processor::multi_thread_buckets::BucketWriter;
@@ -175,13 +175,13 @@ impl PartialEq for UnitigIndex {
 }
 
 impl SequenceExtraData for UnitigIndex {
-    fn decode(mut reader: impl Read) -> Option<Self> {
+    fn decode<'a>(mut reader: &'a mut impl Read) -> Option<Self> {
         let bucket = decode_varint(|| reader.read_u8().ok())? as BucketIndexType;
         let index = decode_varint(|| reader.read_u8().ok())?;
         Some(UnitigIndex::new_raw(bucket, index as usize))
     }
 
-    fn encode(&self, mut writer: impl Write) {
+    fn encode<'a>(&self, mut writer: &'a mut impl Write) {
         encode_varint(
             |b| writer.write_all(b).ok(),
             self.raw_bucket_revcomplemented() as u64,

@@ -1,15 +1,17 @@
-use crate::assemble_pipeline::parallel_kmers_merge::KmersFlags;
+use crate::assemble_pipeline::parallel_kmers_merge::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::BucketIndexType;
+use crate::config::{BucketIndexType, MinimizerType, SortingHashType};
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
 use crate::io::sequences_reader::FastaSequence;
 use crate::pipeline_common::minimizer_bucketing::{
-    GenericMinimizerBucketing, MinimizerBucketingExecutionContext, MinimizerBucketingExecutor,
+    GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutionContext,
+    MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory, MinimizerInputSequence,
 };
 use crate::rolling::minqueue::RollingMinQueue;
+use crate::utils::debug_functions::debug_minimizers;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::max;
 use std::io::Write;
@@ -17,69 +19,133 @@ use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-pub struct AssemblerMinimizerBucketingExecutor<H: HashFunctionFactory, CX: ColorsManager> {
+pub struct AssemblerMinimizerBucketingExecutor<'a, H: HashFunctionFactory, CX: ColorsManager> {
     minimizer_queue: RollingMinQueue<H>,
+    global_data: &'a MinimizerBucketingCommonData<()>,
     _phantom: PhantomData<CX>,
 }
 
-impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
-    for AssemblerMinimizerBucketingExecutor<H, CX>
+pub struct AssemblerPreprocessInfo<CX: ColorsManager> {
+    color_info: CX::MinimizerBucketingSeqColorDataType,
+    include_first: bool,
+    include_last: bool,
+}
+
+impl<CX: ColorsManager> Default for AssemblerPreprocessInfo<CX> {
+    fn default() -> Self {
+        Self {
+            color_info: CX::MinimizerBucketingSeqColorDataType::default(),
+            include_first: false,
+            include_last: false,
+        }
+    }
+}
+
+pub struct AssemblerMinimizerBucketingExecutorFactory<H: HashFunctionFactory, CX: ColorsManager>(
+    PhantomData<(H, CX)>,
+);
+
+impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutorFactory
+    for AssemblerMinimizerBucketingExecutorFactory<H, CX>
 {
     type GlobalData = ();
-    type ExtraData = KmersFlags<CX::MinimizerBucketingSeqColorDataType>;
-    type PreprocessInfo = u64;
+    type ExtraData = CX::MinimizerBucketingSeqColorDataType;
+    type PreprocessInfo = AssemblerPreprocessInfo<CX>;
     type FileInfo = u64;
 
-    fn new<C>(
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
-    ) -> Self {
-        Self {
+    #[allow(non_camel_case_types)]
+    type FLAGS_COUNT = typenum::U2;
+
+    type ExecutorType<'a> = AssemblerMinimizerBucketingExecutor<'a, H, CX>;
+
+    fn new<'a>(
+        global_data: &'a MinimizerBucketingCommonData<Self::GlobalData>,
+    ) -> Self::ExecutorType<'a> {
+        Self::ExecutorType::<'a> {
             minimizer_queue: RollingMinQueue::new(global_data.k - global_data.m),
+            global_data,
             _phantom: PhantomData,
         }
     }
+}
 
-    fn preprocess_fasta<C>(
+impl<'a, H: HashFunctionFactory, CX: ColorsManager>
+    MinimizerBucketingExecutor<'a, AssemblerMinimizerBucketingExecutorFactory<H, CX>>
+    for AssemblerMinimizerBucketingExecutor<'a, H, CX>
+{
+    fn preprocess_fasta(
         &mut self,
-        _global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
-        file_info: &Self::FileInfo,
+        file_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::FileInfo,
         _read_index: u64,
-        preprocess_info: &mut Self::PreprocessInfo,
+        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
         _sequence: &FastaSequence,
     ) {
-        *preprocess_info = *file_info;
+        *preprocess_info = AssemblerPreprocessInfo {
+            color_info: CX::MinimizerBucketingSeqColorDataType::create(*file_info),
+            include_first: true,
+            include_last: true,
+        };
     }
 
-    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData)>(
+    #[inline(always)]
+    fn reprocess_sequence(
         &mut self,
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
-        preprocess_info: &Self::PreprocessInfo,
-        sequence: &[u8],
+        flags: u8,
+        extra_data: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
+        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+    ) {
+        preprocess_info.include_first = (flags & READ_FLAG_INCL_BEGIN) != 0;
+        preprocess_info.include_last = (flags & READ_FLAG_INCL_END) != 0;
+        preprocess_info.color_info = *extra_data;
+    }
+
+    fn process_sequence<
+        S: MinimizerInputSequence,
+        F: FnMut(BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData, SortingHashType),
+        const MINIMIZER_MASK: MinimizerType
+    >(
+        &mut self,
+        preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        sequence: S,
         _range: Range<usize>,
         mut push_sequence: F,
-    ) {
-        let hashes = H::new(&sequence[..], global_data.m);
+    ){
+        let hashes = H::new(sequence, self.global_data.m);
 
         let mut rolling_iter = self
             .minimizer_queue
-            .make_iter(hashes.iter().map(|x| x.to_unextendable()));
+            .make_iter::<_, MINIMIZER_MASK>(hashes.iter().map(|x| x.to_unextendable()));
 
         let mut last_index = 0;
         let mut last_hash = rolling_iter.next().unwrap();
-        let mut include_first = true;
+        let mut include_first = preprocess_info.include_first;
+
+        // If we do not include the first base (so the minimizer value is different), it should not be further split
+        let additional_offset = if !include_first {
+            last_hash = rolling_iter.next().unwrap();
+            1
+        } else {
+            0
+        };
+
+        let end_index = sequence.seq_len() - self.global_data.k;
 
         for (index, min_hash) in rolling_iter.enumerate() {
-            if H::get_full_minimizer(min_hash) != H::get_full_minimizer(last_hash) {
-                let bucket =
-                    H::get_first_bucket(last_hash) % (global_data.buckets_count as BucketIndexType);
+            let index = index + additional_offset;
+
+            if (H::get_full_minimizer::<MINIMIZER_MASK>(min_hash)
+                != H::get_full_minimizer::<MINIMIZER_MASK>(last_hash))
+                && (preprocess_info.include_last || end_index != index)
+            {
+                let bucket = H::get_first_bucket(last_hash);
+                let sorting_hash = H::get_sorting_hash(last_hash);
 
                 push_sequence(
                     bucket,
-                    &sequence[(max(1, last_index) - 1)..(index + global_data.k)],
-                    KmersFlags(
-                        include_first as u8,
-                        CX::MinimizerBucketingSeqColorDataType::create(*preprocess_info),
-                    ),
+                    sequence.get_subslice((max(1, last_index) - 1)..(index + self.global_data.k)),
+                    include_first as u8,
+                    preprocess_info.color_info,
+                    sorting_hash,
                 );
                 last_index = index + 1;
                 last_hash = min_hash;
@@ -88,14 +154,13 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutor
         }
 
         let start_index = max(1, last_index) - 1;
-        let include_last = true; // Always include the last element of the sequence in the last entry
+        let include_last = preprocess_info.include_last; // Always include the last element of the sequence in the last entry
         push_sequence(
-            H::get_first_bucket(last_hash) % (global_data.buckets_count as BucketIndexType),
-            &sequence[start_index..sequence.len()],
-            KmersFlags(
-                include_first as u8 | ((include_last as u8) << 1),
-                CX::MinimizerBucketingSeqColorDataType::create(*preprocess_info),
-            ),
+            H::get_first_bucket(last_hash),
+            sequence.get_subslice(start_index..sequence.seq_len()),
+            include_first as u8 | ((include_last as u8) << 1),
+            preprocess_info.color_info,
+            H::get_sorting_hash(last_hash),
         );
     }
 }
@@ -108,7 +173,6 @@ impl AssemblePipeline {
         threads_count: usize,
         k: usize,
         m: usize,
-        quality_threshold: Option<f64>,
     ) -> Vec<PathBuf> {
         PHASES_TIMES_MONITOR
             .write()
@@ -120,14 +184,13 @@ impl AssemblePipeline {
             .map(|(i, f)| (f, i as u64))
             .collect();
 
-        GenericMinimizerBucketing::do_bucketing::<AssemblerMinimizerBucketingExecutor<H, CX>>(
+        GenericMinimizerBucketing::do_bucketing::<AssemblerMinimizerBucketingExecutorFactory<H, CX>>(
             input_files,
             output_path,
             buckets_count,
             threads_count,
             k,
             m,
-            quality_threshold,
             (),
         )
     }

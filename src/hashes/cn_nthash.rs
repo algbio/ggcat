@@ -1,12 +1,15 @@
 //! NtHash impl adapted from https://github.com/luizirber/nthash.git
 
+use crate::config::{
+    BucketIndexType, MinimizerType, SortingHashType, FIRST_BUCKETS_COUNT, FIRST_BUCKET_BITS,
+    SECOND_BUCKETS_COUNT, SECOND_BUCKET_BITS, SORTING_HASH_SHIFT,
+};
 use crate::hashes::dummy_hasher::DummyHasherBuilder;
 use crate::hashes::nthash_base::{h, rc};
 use crate::hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     UnextendableHashTraitType,
 };
-use crate::config::{BucketIndexType, FIRST_BUCKET_BITS, FIRST_BUCKETS_COUNT, MinimizerType, SECOND_BUCKET_BITS, SECOND_BUCKETS_COUNT, SortingHashType};
 use std::cmp::min;
 
 #[derive(Debug, Clone)]
@@ -125,12 +128,14 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
     }
 
     fn get_sorting_hash(hash: Self::HashTypeUnextendable) -> SortingHashType {
-        (hash >> (FIRST_BUCKET_BITS + SECOND_BUCKET_BITS)) as SortingHashType
+        (hash >> SORTING_HASH_SHIFT) as SortingHashType
     }
 
     #[inline(always)]
-    fn get_full_minimizer(hash: Self::HashTypeUnextendable) -> MinimizerType {
-        hash as MinimizerType
+    fn get_full_minimizer<const MASK: MinimizerType>(
+        hash: Self::HashTypeUnextendable,
+    ) -> MinimizerType {
+        (hash as MinimizerType) & MASK
     }
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8 {
@@ -140,6 +145,10 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
     #[inline(always)]
     fn get_u64(hash: Self::HashTypeUnextendable) -> u64 {
         hash as u64
+    }
+
+    fn debug_eq_to_u128(hash: Self::HashTypeUnextendable, value: u128) -> bool {
+        hash as u128 == value
     }
 
     #[inline(always)]

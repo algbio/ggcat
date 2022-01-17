@@ -48,7 +48,7 @@ pub struct ReorganizedReadsExtraData<CX: SequenceExtraData> {
 
 impl<CX: SequenceExtraData> SequenceExtraData for ReorganizedReadsExtraData<CX> {
     #[inline(always)]
-    fn decode(mut reader: impl Read) -> Option<Self> {
+    fn decode<'a>(mut reader: &'a mut impl Read) -> Option<Self> {
         Some(Self {
             unitig: UnitigIndex::decode(&mut reader)?,
             color: CX::decode(&mut reader)?,
@@ -56,7 +56,7 @@ impl<CX: SequenceExtraData> SequenceExtraData for ReorganizedReadsExtraData<CX> 
     }
 
     #[inline(always)]
-    fn encode(&self, mut writer: impl Write) {
+    fn encode<'a>(&self, mut writer: &'a mut impl Write) {
         self.unitig.encode(&mut writer);
         self.color.encode(&mut writer);
     }
@@ -143,7 +143,7 @@ impl AssemblePipeline {
                 MH,
                 CX,
             >>::PartialUnitigsColorStructure>::new(read_file, !KEEP_FILES.load(Ordering::Relaxed))
-                .for_each(|color, seq| {
+                .for_each::<_, typenum::U0>(|_, color, seq| {
 
                     if seq.bases_count() > decompress_buffer.len() {
                         decompress_buffer.resize(seq.bases_count(), 0);
@@ -154,12 +154,13 @@ impl AssemblePipeline {
 
                     if map_index < mappings.len() && mappings[map_index].entry == index {
                         // Mapping found
-                        tmp_reads_buffer.add_read(ReorganizedReadsExtraData {
+                        tmp_reads_buffer.add_read::<typenum::U0>(ReorganizedReadsExtraData {
                             unitig: UnitigIndex::new(bucket_index, index as usize, false),
                             color
                         },
                             seq,
                             mappings[map_index].bucket,
+                            0
                         );
                         map_index += 1;
                     } else {

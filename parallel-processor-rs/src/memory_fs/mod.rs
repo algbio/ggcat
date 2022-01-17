@@ -70,6 +70,12 @@ impl MemoryFs {
         }
     }
 
+    pub fn get_file_size(file: impl AsRef<Path>) -> Option<usize> {
+        MemoryFileInternal::retrieve_reference(&file)
+            .map(|f| f.len())
+            .or_else(|| std::fs::metadata(&file).map(|m| m.len() as usize).ok())
+    }
+
     pub fn ensure_flushed(file: impl AsRef<Path>) {
         unsafe {
             FILES_FLUSH_HASH_MAP

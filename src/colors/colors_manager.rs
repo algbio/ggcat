@@ -6,7 +6,9 @@ use std::io::Write;
 use std::path::Path;
 
 /// Encoded color(s) of a minimizer bucketing step sequence
-pub trait MinimizerBucketingSeqColorData: Copy + Clone + SequenceExtraData + Send + Sync {
+pub trait MinimizerBucketingSeqColorData:
+    Default + Copy + Clone + SequenceExtraData + Send + Sync
+{
     fn create(file_index: u64) -> Self;
 }
 

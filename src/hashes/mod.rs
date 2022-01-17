@@ -61,10 +61,14 @@ pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + 'static {
     fn get_sorting_hash(hash: Self::HashTypeUnextendable) -> SortingHashType;
 
     /// Gets the full minimizer, that is split in first and second buckets and the final sorting hash
-    fn get_full_minimizer(hash: Self::HashTypeUnextendable) -> MinimizerType;
+    fn get_full_minimizer<const MASK: MinimizerType>(
+        hash: Self::HashTypeUnextendable,
+    ) -> MinimizerType;
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8;
     fn get_u64(hash: Self::HashTypeUnextendable) -> u64;
+
+    fn debug_eq_to_u128(hash: Self::HashTypeUnextendable, value: u128) -> bool;
 
     fn manual_roll_forward(
         hash: Self::HashTypeExtendable,

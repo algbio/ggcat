@@ -46,7 +46,6 @@ fn run_assembler_from_args<
         args.common_args.temp_dir,
         args.common_args.threads_count,
         args.min_multiplicity,
-        args.quality_threshold,
         Some(args.number),
     );
 }

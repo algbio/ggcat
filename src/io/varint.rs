@@ -22,20 +22,21 @@ pub fn encode_varint<T>(mut write_bytes: impl FnOnce(&[u8]) -> T, mut value: u64
 
 #[inline(always)]
 #[allow(clippy::uninit_assumed_init)]
-pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T>(
+pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, FLAGS_COUNT: typenum::Unsigned>(
     mut write_bytes: F,
     mut value: u64,
-    flags_count: usize,
     flags: u8,
 ) -> T {
     let mut bytes: [u8; 10] = unsafe { MaybeUninit::uninit().assume_init() };
 
-    let useful_first_bits: usize = 8 - flags_count;
+    let useful_first_bits: usize = 8 - FLAGS_COUNT::to_usize();
     let first_byte_max_value: u8 = ((1u16 << (useful_first_bits - 1)) - 1) as u8;
 
     let fr_rem = ((value > first_byte_max_value as u64) as u8) << (useful_first_bits - 1);
 
-    bytes[0] = (flags << useful_first_bits) | (value as u8 & first_byte_max_value) | fr_rem;
+    bytes[0] = (((flags as u16) << useful_first_bits) as u8)
+        | (value as u8 & first_byte_max_value)
+        | fr_rem;
 
     value >>= (useful_first_bits - 1);
     let mut index = 1;
@@ -53,16 +54,15 @@ pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T>(
 }
 
 #[inline(always)]
-pub fn decode_varint_flags<F: FnMut() -> Option<u8>>(
+pub fn decode_varint_flags<F: FnMut() -> Option<u8>, FLAGS_COUNT: typenum::Unsigned>(
     mut read_byte: F,
-    flags_count: usize,
 ) -> Option<(u64, u8)> {
     let first_byte = read_byte()?;
 
-    let useful_first_bits: usize = 8 - flags_count;
+    let useful_first_bits: usize = 8 - FLAGS_COUNT::to_usize();
     let first_byte_max_value: u8 = ((1u16 << (useful_first_bits - 1)) - 1) as u8;
 
-    let flags = first_byte >> useful_first_bits;
+    let flags = (((first_byte as u16) >> useful_first_bits) as u8);
     let mut result = (first_byte & first_byte_max_value) as u64;
     let mut offset = useful_first_bits - 1;
     let mut next = first_byte & (1 << (useful_first_bits - 1)) != 0;
@@ -144,12 +144,12 @@ mod tests {
 
         for i in 0..100000 {
             result.clear();
-            encode_varint_flags::<_, _>(|b| result.write_all(b), i, 2, (i % 4) as u8);
+            encode_varint_flags::<_, _, typenum::U2>(|b| result.write_all(b), i, (i % 4) as u8);
             let mut cursor = Cursor::new(&result);
             let mut vecreader = VecReader::new(4096, &mut cursor);
             assert_eq!(
                 (i, (i % 4) as u8),
-                decode_varint_flags::<_>(|| Some(vecreader.read_byte()), 2).unwrap()
+                decode_varint_flags::<_, typenum::U2>(|| Some(vecreader.read_byte())).unwrap()
             );
         }
     }
@@ -176,24 +176,23 @@ mod tests {
 
         let mut tmp = Vec::new();
 
-        let mut writer = IntermediateReadsWriter::<(), FileOnlyDataWriter>::new(
-            "/tmp/test-encoding".as_ref(),
-            0,
-        );
+        let mut writer = IntermediateReadsWriter::<()>::new("/tmp/test-encoding".as_ref(), 0);
         for read in sequences.iter() {
             tmp.clear();
-            CompressedRead::from_plain_write_directly_to_buffer(read.as_bytes(), &mut tmp);
+            CompressedRead::from_plain_write_directly_to_buffer_with_flags::<typenum::U0>(
+                read.as_bytes(),
+                &mut tmp,
+                0,
+            );
             writer.write_data(tmp.as_slice());
         }
         writer.finalize();
 
-        let mut reader = IntermediateReadsReader::<(), FileOnlyDataReader>::new(
-            "/tmp/test-encoding.0.lz4".to_string(),
-            false,
-        );
+        let mut reader =
+            IntermediateReadsReader::<()>::new("/tmp/test-encoding.0.lz4".to_string(), false);
 
         let mut index = 0;
-        reader.for_each(|_, x| {
+        reader.for_each::<_, typenum::U0>(|_, _, x| {
             let val = x.to_string();
             // println!("SQ: {} / {}", val, sequences[index]);
             if val != sequences[index].as_str() {

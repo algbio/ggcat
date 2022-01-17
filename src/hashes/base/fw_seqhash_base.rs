@@ -1,8 +1,8 @@
+use crate::config::{BucketIndexType, MinimizerType, SortingHashType};
 use crate::hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     UnextendableHashTraitType,
 };
-use crate::config::{BucketIndexType, MinimizerType, SortingHashType};
 use std::mem::size_of;
 
 pub struct ForwardSeqHashIterator<N: HashableSequence> {
@@ -114,7 +114,9 @@ impl HashFunctionFactory for ForwardSeqHashFactory {
         panic!("Not supported!")
     }
 
-    fn get_full_minimizer(_hash: Self::HashTypeUnextendable) -> MinimizerType {
+    fn get_full_minimizer<const MASK: MinimizerType>(
+        _hash: Self::HashTypeUnextendable,
+    ) -> MinimizerType {
         panic!("Not supported!")
     }
 
@@ -125,6 +127,10 @@ impl HashFunctionFactory for ForwardSeqHashFactory {
     #[inline(always)]
     fn get_u64(hash: Self::HashTypeUnextendable) -> u64 {
         hash as u64
+    }
+
+    fn debug_eq_to_u128(hash: Self::HashTypeUnextendable, value: u128) -> bool {
+        hash as u128 == value
     }
 
     fn manual_roll_forward(

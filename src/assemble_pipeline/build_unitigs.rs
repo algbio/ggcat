@@ -161,7 +161,7 @@ impl AssemblePipeline {
                 read_file,
                 !KEEP_FILES.load(Ordering::Relaxed),
             )
-            .for_each(|index, seq| {
+            .for_each::<_, typenum::U0>(|_, index, seq| {
                 let &(findex, unitig_info) = unitigs_hashmap.get(&index.unitig).unwrap();
                 final_sequences[findex] = Some((
                     CompressedReadIndipendent::from_read(&seq, &mut temp_storage),

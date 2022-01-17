@@ -1,9 +1,10 @@
 use crate::io::sequences_reader::FastaSequence;
+use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 use parallel_processor::threadpools_chain::ThreadChainObject;
 
 pub struct MinimizerBucketingQueueData<F: Clone + Sync + Send + Default> {
-    data: Vec<u8>,
-    pub sequences: Vec<(usize, usize, usize, usize)>,
+    data: TrackedVec<u8>,
+    pub sequences: TrackedVec<(usize, usize, usize, usize)>,
     pub file_info: F,
     pub start_read_index: u64,
 }
@@ -11,8 +12,8 @@ pub struct MinimizerBucketingQueueData<F: Clone + Sync + Send + Default> {
 impl<F: Clone + Sync + Send + Default> MinimizerBucketingQueueData<F> {
     pub fn new(capacity: usize, file_info: F) -> Self {
         Self {
-            data: Vec::with_capacity(capacity),
-            sequences: Vec::with_capacity(capacity / 512),
+            data: TrackedVec::with_capacity(capacity),
+            sequences: TrackedVec::with_capacity(capacity / 512),
             file_info,
             start_read_index: 0,
         }

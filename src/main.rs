@@ -196,10 +196,9 @@ struct AssemblerArgs {
     #[structopt(short = "s", long = "min-multiplicity", default_value = "2")]
     pub min_multiplicity: usize,
 
-    /// Minimum correctness probability for each kmer (using fastq quality checks)
-    #[structopt(short = "q", long = "quality-threshold")]
-    pub quality_threshold: Option<f64>,
-
+    // /// Minimum correctness probability for each kmer (using fastq quality checks)
+    // #[structopt(short = "q", long = "quality-threshold")]
+    // pub quality_threshold: Option<f64>,
     #[structopt(short = "n", long, default_value = "0")]
     pub number: usize,
 
@@ -241,12 +240,12 @@ struct QueryArgs {
 static KEEP_FILES: AtomicBool = AtomicBool::new(false);
 static PREFER_MEMORY: AtomicBool = AtomicBool::new(false);
 
-#[cfg(feature = "mem-analysis")]
-use parallel_processor::debug_allocator::{debug_print_allocations, DebugAllocator};
-
-#[cfg_attr(feature = "mem-analysis", global_allocator)]
-#[cfg(feature = "mem-analysis")]
-static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
+// #[cfg(feature = "mem-analysis")]
+// use parallel_processor::debug_allocator::{debug_print_allocations, DebugAllocator};
+//
+// #[cfg_attr(feature = "mem-analysis", global_allocator)]
+// #[cfg(feature = "mem-analysis")]
+// static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
 
 fn initialize(args: &CommonArgs) {
     // Increase the maximum allowed number of open files
@@ -258,6 +257,7 @@ fn initialize(args: &CommonArgs) {
 
     ThreadPoolBuilder::new()
         .num_threads(args.threads_count)
+        .thread_name(|i| format!("rayon-thread-{}", i))
         .build_global();
 
     create_dir_all(&args.temp_dir);
@@ -268,11 +268,11 @@ fn initialize(args: &CommonArgs) {
         parallel_processor::memory_data_size::MemoryDataSize::from_gibioctets(args.memory),
         512,
         3,
-        4096,
+        32768,
     );
 
-    #[cfg(feature = "mem-analysis")]
-    debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
+    // #[cfg(feature = "mem-analysis")]
+    // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
 }
 
 pub static SAVE_MEMORY: AtomicBool = AtomicBool::new(false);

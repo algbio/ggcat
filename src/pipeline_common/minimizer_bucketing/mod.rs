@@ -2,9 +2,11 @@ mod queue_data;
 mod reader;
 mod sequences_splitter;
 
-use crate::assemble_pipeline::parallel_kmers_merge::KmersFlags;
-use crate::config::{BucketIndexType, READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_SIZE};
-use crate::hashes::HashFunctionFactory;
+use crate::config::{
+    BucketIndexType, MinimizerType, SortingHashType, DEFAULT_MINIMIZER_MASK,
+    READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_SIZE,
+};
+use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::intermediate_storage::{
     IntermediateReadsWriter, IntermediateSequencesStorage, SequenceExtraData,
 };
@@ -24,45 +26,82 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-pub trait MinimizerBucketingExecutor {
+pub trait MinimizerInputSequence: HashableSequence + Copy {
+    fn get_subslice(&self, range: Range<usize>) -> Self;
+    fn seq_len(&self) -> usize;
+    fn debug_to_string(&self) -> String;
+}
+
+impl MinimizerInputSequence for &[u8] {
+    #[inline(always)]
+    fn get_subslice(&self, range: Range<usize>) -> Self {
+        &self[range]
+    }
+
+    fn seq_len(&self) -> usize {
+        self.len()
+    }
+
+    fn debug_to_string(&self) -> String {
+        std::str::from_utf8(self).unwrap().to_string()
+    }
+}
+
+pub trait MinimizerBucketingExecutorFactory: Sized {
     type GlobalData: Sync + Send;
     type ExtraData: SequenceExtraData;
     type PreprocessInfo: Default;
     type FileInfo: Clone + Sync + Send + Default;
 
-    fn new<C>(
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
-    ) -> Self;
+    #[allow(non_camel_case_types)]
+    type FLAGS_COUNT: typenum::uint::Unsigned;
 
-    fn preprocess_fasta<C>(
+    type ExecutorType<'a>: MinimizerBucketingExecutor<'a, Self>;
+
+    fn new<'a>(
+        global_data: &'a MinimizerBucketingCommonData<Self::GlobalData>,
+    ) -> Self::ExecutorType<'a>;
+}
+
+pub trait MinimizerBucketingExecutor<'a, FACTORY: MinimizerBucketingExecutorFactory> {
+    fn preprocess_fasta(
         &mut self,
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
-        file_info: &Self::FileInfo,
+        file_info: &FACTORY::FileInfo,
         read_index: u64,
-        preprocess_info: &mut Self::PreprocessInfo,
+        preprocess_info: &mut FACTORY::PreprocessInfo,
         sequence: &FastaSequence,
     );
-    fn process_sequence<C, F: FnMut(BucketIndexType, &[u8], Self::ExtraData)>(
+
+    fn reprocess_sequence(
         &mut self,
-        global_data: &MinimizerBucketingExecutionContext<Self::ExtraData, C, Self::GlobalData>,
-        preprocess_info: &Self::PreprocessInfo,
-        sequence: &[u8],
+        flags: u8,
+        intermediate_data: &FACTORY::ExtraData,
+        preprocess_info: &mut FACTORY::PreprocessInfo,
+    );
+
+    fn process_sequence<
+        S: MinimizerInputSequence,
+        F: FnMut(BucketIndexType, S, u8, FACTORY::ExtraData, SortingHashType),
+        const MINIMIZER_MASK: MinimizerType,
+    >(
+        &mut self,
+        preprocess_info: &FACTORY::PreprocessInfo,
+        sequence: S,
         range: Range<usize>,
         push_sequence: F,
     );
 }
 
-pub struct MinimizerBucketingExecutionContext<
-    ReadAssociatedData: SequenceExtraData,
-    ExtraData,
-    GlobalData,
-> {
+pub struct MinimizerBucketingCommonData<GlobalData> {
     pub k: usize,
     pub m: usize,
     pub buckets_count: usize,
-    pub buckets: MultiThreadBuckets<IntermediateReadsWriter<ReadAssociatedData>>,
-    pub extra: ExtraData,
     pub global_data: GlobalData,
+}
+
+pub struct MinimizerBucketingExecutionContext<ReadAssociatedData: SequenceExtraData, GlobalData> {
+    pub buckets: MultiThreadBuckets<IntermediateReadsWriter<ReadAssociatedData>>,
+    pub common: MinimizerBucketingCommonData<GlobalData>,
     pub current_file: AtomicUsize,
     pub total_files: usize,
 }
@@ -74,22 +113,18 @@ static LAST_TOTAL_COUNT: AtomicU64 = AtomicU64::new(0);
 static TOT_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 static VALID_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 
-struct ContextExtraData {
-    quality_threshold: Option<f64>,
-}
-
-fn worker<E: MinimizerBucketingExecutor>(
-    context: &MinimizerBucketingExecutionContext<E::ExtraData, ContextExtraData, E::GlobalData>,
+fn worker<E: MinimizerBucketingExecutorFactory>(
+    context: &MinimizerBucketingExecutionContext<E::ExtraData, E::GlobalData>,
     manager: ObjectsPoolManager<(), MinimizerBucketingQueueData<E::FileInfo>>,
 ) {
     let mut tmp_reads_buffer =
-        IntermediateSequencesStorage::new(context.buckets_count, &context.buckets);
+        IntermediateSequencesStorage::new(context.common.buckets_count, &context.buckets);
 
-    let mut buckets_processor = E::new(context);
+    let mut buckets_processor = E::new(&context.common);
 
     while let Some(data) = manager.recv_obj() {
         let mut total_bases = 0;
-        let mut sequences_splitter = SequencesSplitter::new(context.k);
+        let mut sequences_splitter = SequencesSplitter::new(context.common.k);
 
         let mut preprocess_info = E::PreprocessInfo::default();
 
@@ -98,7 +133,6 @@ fn worker<E: MinimizerBucketingExecutor>(
         for (index, x) in data.iter_sequences().enumerate() {
             total_bases += x.seq.len() as u64;
             buckets_processor.preprocess_fasta(
-                context,
                 &data.file_info,
                 data.start_read_index + index as u64,
                 &mut preprocess_info,
@@ -106,18 +140,17 @@ fn worker<E: MinimizerBucketingExecutor>(
             );
 
             sequences_splitter.process_sequences(&x, None, &mut |sequence: &[u8], range| {
-                buckets_processor.process_sequence(
-                    context,
+                buckets_processor.process_sequence::<_, _, { DEFAULT_MINIMIZER_MASK }>(
                     &preprocess_info,
                     sequence,
                     range,
-                    |bucket, seq, extra| {
+                    |bucket, seq, flags, extra, _| {
                         // println!(
                         //     "Sequence: {} /\t {}",
                         //     std::str::from_utf8(seq).unwrap(),
                         //     seq.len()
                         // );
-                        tmp_reads_buffer.add_read(extra, seq, bucket);
+                        tmp_reads_buffer.add_read::<E::FLAGS_COUNT>(extra, seq, bucket, flags);
                     },
                 );
             });
@@ -167,14 +200,13 @@ fn worker<E: MinimizerBucketingExecutor>(
 }
 
 impl GenericMinimizerBucketing {
-    pub fn do_bucketing<E: MinimizerBucketingExecutor>(
+    pub fn do_bucketing<E: MinimizerBucketingExecutorFactory>(
         mut input_files: Vec<(PathBuf, E::FileInfo)>,
         output_path: &Path,
         buckets_count: usize,
         threads_count: usize,
         k: usize,
         m: usize,
-        quality_threshold: Option<f64>,
         global_data: E::GlobalData,
     ) -> Vec<PathBuf> {
         let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<E::ExtraData>>::new(
@@ -191,14 +223,15 @@ impl GenericMinimizerBucketing {
         input_files.reverse();
 
         let mut execution_context = MinimizerBucketingExecutionContext {
-            k,
-            m,
-            buckets_count,
             buckets,
-            extra: ContextExtraData { quality_threshold },
-            global_data,
             current_file: AtomicUsize::new(0),
             total_files: input_files.len(),
+            common: MinimizerBucketingCommonData {
+                k,
+                m,
+                buckets_count,
+                global_data,
+            },
         };
 
         ThreadPoolsChain::run_double(
@@ -207,7 +240,7 @@ impl GenericMinimizerBucketing {
                 &execution_context,
                 READ_INTERMEDIATE_CHUNKS_SIZE,
                 String::from("assembler-minimizer-bucketing-reader"),
-                threads_count,
+                max(1, threads_count / 4),
                 &AtomicUsize::new(threads_count),
                 READ_INTERMEDIATE_QUEUE_SIZE.load(Ordering::Relaxed),
                 minb_reader,

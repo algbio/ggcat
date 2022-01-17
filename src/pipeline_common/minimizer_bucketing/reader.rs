@@ -11,11 +11,10 @@ use std::sync::atomic::Ordering;
 
 pub fn minb_reader<
     ReadAssociatedData: SequenceExtraData,
-    ExtraData,
     GlobalData,
     FileInfo: Clone + Sync + Send + Default,
 >(
-    context: &MinimizerBucketingExecutionContext<ReadAssociatedData, ExtraData, GlobalData>,
+    context: &MinimizerBucketingExecutionContext<ReadAssociatedData, GlobalData>,
     manager: ObjectsPoolManager<MinimizerBucketingQueueData<FileInfo>, (PathBuf, FileInfo)>,
 ) {
     while let Some((input, file_info)) = manager.recv_obj() {
@@ -30,7 +29,7 @@ pub fn minb_reader<
         SequencesReader::process_file_extended(
             input,
             |x| {
-                if x.seq.len() < context.k {
+                if x.seq.len() < context.common.k {
                     return;
                 }
 

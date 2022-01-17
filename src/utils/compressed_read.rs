@@ -1,5 +1,6 @@
 use crate::hashes::HashableSequence;
-use crate::io::varint::encode_varint;
+use crate::io::varint::{encode_varint, encode_varint_flags};
+use crate::pipeline_common::minimizer_bucketing::MinimizerInputSequence;
 use crate::utils::Utils;
 use std::io::Write;
 use std::iter::FromIterator;
@@ -42,8 +43,17 @@ impl CompressedReadIndipendent {
 }
 
 impl<'a> CompressedRead<'a> {
-    pub fn from_plain_write_directly_to_buffer(seq: &'a [u8], buffer: &mut Vec<u8>) {
-        encode_varint(|b| buffer.extend_from_slice(b), seq.len() as u64);
+    #[inline(always)]
+    pub fn from_plain_write_directly_to_buffer_with_flags<FLAGS_COUNT: typenum::Unsigned>(
+        seq: &'a [u8],
+        buffer: &mut Vec<u8>,
+        flags: u8,
+    ) {
+        encode_varint_flags::<_, _, FLAGS_COUNT>(
+            |b| buffer.extend_from_slice(b),
+            seq.len() as u64,
+            flags,
+        );
         Self::new_from_plain(seq, buffer);
     }
 
@@ -98,8 +108,33 @@ impl<'a> CompressedRead<'a> {
     //     wr.write(self.get_compr_slice());
     // }
 
-    pub fn get_compr_slice(&self) -> &[u8] {
+    fn get_compr_slice(&self) -> &[u8] {
         unsafe { from_raw_parts(self.data, (self.size + self.start as usize + 3) / 4) }
+    }
+
+    pub fn copy_to_buffer(&self, buffer: &mut Vec<u8>) {
+        if self.start == 0 {
+            buffer.extend_from_slice(self.get_compr_slice());
+        } else {
+            let bytes_count = (self.size + 3) / 4;
+
+            buffer.reserve(bytes_count);
+            unsafe {
+                let mut dest_ptr = buffer.as_mut_ptr().add(buffer.len());
+                buffer.set_len(buffer.len() + bytes_count);
+
+                let right_offset = self.start * 2;
+                let left_offset = 8 - right_offset;
+
+                for b in 0..bytes_count {
+                    let current = *self.data.add(b);
+                    let next = *self.data.add(b + 1);
+
+                    *dest_ptr = (current >> right_offset) | (next << left_offset);
+                    dest_ptr = dest_ptr.add(1);
+                }
+            }
+        }
     }
 
     pub fn sub_slice(&self, range: Range<usize>) -> CompressedRead<'a> {
@@ -160,5 +195,19 @@ impl<'a> HashableSequence for CompressedRead<'a> {
     #[inline(always)]
     fn bases_count(&self) -> usize {
         self.size
+    }
+}
+
+impl<'a> MinimizerInputSequence for CompressedRead<'a> {
+    fn get_subslice(&self, range: Range<usize>) -> Self {
+        self.sub_slice(range)
+    }
+
+    fn seq_len(&self) -> usize {
+        self.bases_count()
+    }
+
+    fn debug_to_string(&self) -> String {
+        self.to_string()
     }
 }

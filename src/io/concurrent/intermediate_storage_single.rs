@@ -63,13 +63,17 @@ impl<'a, T: SequenceExtraData> IntermediateSequencesStorageSingleBucket<'a, T> {
         self.buffer.clear();
     }
 
-    pub fn add_read(&mut self, el: T, seq: &[u8]) {
+    pub fn add_read<FLAGS_COUNT: typenum::Unsigned>(&mut self, el: T, seq: &[u8], flags: u8) {
         if self.buffer.len() > 0 && self.buffer.len() + seq.len() > Self::ALLOWED_LEN {
             self.flush_buffer();
         }
 
         el.encode(&mut self.buffer);
-        CompressedRead::from_plain_write_directly_to_buffer(seq, &mut self.buffer);
+        CompressedRead::from_plain_write_directly_to_buffer_with_flags::<FLAGS_COUNT>(
+            seq,
+            &mut self.buffer,
+            flags,
+        );
     }
 
     pub fn finalize(self) {}

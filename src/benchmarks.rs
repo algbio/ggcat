@@ -390,6 +390,39 @@ mod tests {
     }
 
     #[bench]
+    fn bench_varint_encoding_flags_zero(b: &mut Bencher) {
+        const TEST_SIZE: usize = 10000000;
+
+        let mut test_vec = Vec::with_capacity(TEST_SIZE);
+
+        for i in 0..TEST_SIZE as u64 {
+            test_vec.push(Test {
+                x: i,
+                y: i + 1230120312031023,
+            })
+        }
+
+        let mut ser_vec = Vec::with_capacity(TEST_SIZE * 18);
+
+        b.iter(|| {
+            ser_vec.clear();
+            for test in test_vec.iter() {
+                encode_varint_flags::<_, _, typenum::U0>(
+                    |b| ser_vec.write_all(b),
+                    test.x as u64,
+                    0,
+                );
+                encode_varint_flags::<_, _, typenum::U0>(
+                    |b| ser_vec.write_all(b),
+                    test.y as u64,
+                    0,
+                );
+            }
+        });
+        println!("Size {}", ser_vec.len());
+    }
+
+    #[bench]
     fn bench_varint_encoding_flags(b: &mut Bencher) {
         const TEST_SIZE: usize = 10000000;
 
@@ -407,16 +440,14 @@ mod tests {
         b.iter(|| {
             ser_vec.clear();
             for test in test_vec.iter() {
-                encode_varint_flags::<_, _>(
+                encode_varint_flags::<_, _, typenum::U2>(
                     |b| ser_vec.write_all(b),
                     test.x as u64,
-                    2,
                     (test.x % 4) as u8,
                 );
-                encode_varint_flags::<_, _>(
+                encode_varint_flags::<_, _, typenum::U2>(
                     |b| ser_vec.write_all(b),
                     test.y as u64,
-                    2,
                     (test.y % 4) as u8,
                 );
             }

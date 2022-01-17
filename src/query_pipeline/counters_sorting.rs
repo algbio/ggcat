@@ -27,7 +27,7 @@ pub struct CounterEntry {
 }
 
 impl SequenceExtraData for CounterEntry {
-    fn decode(mut reader: impl Read) -> Option<Self> {
+    fn decode<'a>(mut reader: &'a mut impl Read) -> Option<Self> {
         let query_index = decode_varint(|| reader.read_u8().ok())?;
         let counter = decode_varint(|| reader.read_u8().ok())?;
         Some(Self {
@@ -36,7 +36,7 @@ impl SequenceExtraData for CounterEntry {
         })
     }
 
-    fn encode(&self, mut writer: impl Write) {
+    fn encode<'a>(&self, mut writer: &'a mut impl Write) {
         encode_varint(|b| writer.write_all(b).ok(), self.query_index);
         encode_varint(|b| writer.write_all(b).ok(), self.counter);
     }

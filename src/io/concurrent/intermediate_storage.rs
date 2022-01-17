@@ -1,7 +1,7 @@
 use crate::config::{BucketIndexType, SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE};
 use crate::hashes::HashableSequence;
 use crate::io::sequences_reader::FastaSequence;
-use crate::io::varint::{decode_varint, encode_varint};
+use crate::io::varint::{decode_varint, decode_varint_flags, encode_varint};
 use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::utils::{cast_static, cast_static_mut, get_memory_mode, Utils};
 use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -58,29 +58,29 @@ impl Read for PointerDecoder {
 
 pub trait SequenceExtraData: Sized + Send + Debug {
     fn decode_from_slice(slice: &[u8]) -> Option<Self> {
-        let cursor = Cursor::new(slice);
-        Self::decode(cursor)
+        let mut cursor = Cursor::new(slice);
+        Self::decode(&mut cursor)
     }
 
     unsafe fn decode_from_pointer(ptr: *const u8) -> Option<Self> {
-        let stream = PointerDecoder { ptr };
-        Self::decode(stream)
+        let mut stream = PointerDecoder { ptr };
+        Self::decode(&mut stream)
     }
 
-    fn decode(reader: impl Read) -> Option<Self>;
-    fn encode(&self, writer: impl Write);
+    fn decode<'a>(reader: &'a mut impl Read) -> Option<Self>;
+    fn encode<'a>(&self, writer: &'a mut impl Write);
 
     fn max_size(&self) -> usize;
 }
 
 impl SequenceExtraData for () {
     #[inline(always)]
-    fn decode(reader: impl Read) -> Option<Self> {
+    fn decode<'a>(reader: &'a mut impl Read) -> Option<Self> {
         Some(())
     }
 
     #[inline(always)]
-    fn encode(&self, writer: impl Write) {}
+    fn encode<'a>(&self, writer: &'a mut impl Write) {}
 
     #[inline(always)]
     fn max_size(&self) -> usize {
@@ -193,7 +193,13 @@ impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
         self.buffers[bucket as usize].clear();
     }
 
-    pub fn add_read(&mut self, el: T, seq: &[u8], bucket: BucketIndexType) {
+    pub fn add_read<FLAGS_COUNT: typenum::Unsigned>(
+        &mut self,
+        el: T,
+        seq: &[u8],
+        bucket: BucketIndexType,
+        flags: u8,
+    ) {
         if self.buffers[bucket as usize].len() > 0
             && self.buffers[bucket as usize].len() + seq.len() > Self::ALLOWED_LEN
         {
@@ -208,9 +214,10 @@ impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
         // );
 
         el.encode(&mut self.buffers[bucket as usize]);
-        CompressedRead::from_plain_write_directly_to_buffer(
+        CompressedRead::from_plain_write_directly_to_buffer_with_flags::<FLAGS_COUNT>(
             seq,
             &mut self.buffers[bucket as usize],
+            flags,
         );
     }
 
@@ -427,14 +434,22 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
         }
     }
 
-    fn read_single_stream(mut stream: impl Read, mut lambda: impl FnMut(T, CompressedRead)) {
+    fn read_single_stream<
+        S: Read,
+        F: FnMut(u8, T, CompressedRead),
+        FLAGS_COUNT: typenum::Unsigned,
+    >(
+        mut stream: S,
+        mut lambda: F,
+    ) {
         let mut read = vec![];
 
         while let Some(el) = T::decode(&mut stream) {
-            let size = match decode_varint(|| Some(stream.read_u8().unwrap())) {
-                None => break,
-                Some(x) => x,
-            } as usize;
+            let (size, flags) =
+                match decode_varint_flags::<_, FLAGS_COUNT>(|| Some(stream.read_u8().unwrap())) {
+                    None => break,
+                    Some(x) => (x.0 as usize, x.1),
+                };
 
             if size == 0 {
                 break;
@@ -445,17 +460,21 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
             stream.read_exact(&mut read[..bytes]);
 
             lambda(
+                flags,
                 el,
                 CompressedRead::new_from_compressed(&read[..bytes], size),
             );
         }
     }
 
-    pub fn for_each(mut self, mut lambda: impl FnMut(T, CompressedRead)) {
+    pub fn for_each<F: FnMut(u8, T, CompressedRead), FLAGS_COUNT: typenum::Unsigned>(
+        mut self,
+        mut lambda: F,
+    ) {
         let mut vec_reader =
             VecReader::new(DEFAULT_OUTPUT_BUFFER_SIZE, &mut self.sequential_reader);
 
-        Self::read_single_stream(vec_reader, lambda);
+        Self::read_single_stream::<_, _, FLAGS_COUNT>(vec_reader, lambda);
     }
 
     pub fn is_finished(&self) -> bool {
@@ -463,7 +482,10 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
             >= self.sequential_reader.index.index.len()
     }
 
-    pub fn read_parallel(&self, mut lambda: impl FnMut(T, CompressedRead)) -> bool {
+    pub fn read_parallel<F: FnMut(u8, T, CompressedRead), FLAGS_COUNT: typenum::Unsigned>(
+        &self,
+        mut lambda: F,
+    ) -> bool {
         let index = self.parallel_index.fetch_add(1, Ordering::Relaxed) as usize;
 
         if index >= self.sequential_reader.index.index.len() {
@@ -478,7 +500,7 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
         let mut compressed_stream = lz4::Decoder::new(reader).unwrap();
         let mut vec_reader = VecReader::new(DEFAULT_OUTPUT_BUFFER_SIZE, &mut compressed_stream);
 
-        Self::read_single_stream(vec_reader, lambda);
+        Self::read_single_stream::<_, _, FLAGS_COUNT>(vec_reader, lambda);
 
         return true;
     }
@@ -486,8 +508,6 @@ impl<T: SequenceExtraData> IntermediateReadsReader<T> {
 
 impl<T: SequenceExtraData> Drop for IntermediateReadsReader<T> {
     fn drop(&mut self) {
-        if self.remove_file {
-            MemoryFs::remove_file(&self.file_path, self.remove_file);
-        }
+        MemoryFs::remove_file(&self.file_path, self.remove_file);
     }
 }

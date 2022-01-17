@@ -140,10 +140,10 @@ impl AssemblePipeline {
                             );
                         },
                         1 => {
-                            println!("Warning spurious hash detected with index {}, this is a bug or a collision in the KmersMerge phase!", x[0].entry);
+                            println!("Warning spurious hash detected ({:?}) with index {}, this is a bug or a collision in the KmersMerge phase!", x[0].hash, x[0].entry);
                         }
                         _ => {
-                            println!("More than 2 equal hashes found in hashes sorting phase, this indicates an hash collision!");
+                            println!("More than 2 equal hashes found in hashes sorting phase, this indicates an hash ({}) collision!",  x[0].hash);
                         }
                     }
                 }
