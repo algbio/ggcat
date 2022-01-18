@@ -1,6 +1,4 @@
-#![feature(trait_alias)]
 #![feature(is_sorted, specialization)]
-#![feature(const_fn_trait_bound)]
 #![feature(associated_type_defaults)]
 #![feature(new_uninit)]
 #![feature(drain_filter)]

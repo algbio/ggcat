@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::Duration;
+use parking_lot::lock_api::RawMutex;
 
 pub mod tracked_box;
 pub mod tracked_vec;
@@ -21,7 +22,7 @@ pub struct MemoryInfo {
 
 pub static MEMORY_INFO: Mutex<
     Option<HashMap<(&'static Location<'static>, &'static str), Vec<Weak<MemoryInfo>>>>,
-> = Mutex::new(None);
+> = Mutex::const_new(parking_lot::RawMutex::INIT, None);
 
 pub fn init_memory_info() {
     *MEMORY_INFO.lock() = Some(HashMap::new());

@@ -1,6 +1,7 @@
 use crate::memory_fs::allocator::CHUNKS_ALLOCATOR;
 use parking_lot::RwLock;
 use std::time::{Duration, Instant};
+use parking_lot::lock_api::RawRwLock;
 
 pub struct PhaseResult {
     name: String,
@@ -13,7 +14,7 @@ pub struct PhaseTimesMonitor {
     results: Vec<PhaseResult>,
 }
 
-pub static PHASES_TIMES_MONITOR: RwLock<PhaseTimesMonitor> = RwLock::new(PhaseTimesMonitor::new());
+pub static PHASES_TIMES_MONITOR: RwLock<PhaseTimesMonitor> = RwLock::const_new(parking_lot::RawRwLock::INIT, PhaseTimesMonitor::new());
 
 impl PhaseTimesMonitor {
     const fn new() -> PhaseTimesMonitor {

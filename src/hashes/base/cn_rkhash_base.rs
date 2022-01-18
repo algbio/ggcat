@@ -7,6 +7,7 @@ use parking_lot::Mutex;
 use std::cmp::min;
 use std::intrinsics::unlikely;
 use std::mem::size_of;
+use parking_lot::lock_api::RawMutex as _;
 
 const FWD_LOOKUP: [HashIntegerType; 256] = {
     let mut lookup = [1; 256];
@@ -81,7 +82,7 @@ fn get_rmmult(k: usize) -> HashIntegerType {
     unsafe {
         static mut LAST_K: usize = 0;
         static mut LAST_RMMULT: HashIntegerType = 0;
-        static CHANGE_LOCK: Mutex<()> = Mutex::new(());
+        static CHANGE_LOCK: Mutex<()> = Mutex::const_new(parking_lot::RawMutex::INIT, ());
 
         if unsafe { unlikely(LAST_K != k) } {
             let rmmult = fastexp(MULTIPLIER, k - 1);

@@ -12,6 +12,7 @@ use std::ptr::null_mut;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use parking_lot::lock_api::RawMutex as _;
 
 const ALLOCATOR_ALIGN: usize = 4096;
 const MAXIMUM_CHUNK_SIZE_LOG: usize = 18;
@@ -200,14 +201,14 @@ unsafe impl Sync for ChunksAllocator {}
 unsafe impl Send for ChunksAllocator {}
 
 #[cfg(feature = "track-usage")]
-static USAGE_MAP: Mutex<Option<HashMap<ChunkUsage_, usize>>> = Mutex::new(None);
+static USAGE_MAP: Mutex<Option<HashMap<ChunkUsage_, usize>>> = Mutex::const_new(parking_lot::RawMutex::INIT, None);
 
 impl ChunksAllocator {
     const fn new() -> ChunksAllocator {
         ChunksAllocator {
             big_buffer_start_addr: AtomicUsize::new(0),
             chunks_wait_condvar: Condvar::new(),
-            chunks: Mutex::new(Vec::new()),
+            chunks: Mutex::const_new(parking_lot::RawMutex::INIT, Vec::new()),
             min_free_chunks: AtomicUsize::new(0),
             chunks_total_count: AtomicUsize::new(0),
             chunk_padded_size: AtomicUsize::new(0),

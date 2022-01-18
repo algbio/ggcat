@@ -56,6 +56,7 @@ impl<'a> DeflateChunkedBufferOutput<'a> {
 }
 
 impl<'a> DeflateOutput for DeflateChunkedBufferOutput<'a> {
+
     #[inline(always)]
     fn copy_forward(&mut self, prev_offset: usize, length: usize) -> bool {
         if self.buffer.len() - self.position <= length {
@@ -115,10 +116,16 @@ impl<'a> DeflateOutput for DeflateChunkedBufferOutput<'a> {
     #[inline(always)]
     fn final_flush(&mut self) -> Result<OutStreamResult, ()> {
         self.flush_buffer(0);
+        self.position = 0;
+        self.lookback_pos = 0;
 
-        Ok(OutStreamResult {
+        let result = OutStreamResult {
             written: self.written,
             crc32: self.crc32.clone().finalize(),
-        })
+        };
+
+        self.crc32 = Hasher::new();
+        self.written = 0;
+        Ok(result)
     }
 }

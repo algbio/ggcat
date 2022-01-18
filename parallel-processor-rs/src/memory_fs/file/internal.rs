@@ -6,7 +6,7 @@ use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 use filebuffer::FileBuffer;
 use lazy_static::lazy_static;
-use parking_lot::lock_api::{ArcRwLockReadGuard, ArcRwLockWriteGuard};
+use parking_lot::lock_api::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawMutex as _};
 use parking_lot::{Mutex, RawRwLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::cmp::min;
 use std::collections::BTreeMap;
@@ -25,7 +25,7 @@ lazy_static! {
 }
 
 pub static SWAPPABLE_FILES: Mutex<BTreeMap<(usize, PathBuf), Weak<MemoryFileInternal>>> =
-    Mutex::new(BTreeMap::new());
+    Mutex::const_new(parking_lot::RawMutex::INIT, BTreeMap::new());
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum MemoryFileMode {

@@ -7,6 +7,7 @@ use std::mem::size_of;
 
 pub mod u32 {
     use crate::hashes::dummy_hasher::DummyHasherBuilder;
+    use parking_lot::lock_api::RawMutex;
 
     type HashIntegerType = u32;
     const MULTIPLIER: HashIntegerType = 0xdc7d07b1;

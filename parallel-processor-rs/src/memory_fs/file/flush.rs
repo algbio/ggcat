@@ -13,12 +13,13 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
+use parking_lot::lock_api::{RawMutex, RawRwLock};
 
 static mut GLOBAL_FLUSH_QUEUE: Option<Sender<FlushableItem>> = None;
-static FLUSH_THREADS: Mutex<Vec<JoinHandle<()>>> = Mutex::new(vec![]);
+static FLUSH_THREADS: Mutex<Vec<JoinHandle<()>>> = Mutex::const_new(parking_lot::RawMutex::INIT, vec![]);
 
-static TAKE_FROM_QUEUE_MUTEX: Mutex<()> = Mutex::new(());
-static WRITING_CHECK: RwLock<()> = RwLock::new(());
+static TAKE_FROM_QUEUE_MUTEX: Mutex<()> = Mutex::const_new(parking_lot::RawMutex::INIT, ());
+static WRITING_CHECK: RwLock<()> = RwLock::const_new(parking_lot::RawRwLock::INIT, ());
 
 pub struct GlobalFlush;
 
