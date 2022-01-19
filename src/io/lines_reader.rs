@@ -4,8 +4,6 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-pub struct LinesReaderBufferLock {}
-
 pub struct LinesReader {}
 
 impl LinesReader {
@@ -42,7 +40,7 @@ impl LinesReader {
             }
             callback(&[]);
         } else if path.as_ref().extension().filter(|x| *x == "lz4").is_some() {
-            let mut file = lz4::Decoder::new(
+            let file = lz4::Decoder::new(
                 File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display())),
             )
             .unwrap();
@@ -53,7 +51,7 @@ impl LinesReader {
                 );
             });
         } else {
-            let mut file =
+            let file =
                 File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display()));
             Self::read_stream_buffered(file, callback).unwrap_or_else(|_| {
                 println!(
@@ -64,7 +62,7 @@ impl LinesReader {
         }
 
         if remove {
-            std::fs::remove_file(path);
+            std::fs::remove_file(path).unwrap();
         }
     }
 

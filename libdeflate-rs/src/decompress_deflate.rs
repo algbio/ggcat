@@ -40,10 +40,8 @@
 use crate::decompress_utils::*;
 use crate::deflate_constants::*;
 use crate::{DeflateInput, DeflateOutput, LibdeflateDecompressor, LibdeflateError};
-use std::intrinsics::{likely, unlikely};
+use nightly_quirks::branch_pred::unlikely;
 use std::mem::size_of;
-use std::num::Wrapping;
-use std::ptr::null;
 
 pub const PRECODE_TABLEBITS: usize = 7;
 pub const LITLEN_TABLEBITS: usize = 10;
@@ -51,7 +49,7 @@ pub const OFFSET_TABLEBITS: usize = 8;
 
 pub struct OutStreamResult {
     pub written: usize,
-    pub crc32: u32
+    pub crc32: u32,
 }
 
 /*
@@ -140,7 +138,6 @@ pub(crate) fn deflate_decompress_template<I: DeflateInput, O: DeflateOutput>(
         /* BTYPE: 2 bits  */
         tmp_data.block_type = pop_bits(&mut tmp_data, 2);
 
-
         let skip_decode_tables;
 
         if tmp_data.block_type == DEFLATE_BLOCKTYPE_DYNAMIC_HUFFMAN {
@@ -182,7 +179,6 @@ pub(crate) fn deflate_decompress_template<I: DeflateInput, O: DeflateOutput>(
             /* Expand the literal/length and offset codeword lengths.  */
             let mut i = 0;
             while i < tmp_data.num_litlen_syms + tmp_data.num_offset_syms {
-
                 ensure_bits(&mut tmp_data, DEFLATE_MAX_PRE_CODEWORD_LEN + 7);
 
                 /* (The code below assumes that the precode decode table
@@ -323,15 +319,15 @@ pub(crate) fn deflate_decompress_template<I: DeflateInput, O: DeflateOutput>(
         /* Decompressing a Huffman block (either dynamic or static)  */
         if !skip_decode_tables {
             safety_check!(build_offset_decode_table(
-                    d,
-                    tmp_data.num_litlen_syms,
-                    tmp_data.num_offset_syms,
-                ));
+                d,
+                tmp_data.num_litlen_syms,
+                tmp_data.num_offset_syms,
+            ));
             safety_check!(build_litlen_decode_table(
-                    d,
-                    tmp_data.num_litlen_syms,
-                    tmp_data.num_offset_syms,
-                ));
+                d,
+                tmp_data.num_litlen_syms,
+                tmp_data.num_offset_syms,
+            ));
         }
 
         /* The main DEFLATE decode loop  */
@@ -377,7 +373,7 @@ pub(crate) fn deflate_decompress_template<I: DeflateInput, O: DeflateOutput>(
              * end-of-block length, so subtract 1 and it turn it into
              * SIZE_MAX.  */
             const_assert!(HUFFDEC_END_OF_BLOCK_LENGTH == 0);
-            if unsafe { unlikely(length == HUFFDEC_END_OF_BLOCK_LENGTH) } {
+            if unlikely(length == HUFFDEC_END_OF_BLOCK_LENGTH) {
                 continue 'block_done;
             }
 

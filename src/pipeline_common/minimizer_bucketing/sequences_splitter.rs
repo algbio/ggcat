@@ -26,7 +26,7 @@ impl SequencesSplitter {
         quality_threshold: Option<f64>,
         mut process_fn: impl FnMut(&[u8], Range<usize>),
     ) {
-        let mut start = 0;
+        let mut start;
         let mut end = 0;
 
         let quality_log_threshold: u64 =

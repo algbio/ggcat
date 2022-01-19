@@ -1,31 +1,27 @@
 use crate::memory_fs::allocator::{AllocatedChunk, CHUNKS_ALLOCATOR};
 use crate::memory_fs::file::flush::GlobalFlush;
 use crate::memory_fs::flushable_buffer::{FileFlushMode, FlushableItem};
-use crate::stats_logger::StatRaiiCounter;
-use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 use filebuffer::FileBuffer;
 use lazy_static::lazy_static;
-use parking_lot::lock_api::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawMutex as _};
-use parking_lot::{Mutex, RawRwLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use nightly_quirks::utils::NightlyUtils;
+use parking_lot::lock_api::{ArcRwLockReadGuard, RawMutex};
+use parking_lot::{Mutex, RawRwLock, RwLock, RwLockReadGuard};
 use std::cmp::min;
 use std::collections::BTreeMap;
 use std::fs::{remove_file, File, OpenOptions};
-use std::hint::unreachable_unchecked;
 use std::io::Write;
-use std::mem::size_of;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::slice::from_raw_parts_mut;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 
 lazy_static! {
     static ref MEMORY_MAPPED_FILES: DashMap<PathBuf, Arc<MemoryFileInternal>> = DashMap::new();
 }
 
-pub static SWAPPABLE_FILES: Mutex<BTreeMap<(usize, PathBuf), Weak<MemoryFileInternal>>> =
-    Mutex::const_new(parking_lot::RawMutex::INIT, BTreeMap::new());
+pub static SWAPPABLE_FILES: Mutex<Option<BTreeMap<(usize, PathBuf), Weak<MemoryFileInternal>>>> =
+    Mutex::const_new(parking_lot::RawMutex::INIT, None);
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum MemoryFileMode {
@@ -42,7 +38,7 @@ pub enum OpenMode {
 }
 
 struct RwLockIterator<'a, A, B, I: Iterator<Item = B>> {
-    lock: RwLockReadGuard<'a, A>,
+    _lock: RwLockReadGuard<'a, A>,
     iterator: I,
 }
 
@@ -127,7 +123,7 @@ pub struct MemoryFileInternal {
 impl MemoryFileInternal {
     pub fn create_new(path: impl AsRef<Path>, mode: MemoryFileMode) -> Arc<Self> {
         // Remove the file if it existed from a previous run
-        remove_file(&path);
+        let _ = remove_file(&path);
 
         let new_file = Arc::new(Self {
             path: path.as_ref().into(),
@@ -216,12 +212,13 @@ impl MemoryFileInternal {
                 match *file.1.memory_mode.read() {
                     MemoryFileMode::AlwaysMemory => {}
                     MemoryFileMode::PreferMemory { swap_priority } => {
-                        SWAPPABLE_FILES
-                            .lock()
-                            .remove(&(swap_priority, path.as_ref().to_path_buf()));
+                        NightlyUtils::mutex_get_or_init(&mut SWAPPABLE_FILES.lock(), || {
+                            BTreeMap::new()
+                        })
+                        .remove(&(swap_priority, path.as_ref().to_path_buf()));
                     }
                     MemoryFileMode::DiskOnly => {
-                        remove_file(path);
+                        let _ = remove_file(path);
                     }
                 }
             }
@@ -278,7 +275,7 @@ impl MemoryFileInternal {
                             }
 
                             if let UnderlyingFile::WriteMode { file, .. } = file_lock.deref_mut() {
-                                file.1.lock().flush();
+                                file.1.lock().flush().unwrap();
                                 *file_lock = UnderlyingFile::NotOpened
                             }
 
@@ -315,7 +312,7 @@ impl MemoryFileInternal {
                 lock.0 = OpenMode::None;
                 match self.file.write().deref_mut() {
                     UnderlyingFile::WriteMode { file, .. } => {
-                        file.1.lock().flush();
+                        file.1.lock().flush().unwrap();
                     }
                     _ => {}
                 }
@@ -328,8 +325,7 @@ impl MemoryFileInternal {
     fn put_on_swappable_list(self: &Arc<Self>) {
         if let MemoryFileMode::PreferMemory { swap_priority } = self.memory_mode.read().deref() {
             if !self.on_swap_list.swap(true, Ordering::Relaxed) {
-                SWAPPABLE_FILES
-                    .lock()
+                NightlyUtils::mutex_get_or_init(&mut SWAPPABLE_FILES.lock(), || BTreeMap::new())
                     .insert((*swap_priority, self.path.clone()), Arc::downgrade(self));
             }
         }
@@ -412,7 +408,8 @@ impl MemoryFileInternal {
                 chunk_position,
             } = file.deref_mut()
             {
-                if let memory = self.memory.read() {
+                let memory = self.memory.read();
+                {
                     let mut flushed_count = 0;
                     while flushed_count < limit {
                         if *chunk_position >= memory.len() {

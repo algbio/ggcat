@@ -10,9 +10,7 @@ pub mod fw_rkhash;
 
 use std::fmt::{Debug, Display};
 use std::hash::{BuildHasher, Hash};
-use std::ops::{Shl, Shr};
 
-use crate::hashes::fw_nthash::ForwardNtHashIterator;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 

@@ -3,49 +3,6 @@
 version = 3
 
 [[package]]
-name = "BiLoki"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "backtrace",
- "bincode",
- "bstr",
- "byteorder",
- "clap",
- "crossbeam",
- "csv",
- "ctrlc",
- "dashmap 4.0.2",
- "desse",
- "fdlimit",
- "filebuffer",
- "flate2",
- "hashbrown",
- "itertools",
- "lazy_static",
- "libc",
- "libdeflate-rs",
- "lz4",
- "make-cmd",
- "nix 0.15.0",
- "parallel-processor",
- "parking_lot",
- "pcg_rand",
- "postcard",
- "rand 0.8.3",
- "rayon",
- "replace_with",
- "roaring",
- "serde",
- "serde_json",
- "siphasher",
- "static_assertions",
- "stopwatch",
- "structopt",
- "typenum",
-]
-
-[[package]]
 name = "addr2line"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -137,6 +94,50 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5deb64efa5bd81e31fcd1938615a6d98c82eafcbcd787162b6f63b91d6bac5b3"
 dependencies = [
  "rustc_version",
+]
+
+[[package]]
+name = "biloki"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "backtrace",
+ "bincode",
+ "bstr",
+ "byteorder",
+ "clap",
+ "crossbeam",
+ "csv",
+ "ctrlc",
+ "dashmap 4.0.2",
+ "desse",
+ "fdlimit",
+ "filebuffer",
+ "flate2",
+ "hashbrown",
+ "itertools",
+ "lazy_static",
+ "libc",
+ "libdeflate-rs",
+ "lz4",
+ "make-cmd",
+ "nightly-quirks",
+ "nix 0.15.0",
+ "parallel-processor",
+ "parking_lot",
+ "pcg_rand",
+ "postcard",
+ "rand 0.8.3",
+ "rayon",
+ "replace_with",
+ "roaring",
+ "serde",
+ "serde_json",
+ "siphasher",
+ "static_assertions",
+ "stopwatch",
+ "structopt",
+ "typenum",
 ]
 
 [[package]]
@@ -630,6 +631,7 @@ version = "0.1.0"
 dependencies = [
  "crc32fast",
  "filebuffer",
+ "nightly-quirks",
  "static_assertions",
  "structopt",
 ]
@@ -712,6 +714,13 @@ name = "nb"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "546c37ac5d9e56f55e73b677106873d9d9f5190605e41a856503623648488cae"
+
+[[package]]
+name = "nightly-quirks"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+]
 
 [[package]]
 name = "nix"
@@ -846,6 +855,7 @@ checksum = "692fcb63b64b1758029e0a96ee63e049ce8c5948587f2f7208df04625e5f6b56"
 name = "parallel-processor"
 version = "0.1.0"
 dependencies = [
+ "backtrace",
  "byteorder",
  "crossbeam",
  "dashmap 5.0.0",
@@ -853,6 +863,7 @@ dependencies = [
  "heapless 0.7.1",
  "lazy_static",
  "libc",
+ "nightly-quirks",
  "parking_lot",
  "rand 0.8.3",
  "rayon",

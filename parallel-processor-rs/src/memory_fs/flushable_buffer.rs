@@ -1,16 +1,11 @@
 use std::fs::File;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Weak};
 
-use parking_lot::{Mutex, RawRwLock, RwLock};
-
-use crate::memory_data_size::*;
-use crate::memory_fs::allocator::{AllocatedChunk, CHUNKS_ALLOCATOR};
-use crate::memory_fs::file::internal::{FileChunk, MemoryFileInternal};
-use crate::memory_fs::FILES_FLUSH_HASH_MAP;
+use crate::memory_fs::allocator::AllocatedChunk;
+use crate::memory_fs::file::internal::FileChunk;
 use parking_lot::lock_api::ArcRwLockWriteGuard;
-use std::panic::Location;
+use parking_lot::{Mutex, RawRwLock};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub struct FlushableItem {
     pub underlying_file: Arc<(PathBuf, Mutex<File>)>,

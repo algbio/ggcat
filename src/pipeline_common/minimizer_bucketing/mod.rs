@@ -3,10 +3,10 @@ mod reader;
 mod sequences_splitter;
 
 use crate::config::{
-    BucketIndexType, MinimizerType, SortingHashType, DEFAULT_MINIMIZER_MASK,
+    BucketIndexType, MinimizerType, SortingHashType, SwapPriority, DEFAULT_MINIMIZER_MASK,
     READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_SIZE,
 };
-use crate::hashes::{HashFunctionFactory, HashableSequence};
+use crate::hashes::HashableSequence;
 use crate::io::concurrent::intermediate_storage::{
     IntermediateReadsWriter, IntermediateSequencesStorage, SequenceExtraData,
 };
@@ -14,14 +14,12 @@ use crate::io::sequences_reader::FastaSequence;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::reader::minb_reader;
 use crate::pipeline_common::minimizer_bucketing::sequences_splitter::SequencesSplitter;
-use crate::rolling::minqueue::RollingMinQueue;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::threadpools_chain::{
     ObjectsPoolManager, ThreadPoolDefinition, ThreadPoolsChain,
 };
 use std::cmp::max;
-use std::io::Write;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -209,9 +207,9 @@ impl GenericMinimizerBucketing {
         m: usize,
         global_data: E::GlobalData,
     ) -> Vec<PathBuf> {
-        let mut buckets = MultiThreadBuckets::<IntermediateReadsWriter<E::ExtraData>>::new(
+        let buckets = MultiThreadBuckets::<IntermediateReadsWriter<E::ExtraData>>::new(
             buckets_count,
-            &output_path.join("bucket"),
+            &(SwapPriority::MinimizerBuckets, output_path.join("bucket")),
             None,
         );
 

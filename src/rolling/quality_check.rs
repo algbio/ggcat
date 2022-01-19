@@ -1,12 +1,10 @@
 use crate::rolling::kseq_iterator::RollingKseqImpl;
-use nix::unistd::PathconfVar::MAX_INPUT;
-use std::cmp::min;
 
 pub struct RollingQualityCheck {
     prob_log: u64,
 }
 
-const MIN_SCORE: usize = b'!' as usize;
+// const MIN_SCORE: usize = b'!' as usize;
 pub static SCORES_INDEX: [u64; 256] = [
     0,
     0,
@@ -299,18 +297,18 @@ impl RollingQualityCheck {
 
 impl RollingKseqImpl<u8, u64> for RollingQualityCheck {
     #[inline(always)]
-    fn clear(&mut self, ksize: usize) {
+    fn clear(&mut self, _ksize: usize) {
         self.prob_log = 0
     }
 
     #[inline(always)]
-    fn init(&mut self, index: usize, base: u8) {
+    fn init(&mut self, _index: usize, base: u8) {
         //1.0 - (10.0 as f64).powf(-(0.1 * ((*qb as f64) - 33.0)));
         self.prob_log += unsafe { *SCORES_INDEX.get_unchecked(base as usize) };
     }
 
     #[inline(always)]
-    fn iter(&mut self, index: usize, out_base: u8, in_base: u8) -> u64 {
+    fn iter(&mut self, _index: usize, out_base: u8, in_base: u8) -> u64 {
         self.prob_log += unsafe { *SCORES_INDEX.get_unchecked(in_base as usize) };
         let result = self.prob_log;
         self.prob_log -= unsafe { *SCORES_INDEX.get_unchecked(out_base as usize) };

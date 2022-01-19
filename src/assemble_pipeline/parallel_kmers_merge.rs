@@ -1,86 +1,48 @@
-use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
+use core::slice::from_raw_parts;
 use std::cmp::min;
-use std::fs::File;
-use std::hash::{BuildHasher, Hasher};
-use std::io::{stdout, BufWriter, Read, Write};
 use std::marker::PhantomData;
-use std::mem::{size_of, MaybeUninit};
-use std::ops::{Index, Range};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
-use typenum::Unsigned;
 
-use rayon::prelude::*;
-
-use crate::assemble_pipeline::assembler_minimizer_bucketing::{
-    AssemblerMinimizerBucketingExecutor, AssemblerMinimizerBucketingExecutorFactory,
-};
+use crate::assemble_pipeline::assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
 use crate::assemble_pipeline::AssemblePipeline;
+use crate::colors::colors_manager::ColorsManager;
 use crate::colors::colors_manager::ColorsMergeManager;
-use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_MINIMIZER_MASK, DEFAULT_PER_CPU_BUFFER_SIZE,
-    RESPLITTING_MAX_K_M_DIFFERENCE,
+    MERGE_RESULTS_BUCKETS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use crate::hashes::{ExtendableHashTraitType, HashFunction};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
-use crate::io::concurrent::intermediate_storage::{
-    IntermediateReadsReader, IntermediateReadsWriter, SequenceExtraData,
-};
+use crate::io::concurrent::intermediate_storage::IntermediateReadsWriter;
 use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
-use crate::io::reads_reader::ReadsReader;
-use crate::io::sequences_reader::FastaSequence;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::hash_entry::HashEntry;
-use crate::io::varint::{decode_varint, decode_varint_flags, encode_varint_flags};
 use crate::pipeline_common::kmers_transform::structs::ReadRef;
 use crate::pipeline_common::kmers_transform::{
     KmersTransform, KmersTransformExecutor, KmersTransformExecutorFactory, ReadDispatchInfo,
-    MERGE_BUCKETS_COUNT,
 };
 use crate::pipeline_common::minimizer_bucketing::{
     MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory,
 };
-use crate::rolling::minqueue::RollingMinQueue;
-use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
-use crate::utils::debug_utils::debug_increase;
 use crate::utils::{get_memory_mode, Utils};
-use crate::KEEP_FILES;
-use byteorder::{ReadBytesExt, WriteBytesExt};
+use crate::CompressedRead;
 use crossbeam::queue::*;
 use hashbrown::HashMap;
-use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
-use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 #[cfg(feature = "mem-analysis")]
 use parallel_processor::mem_tracker::MemoryInfo;
-use parallel_processor::memory_data_size::MemoryDataSize;
-use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use parallel_processor::multi_thread_buckets::{
-    BucketType, BucketsThreadDispatcher, MultiThreadBuckets,
-};
+use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parallel_processor::threadpools_chain::{
-    ObjectsPoolManager, ThreadChainObject, ThreadPoolDefinition, ThreadPoolsChain,
-};
-use parallel_processor::{stats_logger::StatMode, update_stat};
-use rand::prelude::SliceRandom;
-use rand::thread_rng;
-use std::process::exit;
-use std::slice::from_raw_parts;
-use std::sync::Arc;
 use structs::*;
 
-pub const READ_FLAG_INCL_BEGIN: u8 = (1 << 0);
-pub const READ_FLAG_INCL_END: u8 = (1 << 1);
+pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;
+pub const READ_FLAG_INCL_END: u8 = 1 << 1;
 
 pub mod structs {
     use crate::config::BucketIndexType;
     use crate::io::concurrent::intermediate_storage::SequenceExtraData;
     use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
-    use std::io::Write;
     use std::path::PathBuf;
 
     pub struct MapEntry<CHI> {
@@ -124,7 +86,8 @@ struct GlobalMergeData<'a, MH: HashFunctionFactory, CX: ColorsManager> {
     global_resplit_data: MinimizerBucketingCommonData<()>,
 }
 
-pub type ResultsBucketType<'a, MH: HashFunctionFactory, CX: ColorsManager> = ResultsBucket<
+#[allow(type_alias_bounds)]
+pub type ResultsBucketType<'a, MH, CX: ColorsManager> = ResultsBucket<
     'a,
     <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::PartialUnitigsColorStructure,
 >;
@@ -159,7 +122,7 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         );
 
         Self::ExecutorType::<'a> {
-            results_buckets_counter: MERGE_BUCKETS_COUNT,
+            results_buckets_counter: MERGE_RESULTS_BUCKETS_COUNT,
             current_bucket: global_data.output_results_buckets.pop().unwrap(),
             hashes_tmp: BucketsThreadDispatcher::new(
                 DEFAULT_PER_CPU_BUFFER_SIZE,
@@ -231,8 +194,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             })
             .unwrap();
 
-        let bucket = H::get_second_bucket(minimizer.to_unextendable())
-            % (MERGE_BUCKETS_COUNT as BucketIndexType);
+        let bucket = H::get_second_bucket(minimizer.to_unextendable());
 
         ReadDispatchInfo {
             bucket,
@@ -247,7 +209,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
     ) {
         if self.results_buckets_counter == 0 {
-            self.results_buckets_counter = MERGE_BUCKETS_COUNT;
+            self.results_buckets_counter = MERGE_RESULTS_BUCKETS_COUNT;
             replace_with::replace_with_or_abort(&mut self.current_bucket, |results_bucket| {
                 global_data.output_results_buckets.push(results_bucket);
                 global_data.output_results_buckets.pop().unwrap()
@@ -274,9 +236,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             self.rhash_map = HashMap::with_capacity(4096);
         }
         self.rcorrect_reads.clear();
-
-        let mut tot_reads = 0;
-        let mut tot_chars = 0;
 
         for packed_read in reads {
             let (kmer_flags, read, color) = packed_read
@@ -329,8 +288,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 }
             }
             assert!(did_max);
-            tot_reads += 1;
-            tot_chars += read.bases_count();
         }
 
         if CX::COLORS_ENABLED {
@@ -618,7 +575,7 @@ impl AssemblePipeline {
 
         let mut sequences = Vec::new();
 
-        let mut reads_buckets =
+        let reads_buckets =
             MultiThreadBuckets::<
                 IntermediateReadsWriter<
                     <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
@@ -626,7 +583,7 @@ impl AssemblePipeline {
                         CX,
                     >>::PartialUnitigsColorStructure,
                 >,
-            >::new(buckets_count, &out_directory.as_ref().join("result"), None);
+            >::new(buckets_count, &(SwapPriority::ResultBuckets, out_directory.as_ref().join("result")), None);
 
         let output_results_buckets = SegQueue::new();
         for bucket_index in 0..buckets_count {

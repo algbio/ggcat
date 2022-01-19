@@ -1,25 +1,13 @@
 // use crate::colors::storage::roaring::ColorsStorage;
-use crate::colors::storage::serializer::{ColorsFlushProcessing, ColorsSerializer};
+use crate::colors::storage::serializer::ColorsSerializer;
 use crate::colors::storage::ColorsSerializerImpl;
 use crate::colors::ColorIndexType;
-use crate::hashes::dummy_hasher::{DummyHasher, DummyHasherBuilder};
-use crate::io::varint::{decode_varint, encode_varint};
-use crate::utils::async_slice_queue::AsyncSliceQueue;
-use crate::KEEP_FILES;
-use byteorder::ReadBytesExt;
+use crate::hashes::dummy_hasher::DummyHasherBuilder;
 use dashmap::DashMap;
-use parking_lot::Mutex;
 use rand::{thread_rng, RngCore};
-use siphasher::sip128::{Hash128, Hasher128, SipHasher13};
-use std::cell::UnsafeCell;
-use std::cmp::max;
-use std::fs::File;
-use std::hash::{Hash, Hasher};
-use std::io::{BufWriter, Read, Write};
-use std::mem::{swap, transmute};
-use std::ops::{Deref, DerefMut};
+use siphasher::sip128::{Hasher128, SipHasher13};
+use std::hash::Hash;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct ColorsMemMap<C: ColorsSerializerImpl> {
     colors: DashMap<u128, ColorIndexType, DummyHasherBuilder>,
@@ -47,11 +35,11 @@ impl<C: ColorsSerializerImpl> ColorsMemMap<C> {
         let hash = self.hash_colors(colors);
 
         match self.colors.get(&hash) {
-            None => unsafe {
+            None => {
                 let color = self.colors_storage.serialize_colors(colors);
                 self.colors.insert(hash, color);
                 color
-            },
+            }
             Some(id) => *id,
         }
     }

@@ -1,20 +1,13 @@
-use std::io::{Read, Write};
-use std::marker::PhantomData;
-
-use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
-use serde::ser::SerializeTuple;
-use serde::{Deserialize, Serialize, Serializer};
-
 use crate::config::BucketIndexType;
-use crate::io::concurrent::intermediate_storage::{SequenceExtraData, VecReader};
-use crate::io::structs::hash_entry::Direction;
+use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::utils::vec_slice::VecSlice;
-use parallel_processor::binary_writer::BinaryWriter;
+use byteorder::ReadBytesExt;
 use parallel_processor::multi_thread_buckets::BucketWriter;
+use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
-use std::{fmt, io};
+use std::io::{Read, Write};
 
 #[repr(transparent)]
 #[derive(Copy, Clone)]
@@ -22,23 +15,23 @@ pub struct UnitigFlags(u8);
 
 impl Debug for UnitigFlags {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str("UnitigFlags(");
+        f.write_str("UnitigFlags(")?;
         if self.is_forward() {
-            f.write_str("Forward");
+            f.write_str("Forward")?;
         } else {
-            f.write_str("Backward");
+            f.write_str("Backward")?;
         }
 
         if self.begin_sealed() {
-            f.write_str(", BeginSealed");
+            f.write_str(", BeginSealed")?;
         }
 
         if self.end_sealed() {
-            f.write_str(", EndSealed");
+            f.write_str(", EndSealed")?;
         }
 
         if self.is_reverse_complemented() {
-            f.write_str(", ReverseComplemented");
+            f.write_str(", ReverseComplemented")?;
         }
 
         f.write_str(")")
@@ -77,7 +70,7 @@ impl UnitigFlags {
 
     #[inline(always)]
     fn set_bit(&mut self, pos: usize) {
-        self.0 |= (1 << pos);
+        self.0 |= 1 << pos;
     }
 
     #[inline(always)]
@@ -101,11 +94,6 @@ impl UnitigFlags {
             ((forward as u8) << Self::DIRECTION_FLAG)
                 | ((complement as u8) << Self::REVERSE_COMPLEMENT_FLAG),
         )
-    }
-
-    #[inline(always)]
-    pub const fn new_backward() -> UnitigFlags {
-        UnitigFlags(0)
     }
 
     #[inline(always)]
@@ -175,13 +163,13 @@ impl PartialEq for UnitigIndex {
 }
 
 impl SequenceExtraData for UnitigIndex {
-    fn decode<'a>(mut reader: &'a mut impl Read) -> Option<Self> {
+    fn decode<'a>(reader: &'a mut impl Read) -> Option<Self> {
         let bucket = decode_varint(|| reader.read_u8().ok())? as BucketIndexType;
         let index = decode_varint(|| reader.read_u8().ok())?;
         Some(UnitigIndex::new_raw(bucket, index as usize))
     }
 
-    fn encode<'a>(&self, mut writer: &'a mut impl Write) {
+    fn encode<'a>(&self, writer: &'a mut impl Write) {
         encode_varint(
             |b| writer.write_all(b).ok(),
             self.raw_bucket_revcomplemented() as u64,
@@ -237,7 +225,7 @@ impl UnitigIndex {
     }
 
     pub fn change_reverse_complemented(&mut self) {
-        self.index ^= (0x1 << 48);
+        self.index ^= 0x1 << 48;
     }
 
     #[inline]
@@ -251,17 +239,6 @@ pub struct UnitigLink {
     pub entry: u64,
     pub flags: UnitigFlags,
     pub entries: VecSlice<UnitigIndex>,
-}
-
-struct UnitigLinkSerializer {
-    link: UnitigLink,
-    indexes: Vec<UnitigIndex>,
-}
-
-#[derive(Copy, Clone)]
-pub struct UnitigPointer {
-    pub entry: u64,
-    pub link_index: u64,
 }
 
 impl UnitigLink {
@@ -291,18 +268,19 @@ impl BucketWriter for UnitigLink {
 
     #[inline(always)]
     fn write_to(&self, bucket: &mut Vec<u8>, extra_data: &Self::ExtraData) {
-        encode_varint(|b| bucket.write_all(b), self.entry);
-        bucket.write_all(&[self.flags.0]);
+        encode_varint(|b| bucket.write_all(b), self.entry).unwrap();
+        bucket.write_all(&[self.flags.0]).unwrap();
 
         let entries = self.entries.get_slice(extra_data);
-        encode_varint(|b| bucket.write_all(b), entries.len() as u64);
+        encode_varint(|b| bucket.write_all(b), entries.len() as u64).unwrap();
 
         for entry in entries {
             encode_varint(
                 |b| bucket.write_all(b),
                 entry.raw_bucket_revcomplemented() as u64,
-            );
-            encode_varint(|b| bucket.write_all(b), entry.index() as u64);
+            )
+            .unwrap();
+            encode_varint(|b| bucket.write_all(b), entry.index() as u64).unwrap();
         }
     }
 

@@ -2,9 +2,7 @@ use crate::memory_fs::allocator::{AllocatedChunk, CHUNKS_ALLOCATOR};
 use crate::memory_fs::file::internal::{
     FileChunk, MemoryFileInternal, MemoryFileMode, OpenMode, UnderlyingFile,
 };
-use parking_lot::{Mutex, RwLock};
-use std::cmp::min;
-use std::fs::{File, OpenOptions};
+use parking_lot::RwLock;
 use std::io::{Seek, SeekFrom, Write};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
@@ -115,11 +113,13 @@ impl FileWriter {
 }
 
 impl Write for FileWriter {
+    #[inline(always)]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.write_all_parallel(buf, 1);
         Ok(buf.len())
     }
 
+    #[inline(always)]
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }

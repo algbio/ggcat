@@ -34,7 +34,7 @@ pub struct ReadsWriter {
 
 impl ReadsWriter {
     pub fn new_compressed_gzip(path: impl AsRef<Path>, level: u32) -> ReadsWriter {
-        let mut compress_stream = GzEncoder::new(
+        let compress_stream = GzEncoder::new(
             BufWriter::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE, File::create(&path).unwrap()),
             Compression::new(level),
         );
@@ -50,7 +50,7 @@ impl ReadsWriter {
     }
 
     pub fn new_compressed_lz4(path: impl AsRef<Path>, level: u32) -> ReadsWriter {
-        let mut compress_stream = lz4::EncoderBuilder::new()
+        let compress_stream = lz4::EncoderBuilder::new()
             .level(level)
             .checksum(ContentChecksum::NoChecksum)
             .block_mode(BlockMode::Linked)
@@ -88,8 +88,8 @@ impl ReadsWriter {
 
     pub fn add_read(&mut self, read: FastaSequence) {
         let writer = self.writer.get_writer();
-        writer.write_all(read.ident);
-        writer.write_all(b"\n");
+        writer.write_all(read.ident).unwrap();
+        writer.write_all(b"\n").unwrap();
         writer.write_all(read.seq).unwrap();
         if let Some(qual) = read.qual {
             writer.write_all(b"\n+\n").unwrap();
@@ -100,6 +100,7 @@ impl ReadsWriter {
         self.reads_count += 1;
     }
 
+    #[allow(dead_code)]
     pub fn get_path(&self) -> PathBuf {
         self.path.clone()
     }
@@ -111,9 +112,11 @@ impl Drop for ReadsWriter {
     fn drop(&mut self) {
         let writer = std::mem::replace(&mut self.writer, WriterChannels::None);
         match writer {
-            WriterChannels::File(mut writer) => {}
+            WriterChannels::File(writer) => {
+                writer.into_inner().unwrap().flush().unwrap();
+            }
             WriterChannels::CompressedFileGzip(mut writer) => {
-                writer.flush();
+                writer.flush().unwrap();
                 writer
                     .into_inner()
                     .unwrap_or_else(|_| panic!("Cannot unwrap!"))
@@ -123,7 +126,7 @@ impl Drop for ReadsWriter {
                     .unwrap();
             }
             WriterChannels::CompressedFileLZ4(mut writer) => {
-                writer.flush();
+                writer.flush().unwrap();
                 writer
                     .into_inner()
                     .unwrap_or_else(|_| panic!("Cannot unwrap!"))

@@ -1,28 +1,18 @@
-use std::cell::UnsafeCell;
-use std::cmp::max;
-use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
+use std::collections::{BTreeMap, HashMap};
+use std::fs::File;
 
-use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
 use std::sync::Arc;
-use std::thread::JoinHandle;
 
 use crate::memory_fs::file::flush::*;
 
-use parking_lot::lock_api::RwLockReadGuard;
-use parking_lot::{Mutex, MutexGuard, RwLock, RwLockWriteGuard};
+use parking_lot::Mutex;
 
 use crate::memory_data_size::MemoryDataSize;
-use crate::memory_fs::allocator::{AllocatedChunk, ChunksAllocator, CHUNKS_ALLOCATOR};
+use crate::memory_fs::allocator::CHUNKS_ALLOCATOR;
 use crate::memory_fs::file::internal::{MemoryFileInternal, SWAPPABLE_FILES};
-use crate::stats_logger::{StatMode, StatRaiiCounter};
-use std::mem::{replace, size_of};
-use std::panic::Location;
-use std::slice::from_raw_parts_mut;
-use std::time::Duration;
+use nightly_quirks::utils::NightlyUtils;
 
 pub const O_DIRECT: i32 = 0x4000;
 
@@ -31,12 +21,8 @@ pub mod allocator;
 pub mod file;
 pub mod flushable_buffer;
 
-const FLUSH_BUFFERS_COUNT: usize = 2;
-
 static mut FILES_FLUSH_HASH_MAP: Option<Mutex<HashMap<PathBuf, Vec<Arc<(PathBuf, Mutex<File>)>>>>> =
     None;
-
-const JOIN_HANDLE_OPT: Option<JoinHandle<()>> = None;
 
 pub struct MemoryFs;
 
@@ -100,6 +86,7 @@ impl MemoryFs {
         let (current, max_size) = GlobalFlush::global_queue_occupation();
         if current * 3 < max_size {
             let mut map_lock = SWAPPABLE_FILES.lock();
+            let map_lock = NightlyUtils::mutex_get_or_init(&mut map_lock, || BTreeMap::new());
 
             let mut file_ref = None;
 

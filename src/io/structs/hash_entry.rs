@@ -1,17 +1,8 @@
-use std::io::{Read, Write};
-use std::marker::PhantomData;
-
-use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
-use serde::{Deserialize, Serialize, Serializer};
-
-use crate::io::concurrent::intermediate_storage::VecReader;
-use crate::io::varint::{decode_varint, encode_varint};
 use crate::config::BucketIndexType;
-use crate::utils::vec_slice::VecSlice;
 use bincode::serialize_into;
-use parallel_processor::binary_writer::BinaryWriter;
 use parallel_processor::multi_thread_buckets::BucketWriter;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use std::mem::size_of;
 
 #[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize, Debug)]
@@ -34,7 +25,7 @@ impl<H: Serialize + DeserializeOwned + Copy> BucketWriter for HashEntry<H> {
 
     #[inline(always)]
     fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
-        serialize_into(bucket, self);
+        serialize_into(bucket, self).unwrap();
     }
 
     #[inline(always)]

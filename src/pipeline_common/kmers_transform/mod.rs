@@ -5,33 +5,22 @@ use crate::config::{
     BucketIndexType, SortingHashType, DEFAULT_PER_CPU_BUFFER_SIZE, FIRST_BUCKETS_COUNT,
     SECOND_BUCKETS_COUNT,
 };
-use crate::hashes::HashableSequence;
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
-use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
-use crate::io::varint::{encode_varint, encode_varint_flags};
-use crate::pipeline_common::minimizer_bucketing::{
-    MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory,
-};
+use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use crate::utils::compressed_read::CompressedRead;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
-use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::BucketsThreadDispatcher;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::{Condvar, Mutex, RwLock};
 use std::cmp::{max, min};
-use std::path::{Path, PathBuf};
-use std::process::exit;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use structs::ReadRef;
-use typenum::Unsigned;
-
-pub const MERGE_BUCKETS_COUNT: usize = 256;
-const BUFFER_CHUNK_SIZE: usize = 1024 * 16;
 
 pub struct ReadDispatchInfo<E: SequenceExtraData> {
     pub bucket: BucketIndexType,
@@ -103,7 +92,7 @@ impl KmersTransform {
 
         let vecs_process_queue = Arc::new(SegQueue::new());
 
-        let mut last_info_log = Mutex::new(Instant::now());
+        let last_info_log = Mutex::new(Instant::now());
 
         const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(15);
 
@@ -163,135 +152,140 @@ impl KmersTransform {
 
         crossbeam::thread::scope(|s| {
             for _ in 0..min(buckets_count, threads_count) {
-                s.builder().name("kmers-transform".to_string()).spawn(|_| {
-                    let mut executor = F::new(&global_extra_data);
+                s.builder()
+                    .name("kmers-transform".to_string())
+                    .spawn(|_| {
+                        let mut executor = F::new(&global_extra_data);
 
-                    let mut process_pending_reads = |executor: &mut F::ExecutorType<'a>| {
-                        while let Some((queue_path, can_resplit)) = vecs_process_queue.pop() {
-                            let mut reader = FileReader::open(&queue_path).unwrap();
+                        let process_pending_reads = |executor: &mut F::ExecutorType<'a>| {
+                            while let Some((queue_path, can_resplit)) = vecs_process_queue.pop() {
+                                let mut reader = FileReader::open(&queue_path).unwrap();
 
-                            let mut temp_readref_vec = TrackedVec::new();
-                            let mut temp_data_vec = TrackedVec::new();
+                                let mut temp_readref_vec = TrackedVec::new();
+                                let mut temp_data_vec = TrackedVec::new();
 
-                            executor.maybe_swap_bucket(&global_extra_data);
+                                executor.maybe_swap_bucket(&global_extra_data);
 
-                            let is_outlier =
-                                reader.total_file_size() > typical_sub_bucket_size * 512;
+                                let is_outlier =
+                                    reader.total_file_size() > typical_sub_bucket_size * 512;
 
-                            process_subbucket::process_subbucket::<F>(
-                                &global_extra_data,
-                                reader,
-                                &mut temp_readref_vec,
-                                &mut temp_data_vec,
-                                executor,
-                                queue_path.as_ref(),
-                                &vecs_process_queue,
-                                can_resplit,
-                                is_outlier,
-                            );
-                        }
-                    };
-
-                    'outer_loop: loop {
-                        process_pending_reads(&mut executor);
-
-                        if reading_finished.load(Ordering::SeqCst) {
-                            break 'outer_loop;
-                        }
-                        let mut bucket = {
-                            let current_bucket_read_guard = current_bucket.read();
-
-                            match current_bucket_read_guard.clone() {
-                                None => {
-                                    drop(current_bucket_read_guard);
-                                    data_wait_condvar.wait_for(
-                                        &mut data_wait_mutex.lock(),
-                                        Duration::from_millis(100),
-                                    );
-                                    continue;
-                                }
-                                Some(val) => val,
+                                process_subbucket::process_subbucket::<F>(
+                                    &global_extra_data,
+                                    reader,
+                                    &mut temp_readref_vec,
+                                    &mut temp_data_vec,
+                                    executor,
+                                    queue_path.as_ref(),
+                                    &vecs_process_queue,
+                                    can_resplit,
+                                    is_outlier,
+                                );
                             }
                         };
 
-                        let mut cmp_reads = BucketsThreadDispatcher::new(
-                            DEFAULT_PER_CPU_BUFFER_SIZE,
-                            &bucket.buckets,
-                        );
-
-                        let mut continue_read = true;
-                        let mut tmp_data = Vec::with_capacity(max(ReadRef::TMP_DATA_OFFSET, 256));
-
-                        while continue_read {
+                        'outer_loop: loop {
                             process_pending_reads(&mut executor);
 
-                            continue_read = bucket.reader.read_parallel::<_, F::FLAGS_COUNT>(
-                                |flags, read_extra_data, read| {
-                                    let preprocess_info = executor.preprocess_bucket(
-                                        &global_extra_data,
-                                        flags,
-                                        read_extra_data,
-                                        read,
-                                    );
-
-                                    let packed_slice = ReadRef::pack::<_, F::FLAGS_COUNT>(
-                                        preprocess_info.hash,
-                                        preprocess_info.flags,
-                                        read,
-                                        &preprocess_info.extra_data,
-                                        &mut tmp_data,
-                                    );
-
-                                    cmp_reads.add_element(
-                                        preprocess_info.bucket,
-                                        &(),
-                                        packed_slice,
-                                    );
-                                },
-                            );
-                        }
-
-                        cmp_reads.finalize();
-
-                        drop(bucket);
-
-                        let mut writable_bucket = current_bucket.write();
-                        if writable_bucket
-                            .as_ref()
-                            .map(|x| {
-                                x.reader.is_finished()
-                                    && (!save_memory || (Arc::strong_count(x) == 1))
-                            })
-                            .unwrap_or(false)
-                        {
-                            writable_bucket.take();
-                        }
-
-                        drop(writable_bucket);
-
-                        loop {
-                            process_pending_reads(&mut executor);
-
-                            writable_bucket = current_bucket.write();
-                            if vecs_process_queue.len() > 0 {
-                                drop(writable_bucket);
-                                continue;
+                            if reading_finished.load(Ordering::SeqCst) {
+                                break 'outer_loop;
                             }
+                            let bucket = {
+                                let current_bucket_read_guard = current_bucket.read();
 
-                            if writable_bucket.is_none() {
-                                if let Some(bucket) = open_bucket() {
-                                    *writable_bucket = Some(bucket);
-                                } else if opened_buckets_count.load(Ordering::SeqCst) == 0 {
-                                    reading_finished.store(true, Ordering::SeqCst);
+                                match current_bucket_read_guard.clone() {
+                                    None => {
+                                        drop(current_bucket_read_guard);
+                                        data_wait_condvar.wait_for(
+                                            &mut data_wait_mutex.lock(),
+                                            Duration::from_millis(100),
+                                        );
+                                        continue;
+                                    }
+                                    Some(val) => val,
                                 }
-                                data_wait_condvar.notify_all();
+                            };
+
+                            let mut cmp_reads = BucketsThreadDispatcher::new(
+                                DEFAULT_PER_CPU_BUFFER_SIZE,
+                                &bucket.buckets,
+                            );
+
+                            let mut continue_read = true;
+                            let mut tmp_data =
+                                Vec::with_capacity(max(ReadRef::TMP_DATA_OFFSET, 256));
+
+                            while continue_read {
+                                process_pending_reads(&mut executor);
+
+                                continue_read = bucket.reader.read_parallel::<_, F::FLAGS_COUNT>(
+                                    |flags, read_extra_data, read| {
+                                        let preprocess_info = executor.preprocess_bucket(
+                                            &global_extra_data,
+                                            flags,
+                                            read_extra_data,
+                                            read,
+                                        );
+
+                                        let packed_slice = ReadRef::pack::<_, F::FLAGS_COUNT>(
+                                            preprocess_info.hash,
+                                            preprocess_info.flags,
+                                            read,
+                                            &preprocess_info.extra_data,
+                                            &mut tmp_data,
+                                        );
+
+                                        cmp_reads.add_element(
+                                            preprocess_info.bucket,
+                                            &(),
+                                            packed_slice,
+                                        );
+                                    },
+                                );
                             }
-                            break;
+
+                            cmp_reads.finalize();
+
+                            drop(bucket);
+
+                            let mut writable_bucket = current_bucket.write();
+                            if writable_bucket
+                                .as_ref()
+                                .map(|x| {
+                                    x.reader.is_finished()
+                                        && (!save_memory || (Arc::strong_count(x) == 1))
+                                })
+                                .unwrap_or(false)
+                            {
+                                writable_bucket.take();
+                            }
+
+                            drop(writable_bucket);
+
+                            loop {
+                                process_pending_reads(&mut executor);
+
+                                writable_bucket = current_bucket.write();
+                                if vecs_process_queue.len() > 0 {
+                                    drop(writable_bucket);
+                                    continue;
+                                }
+
+                                if writable_bucket.is_none() {
+                                    if let Some(bucket) = open_bucket() {
+                                        *writable_bucket = Some(bucket);
+                                    } else if opened_buckets_count.load(Ordering::SeqCst) == 0 {
+                                        reading_finished.store(true, Ordering::SeqCst);
+                                    }
+                                    data_wait_condvar.notify_all();
+                                }
+                                break;
+                            }
                         }
-                    }
-                    executor.finalize(&global_extra_data);
-                });
+                        executor.finalize(&global_extra_data);
+                    })
+                    .unwrap();
             }
-        });
+        })
+        .unwrap();
     }
 }

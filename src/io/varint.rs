@@ -1,16 +1,13 @@
-use byteorder::ReadBytesExt;
-use serde::{Deserializer, Serializer};
-use std::io::{Read, Write};
 use std::mem::MaybeUninit;
 
 #[inline(always)]
 #[allow(clippy::uninit_assumed_init)]
-pub fn encode_varint<T>(mut write_bytes: impl FnOnce(&[u8]) -> T, mut value: u64) -> T {
+pub fn encode_varint<T>(write_bytes: impl FnOnce(&[u8]) -> T, mut value: u64) -> T {
     let mut bytes: [u8; 9] = unsafe { MaybeUninit::uninit().assume_init() };
     let mut index = 0;
     while index < bytes.len() {
         let rem = ((value > 127) as u8) << 7;
-        bytes[index] = (((value as u8) & 0b1111111) | rem);
+        bytes[index] = ((value as u8) & 0b1111111) | rem;
         value >>= 7;
         index += 1;
         if value == 0 {
@@ -21,9 +18,10 @@ pub fn encode_varint<T>(mut write_bytes: impl FnOnce(&[u8]) -> T, mut value: u64
 }
 
 #[inline(always)]
+#[allow(non_camel_case_types)]
 #[allow(clippy::uninit_assumed_init)]
 pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, FLAGS_COUNT: typenum::Unsigned>(
-    mut write_bytes: F,
+    write_bytes: F,
     mut value: u64,
     flags: u8,
 ) -> T {
@@ -38,7 +36,7 @@ pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, FLAGS_COUNT: typenum::Unsig
         | (value as u8 & first_byte_max_value)
         | fr_rem;
 
-    value >>= (useful_first_bits - 1);
+    value >>= useful_first_bits - 1;
     let mut index = 1;
 
     while index < bytes.len() {
@@ -54,6 +52,7 @@ pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, FLAGS_COUNT: typenum::Unsig
 }
 
 #[inline(always)]
+#[allow(non_camel_case_types)]
 pub fn decode_varint_flags<F: FnMut() -> Option<u8>, FLAGS_COUNT: typenum::Unsigned>(
     mut read_byte: F,
 ) -> Option<(u64, u8)> {
@@ -62,7 +61,7 @@ pub fn decode_varint_flags<F: FnMut() -> Option<u8>, FLAGS_COUNT: typenum::Unsig
     let useful_first_bits: usize = 8 - FLAGS_COUNT::to_usize();
     let first_byte_max_value: u8 = ((1u16 << (useful_first_bits - 1)) - 1) as u8;
 
-    let flags = (((first_byte as u16) >> useful_first_bits) as u8);
+    let flags = ((first_byte as u16) >> useful_first_bits) as u8;
     let mut result = (first_byte & first_byte_max_value) as u64;
     let mut offset = useful_first_bits - 1;
     let mut next = first_byte & (1 << (useful_first_bits - 1)) != 0;
@@ -71,7 +70,7 @@ pub fn decode_varint_flags<F: FnMut() -> Option<u8>, FLAGS_COUNT: typenum::Unsig
         if !next {
             break;
         }
-        let mut value = read_byte()?;
+        let value = read_byte()?;
         next = (value & 0b10000000) != 0;
         result |= ((value & 0b1111111) as u64) << offset;
         offset += 7;
@@ -84,7 +83,7 @@ pub fn decode_varint(mut read_byte: impl FnMut() -> Option<u8>) -> Option<u64> {
     let mut result = 0;
     let mut offset = 0u32;
     loop {
-        let mut value = read_byte()?;
+        let value = read_byte()?;
         let next = (value & 0b10000000) != 0;
         result |= ((value & 0b1111111) as u64) << offset;
         if !next {
@@ -95,28 +94,8 @@ pub fn decode_varint(mut read_byte: impl FnMut() -> Option<u8>) -> Option<u64> {
     Some(result)
 }
 
-#[inline(always)]
-pub fn serialize<S>(t: &u64, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    encode_varint(move |b| serializer.serialize_bytes(b), *t)
-}
-
-pub fn deserialize<'de, D>(d: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    todo!()
-}
-
+#[cfg(test)]
 mod tests {
-    use crate::io::concurrent::intermediate_storage::{
-        IntermediateReadsReader, IntermediateReadsWriter, VecReader,
-    };
-    use crate::io::varint::{
-        decode_varint, decode_varint_flags, encode_varint, encode_varint_flags,
-    };
     use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
     use byteorder::WriteBytesExt;
     use parallel_processor::multi_thread_buckets::BucketType;

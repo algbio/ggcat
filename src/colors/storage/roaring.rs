@@ -1,28 +1,11 @@
 use crate::colors::storage::serializer::{ColorsFlushProcessing, ColorsIndexEntry};
 use crate::colors::storage::ColorsSerializerImpl;
 use crate::colors::ColorIndexType;
-use crate::hashes::dummy_hasher::{DummyHasher, DummyHasherBuilder};
 use crate::io::chunks_writer::ChunksWriter;
-use crate::io::varint::{decode_varint, encode_varint};
-use crate::utils::async_slice_queue::AsyncSliceQueue;
-use crate::KEEP_FILES;
-use byteorder::ReadBytesExt;
-use dashmap::DashMap;
-use desse::{Desse, DesseSized};
 use parking_lot::Mutex;
-use rand::{thread_rng, RngCore};
 use roaring::RoaringBitmap;
-use serde::{Deserialize, Serialize};
-use siphasher::sip128::{Hash128, Hasher128, SipHasher13};
-use std::cell::UnsafeCell;
-use std::cmp::max;
-use std::fs::File;
-use std::hash::{Hash, Hasher};
-use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
-use std::mem::{swap, transmute};
-use std::ops::{Deref, DerefMut};
-use std::path::Path;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::io::Read;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 struct RoaringBitmapInstance {
     bitmap: RoaringBitmap,
@@ -56,7 +39,7 @@ impl RoaringBitmapInstance {
         colors: impl Iterator<Item = ColorIndexType>,
         writer: &ColorsFlushProcessing,
     ) -> bool {
-        let base_color = (color_index - self.offset);
+        let base_color = color_index - self.offset;
 
         // Another append is in queue and the current is not the first one
         if base_color > self.last_color + self.stride {
@@ -83,7 +66,9 @@ impl RoaringBitmapInstance {
 
     fn flush(&mut self, writer: &ColorsFlushProcessing) {
         let mut pdata = writer.start_processing();
-        self.bitmap.serialize_into(writer.get_stream(&mut pdata));
+        self.bitmap
+            .serialize_into(writer.get_stream(&mut pdata))
+            .unwrap();
         writer.end_processing(pdata, self.offset, self.stride);
         self.offset += self.last_color;
         self.last_color = 0;
@@ -96,14 +81,14 @@ pub struct RoaringColorsSerializer {
     roaring_bitmaps: Vec<Mutex<RoaringBitmapInstance>>,
     writer: ColorsFlushProcessing,
     colors_index: AtomicU32,
-    checkpoint_distance: usize,
 }
 
 impl ColorsSerializerImpl for RoaringColorsSerializer {
+    // FIXME: Implement!
     fn decode_color(
-        reader: impl Read,
-        entry_info: ColorsIndexEntry,
-        color: ColorIndexType,
+        _reader: impl Read,
+        _entry_info: ColorsIndexEntry,
+        _color: ColorIndexType,
     ) -> Vec<u32> {
         todo!()
     }
@@ -124,7 +109,6 @@ impl ColorsSerializerImpl for RoaringColorsSerializer {
                 .collect(),
             writer,
             colors_index: AtomicU32::new(0),
-            checkpoint_distance,
             colors_count,
         }
     }
@@ -151,7 +135,11 @@ impl ColorsSerializerImpl for RoaringColorsSerializer {
     }
 
     fn print_stats(&self) {
-        println!("Subsets count: {}", self.get_subsets_count());
+        println!(
+            "Subsets count: {} witn {} colors",
+            self.get_subsets_count(),
+            self.colors_count
+        );
     }
 
     fn finalize(mut self) -> ColorsFlushProcessing {

@@ -1,4 +1,3 @@
-use crate::memory_fs::file::reader::FileReader;
 use crate::multi_thread_buckets::BucketWriter;
 use rand::{thread_rng, RngCore};
 use rayon::prelude::*;
@@ -7,12 +6,8 @@ use std::cmp::min;
 use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::io::Write;
-use std::mem::size_of;
-use std::ops::Range;
-use std::slice::{from_raw_parts, from_raw_parts_mut};
-use std::sync::atomic::{AtomicU64, AtomicUsize};
-use std::sync::Arc;
-use std::time::Duration;
+use std::slice::from_raw_parts_mut;
+use std::sync::atomic::AtomicUsize;
 use unchecked_index::{unchecked_index, UncheckedIndex};
 
 type IndexType = usize;
@@ -35,7 +30,8 @@ impl<const LEN: usize> BucketWriter for SortedData<LEN> {
 
     #[inline(always)]
     fn write_to(&self, bucket: &mut Vec<u8>, _: &Self::ExtraData) {
-        bucket.write(&self.data[..]);
+        #[allow(unaligned_references)] // Safe because the aligment of bytes is always 1
+        bucket.write(&self.data[..]).unwrap();
     }
     #[inline(always)]
     fn get_size(&self) -> usize {
@@ -48,11 +44,6 @@ pub trait SortKey<T> {
     const KEY_BITS: usize;
     fn compare(left: &T, right: &T) -> Ordering;
     fn get_shifted(value: &T, rhs: u8) -> u8;
-}
-
-pub struct SortingData<'a, T> {
-    data: &'a mut [T],
-    mask: u8,
 }
 
 const RADIX_SIZE_LOG: u8 = 8;
@@ -90,8 +81,8 @@ pub fn striped_parallel_smart_radix_sort<T: Ord + Send + Sync + Debug, F: SortKe
 
     let first_shift = F::KEY_BITS as u8 - RADIX_SIZE_LOG;
 
-    for i in 0..num_threads {
-        queue.push([0; RADIX_SIZE + 1]);
+    for _ in 0..num_threads {
+        queue.push([0; RADIX_SIZE + 1]).unwrap();
     }
 
     striped_file.par_iter().for_each(|chunk| {
@@ -191,13 +182,12 @@ fn smart_radix_sort_<
 
         let mut counts: UncheckedIndex<[IndexType; RADIX_SIZE + 1]> =
             unsafe { unchecked_index([0; RADIX_SIZE + 1]) };
-        let mut sums: UncheckedIndex<[IndexType; RADIX_SIZE + 1]> =
-            unsafe { unchecked_index([0; RADIX_SIZE + 1]) };
+        let mut sums: UncheckedIndex<[IndexType; RADIX_SIZE + 1]>;
 
-        unsafe {
+        {
             if PARALLEL {
                 const ATOMIC_ZERO: AtomicUsize = AtomicUsize::new(0);
-                let mut par_counts: UncheckedIndex<[AtomicUsize; RADIX_SIZE + 1]> =
+                let par_counts: UncheckedIndex<[AtomicUsize; RADIX_SIZE + 1]> =
                     unsafe { unchecked_index([ATOMIC_ZERO; RADIX_SIZE + 1]) };
                 let num_threads = rayon::current_num_threads();
                 let chunk_size = (data.len() + num_threads - 1) / num_threads;
@@ -232,7 +222,7 @@ fn smart_radix_sort_<
                     while start < range.end {
                         let end = min(start + subrange_len, range.end);
                         if start < end {
-                            bucket_queues[i].0.send(start..end);
+                            bucket_queues[i].0.send(start..end).unwrap();
                         }
                         start += subrange_len;
                     }
@@ -243,7 +233,7 @@ fn smart_radix_sort_<
                     let mut start_buckets = unsafe { unchecked_index([0; RADIX_SIZE]) };
                     let mut end_buckets = unsafe { unchecked_index([0; RADIX_SIZE]) };
 
-                    let data = from_raw_parts_mut(data_ptr as *mut T, data.len());
+                    let data = unsafe { from_raw_parts_mut(data_ptr as *mut T, data.len()) };
 
                     let get_bpart = || {
                         let start = thread_rng().next_u32() as usize % RADIX_SIZE;
@@ -267,7 +257,7 @@ fn smart_radix_sort_<
 
                         while let Some(bucket) = buckets_stack.pop() {
                             while start_buckets[bucket] < end_buckets[bucket] {
-                                let mut val =
+                                let val =
                                     (F::get_shifted(&data[start_buckets[bucket]], shift)) as usize;
 
                                 while start_buckets[val] == end_buckets[val] {
@@ -315,7 +305,7 @@ fn smart_radix_sort_<
                 for bucket in 0..RADIX_SIZE {
                     let end = counts[bucket + 1];
                     while sums[bucket] < end {
-                        let mut val = (F::get_shifted(&data[sums[bucket]], shift)) as usize;
+                        let val = (F::get_shifted(&data[sums[bucket]], shift)) as usize;
                         data.swap(sums[bucket], sums[val]);
                         sums[val] += 1;
                     }
@@ -382,12 +372,9 @@ fn smart_radix_sort_<
     ret_counts
 }
 
+#[cfg(test)]
 mod tests {
-    use crate::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
-    use rand::{thread_rng, Rng, RngCore};
-    use rayon::prelude::*;
-    use std::cmp::Ordering;
-    use std::time::Instant;
+    use crate::fast_smart_bucket_sort::SortKey;
 
     const VEC_SIZE: usize = 1000000000;
 

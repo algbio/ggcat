@@ -95,21 +95,6 @@ macro_rules! implement_measurement {
 
 // Types and constants for handling amounts of data (in octets, or bits).
 
-// Constants
-const OCTET_BIT_FACTOR: f64 = 0.125;
-
-// Constants, legacy
-const OCTET_KILOOCTET_FACTOR: f64 = 1000.0;
-const OCTET_MEGAOCTET_FACTOR: f64 = 1000.0 * 1000.0;
-const OCTET_GIGAOCTET_FACTOR: f64 = 1000.0 * 1000.0 * 1000.0;
-const OCTET_TERAOCTET_FACTOR: f64 = 1000.0 * 1000.0 * 1000.0 * 1000.0;
-
-// Constants, SI
-const OCTET_KIBIOCTET_FACTOR: f64 = 1024.0;
-const OCTET_MEBIOCTET_FACTOR: f64 = 1024.0 * 1024.0;
-const OCTET_GIBIOCTET_FACTOR: f64 = 1024.0 * 1024.0 * 1024.0;
-const OCTET_TEBIOCTET_FACTOR: f64 = 1024.0 * 1024.0 * 1024.0 * 1024.0;
-
 /// The `Data` struct can be used to deal with computer information in a common way.
 /// Common legacy and SI units are supported.
 ///
@@ -130,55 +115,70 @@ pub struct MemoryDataSize {
 }
 
 impl MemoryDataSize {
+    // Constants
+    pub const OCTET_BIT_FACTOR: f64 = 0.125;
+
+    // Constants, legacy
+    pub const OCTET_KILOOCTET_FACTOR: u64 = 1000;
+    pub const OCTET_MEGAOCTET_FACTOR: u64 = 1000 * 1000;
+    pub const OCTET_GIGAOCTET_FACTOR: u64 = 1000 * 1000 * 1000;
+    pub const OCTET_TERAOCTET_FACTOR: u64 = 1000 * 1000 * 1000 * 1000;
+
+    // Constants, SI
+    pub const OCTET_KIBIOCTET_FACTOR: u64 = 1024;
+    pub const OCTET_MEBIOCTET_FACTOR: u64 = 1024 * 1024;
+    pub const OCTET_GIBIOCTET_FACTOR: u64 = 1024 * 1024 * 1024;
+    pub const OCTET_TEBIOCTET_FACTOR: u64 = 1024 * 1024 * 1024 * 1024;
+
     /// Create new Data from floating point value in Octets
     pub const fn from_octets(octets: f64) -> Self {
         MemoryDataSize { octets }
     }
 
     /// Create new Data from floating point value in Bits
-    pub const fn from_bits(bits: f64) -> Self {
-        Self::from_octets(bits * OCTET_BIT_FACTOR)
+    pub fn from_bits(bits: f64) -> Self {
+        Self::from_octets(bits * Self::OCTET_BIT_FACTOR)
     }
 
     // Inputs, legacy
     /// Create new Data from floating point value in Kilooctets (1000 octets)
-    pub const fn from_kilooctets(kilooctets: f64) -> Self {
-        Self::from_octets(kilooctets * OCTET_KILOOCTET_FACTOR)
+    pub const fn from_kilooctets(kilooctets: u64) -> Self {
+        Self::from_octets((kilooctets * Self::OCTET_KILOOCTET_FACTOR) as f64)
     }
 
     /// Create new Data from floating point value in Megaoctets (1e6 octets)
-    pub const fn from_megaoctets(megaoctets: f64) -> Self {
-        Self::from_octets(megaoctets * OCTET_MEGAOCTET_FACTOR)
+    pub const fn from_megaoctets(megaoctets: u64) -> Self {
+        Self::from_octets((megaoctets * Self::OCTET_MEGAOCTET_FACTOR) as f64)
     }
 
     /// Create new Data from floating point value in Gigaoctets (1e9 octets)
-    pub const fn from_gigaoctets(gigaoctets: f64) -> Self {
-        Self::from_octets(gigaoctets * OCTET_GIGAOCTET_FACTOR)
+    pub const fn from_gigaoctets(gigaoctets: u64) -> Self {
+        Self::from_octets((gigaoctets * Self::OCTET_GIGAOCTET_FACTOR) as f64)
     }
 
     /// Create new Data from floating point value in Teraoctets (1e12 octets)
-    pub const fn from_teraoctets(teraoctets: f64) -> Self {
-        Self::from_octets(teraoctets * OCTET_TERAOCTET_FACTOR)
+    pub const fn from_teraoctets(teraoctets: u64) -> Self {
+        Self::from_octets((teraoctets * Self::OCTET_TERAOCTET_FACTOR) as f64)
     }
 
     /// Create new Data from floating point value in Kibioctets (1024 octets)
-    pub const fn from_kibioctets(kibioctets: f64) -> Self {
-        Self::from_octets(kibioctets * OCTET_KIBIOCTET_FACTOR)
+    pub const fn from_kibioctets(kibioctets: u64) -> Self {
+        Self::from_octets((kibioctets * Self::OCTET_KIBIOCTET_FACTOR) as f64)
     }
 
     /// Create new Data from floating point value in Mebioctets (1024**2 octets)
-    pub const fn from_mebioctets(mebioctets: f64) -> Self {
-        Self::from_octets(mebioctets * OCTET_MEBIOCTET_FACTOR)
+    pub const fn from_mebioctets(mebioctets: u64) -> Self {
+        Self::from_octets((mebioctets * Self::OCTET_MEBIOCTET_FACTOR) as f64)
     }
 
     /// Create new Data from floating point value in Gibioctets (1024**3 octets)
-    pub const fn from_gibioctets(gibioctets: f64) -> Self {
-        Self::from_octets(gibioctets * OCTET_GIBIOCTET_FACTOR)
+    pub const fn from_gibioctets(gibioctets: u64) -> Self {
+        Self::from_octets((gibioctets * Self::OCTET_GIBIOCTET_FACTOR) as f64)
     }
 
     /// Create new Data from floating point value in Tebioctets (1024**4 octets)
-    pub const fn from_tebioctets(tebioctets: f64) -> Self {
-        Self::from_octets(tebioctets * OCTET_TEBIOCTET_FACTOR)
+    pub const fn from_tebioctets(tebioctets: u64) -> Self {
+        Self::from_octets((tebioctets * Self::OCTET_TEBIOCTET_FACTOR) as f64)
     }
 
     /// Convert this Data to a floating point value in Octets
@@ -188,47 +188,47 @@ impl MemoryDataSize {
 
     /// Convert this Data to a floating point value in Bits
     pub fn as_bits(&self) -> f64 {
-        self.octets / OCTET_BIT_FACTOR
+        self.octets / Self::OCTET_BIT_FACTOR
     }
 
     /// Convert this Data to a floating point value in Kilooctets (1000 octets)
     pub fn as_kilooctets(&self) -> f64 {
-        self.octets / OCTET_KILOOCTET_FACTOR
+        self.octets / (Self::OCTET_KILOOCTET_FACTOR as f64)
     }
 
     /// Convert this Data to a floating point value in Megaoctets (1e6 octets)
     pub fn as_megaoctets(&self) -> f64 {
-        self.octets / OCTET_MEGAOCTET_FACTOR
+        self.octets / (Self::OCTET_MEGAOCTET_FACTOR as f64)
     }
 
     /// Convert this Data to a floating point value in Gigaoctets (1e9 octets)
     pub fn as_gigaoctets(&self) -> f64 {
-        self.octets / OCTET_GIGAOCTET_FACTOR
+        self.octets / (Self::OCTET_GIGAOCTET_FACTOR as f64)
     }
 
     /// Convert this Data to a floating point value in Teraoctets (1e12 octets)
     pub fn as_teraoctets(&self) -> f64 {
-        self.octets / OCTET_TERAOCTET_FACTOR
+        self.octets / (Self::OCTET_TERAOCTET_FACTOR as f64)
     }
 
     /// Convert this Data to a floating point value in Kibioctets (1024 octets)
     pub fn as_kibioctets(&self) -> f64 {
-        self.octets / OCTET_KIBIOCTET_FACTOR
+        self.octets / (Self::OCTET_KIBIOCTET_FACTOR as f64)
     }
 
     /// Convert this Data to a floating point value in Mebioctets (1024**2 octets)
     pub fn as_mebioctets(&self) -> f64 {
-        self.octets / OCTET_MEBIOCTET_FACTOR
+        self.octets / (Self::OCTET_MEBIOCTET_FACTOR as f64)
     }
 
     /// Convert this Data to a floating point value in Gibioctets (1024**3 octets)
     pub fn as_gibioctets(&self) -> f64 {
-        self.octets / OCTET_GIBIOCTET_FACTOR
+        self.octets / (Self::OCTET_GIBIOCTET_FACTOR as f64)
     }
 
     /// Convert this Data to a floating point value in Tebioctets (1024**4 octets)
     pub fn as_tebioctets(&self) -> f64 {
-        self.octets / OCTET_TEBIOCTET_FACTOR
+        self.octets / (Self::OCTET_TEBIOCTET_FACTOR as f64)
     }
 
     fn as_base_units(&self) -> f64 {
@@ -237,10 +237,6 @@ impl MemoryDataSize {
 
     fn from_base_units(units: f64) -> Self {
         Self::from_octets(units)
-    }
-
-    fn get_base_units_name(&self) -> &'static str {
-        "octets"
     }
 
     fn get_appropriate_units(&self) -> (&'static str, f64) {
@@ -290,7 +286,6 @@ mod test {
     use crate::memory_data_size::MemoryDataSize;
 
     const DEFAULT_DELTA: f64 = 1e-5;
-
 
     /// Check two floating point values are approximately equal using some given delta (a fraction of the inputs)
     fn almost_eq_delta(a: f64, b: f64, d: f64) -> bool {

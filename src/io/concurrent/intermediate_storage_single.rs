@@ -1,26 +1,8 @@
 use crate::config::BucketIndexType;
-use crate::hashes::HashableSequence;
 use crate::io::concurrent::intermediate_storage::{IntermediateReadsWriter, SequenceExtraData};
-use crate::io::sequences_reader::FastaSequence;
-use crate::io::varint::{decode_varint, encode_varint};
-use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
-use crate::utils::{cast_static, cast_static_mut, Utils};
-use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use lz4::{BlockMode, BlockSize, ContentChecksum};
-use parallel_processor::multi_thread_buckets::{BucketType, MultiThreadBuckets};
-use std::cell::{Cell, UnsafeCell};
-use std::cmp::{max, min};
-use std::fmt::Debug;
-use std::fs::{File, OpenOptions};
-use std::hash::Hasher;
-use std::io::{stdin, stdout, BufRead, BufReader, BufWriter, Read};
-use std::marker::PhantomData;
-use std::ops::DerefMut;
-use std::path::{Path, PathBuf};
-use std::process::{ChildStdin, Command, Stdio};
-use std::slice::from_raw_parts;
+use crate::CompressedRead;
+use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
+use std::path::PathBuf;
 
 pub struct IntermediateSequencesStorageSingleBucket<'a, T: SequenceExtraData> {
     buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T>>,
@@ -63,6 +45,7 @@ impl<'a, T: SequenceExtraData> IntermediateSequencesStorageSingleBucket<'a, T> {
         self.buffer.clear();
     }
 
+    #[allow(non_camel_case_types)]
     pub fn add_read<FLAGS_COUNT: typenum::Unsigned>(&mut self, el: T, seq: &[u8], flags: u8) {
         if self.buffer.len() > 0 && self.buffer.len() + seq.len() > Self::ALLOWED_LEN {
             self.flush_buffer();
@@ -75,8 +58,6 @@ impl<'a, T: SequenceExtraData> IntermediateSequencesStorageSingleBucket<'a, T> {
             flags,
         );
     }
-
-    pub fn finalize(self) {}
 }
 
 impl<'a, T: SequenceExtraData> Drop for IntermediateSequencesStorageSingleBucket<'a, T> {

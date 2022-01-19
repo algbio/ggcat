@@ -1,8 +1,6 @@
 use crate::colors::storage::serializer::{ColorsFlushProcessing, ColorsIndexEntry};
 use crate::colors::ColorIndexType;
-use crate::io::chunks_writer::ChunksWriter;
 use std::io::Read;
-use std::path::Path;
 
 pub mod roaring;
 pub mod run_length;

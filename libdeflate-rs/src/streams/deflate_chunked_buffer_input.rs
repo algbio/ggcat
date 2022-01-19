@@ -1,31 +1,25 @@
-use std::cmp::min;
-use std::fs::File;
-use std::io::Read;
-use std::path::Path;
-use filebuffer::FileBuffer;
 use crate::{DeflateInput, DeflateOutput};
-
-
+use nightly_quirks::utils::NightlyUtils;
+use std::cmp::min;
 
 pub struct DeflateChunkedBufferInput<'a> {
     buffer: Box<[u8]>,
     position: usize,
     last_position: usize,
-    func: Box<dyn FnMut(&mut [u8]) -> usize + 'a>
+    func: Box<dyn FnMut(&mut [u8]) -> usize + 'a>,
 }
 
 impl<'a> DeflateChunkedBufferInput<'a> {
     pub fn new<F: FnMut(&mut [u8]) -> usize + 'a>(read_func: F, buf_size: usize) -> Self {
         Self {
-            buffer: unsafe { Box::new_uninit_slice(buf_size).assume_init() },
+            buffer: unsafe { NightlyUtils::box_new_uninit_slice_assume_init(buf_size) },
             position: 0,
             last_position: 0,
-            func: Box::new(read_func)
+            func: Box::new(read_func),
         }
     }
 
     fn refill_buffer(&mut self, min_amount: usize) -> bool {
-
         let keep_buf_len = min(self.position, Self::MAX_LOOK_BACK);
 
         let move_offset = self.position - keep_buf_len;
@@ -35,7 +29,7 @@ impl<'a> DeflateChunkedBufferInput<'a> {
             std::ptr::copy(
                 self.buffer.as_ptr().add(move_offset),
                 self.buffer.as_mut_ptr(),
-                move_amount
+                move_amount,
             );
         }
         self.position -= move_offset;
@@ -50,10 +44,11 @@ impl<'a> DeflateChunkedBufferInput<'a> {
 }
 
 impl<'a> DeflateInput for DeflateChunkedBufferInput<'a> {
-
     #[inline(always)]
     unsafe fn get_le_word_no_advance(&mut self) -> usize {
-        usize::from_le_bytes(*(self.buffer.as_ptr().add(self.position) as *const [u8; std::mem::size_of::<usize>()]))
+        usize::from_le_bytes(
+            *(self.buffer.as_ptr().add(self.position) as *const [u8; std::mem::size_of::<usize>()]),
+        )
     }
 
     #[inline(always)]
@@ -73,7 +68,6 @@ impl<'a> DeflateInput for DeflateChunkedBufferInput<'a> {
 
     #[inline(always)]
     fn read(&mut self, out_data: &mut [u8]) -> usize {
-
         if self.last_position - self.position < out_data.len() {
             self.refill_buffer(out_data.len());
         }
@@ -97,7 +91,11 @@ impl<'a> DeflateInput for DeflateChunkedBufferInput<'a> {
 
     #[inline(always)]
     unsafe fn read_unchecked(&mut self, out_data: &mut [u8]) {
-        std::ptr::copy_nonoverlapping(self.buffer.as_ptr().add(self.position), out_data.as_mut_ptr(), out_data.len());
+        std::ptr::copy_nonoverlapping(
+            self.buffer.as_ptr().add(self.position),
+            out_data.as_mut_ptr(),
+            out_data.len(),
+        );
         self.position += out_data.len();
     }
 

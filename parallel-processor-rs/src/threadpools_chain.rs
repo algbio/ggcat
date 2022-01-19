@@ -1,11 +1,10 @@
-use crate::stats_logger::{StatMode, StatRaiiCounter, DEFAULT_STATS_LOGGER};
+use crate::stats_logger::StatRaiiCounter;
 use crossbeam::channel::*;
 use crossbeam::queue::*;
 use crossbeam::thread;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::thread::Thread;
 use std::time::Duration;
 
 pub trait ThreadChainObject: Send + Sync {
@@ -18,11 +17,11 @@ pub trait ThreadChainObject: Send + Sync {
 impl<T: Sync + Send + Default> ThreadChainObject for T {
     type InitData = ();
 
-    default fn initialize(_params: &()) -> Self {
+    fn initialize(_params: &()) -> Self {
         Default::default()
     }
 
-    default fn reset(&mut self) {
+    fn reset(&mut self) {
         *self = Default::default()
     }
 }
@@ -137,12 +136,6 @@ impl<'a, OS: ThreadChainObject, OR: ThreadChainObject> ObjectsPoolManager<'a, OS
     }
 }
 
-struct ThreadPool<C: Sync, OS: ThreadChainObject, OR: ThreadChainObject> {
-    threads: Vec<Thread>,
-    input_queue: Receiver<OR>,
-    _phantom: PhantomData<(C, OS)>,
-}
-
 pub struct ThreadPoolsChain;
 impl ThreadPoolsChain {
     pub fn run_single<
@@ -216,7 +209,8 @@ impl ThreadPoolsChain {
                 output.push(data);
                 continue;
             }
-        });
+        })
+        .unwrap();
         output
     }
 
@@ -337,7 +331,8 @@ impl ThreadPoolsChain {
                 output.push(data);
                 continue;
             }
-        });
+        })
+        .unwrap();
         output
     }
 }

@@ -1,7 +1,6 @@
 use crate::memory_fs::file::internal::MemoryFileMode;
 use crate::memory_fs::file::writer::FileWriter;
 use crate::multi_thread_buckets::BucketType;
-use crate::stats_logger::{StatMode, DEFAULT_STATS_LOGGER};
 use rand::{thread_rng, RngCore};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -31,6 +30,7 @@ impl BinaryWriter {
 
 impl BucketType for BinaryWriter {
     type InitType = (PathBuf, StorageMode);
+    type DataType = u8;
     const SUPPORTS_LOCK_FREE: bool = false;
 
     fn new((name, mode): &(PathBuf, StorageMode), index: usize) -> Self {

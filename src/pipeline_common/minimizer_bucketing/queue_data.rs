@@ -30,7 +30,7 @@ impl<F: Clone + Sync + Send + Default> MinimizerBucketingQueueData<F> {
             return false;
         }
 
-        let mut start = self.data.len();
+        let start = self.data.len();
         self.data.extend_from_slice(seq.ident);
         self.data.extend_from_slice(seq.seq);
         if let Some(qual) = seq.qual {

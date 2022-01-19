@@ -1,18 +1,12 @@
 use crate::memory_data_size::MemoryDataSize;
-use crate::memory_fs::file::internal::MemoryFileInternal;
 use crate::memory_fs::{MemoryFs, FILES_FLUSH_HASH_MAP};
-use parking_lot::RawMutex;
+use parking_lot::lock_api::RawMutex as _;
 use parking_lot::{Condvar, Mutex};
-use rayon::prelude::*;
 use std::alloc::{alloc, dealloc, Layout};
 use std::cmp::{max, min};
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::ptr::null_mut;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use parking_lot::lock_api::RawMutex as _;
 
 const ALLOCATOR_ALIGN: usize = 4096;
 const MAXIMUM_CHUNK_SIZE_LOG: usize = 18;
@@ -73,9 +67,10 @@ impl AllocatedChunk {
     };
 
     #[inline(always)]
+    #[allow(dead_code)]
     fn zero_memory(&mut self) {
         unsafe {
-            std::ptr::write_bytes(self.memory as *mut u8, 0, (1 << self.max_len_log2));
+            std::ptr::write_bytes(self.memory as *mut u8, 0, 1 << self.max_len_log2);
         }
     }
 
@@ -137,7 +132,7 @@ impl AllocatedChunk {
 
     #[inline(always)]
     pub unsafe fn get_mut_slice(&self) -> &'static mut [u8] {
-        unsafe { from_raw_parts_mut(self.memory as *mut u8, self.len.load(Ordering::Relaxed)) }
+        from_raw_parts_mut(self.memory as *mut u8, self.len.load(Ordering::Relaxed))
     }
 
     #[inline(always)]
@@ -201,7 +196,8 @@ unsafe impl Sync for ChunksAllocator {}
 unsafe impl Send for ChunksAllocator {}
 
 #[cfg(feature = "track-usage")]
-static USAGE_MAP: Mutex<Option<HashMap<ChunkUsage_, usize>>> = Mutex::const_new(parking_lot::RawMutex::INIT, None);
+static USAGE_MAP: Mutex<Option<HashMap<ChunkUsage_, usize>>> =
+    Mutex::const_new(parking_lot::RawMutex::INIT, None);
 
 impl ChunksAllocator {
     const fn new() -> ChunksAllocator {
@@ -233,7 +229,7 @@ impl ChunksAllocator {
             max(MINIMUM_CHUNK_SIZE_LOG, chunks_log_size),
         );
 
-        let chunk_usable_size = (1usize << chunks_log_size);
+        let chunk_usable_size = 1usize << chunks_log_size;
         let chunk_padded_size = chunk_usable_size
             + if cfg!(feature = "memory-guards") {
                 4096
@@ -338,7 +334,7 @@ impl ChunksAllocator {
                 max_len_log2: self.chunks_log_size.load(Ordering::Relaxed),
                 #[cfg(feature = "track-usage")]
                 usage: usage.clone(),
-                dealloc_fn: |ptr, size_log2| {
+                dealloc_fn: |ptr, _size_log2| {
                     CHUNKS_ALLOCATOR.chunks.lock().push(ptr);
                     CHUNKS_ALLOCATOR.chunks_wait_condvar.notify_one();
                 },

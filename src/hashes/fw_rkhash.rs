@@ -1,10 +1,3 @@
-use crate::hashes::{
-    ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
-    UnextendableHashTraitType,
-};
-use crate::config::MinimizerType;
-use std::mem::size_of;
-
 pub mod u32 {
     use crate::hashes::dummy_hasher::DummyHasherBuilder;
 

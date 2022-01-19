@@ -1,47 +1,26 @@
-use crate::assemble_pipeline::links_compaction::LinkMapping;
 use crate::assemble_pipeline::reorganize_reads::ReorganizedReadsExtraData;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{ColorsManager, ColorsMergeManager};
-use crate::config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE};
+use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
-use crate::io::concurrent::intermediate_storage::{
-    IntermediateReadsReader, IntermediateReadsWriter, IntermediateSequencesStorage,
-    SequenceExtraData,
-};
-use crate::io::reads_reader::ReadsReader;
+use crate::io::concurrent::intermediate_storage::IntermediateReadsReader;
 use crate::io::reads_writer::ReadsWriter;
-use crate::io::sequences_reader::{FastaSequence, SequencesReader};
+use crate::io::sequences_reader::FastaSequence;
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
-use crate::rolling::minqueue::RollingMinQueue;
-use crate::utils::compressed_read::{CompressedRead, CompressedReadIndipendent};
+use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::utils::Utils;
 use crate::KEEP_FILES;
-use crossbeam::channel::*;
-use crossbeam::queue::{ArrayQueue, SegQueue};
-use crossbeam::{scope, thread};
 use hashbrown::HashMap;
-use nix::sys::ptrace::cont;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::MemoryFs;
-use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
+use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
-use std::fs::File;
-use std::intrinsics::unlikely;
-use std::io::Cursor;
 use std::io::Write;
-use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::process::exit;
-use std::sync::{
-    atomic::{AtomicU64, AtomicUsize, Ordering},
-    Arc,
-};
-use std::thread::{sleep, Thread};
-use std::time::{Duration, Instant};
+use std::sync::atomic::Ordering;
 
 #[derive(Copy, Clone, Debug)]
 struct FinalUnitigInfo {
@@ -50,19 +29,13 @@ struct FinalUnitigInfo {
     flags: UnitigFlags,
 }
 
-struct FinalUnitigExtraData<CI: SequenceExtraData> {
-    color: CI,
-}
-
 impl AssemblePipeline {
     pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
         mut read_buckets_files: Vec<PathBuf>,
         mut unitig_map_files: Vec<PathBuf>,
-        temp_path: &Path,
+        _temp_path: &Path,
         out_file: &Mutex<ReadsWriter>,
-        buckets_count: usize,
         k: usize,
-        m: usize,
     ) {
         PHASES_TIMES_MONITOR
             .write()
@@ -147,7 +120,7 @@ impl AssemblePipeline {
             }
 
             drop(reader);
-            MemoryFs::remove_file(&unitigs_map_file, !KEEP_FILES.load(Ordering::Relaxed));
+            MemoryFs::remove_file(&unitigs_map_file, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
 
 
             let mut final_sequences = Vec::with_capacity(counter);
@@ -170,14 +143,12 @@ impl AssemblePipeline {
                 ));
             });
 
-            MemoryFs::remove_file(&read_file, !KEEP_FILES.load(Ordering::Relaxed));
-
             let mut temp_sequence = Vec::new();
             let mut ident_buffer = Vec::new();
 
             let mut final_unitig_color = CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure();
 
-            'uloop: for sequence in final_sequences.group_by(|a, b| !b.as_ref().unwrap().1.is_start) {
+            'uloop: for sequence in final_sequences.group_by(|_a, b| !b.as_ref().unwrap().1.is_start) {
                 let is_backwards = !sequence[0].as_ref().unwrap().1.flags.is_forward();
                 let is_circular = sequence[0].as_ref().unwrap().1.is_circular;
 
@@ -234,7 +205,7 @@ impl AssemblePipeline {
                 }
 
                 ident_buffer.clear();
-                write!(ident_buffer, "> {} J", bucket_index);
+                write!(ident_buffer, "> {} J", bucket_index).unwrap();
 
                 let writable_color = CX::ColorsMergeManagerType::<MH>::encode_part_unitigs_colors(&mut final_unitig_color);
                 CX::ColorsMergeManagerType::<MH>::print_color_data(&writable_color, &mut ident_buffer);

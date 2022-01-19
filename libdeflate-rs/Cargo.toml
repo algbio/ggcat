@@ -10,7 +10,7 @@ crc32fast = "1.3.0"
 filebuffer = "0.4.0"
 static_assertions = "1.1.0"
 structopt = "0.3.25"
-
+nightly-quirks = { path = "../nightly-quirks" }
 
 [[bin]]
 name = "gzipd"

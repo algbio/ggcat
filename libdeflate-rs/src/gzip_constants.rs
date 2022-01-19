@@ -1,10 +1,11 @@
+#![allow(dead_code)]
 /*
  * gzip_constants.h - constants for the gzip wrapper format
  */
 
 pub const GZIP_MIN_HEADER_SIZE: usize = 10;
 pub const GZIP_FOOTER_SIZE: usize = 8;
-pub const GZIP_MIN_OVERHEAD: usize = (GZIP_MIN_HEADER_SIZE + GZIP_FOOTER_SIZE);
+pub const GZIP_MIN_OVERHEAD: usize = GZIP_MIN_HEADER_SIZE + GZIP_FOOTER_SIZE;
 
 pub const GZIP_ID1: u8 = 0x1F;
 pub const GZIP_ID2: u8 = 0x8B;

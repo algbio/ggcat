@@ -1,31 +1,23 @@
-use std::io::Cursor;
-use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::config::SwapPriority;
-use crate::hashes::{ExtendableHashTraitType, HashFunctionFactory};
+use crate::hashes::HashFunctionFactory;
 use crate::io::structs::hash_entry::{Direction, HashEntry};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::get_memory_mode;
 use crate::utils::vec_slice::VecSlice;
 use crate::KEEP_FILES;
-use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
-use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use rand::{thread_rng, RngCore};
-use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::atomic::Ordering;
@@ -51,10 +43,9 @@ impl AssemblePipeline {
 
         file_hashes_inputs
             .par_iter()
-            .enumerate()
-            .for_each(|(index, input)| {
+            .for_each(|input| {
                 let mut links_tmp = BucketsThreadDispatcher::new(
-                    MemoryDataSize::from_kibioctets(64.0),
+                    MemoryDataSize::from_kibioctets(64),
                     &links_buckets,
                 );
 
@@ -69,7 +60,7 @@ impl AssemblePipeline {
                 }
 
                 drop(reader);
-                MemoryFs::remove_file(&input, !KEEP_FILES.load(Ordering::Relaxed));
+                MemoryFs::remove_file(&input, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
 
                 struct Compare<H: HashFunctionFactory> {
                     _phantom: PhantomData<H>,

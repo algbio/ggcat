@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /*
  * deflate_constants.h - constants for the DEFLATE compression format
  */
@@ -56,7 +57,7 @@ pub const DEFLATE_MAX_EXTRA_OFFSET_BITS: usize = 14;
 /* The maximum number of bits in which a match can be represented.  This
  * is the absolute worst case, which assumes the longest possible Huffman
  * codewords and the maximum numbers of extra bits.  */
-pub const DEFLATE_MAX_MATCH_BITS: usize = (DEFLATE_MAX_LITLEN_CODEWORD_LEN
+pub const DEFLATE_MAX_MATCH_BITS: usize = DEFLATE_MAX_LITLEN_CODEWORD_LEN
     + DEFLATE_MAX_EXTRA_LENGTH_BITS
     + DEFLATE_MAX_OFFSET_CODEWORD_LEN
-    + DEFLATE_MAX_EXTRA_OFFSET_BITS);
+    + DEFLATE_MAX_EXTRA_OFFSET_BITS;

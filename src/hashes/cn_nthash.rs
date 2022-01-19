@@ -2,14 +2,11 @@
 
 use crate::config::{
     BucketIndexType, MinimizerType, SortingHashType, FIRST_BUCKETS_COUNT, FIRST_BUCKET_BITS,
-    SECOND_BUCKETS_COUNT, SECOND_BUCKET_BITS, SORTING_HASH_SHIFT,
+    SECOND_BUCKETS_COUNT, SORTING_HASH_SHIFT,
 };
 use crate::hashes::dummy_hasher::DummyHasherBuilder;
 use crate::hashes::nthash_base::{h, rc};
-use crate::hashes::{
-    ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
-    UnextendableHashTraitType,
-};
+use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use std::cmp::min;
 
 #[derive(Debug, Clone)]

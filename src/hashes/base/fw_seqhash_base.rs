@@ -1,8 +1,5 @@
 use crate::config::{BucketIndexType, MinimizerType, SortingHashType};
-use crate::hashes::{
-    ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
-    UnextendableHashTraitType,
-};
+use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use std::mem::size_of;
 
 pub struct ForwardSeqHashIterator<N: HashableSequence> {
@@ -176,7 +173,7 @@ impl HashFunctionFactory for ForwardSeqHashFactory {
 
     fn manual_remove_only_reverse(
         hash: Self::HashTypeExtendable,
-        k: usize,
+        _k: usize,
         _out_base: u8,
     ) -> Self::HashTypeExtendable {
         // K = 2

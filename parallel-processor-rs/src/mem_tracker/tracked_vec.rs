@@ -1,11 +1,6 @@
 #[cfg(feature = "track-usage")]
 use crate::mem_tracker::{create_hashmap_entry, MemoryInfo};
-use std::cmp::max;
-use std::mem::{size_of, MaybeUninit};
 use std::ops::{Deref, DerefMut};
-use std::panic::Location;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 // #[repr(transparent)]
 pub struct TrackedVec<T> {

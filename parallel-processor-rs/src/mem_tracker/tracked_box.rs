@@ -1,11 +1,8 @@
 #[cfg(feature = "track-usage")]
 use crate::mem_tracker::{create_hashmap_entry, MemoryInfo};
-use std::cmp::max;
+use nightly_quirks::utils::NightlyUtils;
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
-use std::panic::Location;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 // #[repr(transparent)]
 pub struct TrackedBox<T: ?Sized> {
@@ -52,7 +49,7 @@ impl<T> TrackedBox<[MaybeUninit<T>]> {
     #[track_caller]
     pub fn new_uninit_slice(len: usize) -> Self {
         Self {
-            value: Box::new_uninit_slice(len),
+            value: NightlyUtils::box_new_uninit_slice(len),
             #[cfg(feature = "track-usage")]
             mem_info: {
                 let location = Location::caller();
@@ -68,7 +65,7 @@ impl<T> TrackedBox<[MaybeUninit<T>]> {
     #[track_caller]
     pub fn new_zeroed_slice(len: usize) -> Self {
         Self {
-            value: Box::new_zeroed_slice(len),
+            value: NightlyUtils::box_new_zeroed_slice(len),
             #[cfg(feature = "track-usage")]
             mem_info: {
                 let location = Location::caller();
@@ -83,7 +80,7 @@ impl<T> TrackedBox<[MaybeUninit<T>]> {
 
     pub unsafe fn assume_init(mut self) -> TrackedBox<[T]> {
         let new_box = TrackedBox {
-            value: std::mem::take(&mut self.value).assume_init(),
+            value: NightlyUtils::box_assume_init(std::mem::take(&mut self.value)),
             #[cfg(feature = "track-usage")]
             mem_info: self.mem_info,
         };

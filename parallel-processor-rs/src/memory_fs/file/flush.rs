@@ -1,22 +1,22 @@
 use crate::memory_fs::allocator::AllocatedChunk;
 use crate::memory_fs::file::internal::FileChunk;
 use crate::memory_fs::flushable_buffer::{FileFlushMode, FlushableItem};
-use crate::stats_logger::{StatMode, StatRaiiCounter};
+use crate::stats_logger::StatRaiiCounter;
 use crossbeam::channel::*;
+use parking_lot::lock_api::{RawMutex, RawRwLock};
 use parking_lot::{Mutex, RwLock};
 use std::cmp::max;
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use parking_lot::lock_api::{RawMutex, RawRwLock};
 
 static mut GLOBAL_FLUSH_QUEUE: Option<Sender<FlushableItem>> = None;
-static FLUSH_THREADS: Mutex<Vec<JoinHandle<()>>> = Mutex::const_new(parking_lot::RawMutex::INIT, vec![]);
+static FLUSH_THREADS: Mutex<Vec<JoinHandle<()>>> =
+    Mutex::const_new(parking_lot::RawMutex::INIT, vec![]);
 
 static TAKE_FROM_QUEUE_MUTEX: Mutex<()> = Mutex::const_new(parking_lot::RawMutex::INIT, ());
 static WRITING_CHECK: RwLock<()> = RwLock::const_new(parking_lot::RawRwLock::INIT, ());
@@ -77,7 +77,7 @@ impl GlobalFlush {
 
                     update_stat!("TOTAL_DISK_FLUSHES", 1.0, StatMode::Sum);
                     let _stat = StatRaiiCounter::create("FILE_DISK_WRITEAT");
-                    file_lock.seek(SeekFrom::Start(offset));
+                    file_lock.seek(SeekFrom::Start(offset)).unwrap();
                     file_lock.write_all(buffer.get()).unwrap();
                 }
             }

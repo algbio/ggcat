@@ -1,13 +1,9 @@
 use crate::config::{BucketIndexType, MinimizerType, SortingHashType};
-use crate::hashes::{
-    ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
-    UnextendableHashTraitType,
-};
+use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
+use nightly_quirks::branch_pred::unlikely;
+use nightly_quirks::utils::NightlyUtils;
 use parking_lot::Mutex;
 use std::cmp::min;
-use std::intrinsics::unlikely;
-use std::mem::size_of;
-use parking_lot::lock_api::RawMutex as _;
 
 const FWD_LOOKUP: [HashIntegerType; 256] = {
     let mut lookup = [1; 256];
@@ -82,9 +78,9 @@ fn get_rmmult(k: usize) -> HashIntegerType {
     unsafe {
         static mut LAST_K: usize = 0;
         static mut LAST_RMMULT: HashIntegerType = 0;
-        static CHANGE_LOCK: Mutex<()> = Mutex::const_new(parking_lot::RawMutex::INIT, ());
+        static CHANGE_LOCK: Mutex<()> = NightlyUtils::new_mutex(());
 
-        if unsafe { unlikely(LAST_K != k) } {
+        if unlikely(LAST_K != k) {
             let rmmult = fastexp(MULTIPLIER, k - 1);
             let _lock = CHANGE_LOCK.lock();
             LAST_RMMULT = rmmult;

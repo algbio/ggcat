@@ -1,21 +1,21 @@
+use crate::decompress_deflate::OutStreamResult;
+use crate::utils::copy_rolling;
+use crate::DeflateOutput;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::slice::from_raw_parts_mut;
-use crate::decompress_deflate::OutStreamResult;
-use crate::DeflateOutput;
-use crate::utils::copy_rolling;
 
 pub struct DeflateMemBufferOutput {
     buffer: Vec<u8>,
-    path: PathBuf
+    path: PathBuf,
 }
 
 impl DeflateMemBufferOutput {
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
-            buffer: vec![0; 100000],//Vec::new(),
-            path: path.as_ref().to_path_buf()
+            buffer: vec![0; 100000], //Vec::new(),
+            path: path.as_ref().to_path_buf(),
         }
     }
 }
@@ -30,7 +30,12 @@ impl DeflateOutput for DeflateMemBufferOutput {
 
         unsafe {
             let dest = self.buffer.as_mut_ptr().add(self.buffer.len());
-            copy_rolling(dest, dest.add(length), prev_offset, self.get_available_buffer().len() > 3);
+            copy_rolling(
+                dest,
+                dest.add(length),
+                prev_offset,
+                self.get_available_buffer().len() > 3,
+            );
             self.buffer.set_len(self.buffer.len() + length);
         }
         true
@@ -47,9 +52,7 @@ impl DeflateOutput for DeflateMemBufferOutput {
         self.buffer.reserve(1);
         let capacity = self.buffer.capacity();
         let len = self.buffer.len();
-        unsafe {
-            from_raw_parts_mut(self.buffer.as_mut_ptr().add(len), capacity - len)
-        }
+        unsafe { from_raw_parts_mut(self.buffer.as_mut_ptr().add(len), capacity - len) }
     }
 
     #[inline(always)]
@@ -60,10 +63,13 @@ impl DeflateOutput for DeflateMemBufferOutput {
     #[inline(always)]
     fn final_flush(&mut self) -> Result<OutStreamResult, ()> {
         println!("Successfully read {} bytes!", self.buffer.len());
-        // File::create(&self.path).unwrap().write_all(&self.buffer).unwrap();
+        File::create(&self.path)
+            .unwrap()
+            .write_all(&self.buffer)
+            .unwrap();
         Ok(OutStreamResult {
             written: 0,
-            crc32: 0
+            crc32: 0,
         })
     }
 }

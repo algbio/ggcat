@@ -1,17 +1,16 @@
 use parking_lot::RwLock;
 use rand::{thread_rng, RngCore};
-use rayon::iter::ParallelIterator;
+use std::cmp::min;
 
 use crate::memory_data_size::*;
-use std::cmp::{max, min};
 use std::io::Write;
 use std::marker::PhantomData;
-use std::mem::{size_of, swap};
+use std::mem::size_of;
 use std::path::PathBuf;
 
 pub trait BucketType: Send {
     type InitType: ?Sized;
-    type DataType = u8;
+    type DataType;
 
     const SUPPORTS_LOCK_FREE: bool;
 
@@ -127,7 +126,7 @@ impl<T: Copy> BucketWriter<T> for T {
 impl<const SIZE: usize> BucketWriter for [u8; SIZE] {
     type ExtraData = ();
     #[inline(always)]
-    fn write_to(&self, mut bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
+    fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
         bucket.write(self).unwrap();
     }
 
@@ -140,7 +139,7 @@ impl<const SIZE: usize> BucketWriter for [u8; SIZE] {
 impl BucketWriter for [u8] {
     type ExtraData = ();
     #[inline(always)]
-    fn write_to(&self, mut bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
+    fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
         bucket.write(self).unwrap();
     }
 

@@ -1,13 +1,7 @@
 use crate::config::MinimizerType;
 use crate::hashes::HashFunctionFactory;
-use crate::rolling::kseq_iterator::RollingKseqImpl;
-use rand::prelude::*;
-use std::cmp::{min, min_by_key};
-use std::collections::VecDeque;
-use std::fmt::Display;
-use std::hint::unreachable_unchecked;
+use std::cmp::min_by_key;
 use std::marker::PhantomData;
-use std::mem::MaybeUninit;
 
 pub struct RollingMinQueue<H: HashFunctionFactory> {
     queue: Vec<(H::HashTypeUnextendable, H::HashTypeUnextendable)>,
@@ -31,7 +25,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
             index: 0,
             capacity_mask: capacity - 1,
             size,
-            minimum: unsafe { (H::HashTypeUnextendable::default(), 0) },
+            minimum: (H::HashTypeUnextendable::default(), 0),
             _marker: PhantomData,
         }
     }
@@ -44,7 +38,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
             (self.index + size) & self.capacity_mask,
         );
 
-        let mut li = (self.index.wrapping_sub(size + 1)) & self.capacity_mask;
+        let li = (self.index.wrapping_sub(size + 1)) & self.capacity_mask;
         while i != li {
             unsafe {
                 self.queue.get_unchecked_mut(i).1 = min_by_key(
@@ -100,7 +94,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
     }
 }
 
-// #[cfg(feature = "test")]
+#[cfg(test)]
 mod tests {
     use crate::config::DEFAULT_MINIMIZER_MASK;
     use crate::hashes::fw_nthash::ForwardNtHashIteratorFactory;

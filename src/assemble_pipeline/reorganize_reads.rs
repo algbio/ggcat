@@ -7,38 +7,25 @@ use crate::io::concurrent::intermediate_storage::{
     IntermediateReadsReader, IntermediateReadsWriter, IntermediateSequencesStorage,
     SequenceExtraData,
 };
-use crate::io::reads_reader::ReadsReader;
 use crate::io::reads_writer::ReadsWriter;
+use std::io::{Read, Write};
 
-use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
-use crate::io::sequences_reader::{FastaSequence, SequencesReader};
+use crate::config::{SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE};
+use crate::io::sequences_reader::FastaSequence;
 use crate::io::structs::unitig_link::UnitigIndex;
-use crate::rolling::minqueue::RollingMinQueue;
 use crate::utils::Utils;
 use crate::KEEP_FILES;
 use bstr::ByteSlice;
-use crossbeam::channel::*;
-use crossbeam::queue::{ArrayQueue, SegQueue};
-use crossbeam::{scope, thread};
-use nix::sys::ptrace::cont;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
+use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
-use std::fs::File;
-use std::intrinsics::unlikely;
-use std::io::{Cursor, Read, Write};
-use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::process::exit;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::thread::{sleep, Thread};
-use std::time::{Duration, Instant};
+use std::sync::atomic::Ordering;
 
 #[derive(Clone, Debug)]
 pub struct ReorganizedReadsExtraData<CX: SequenceExtraData> {
@@ -74,8 +61,6 @@ impl AssemblePipeline {
         temp_path: &Path,
         out_file: &Mutex<ReadsWriter>,
         buckets_count: usize,
-        k: usize,
-        m: usize,
     ) -> Vec<PathBuf> {
         PHASES_TIMES_MONITOR
             .write()
@@ -86,7 +71,7 @@ impl AssemblePipeline {
                 MH,
                 CX,
             >>::PartialUnitigsColorStructure>>,
-        >::new(buckets_count, &temp_path.join("reads_bucket"), None);
+        >::new(buckets_count, &(SwapPriority::ReorganizeReads, temp_path.join("reads_bucket")), None);
 
         reads.sort();
         mapping_files.sort();
@@ -115,7 +100,7 @@ impl AssemblePipeline {
             }
 
             drop(reader);
-            MemoryFs::remove_file(&mapping_file, !KEEP_FILES.load(Ordering::Relaxed));
+            MemoryFs::remove_file(&mapping_file, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
 
             struct Compare {}
             impl SortKey<LinkMapping> for Compare {
@@ -166,7 +151,7 @@ impl AssemblePipeline {
                     } else {
 
                         ident_buffer.clear();
-                        write!(ident_buffer, "> {} {}", bucket_index, index);
+                        write!(ident_buffer, "> {} {}", bucket_index, index).unwrap();
                         CX::ColorsMergeManagerType::<MH>::print_color_data(&color, &mut ident_buffer);
 
                         tmp_lonely_unitigs_buffer.add_read(FastaSequence {

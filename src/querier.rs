@@ -1,16 +1,11 @@
 use crate::colors::colors_manager::ColorsManager;
 use crate::hashes::HashFunctionFactory;
 use crate::query_pipeline::QueryPipeline;
-use crate::utils::debug_utils::debug_print;
 use crate::utils::Utils;
-use crate::{QuerierStartingStep, KEEP_FILES, SAVE_MEMORY};
-use itertools::Itertools;
+use crate::{QuerierStartingStep, SAVE_MEMORY};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parking_lot::Mutex;
-use std::fs::remove_file;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::thread;
 
 pub fn run_query<
     BucketingHash: HashFunctionFactory,

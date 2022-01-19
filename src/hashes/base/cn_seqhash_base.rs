@@ -1,8 +1,5 @@
 use crate::config::{BucketIndexType, MinimizerType, SortingHashType};
-use crate::hashes::{
-    ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
-    UnextendableHashTraitType,
-};
+use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use std::cmp::min;
 use std::mem::size_of;
 

@@ -1,16 +1,10 @@
-use crate::assembler::run_assembler;
 use crate::colors::colors_manager::ColorsManager;
 use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
 use crate::hashes::fw_nthash::ForwardNtHashIteratorFactory;
-use crate::hashes::{cn_rkhash, cn_seqhash, fw_rkhash, fw_seqhash, HashFunctionFactory};
+use crate::hashes::HashFunctionFactory;
 use crate::querier::run_query;
 use crate::utils::compute_best_m;
 use crate::{HashType, QueryArgs};
-use std::cmp::min;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
-use std::process::exit;
 
 fn run_querier_from_args<
     BucketingHash: HashFunctionFactory,

@@ -1,42 +1,25 @@
 use super::structs::ReadRef;
-use crate::colors::colors_manager::{ColorsManager, ColorsMergeManager};
-use crate::config::{
-    BucketIndexType, SwapPriority, DEFAULT_MINIMIZER_MASK, FIRST_BUCKET_BITS,
-    RESPLIT_MINIMIZER_MASK,
-};
-use crate::hashes::HashFunction;
-use crate::hashes::{ExtendableHashTraitType, HashFunctionFactory, HashableSequence};
-use crate::io::concurrent::intermediate_storage::{IntermediateReadsWriter, SequenceExtraData};
-use crate::io::structs::hash_entry::{Direction, HashEntry};
-use crate::io::varint::{decode_varint, decode_varint_flags};
+use crate::config::{SwapPriority, FIRST_BUCKET_BITS, RESPLIT_MINIMIZER_MASK};
+use crate::hashes::HashableSequence;
+use crate::io::varint::decode_varint;
 use crate::pipeline_common::kmers_transform::{
     KmersTransformExecutor, KmersTransformExecutorFactory,
 };
 use crate::pipeline_common::minimizer_bucketing::{
     MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory,
 };
-use crate::utils::compressed_read::CompressedRead;
-use crate::utils::debug_utils::debug_increase;
-use crate::utils::Utils;
 use byteorder::{LittleEndian, ReadBytesExt};
 use crossbeam::queue::SegQueue;
-use hashbrown::HashMap;
-use parallel_processor::binary_writer::BinaryWriter;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::file::writer::FileWriter;
 use parallel_processor::memory_fs::MemoryFs;
-use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
-use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::max;
 use std::io::{Read, Write};
 use std::mem::size_of;
 use std::path::{Path, PathBuf};
-use std::slice::from_raw_parts;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use typenum::Unsigned;
 
 pub fn process_subbucket<'a, F: KmersTransformExecutorFactory>(
     global_data: &F::GlobalExtraData<'a>,
@@ -65,9 +48,9 @@ pub fn process_subbucket<'a, F: KmersTransformExecutorFactory>(
     }
 
     drop(bucket_stream);
-    MemoryFs::remove_file(file_path, true);
+    MemoryFs::remove_file(file_path, true).unwrap();
 
-    struct Compare {};
+    struct Compare {}
     impl SortKey<ReadRef> for Compare {
         type KeyType = u16;
         const KEY_BITS: usize = size_of::<u16>() * 8;
@@ -99,7 +82,7 @@ pub fn process_subbucket<'a, F: KmersTransformExecutorFactory>(
             let mut preproc_info = <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::PreprocessInfo::default();
 
             let buckets_log2 = FIRST_BUCKET_BITS;
-            let buckets_count = (1 << buckets_log2);
+            let buckets_count = 1 << buckets_log2;
 
             let mut sub_buckets = Vec::with_capacity(buckets_count);
 
@@ -133,7 +116,7 @@ pub fn process_subbucket<'a, F: KmersTransformExecutorFactory>(
                             &extra,
                             &mut temp_mem,
                         );
-                        sub_buckets[bucket as usize].write(data);
+                        sub_buckets[bucket as usize].write(data).unwrap();
                     },
                 );
             }

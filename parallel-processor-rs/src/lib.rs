@@ -1,12 +1,4 @@
-#![feature(is_sorted, specialization)]
-#![feature(associated_type_defaults)]
-#![feature(new_uninit)]
-#![feature(drain_filter)]
-#![feature(const_fn_floating_point_arithmetic)]
-#![feature(const_btree_new)]
-#![feature(allocator_api)]
-#![feature(backtrace)]
-#![feature(thread_local)]
+#![deny(warnings)]
 
 #[macro_use]
 pub mod stats_logger;

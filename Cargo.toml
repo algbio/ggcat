@@ -1,7 +1,7 @@
 [package]
 authors = ["Andrea Cracco <guilucand@gmail.com>"]
 edition = "2021"
-name = "BiLoki"
+name = "biloki"
 version = "0.1.0"
 
 [dependencies]
@@ -41,6 +41,7 @@ csv = "1.1.6"
 flate2 = { default-features = false, features = ["cloudflare_zlib"], version = "1.0.22" }
 static_assertions = "1.1.0"
 typenum = "1.15.0"
+nightly-quirks = { path = "nightly-quirks" }
 
 [profile.release]
 debug = true

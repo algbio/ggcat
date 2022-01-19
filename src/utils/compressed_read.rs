@@ -1,11 +1,10 @@
 use crate::hashes::HashableSequence;
-use crate::io::varint::{encode_varint, encode_varint_flags};
+use crate::io::varint::encode_varint_flags;
 use crate::pipeline_common::minimizer_bucketing::MinimizerInputSequence;
 use crate::utils::Utils;
-use std::io::Write;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
-use std::ops::{Index, Range};
+use std::ops::Range;
 use std::slice::from_raw_parts;
 
 #[derive(Copy, Clone)]
@@ -44,6 +43,7 @@ impl CompressedReadIndipendent {
 
 impl<'a> CompressedRead<'a> {
     #[inline(always)]
+    #[allow(non_camel_case_types)]
     pub fn from_plain_write_directly_to_buffer_with_flags<FLAGS_COUNT: typenum::Unsigned>(
         seq: &'a [u8],
         buffer: &mut Vec<u8>,
@@ -154,7 +154,7 @@ impl<'a> CompressedRead<'a> {
     #[inline(always)]
     pub unsafe fn get_base_unchecked(&self, index: usize) -> u8 {
         let index = index + self.start as usize;
-        ((*self.data.add(index / 4) >> ((index % 4) * 2)) & 0x3)
+        (*self.data.add(index / 4) >> ((index % 4) * 2)) & 0x3
     }
 
     pub fn write_to_slice(&self, slice: &mut [u8]) {

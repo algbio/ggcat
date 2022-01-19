@@ -2,10 +2,8 @@ use crate::colors::storage::ColorsSerializerImpl;
 use crate::colors::ColorIndexType;
 use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::io::chunks_writer::ChunksWriter;
-use bincode::Options;
 use desse::{Desse, DesseSized};
 use parking_lot::Mutex;
-use rayon::str::SplitTerminator;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -54,7 +52,7 @@ impl<SI: ColorsSerializerImpl> ColorsSerializer<SI> {
         let mut file = File::open(file).unwrap();
 
         let mut header_buffer = [0; ColorsFileHeader::SIZE];
-        file.read_exact(&mut header_buffer);
+        file.read_exact(&mut header_buffer).unwrap();
 
         let header: ColorsFileHeader = ColorsFileHeader::deserialize_from(&header_buffer);
         assert_eq!(header.magic, MAGIC_STRING);
@@ -77,7 +75,7 @@ impl<SI: ColorsSerializerImpl> ColorsSerializer<SI> {
         };
 
         {
-            file.seek(SeekFrom::Start(header.index_offset));
+            file.seek(SeekFrom::Start(header.index_offset)).unwrap();
             let colors_index: ColorsIndexMap = bincode::deserialize_from(&mut file).unwrap();
 
             for entry in colors_index.pairs.iter() {
@@ -91,8 +89,8 @@ impl<SI: ColorsSerializerImpl> ColorsSerializer<SI> {
 
         {
             assert_ne!(color_entry.file_offset, 0);
-            file.seek(SeekFrom::Start(color_entry.file_offset));
-            let mut compressed_stream = lz4::Decoder::new(BufReader::new(file)).unwrap();
+            file.seek(SeekFrom::Start(color_entry.file_offset)).unwrap();
+            let compressed_stream = lz4::Decoder::new(BufReader::new(file)).unwrap();
 
             let colors = SI::decode_color(compressed_stream, color_entry, color_index);
 
@@ -107,14 +105,16 @@ impl<SI: ColorsSerializerImpl> ColorsSerializer<SI> {
     pub fn new(file: impl AsRef<Path>, color_names: Vec<String>) -> Self {
         let mut colormap_file = File::create(file).unwrap();
 
-        colormap_file.write_all(&ColorsFileHeader::default().serialize()[..]);
+        colormap_file
+            .write_all(&ColorsFileHeader::default().serialize()[..])
+            .unwrap();
 
         colormap_file = {
             let mut color_names_stream = lz4::EncoderBuilder::new()
                 .level(4)
                 .build(colormap_file)
                 .unwrap();
-            bincode::serialize_into(&mut color_names_stream, &color_names);
+            bincode::serialize_into(&mut color_names_stream, &color_names).unwrap();
 
             let (cf, res) = color_names_stream.finish();
             res.unwrap();
@@ -154,7 +154,7 @@ impl<SI: ColorsSerializerImpl> ColorsSerializer<SI> {
 }
 
 fn bincode_serialize_ref<S: Write, D: Serialize>(ser: &mut S, data: &D) {
-    bincode::serialize_into(ser, data);
+    bincode::serialize_into(ser, data).unwrap();
 }
 
 impl<SI: ColorsSerializerImpl> Drop for ColorsSerializer<SI> {
@@ -168,15 +168,15 @@ impl<SI: ColorsSerializerImpl> Drop for ColorsSerializer<SI> {
         let (colors_file, index_map) = colors_lock.deref_mut();
         index_map.pairs.sort();
 
-        colors_file.flush();
+        colors_file.flush().unwrap();
 
         let index_position = colors_file.stream_position().unwrap();
 
         bincode_serialize_ref(colors_file, index_map);
-        colors_file.flush();
+        colors_file.flush().unwrap();
 
         let total_size = colors_file.stream_position().unwrap();
-        colors_file.seek(SeekFrom::Start(0));
+        colors_file.seek(SeekFrom::Start(0)).unwrap();
 
         colors_file
             .write_all(
@@ -195,7 +195,7 @@ impl<SI: ColorsSerializerImpl> Drop for ColorsSerializer<SI> {
             )
             .unwrap();
 
-        colors_file.flush();
+        colors_file.flush().unwrap();
     }
 }
 
@@ -212,7 +212,7 @@ pub struct StreamWrapper<'a> {
 impl<'a> Write for StreamWrapper<'a> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.serializer.flush_data(&mut self.tmp_data, buf);
-        Ok((buf.len()))
+        Ok(buf.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
@@ -262,7 +262,7 @@ impl ChunksWriter for ColorsFlushProcessing {
 
         let file_offset = self.offset.fetch_add(data.len() as u64, Ordering::Relaxed);
 
-        file_lock.0.write_all(data.as_slice());
+        file_lock.0.write_all(data.as_slice()).unwrap();
         file_lock.1.pairs.push(ColorsIndexEntry {
             start_index,
             stride,

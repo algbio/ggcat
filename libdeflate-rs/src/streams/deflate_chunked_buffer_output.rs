@@ -1,19 +1,15 @@
 use crate::utils::copy_rolling;
 use crate::{DeflateOutput, OutStreamResult};
 use crc32fast::Hasher;
+use nightly_quirks::utils::NightlyUtils;
 use std::cmp::min;
-use std::fs::File;
-use std::io::Write;
-use std::marker::PhantomData;
 use std::mem::size_of;
-use std::path::{Path, PathBuf};
 use std::slice::from_raw_parts_mut;
 
 pub struct DeflateChunkedBufferOutput<'a> {
     buffer: Box<[u8]>,
     lookback_pos: usize,
     position: usize,
-    tot_out: usize,
     crc32: Hasher,
     written: usize,
     func: Box<dyn FnMut(&[u8]) -> Result<(), ()> + 'a>,
@@ -22,10 +18,9 @@ pub struct DeflateChunkedBufferOutput<'a> {
 impl<'a> DeflateChunkedBufferOutput<'a> {
     pub fn new<F: FnMut(&[u8]) -> Result<(), ()> + 'a>(write_func: F, buf_size: usize) -> Self {
         Self {
-            buffer: unsafe { Box::new_uninit_slice(buf_size).assume_init() },
+            buffer: unsafe { NightlyUtils::box_new_uninit_slice_assume_init(buf_size) },
             lookback_pos: 0,
             position: 0,
-            tot_out: 0,
             crc32: Hasher::new(),
             written: 0,
             func: Box::new(write_func),
@@ -56,7 +51,6 @@ impl<'a> DeflateChunkedBufferOutput<'a> {
 }
 
 impl<'a> DeflateOutput for DeflateChunkedBufferOutput<'a> {
-
     #[inline(always)]
     fn copy_forward(&mut self, prev_offset: usize, length: usize) -> bool {
         if self.buffer.len() - self.position <= length {

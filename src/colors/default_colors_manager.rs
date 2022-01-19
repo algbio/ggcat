@@ -4,12 +4,11 @@ use crate::colors::colors_manager::{
 };
 use crate::colors::colors_memmap::ColorsMemMap;
 use crate::colors::storage::roaring::RoaringColorsSerializer;
-use crate::colors::storage::run_length::RunLengthColorsSerializer;
 use crate::colors::ColorIndexType;
 use crate::hashes::HashFunctionFactory;
 use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
-use byteorder::{ReadBytesExt, WriteBytesExt};
+use byteorder::ReadBytesExt;
 use hashbrown::HashMap;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -61,12 +60,12 @@ impl SequenceExtraData for MinBkSingleColor {
         .map(|x| Self(x as ColorIndexType))
     }
 
-    fn decode<'a>(mut reader: &'a mut impl Read) -> Option<Self> {
+    fn decode<'a>(reader: &'a mut impl Read) -> Option<Self> {
         decode_varint(|| reader.read_u8().ok()).map(|x| Self(x as ColorIndexType))
     }
 
-    fn encode<'a>(&self, mut writer: &'a mut impl Write) {
-        encode_varint(|b| writer.write_all(b), self.0 as u64);
+    fn encode<'a>(&self, writer: &'a mut impl Write) {
+        encode_varint(|b| writer.write_all(b), self.0 as u64).unwrap();
     }
 
     #[inline(always)]
@@ -108,7 +107,7 @@ pub struct UnitigColorDataSerializer {
 static mut DESERIALIZED_TEMP_COLOR_DATA: Option<DefaultUnitigsTempColorData> = None;
 
 impl SequenceExtraData for UnitigColorDataSerializer {
-    fn decode<'a>(mut reader: &'a mut impl Read) -> Option<Self> {
+    fn decode<'a>(reader: &'a mut impl Read) -> Option<Self> {
         let temp_data = unsafe {
             if DESERIALIZED_TEMP_COLOR_DATA.is_none() {
                 DESERIALIZED_TEMP_COLOR_DATA = Some(DefaultUnitigsTempColorData {
@@ -124,12 +123,10 @@ impl SequenceExtraData for UnitigColorDataSerializer {
         let colors_count = decode_varint(|| reader.read_u8().ok())?;
 
         for _ in 0..colors_count {
-            unsafe {
-                temp_data.colors.push_back((
-                    decode_varint(|| reader.read_u8().ok())? as ColorIndexType,
-                    decode_varint(|| reader.read_u8().ok())?,
-                ));
-            }
+            temp_data.colors.push_back((
+                decode_varint(|| reader.read_u8().ok())? as ColorIndexType,
+                decode_varint(|| reader.read_u8().ok())?,
+            ));
         }
         Some(Self {
             data: temp_data,
@@ -137,14 +134,14 @@ impl SequenceExtraData for UnitigColorDataSerializer {
         })
     }
 
-    fn encode<'a>(&self, mut writer: &'a mut impl Write) {
+    fn encode<'a>(&self, writer: &'a mut impl Write) {
         let colors_count = self.slice.1 - self.slice.0;
-        encode_varint(|b| writer.write_all(b), colors_count as u64);
+        encode_varint(|b| writer.write_all(b), colors_count as u64).unwrap();
 
         for i in self.slice.0..self.slice.1 {
             let el = self.data.colors[i];
-            encode_varint(|b| writer.write_all(b), el.0 as u64);
-            encode_varint(|b| writer.write_all(b), el.1);
+            encode_varint(|b| writer.write_all(b), el.0 as u64).unwrap();
+            encode_varint(|b| writer.write_all(b), el.1).unwrap();
         }
     }
 
@@ -360,7 +357,8 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H, DefaultColorsManager>
                 buffer,
                 " ({}, {})",
                 data.data.colors[i].0, data.data.colors[i].1
-            );
+            )
+            .unwrap();
         }
     }
 

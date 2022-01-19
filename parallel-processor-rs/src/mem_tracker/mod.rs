@@ -2,15 +2,14 @@ use crate::memory_data_size::MemoryDataSize;
 use crate::memory_fs::allocator::CHUNKS_ALLOCATOR;
 use crate::memory_fs::file::flush::GlobalFlush;
 use crate::memory_fs::file::internal::MemoryFileInternal;
-use parking_lot::{Mutex, MutexGuard};
+use parking_lot::lock_api::RawMutex;
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
 use std::panic::Location;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 use std::thread;
 use std::time::Duration;
-use parking_lot::lock_api::RawMutex;
 
 pub mod tracked_box;
 pub mod tracked_vec;
@@ -69,16 +68,15 @@ pub fn print_memory_info() {
         let mut resident = 0;
         let mut objects_count = 0;
 
-        info.drain_filter(|x| match x.upgrade() {
-            None => true,
+        info.retain(|x| match x.upgrade() {
+            None => false,
             Some(val) => {
                 reserved += val.bytes.load(Ordering::Relaxed);
                 resident += val.resident_bytes.load(Ordering::Relaxed);
                 objects_count += 1;
-                false
+                true
             }
-        })
-        .for_each(drop);
+        });
 
         println!(
             "Allocation: {:?} => alloc: {:.2} resident: {:.2} [tot {} objects]",

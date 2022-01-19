@@ -3,56 +3,23 @@ use crate::config::{BucketIndexType, MinimizerType, SortingHashType, DEFAULT_MIN
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
-use crate::io::concurrent::intermediate_storage::{
-    IntermediateReadsWriter, IntermediateSequencesStorage, SequenceExtraData,
-};
-use crate::io::sequences_reader::{FastaSequence, SequencesReader};
+use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::pipeline_common::minimizer_bucketing::{
-    GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutionContext,
-    MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory, MinimizerInputSequence,
+    GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
+    MinimizerBucketingExecutorFactory, MinimizerInputSequence,
 };
 use crate::query_pipeline::parallel_kmers_query::QueryKmersReferenceData;
 use crate::query_pipeline::QueryPipeline;
-use crate::rolling::kseq_iterator::{RollingKseqImpl, RollingKseqIterator};
 use crate::rolling::minqueue::RollingMinQueue;
-use crate::rolling::quality_check::{RollingQualityCheck, LOGPROB_MULTIPLIER, SCORES_INDEX};
-use crate::KEEP_FILES;
-use bstr::ByteSlice;
-use byteorder::{ReadBytesExt, WriteBytesExt};
-use crossbeam::channel::*;
-use crossbeam::queue::{ArrayQueue, SegQueue};
-use crossbeam::{scope, thread};
-use hashbrown::HashMap;
-use itertools::Itertools;
-use nix::sys::ptrace::cont;
-use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
+use crate::FastaSequence;
+use byteorder::ReadBytesExt;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parallel_processor::threadpools_chain::{
-    ObjectsPoolManager, ThreadChainObject, ThreadPoolDefinition, ThreadPoolsChain,
-};
-use rayon::iter::ParallelIterator;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
-use std::cmp::{max, min};
-use std::hash::Hasher;
-use std::intrinsics::unlikely;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
-use std::mem::swap;
 use std::num::NonZeroU64;
-use std::ops::{Deref, Range};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::process::exit;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::{sleep, Thread};
-use std::time::{Duration, Instant};
-
-static SEQ_COUNT: AtomicU64 = AtomicU64::new(0);
-static TOT_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
-static VALID_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
-
-struct ContextExtraData {}
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct KmersQueryData(pub u64);
@@ -83,13 +50,13 @@ impl Default for ReadType {
 
 impl SequenceExtraData for KmersQueryData {
     #[inline(always)]
-    fn decode<'a>(mut reader: &'a mut impl Read) -> Option<Self> {
+    fn decode<'a>(reader: &'a mut impl Read) -> Option<Self> {
         Some(Self(decode_varint(|| reader.read_u8().ok())?))
     }
 
     #[inline(always)]
-    fn encode<'a>(&self, mut writer: &'a mut impl Write) {
-        encode_varint(|b| writer.write_all(b), self.0);
+    fn encode<'a>(&self, writer: &'a mut impl Write) {
+        encode_varint(|b| writer.write_all(b), self.0).unwrap();
     }
 
     #[inline(always)]
@@ -149,11 +116,12 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
         }
     }
 
+    // FIXME: Implement
     fn reprocess_sequence(
         &mut self,
-        flags: u8,
-        extra_data: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-        preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        _flags: u8,
+        _extra_data: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
+        _preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         todo!()
     }
@@ -238,7 +206,7 @@ impl QueryPipeline {
             .write()
             .start_phase("phase: graph + query bucketing".to_string());
 
-        let mut input_files = vec![(graph_file, FileType::Graph), (query_file, FileType::Query)];
+        let input_files = vec![(graph_file, FileType::Graph), (query_file, FileType::Query)];
 
         GenericMinimizerBucketing::do_bucketing::<QuerierMinimizerBucketingExecutorFactory<H, CX>>(
             input_files,

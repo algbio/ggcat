@@ -1,25 +1,23 @@
-use std::intrinsics::likely;
 use crate::deflate_constants::DEFLATE_MIN_MATCH_LEN;
+use nightly_quirks::branch_pred::likely;
 
 const WORD_BYTES: usize = std::mem::size_of::<usize>();
 
 #[inline(always)]
 unsafe fn copy_word_unaligned(src: *const u8, dst: *mut u8) {
-    std::ptr::write_unaligned(dst as *mut usize, std::ptr::read_unaligned(src as *const usize));
+    std::ptr::write_unaligned(
+        dst as *mut usize,
+        std::ptr::read_unaligned(src as *const usize),
+    );
 }
 
 #[inline(always)]
-pub unsafe fn copy_rolling(
-    mut dst: *mut u8,
-    dst_end: *const u8,
-    offset: usize,
-    has_space: bool) {
-
+pub unsafe fn copy_rolling(mut dst: *mut u8, dst_end: *const u8, offset: usize, has_space: bool) {
     let mut src = dst.offset(-(offset as isize)) as *const u8;
 
     if
-        /* max overrun is writing 3 words for a min length match */
-        likely(has_space) {
+    /* max overrun is writing 3 words for a min length match */
+    likely(has_space) {
         if offset >= WORD_BYTES {
             /* words don't overlap? */
             copy_word_unaligned(src, dst);
@@ -83,5 +81,4 @@ pub unsafe fn copy_rolling(
             }
         }
     }
-
 }

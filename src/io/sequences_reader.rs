@@ -1,19 +1,6 @@
 use crate::io::lines_reader::LinesReader;
-use bstr::ByteSlice;
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
-use rand::Rng;
-use serde::Serialize;
-use std::fs::File;
-use std::hint::unreachable_unchecked;
-use std::intrinsics::unlikely;
-use std::io::{BufRead, BufReader, Read};
-use std::num::Wrapping;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::process::Stdio;
-use std::ptr::null_mut;
-use std::slice::from_raw_parts;
+use nightly_quirks::branch_pred::unlikely;
+use std::path::Path;
 
 const IDENT_STATE: usize = 0;
 const SEQ_STATE: usize = 1;
@@ -54,7 +41,7 @@ impl SequencesReader {
 
     pub fn process_file_extended<F: FnMut(FastaSequence)>(
         source: impl AsRef<Path>,
-        mut func: F,
+        func: F,
         remove_file: bool,
     ) {
         const FASTQ_EXTS: &[&str] = &["fq", "fastq"];
@@ -141,6 +128,9 @@ impl SequencesReader {
         LinesReader::process_lines(
             source,
             |line: &[u8], finished| {
+                if unlikely(finished) {
+                    return;
+                }
                 match state {
                     QUAL_STATE => {
                         if !skipped_plus {

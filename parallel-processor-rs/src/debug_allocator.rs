@@ -1,16 +1,11 @@
 use dashmap::DashMap;
 use lazy_static::lazy_static;
-use parking_lot::ReentrantMutex;
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
-use std::alloc::{AllocError, GlobalAlloc, Layout, System};
-use std::backtrace;
-use std::backtrace::Backtrace;
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::fs::File;
 use std::io::Write;
-use std::ops::Deref;
 use std::path::Path;
-use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -55,7 +50,7 @@ lazy_static! {
 pub fn debug_print_allocations(dir: impl AsRef<Path>, period: Duration) {
     let dir = dir.as_ref().to_path_buf();
     std::thread::spawn(move || {
-        IS_NESTED.store(true, Ordering::Relaxed);
+        IS_NESTED.with(|n| n.store(true, Ordering::Relaxed));
         let mut count = 1;
         loop {
             std::thread::sleep(period);
@@ -67,7 +62,7 @@ pub fn debug_print_allocations(dir: impl AsRef<Path>, period: Duration) {
 
             allocations.sort_by(|x, y| y.max_size.cmp(&x.max_size));
 
-            File::create(path)
+            let _ = File::create(path)
                 .unwrap()
                 .write_all(to_string_pretty(&allocations).unwrap().as_bytes());
 
@@ -77,9 +72,9 @@ pub fn debug_print_allocations(dir: impl AsRef<Path>, period: Duration) {
 }
 
 fn store_backtrace(addr: *mut u8, size: usize) {
-    let bt: Backtrace = backtrace::Backtrace::force_capture();
+    let bt: backtrace::Backtrace = backtrace::Backtrace::new();
 
-    let bt_string = bt.to_string();
+    let bt_string = format!("{:?}", bt);
 
     let parts = bt_string.split("  5:").collect::<Vec<_>>();
 
@@ -137,69 +132,42 @@ impl DebugAllocator {
     }
 }
 
-struct AllocLock {}
-
-#[thread_local]
-static IS_NESTED: AtomicBool = AtomicBool::new(false);
-
-// impl AllocLock {
-//     fn lock() -> Self {
-//         if unsafe { LOCK_COUNT } == 0 {
-//             let id = std::thread::current().id();
-//             while IS_LOCKED.swap(true, Ordering::Relaxed) {
-//                 std::thread::yield_now();
-//             }
-//         }
-//         unsafe {
-//             LOCK_COUNT += 1;
-//         }
-//         Self {}
-//     }
-// }
-//
-// impl Drop for AllocLock {
-//     fn drop(&mut self) {
-//         unsafe {
-//             LOCK_COUNT -= 1;
-//             if LOCK_COUNT == 0 {
-//                 IS_LOCKED.swap(false, Ordering::Relaxed);
-//             }
-//         }
-//     }
-// }
+thread_local! {
+    static IS_NESTED: AtomicBool = AtomicBool::new(false);
+}
 
 unsafe impl GlobalAlloc for DebugAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = self.default_allocator.alloc(layout);
-        if !IS_NESTED.swap(true, Ordering::Relaxed) {
+        if !IS_NESTED.with(|n| n.swap(true, Ordering::Relaxed)) {
             store_backtrace(ptr, layout.size());
-            IS_NESTED.store(false, Ordering::Relaxed);
+            IS_NESTED.with(|n| n.store(false, Ordering::Relaxed));
         }
         ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        if !IS_NESTED.swap(true, Ordering::Relaxed) {
+        if !IS_NESTED.with(|n| n.swap(true, Ordering::Relaxed)) {
             dealloc_backtrace(ptr, layout.size());
-            IS_NESTED.store(false, Ordering::Relaxed);
+            IS_NESTED.with(|n| n.store(false, Ordering::Relaxed));
         }
         self.default_allocator.dealloc(ptr, layout)
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         let ptr = self.default_allocator.alloc_zeroed(layout);
-        if !IS_NESTED.swap(true, Ordering::Relaxed) {
+        if !IS_NESTED.with(|n| n.swap(true, Ordering::Relaxed)) {
             store_backtrace(ptr, layout.size());
-            IS_NESTED.store(false, Ordering::Relaxed);
+            IS_NESTED.with(|n| n.store(false, Ordering::Relaxed));
         }
         ptr
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let new_ptr = self.default_allocator.realloc(ptr, layout, new_size);
-        if !IS_NESTED.swap(true, Ordering::Relaxed) {
+        if !IS_NESTED.with(|n| n.swap(true, Ordering::Relaxed)) {
             update_backtrace(ptr, new_ptr, (new_size as isize) - (layout.size() as isize));
-            IS_NESTED.store(false, Ordering::Relaxed);
+            IS_NESTED.with(|n| n.store(false, Ordering::Relaxed));
         }
         new_ptr
     }

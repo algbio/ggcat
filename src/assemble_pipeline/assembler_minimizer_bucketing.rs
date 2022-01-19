@@ -7,14 +7,12 @@ use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
 use crate::io::sequences_reader::FastaSequence;
 use crate::pipeline_common::minimizer_bucketing::{
-    GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutionContext,
-    MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory, MinimizerInputSequence,
+    GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
+    MinimizerBucketingExecutorFactory, MinimizerInputSequence,
 };
 use crate::rolling::minqueue::RollingMinQueue;
-use crate::utils::debug_functions::debug_minimizers;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::max;
-use std::io::Write;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -178,7 +176,7 @@ impl AssemblePipeline {
             .write()
             .start_phase("phase: reads bucketing".to_string());
 
-        let mut input_files: Vec<_> = input_files
+        let input_files: Vec<_> = input_files
             .into_iter()
             .enumerate()
             .map(|(i, f)| (f, i as u64))

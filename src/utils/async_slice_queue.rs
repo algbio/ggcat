@@ -64,7 +64,9 @@ impl<T: Copy, P: ChunksWriter<TargetData = T>> AsyncSliceQueue<T, P> {
         let (sender, receiver) = crossbeam::channel::bounded(max_slices_buffers_count);
 
         for _ in 1..max_slices_buffers_count {
-            sender.send(Vec::with_capacity(slices_buffers_size));
+            sender
+                .send(Vec::with_capacity(slices_buffers_size))
+                .unwrap();
         }
 
         AsyncSliceQueue {
@@ -125,7 +127,7 @@ impl<T: Copy, P: ChunksWriter<TargetData = T>> AsyncSliceQueue<T, P> {
                                 }
                                 self.async_processor
                                     .end_processing(tmp_buffer, color_start, 1);
-                                self.chunks_buffers_pool.0.send(slice_array);
+                                self.chunks_buffers_pool.0.send(slice_array).unwrap();
                             }
 
                             push_lock = self.push_lock.lock();

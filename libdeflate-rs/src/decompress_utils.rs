@@ -28,13 +28,12 @@
  * which they have to fill less often.
  */
 use crate::decompress_deflate::{
-    deflate_decompress_template, LenType, LITLEN_ENOUGH, LITLEN_TABLEBITS,
-    OFFSET_ENOUGH, OFFSET_TABLEBITS, PRECODE_ENOUGH, PRECODE_TABLEBITS,
+    deflate_decompress_template, LenType, LITLEN_ENOUGH, LITLEN_TABLEBITS, OFFSET_ENOUGH,
+    OFFSET_TABLEBITS, PRECODE_ENOUGH, PRECODE_TABLEBITS,
 };
 use crate::deflate_constants::*;
-use crate::{safety_check, DeflateInput, DeflateOutput, LibdeflateError, LibdeflateDecompressor};
-use std::intrinsics::{likely, unlikely};
-use std::mem::MaybeUninit;
+use crate::{safety_check, DeflateInput, DeflateOutput, LibdeflateDecompressor, LibdeflateError};
+use nightly_quirks::branch_pred::{likely, unlikely};
 
 type BitBufType = usize;
 
@@ -61,7 +60,7 @@ pub struct DecompressTempData<'a, I: DeflateInput, O: DeflateOutput> {
  * in FILL_BITS_WORDWISE() that leaves 'bitsleft' in the range
  * [WORDBITS - 8, WORDBITS - 1] rather than [WORDBITS - 7, WORDBITS].
  */
-const BITBUF_NBITS: usize = (8 * std::mem::size_of::<BitBufType>() - 1);
+const BITBUF_NBITS: usize = 8 * std::mem::size_of::<BitBufType>() - 1;
 
 /*
  * The maximum number of bits that can be ensured in the bitbuffer variable,
@@ -69,7 +68,7 @@ const BITBUF_NBITS: usize = (8 * std::mem::size_of::<BitBufType>() - 1);
  * only reads whole bytes from memory, so this is the lowest value of 'bitsleft'
  * at which another byte cannot be read without first consuming some bits.
  */
-pub const MAX_ENSURE: usize = (BITBUF_NBITS - 7);
+pub const MAX_ENSURE: usize = BITBUF_NBITS - 7;
 
 /*
  * Evaluates to true if 'n' is a valid argument to ENSURE_BITS(n), or false if
@@ -104,7 +103,7 @@ pub const fn can_ensure(n: usize) -> bool {
 #[inline(always)]
 pub fn fill_bits_bytewise<I: DeflateInput, O: DeflateOutput>(data: &mut DecompressTempData<I, O>) {
     loop {
-        if unsafe { likely(data.input_stream.ensure_length(1)) } {
+        if likely(data.input_stream.ensure_length(1)) {
             let mut byte = [0];
             unsafe {
                 data.input_stream.read_unchecked(&mut byte);
@@ -146,7 +145,9 @@ pub fn fill_bits_bytewise<I: DeflateInput, O: DeflateOutput>(data: &mut Decompre
  * updated, while the current solution updates 'bitsleft' with no dependencies.
  */
 #[inline(always)]
-pub unsafe fn fill_bits_wordwise<I: DeflateInput, O: DeflateOutput>(data: &mut DecompressTempData<I, O>) {
+pub unsafe fn fill_bits_wordwise<I: DeflateInput, O: DeflateOutput>(
+    data: &mut DecompressTempData<I, O>,
+) {
     /* BITBUF_NBITS must be all 1's in binary, see above */
     // const_assert!((BITBUF_NBITS & (BITBUF_NBITS + 1)) == 0);
 
@@ -179,14 +180,14 @@ pub fn ensure_bits<I: DeflateInput, O: DeflateOutput>(
 ) {
     if !have_bits(data, n) {
         if cfg!(target_endian = "little")
-            && unsafe {
-                likely(
-                    data.input_stream
-                        .ensure_length(std::mem::size_of::<BitBufType>()),
-                )
-            }
+            && likely(
+                data.input_stream
+                    .ensure_length(std::mem::size_of::<BitBufType>()),
+            )
         {
-            unsafe { fill_bits_wordwise(data); }
+            unsafe {
+                fill_bits_wordwise(data);
+            }
         } else {
             fill_bits_bytewise(data);
         }
@@ -679,7 +680,7 @@ const LITLEN_DECODE_RESULTS: [u32; DEFLATE_NUM_LITLEN_SYMS] = [
  * number of extra offset bits.  */
 
 pub const HUFFDEC_EXTRA_OFFSET_BITS_SHIFT: u32 = 16;
-pub const HUFFDEC_OFFSET_BASE_MASK: u32 = ((1u32 << HUFFDEC_EXTRA_OFFSET_BITS_SHIFT) - 1);
+pub const HUFFDEC_OFFSET_BASE_MASK: u32 = (1u32 << HUFFDEC_EXTRA_OFFSET_BITS_SHIFT) - 1;
 
 #[inline(always)]
 const fn odr_entry(offset_base: u32, num_extra_bits: u32) -> u32 {
@@ -775,12 +776,12 @@ pub fn build_decode_table(
 ) -> bool {
     let mut len_counts: [u32; DEFLATE_MAX_CODEWORD_LEN + 1] = [0; DEFLATE_MAX_CODEWORD_LEN + 1];
     let mut offsets: [u32; DEFLATE_MAX_CODEWORD_LEN + 1] = [0; DEFLATE_MAX_CODEWORD_LEN + 1];
-    let mut count: u32 = 0; /* num codewords remaining with this length */
-    let mut codespace_used: u32 = 0; /* codespace used out of '2^max_codeword_len' */
-    let mut cur_table_end: usize = 0; /* end index of current table */
-    let mut subtable_prefix: usize = 0; /* codeword prefix of current subtable */
-    let mut subtable_start: usize = 0; /* start index of current subtable */
-    let mut subtable_bits: usize = 0; /* log2 of current subtable length */
+    let mut count: u32; /* num codewords remaining with this length */
+    let mut codespace_used: u32; /* codespace used out of '2^max_codeword_len' */
+    let mut cur_table_end: usize; /* end index of current table */
+    let mut subtable_prefix: usize; /* codeword prefix of current subtable */
+    let mut subtable_start: usize; /* start index of current subtable */
+    let mut subtable_bits: usize; /* log2 of current subtable length */
 
     /* Count how many codewords have each length, including 0. */
     for len in 0..=max_codeword_len {
@@ -835,12 +836,12 @@ pub fn build_decode_table(
      */
 
     /* overfull code? */
-    if unsafe { unlikely(codespace_used > (1u32 << max_codeword_len)) } {
+    if unlikely(codespace_used > (1u32 << max_codeword_len)) {
         return false;
     }
 
     /* incomplete code? */
-    if unsafe { unlikely(codespace_used < (1u32 << max_codeword_len)) } {
+    if unlikely(codespace_used < (1u32 << max_codeword_len)) {
         let entry = if codespace_used == 0 {
             /*
              * An empty code is allowed.  This can happen for the
@@ -989,7 +990,7 @@ pub fn build_decode_table(
          * codeword don't match the prefix of the current subtable.
          */
         if (codeword & ((1 << table_bits) - 1)) != subtable_prefix {
-            subtable_prefix = (codeword & ((1 << table_bits) - 1));
+            subtable_prefix = codeword & ((1 << table_bits) - 1);
             subtable_start = cur_table_end;
             /*
              * Calculate the subtable length.  If the codeword has

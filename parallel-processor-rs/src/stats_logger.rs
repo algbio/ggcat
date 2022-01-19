@@ -50,7 +50,10 @@ impl Drop for StatRaiiCounter {
 macro_rules! update_stat {
     ($name:expr, $value:expr, $mode:expr) => {
         #[cfg(not(feature = "no-stats"))]
-        $crate::stats_logger::DEFAULT_STATS_LOGGER.update_stat($name, $value, $mode);
+        {
+            use $crate::stats_logger::StatMode;
+            $crate::stats_logger::DEFAULT_STATS_LOGGER.update_stat($name, $value, $mode);
+        }
     };
 }
 
@@ -107,10 +110,10 @@ impl StatsLogger {
                 entries.sort_by_key(|x| x.0);
 
                 for (name, value) in entries {
-                    writeln!(values, "{};{:.2};{:.2?}", name, value, time);
+                    let _ = writeln!(values, "{};{:.2};{:.2?}", name, value, time);
                 }
                 unsafe {
-                    (*self.stats_file.get())
+                    let _ = (*self.stats_file.get())
                         .as_mut()
                         .unwrap()
                         .lock()

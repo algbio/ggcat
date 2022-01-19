@@ -1,5 +1,4 @@
 use crate::colors::ColorIndexType;
-use std::io::Write;
 
 pub trait ChunksWriter {
     type ProcessingData;

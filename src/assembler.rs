@@ -1,17 +1,12 @@
 use crate::assemble_pipeline::parallel_kmers_merge::structs::RetType;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsManager;
-use crate::colors::default_colors_manager::DefaultColorsManager;
 use crate::config::SwapPriority;
 use crate::hashes::HashFunctionFactory;
-use crate::io::reads_reader::ReadsReader;
 use crate::io::reads_writer::ReadsWriter;
-use crate::utils::debug_utils::debug_print;
 use crate::utils::{get_memory_mode, Utils};
 use crate::{AssemblerStartingStep, KEEP_FILES, SAVE_MEMORY};
-use itertools::Itertools;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -120,11 +115,11 @@ pub fn run_assembler<
 
     let (unitigs_map, reads_map) = if step <= AssemblerStartingStep::LinksCompaction {
         for file in unames {
-            remove_file(file);
+            let _ = remove_file(file);
         }
 
         for file in rnames {
-            remove_file(file);
+            let _ = remove_file(file);
         }
 
         let mut result_map_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
@@ -177,7 +172,7 @@ pub fn run_assembler<
         };
 
         for link_file in links {
-            MemoryFs::remove_file(&link_file, !KEEP_FILES.load(Ordering::Relaxed));
+            MemoryFs::remove_file(&link_file, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
         }
         result
     } else {
@@ -188,7 +183,7 @@ pub fn run_assembler<
         return;
     }
 
-    let mut final_unitigs_file = Mutex::new(match output_file.extension() {
+    let final_unitigs_file = Mutex::new(match output_file.extension() {
         Some(ext) => match ext.to_string_lossy().to_string().as_str() {
             "lz4" => ReadsWriter::new_compressed_lz4(&output_file, 2),
             "gz" => ReadsWriter::new_compressed_gzip(&output_file, 2),
@@ -204,8 +199,6 @@ pub fn run_assembler<
             temp_dir.as_path(),
             &final_unitigs_file,
             BUCKETS_COUNT,
-            k,
-            m,
         )
     } else {
         Utils::generate_bucket_names(temp_dir.join("reads_bucket"), BUCKETS_COUNT, Some("lz4"))
@@ -221,13 +214,11 @@ pub fn run_assembler<
             unitigs_map,
             temp_dir.as_path(),
             &final_unitigs_file,
-            BUCKETS_COUNT,
             k,
-            m,
         );
     }
 
-    std::fs::remove_dir(temp_dir.as_path());
+    let _ = std::fs::remove_dir(temp_dir.as_path());
 
     final_unitigs_file.into_inner().finalize();
 

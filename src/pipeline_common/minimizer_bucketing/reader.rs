@@ -2,9 +2,8 @@ use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::io::sequences_reader::SequencesReader;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutionContext;
+use nightly_quirks::branch_pred::unlikely;
 use parallel_processor::threadpools_chain::ObjectsPoolManager;
-use std::intrinsics::unlikely;
-use std::io::Write;
 use std::mem::swap;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -33,7 +32,7 @@ pub fn minb_reader<
                     return;
                 }
 
-                if unsafe { unlikely(!data.push_sequences(x)) } {
+                if unlikely(!data.push_sequences(x)) {
                     let mut tmp_data = manager.allocate();
 
                     swap(&mut data, &mut tmp_data);

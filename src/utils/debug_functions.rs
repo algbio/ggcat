@@ -1,9 +1,22 @@
+#![allow(dead_code)]
+
 use crate::config::{BucketIndexType, DEFAULT_MINIMIZER_MASK};
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
 use crate::pipeline_common::minimizer_bucketing::MinimizerInputSequence;
 use crate::rolling::minqueue::RollingMinQueue;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+pub static KCOUNTER: AtomicU64 = AtomicU64::new(0);
+
+pub fn debug_increase() {
+    KCOUNTER.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn debug_print() {
+    println!("COUNTER: {:?}", KCOUNTER.load(Ordering::Relaxed));
+}
 
 pub fn debug_minimizers<H: HashFunctionFactory, R: MinimizerInputSequence, const MASK: u32>(
     read: R,
@@ -16,7 +29,7 @@ pub fn debug_minimizers<H: HashFunctionFactory, R: MinimizerInputSequence, const
 
     let hashes = H::new(read, m);
 
-    let mut rolling_iter = queue.make_iter::<_, MASK>(hashes.iter().map(|x| x.to_unextendable()));
+    let rolling_iter = queue.make_iter::<_, MASK>(hashes.iter().map(|x| x.to_unextendable()));
 
     for (idx, hash) in rolling_iter.enumerate() {
         println!(
@@ -33,7 +46,7 @@ pub fn debug_minimizers<H: HashFunctionFactory, R: MinimizerInputSequence, const
 
 fn assert_reads<H: HashFunctionFactory>(read: &[u8], bucket: BucketIndexType) {
     // Test ***************************
-    let K: usize = 32;
+    const K: usize = 32;
 
     if read.len() == 33 {
         let hashes = H::new(&read[0..K], M);

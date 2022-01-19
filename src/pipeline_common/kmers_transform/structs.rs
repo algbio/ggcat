@@ -1,20 +1,13 @@
-use crate::colors::colors_manager::ColorsManager;
-use crate::config::{BucketIndexType, SortingHashType, SwapPriority};
+use crate::config::{SortingHashType, SwapPriority, SECOND_BUCKETS_COUNT};
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::intermediate_storage::{IntermediateReadsReader, SequenceExtraData};
-use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
 use crate::io::varint::{decode_varint_flags, encode_varint, encode_varint_flags};
-use crate::pipeline_common::kmers_transform::MERGE_BUCKETS_COUNT;
 use crate::{CompressedRead, KEEP_FILES};
 use crossbeam::queue::SegQueue;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use parallel_processor::memory_fs::file::writer::FileWriter;
-use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
-use parking_lot::{Condvar, Mutex};
-use std::io::{Read, Write};
+use parking_lot::Condvar;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -46,6 +39,7 @@ impl ReadRef {
     }
 
     #[inline(always)]
+    #[allow(non_camel_case_types)]
     pub fn pack<'a, E: SequenceExtraData, FLAGS_COUNT: typenum::Unsigned>(
         hash: SortingHashType,
         flags: u8,
@@ -85,13 +79,14 @@ impl ReadRef {
     }
 
     #[inline(always)]
+    #[allow(non_camel_case_types)]
     pub fn unpack<'a, 'b, E: SequenceExtraData, FLAGS_COUNT: typenum::Unsigned>(
         &'a self,
         memory: &'b [u8],
     ) -> (u8, CompressedRead<'b>, E) {
         let mut read_start = self.get_offset();
         let (read_len, flags) = decode_varint_flags::<_, FLAGS_COUNT>(|| {
-            let x = unsafe { memory[read_start] };
+            let x = memory[read_start];
             read_start += 1;
             Some(x)
         })
@@ -140,7 +135,7 @@ impl<E: SequenceExtraData> BucketProcessData<E> {
         Self {
             reader: IntermediateReadsReader::<E>::new(&path, !KEEP_FILES.load(Ordering::Relaxed)),
             buckets: MultiThreadBuckets::new(
-                MERGE_BUCKETS_COUNT,
+                SECOND_BUCKETS_COUNT,
                 &(
                     PathBuf::from(tmp_dir).join(format!(
                         "vec{}",

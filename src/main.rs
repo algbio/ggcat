@@ -6,33 +6,20 @@
 //
 //
 
-#![feature(new_uninit, core_intrinsics, type_alias_impl_trait)]
+#![feature(type_alias_impl_trait)]
 #![feature(is_sorted, thread_local, panic_info_message)]
 #![feature(slice_group_by)]
-#![feature(option_result_unwrap_unchecked)]
 #![feature(generic_associated_types)]
-#![feature(const_fn_floating_point_arithmetic)]
 #![feature(trait_alias)]
-#![allow(warnings)]
 #![feature(test)]
 #![feature(slice_partition_dedup)]
-#![feature(seek_stream_len)]
+#![deny(warnings)]
 
 extern crate alloc;
 extern crate test;
 
 #[macro_use]
 extern crate static_assertions;
-
-use crate::assemble_pipeline::AssemblePipeline;
-use crate::utils::Utils;
-use rayon::ThreadPoolBuilder;
-use std::cmp::min;
-use std::fs::{create_dir_all, remove_file, File};
-use std::intrinsics::exact_div;
-use std::path::PathBuf;
-use std::process::exit;
-use structopt::{clap::ArgGroup, StructOpt};
 
 mod assemble_pipeline;
 mod benchmarks;
@@ -53,41 +40,25 @@ mod rolling;
 
 use backtrace::Backtrace;
 
-fn outputs_arg_group() -> ArgGroup<'static> {
-    // As the attributes of the struct are executed before the struct
-    // fields, we can't use .args(...), but we can use the group
-    // attribute on the fields.
-    ArgGroup::with_name("outputs").required(true)
-}
-
-use crate::assembler::run_assembler;
 use crate::assembler_generic_dispatcher::dispatch_assembler_hash_type;
 use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
-use crate::colors::colors_manager::ColorsManager;
 use crate::colors::default_colors_manager::DefaultColorsManager;
 use crate::colors::storage::run_length::RunLengthColorsSerializer;
 use crate::colors::storage::serializer::ColorsSerializer;
 use crate::colors::ColorIndexType;
-use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
-use crate::hashes::cn_seqhash;
-use crate::hashes::cn_seqhash::u64::CanonicalSeqHashFactory;
-use crate::hashes::fw_nthash::{ForwardNtHashIterator, ForwardNtHashIteratorFactory};
-use crate::hashes::fw_seqhash::u64::ForwardSeqHashFactory;
-use crate::hashes::HashFunctionFactory;
-use crate::io::reads_reader::ReadsReader;
-use crate::io::reads_writer::ReadsWriter;
-use crate::io::sequences_reader::{FastaSequence, SequencesReader};
-use crate::io::varint::decode_varint;
+use crate::io::sequences_reader::FastaSequence;
 use crate::querier_generic_dispatcher::dispatch_querier_hash_type;
 use crate::utils::compressed_read::CompressedRead;
-use byteorder::ReadBytesExt;
 use clap::arg_enum;
-use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parking_lot::Mutex;
-use std::io::{BufRead, BufReader, Write};
+use parallel_processor::memory_data_size::MemoryDataSize;
+use rayon::ThreadPoolBuilder;
+use std::fs::create_dir_all;
+use std::io::Write;
 use std::panic;
+use std::path::PathBuf;
+use std::process::exit;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use structopt::StructOpt;
 
 arg_enum! {
     #[derive(Debug, PartialOrd, PartialEq)]
@@ -256,14 +227,17 @@ fn initialize(args: &CommonArgs) {
     ThreadPoolBuilder::new()
         .num_threads(args.threads_count)
         .thread_name(|i| format!("rayon-thread-{}", i))
-        .build_global();
+        .build_global()
+        .unwrap();
 
-    create_dir_all(&args.temp_dir);
+    create_dir_all(&args.temp_dir).unwrap();
 
     parallel_processor::stats_logger::DEFAULT_STATS_LOGGER.init(args.temp_dir.join("stats.txt"));
 
     MemoryFs::init(
-        parallel_processor::memory_data_size::MemoryDataSize::from_gibioctets(args.memory),
+        parallel_processor::memory_data_size::MemoryDataSize::from_bytes(
+            (args.memory * (MemoryDataSize::OCTET_GIBIOCTET_FACTOR as f64)) as usize,
+        ),
         512,
         3,
         32768,
@@ -291,16 +265,16 @@ fn main() {
         let stderr = std::io::stderr();
         let mut err_lock = stderr.lock();
 
-        writeln!(
+        let _ = writeln!(
             err_lock,
             "Thread panicked at location: {:?}",
             info.location()
         );
         if let Some(message) = info.message() {
-            writeln!(err_lock, "Error message: {}", message);
+            let _ = writeln!(err_lock, "Error message: {}", message);
         }
         if let Some(s) = info.payload().downcast_ref::<&str>() {
-            writeln!(err_lock, "Panic payload: {:?}", s);
+            let _ = writeln!(err_lock, "Panic payload: {:?}", s);
         }
 
         println!("Backtrace: {:?}", Backtrace::new());

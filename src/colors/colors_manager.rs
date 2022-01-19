@@ -201,5 +201,5 @@ impl<H: HashFunctionFactory, C: ColorsManager> ColorsMergeManager<H, C> for () {
 
     fn print_color_data(_data: &Self::PartialUnitigsColorStructure, _buffer: &mut impl Write) {}
 
-    fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]) {}
+    fn debug_tucs(_str: &Self::TempUnitigColorStructure, _seq: &[u8]) {}
 }

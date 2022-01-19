@@ -2,32 +2,15 @@ use crate::colors::storage::serializer::{ColorsFlushProcessing, ColorsIndexEntry
 use crate::colors::storage::ColorsSerializerImpl;
 use crate::colors::ColorIndexType;
 use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
-use crate::hashes::dummy_hasher::{DummyHasher, DummyHasherBuilder};
-use crate::io::chunks_writer::ChunksWriter;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::utils::async_slice_queue::AsyncSliceQueue;
-use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
-use dashmap::DashMap;
-use desse::{Desse, DesseSized};
-use parking_lot::Mutex;
-use rand::{thread_rng, RngCore};
-use serde::{Deserialize, Serialize};
-use siphasher::sip128::{Hash128, Hasher128, SipHasher13};
-use std::cell::UnsafeCell;
-use std::cmp::max;
-use std::fs::File;
-use std::hash::{Hash, Hasher};
-use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
-use std::mem::{swap, transmute};
-use std::ops::{Deref, DerefMut};
-use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::io::{Read, Write};
 
 pub struct ColorIndexSerializer;
 impl ColorIndexSerializer {
     pub fn serialize_colors(mut writer: impl Write, colors: &[ColorIndexType]) {
-        encode_varint(|b| writer.write_all(b), (colors[0] as u64) + 2);
+        encode_varint(|b| writer.write_all(b), (colors[0] as u64) + 2).unwrap();
 
         let mut last_color = colors[0];
 
@@ -47,7 +30,7 @@ impl ColorIndexSerializer {
                     if !encode_2order {
                         // Second order encoding saves space only if there are at least
                         if i + 2 < colors.len() && (colors[i + 2] - colors[i + 1] == current_diff) {
-                            encode_varint(|b| writer.write_all(b), 1);
+                            encode_varint(|b| writer.write_all(b), 1).unwrap();
                             encode_2order_count = 2;
                             encode_2order = true;
                             encode_2order_value = current_diff;
@@ -63,16 +46,16 @@ impl ColorIndexSerializer {
             }
 
             if flush_2ndorder {
-                encode_varint(|b| writer.write_all(b), encode_2order_value as u64);
-                encode_varint(|b| writer.write_all(b), encode_2order_count);
+                encode_varint(|b| writer.write_all(b), encode_2order_value as u64).unwrap();
+                encode_varint(|b| writer.write_all(b), encode_2order_count).unwrap();
                 encode_2order = false;
             } else if !encode_2order {
-                encode_varint(|b| writer.write_all(b), (current_diff + 1) as u64);
+                encode_varint(|b| writer.write_all(b), (current_diff + 1) as u64).unwrap();
             }
 
             last_color = colors[i];
         }
-        encode_varint(|b| writer.write_all(b), 0);
+        encode_varint(|b| writer.write_all(b), 0).unwrap();
     }
 
     #[inline(always)]
@@ -99,7 +82,7 @@ impl ColorIndexSerializer {
         }
     }
 
-    pub fn deserialize_colors(mut reader: impl Read, colors: &mut Vec<ColorIndexType>) {
+    pub fn deserialize_colors(reader: impl Read, colors: &mut Vec<ColorIndexType>) {
         colors.clear();
 
         Self::deserialize_colors_diffs(reader, |c| colors.push(c));

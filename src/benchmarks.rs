@@ -1,7 +1,3 @@
-pub fn add_two(a: i32) -> i32 {
-    a + 2
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -22,11 +18,6 @@ mod tests {
     use std::ops::Deref;
     use std::time::Instant;
     use test::Bencher;
-
-    #[test]
-    fn it_works() {
-        assert_ne!(4, add_two(2));
-    }
 
     const TEST_SIZE: usize = 10000000;
 

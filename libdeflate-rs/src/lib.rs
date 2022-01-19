@@ -1,26 +1,26 @@
-#![feature(core_intrinsics)]
-#![feature(new_uninit)]
-
+#![deny(warnings)]
 pub mod decompress_deflate;
+pub mod decompress_gzip;
 mod decompress_utils;
 mod deflate_constants;
-pub mod streams;
-pub mod decompress_gzip;
 mod gzip_constants;
+pub mod streams;
 mod utils;
 
 #[macro_use]
 extern crate static_assertions;
 
-use std::fs::File;
-use std::io::Read;
-use std::mem::{MaybeUninit, size_of};
-use std::path::Path;
-use crate::decompress_deflate::{_DecStruct, LenType, LITLEN_ENOUGH, OFFSET_ENOUGH, OutStreamResult};
+use crate::decompress_deflate::{
+    LenType, OutStreamResult, _DecStruct, LITLEN_ENOUGH, OFFSET_ENOUGH,
+};
 use crate::decompress_gzip::libdeflate_gzip_decompress;
 use crate::deflate_constants::{DEFLATE_MAX_NUM_SYMS, DEFLATE_NUM_PRECODE_SYMS};
 use crate::streams::deflate_chunked_buffer_input::DeflateChunkedBufferInput;
 use crate::streams::deflate_chunked_buffer_output::DeflateChunkedBufferOutput;
+use std::fs::File;
+use std::io::Read;
+use std::mem::{size_of, MaybeUninit};
+use std::path::Path;
 
 /*
  * The main DEFLATE decompressor structure.  Since this implementation only
@@ -39,7 +39,6 @@ pub struct LibdeflateDecompressor {
     pub(crate) sorted_syms: [u16; DEFLATE_MAX_NUM_SYMS],
     pub(crate) static_codes_loaded: bool,
 }
-
 
 /*
  * Result of a call to libdeflate_deflate_decompress(),
@@ -61,7 +60,6 @@ pub enum LibdeflateError {
 }
 
 pub trait DeflateInput {
-
     const MAX_LOOK_BACK: usize = size_of::<usize>();
 
     unsafe fn get_le_word_no_advance(&mut self) -> usize;
@@ -91,11 +89,9 @@ pub trait DeflateInput {
         self.read(&mut bytes);
         u32::from_le_bytes(bytes)
     }
-
 }
 
 pub trait DeflateOutput {
-
     const MAX_LOOK_BACK: usize = 32768;
 
     fn copy_forward(&mut self, prev_offset: usize, length: usize) -> bool;
@@ -124,12 +120,15 @@ pub fn libdeflate_alloc_decompressor() -> LibdeflateDecompressor {
     unsafe { MaybeUninit::<LibdeflateDecompressor>::zeroed().assume_init() }
 }
 
-pub fn decompress_file_buffered(file: impl AsRef<Path>, func: impl FnMut(&[u8]) -> Result<(), ()>, buf_size: usize) -> Result<(), LibdeflateError> {
+pub fn decompress_file_buffered(
+    file: impl AsRef<Path>,
+    func: impl FnMut(&[u8]) -> Result<(), ()>,
+    buf_size: usize,
+) -> Result<(), LibdeflateError> {
     let mut read_file = File::open(file).unwrap();
 
-    let mut input_stream = DeflateChunkedBufferInput::new(|buf| {
-        read_file.read(buf).unwrap_or(0)
-    }, buf_size);
+    let mut input_stream =
+        DeflateChunkedBufferInput::new(|buf| read_file.read(buf).unwrap_or(0), buf_size);
 
     let mut output_stream = DeflateChunkedBufferOutput::new(func, buf_size);
 
@@ -140,7 +139,6 @@ pub fn decompress_file_buffered(file: impl AsRef<Path>, func: impl FnMut(&[u8]) 
     }
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
