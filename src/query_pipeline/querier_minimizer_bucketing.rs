@@ -1,5 +1,5 @@
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::{BucketIndexType, MinimizerType, SortingHashType, DEFAULT_MINIMIZER_MASK};
+use crate::config::{BucketIndexType, MinimizerType, DEFAULT_MINIMIZER_MASK};
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
@@ -128,7 +128,7 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData, SortingHashType),
+        F: FnMut(BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData),
         const MINIMIZER_MASK: MinimizerType
     >(
         &mut self,
@@ -151,7 +151,6 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
                 != H::get_full_minimizer::<MINIMIZER_MASK>(last_hash)
             {
                 let bucket = H::get_first_bucket(last_hash);
-                let sorting_hash = H::get_sorting_hash(last_hash);
 
                 push_sequence(
                     bucket,
@@ -166,7 +165,6 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
 
                         ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
                     },
-                    sorting_hash,
                 );
 
                 last_index = index + 1;
@@ -187,7 +185,6 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
 
                 ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
             },
-            H::get_sorting_hash(last_hash),
         );
     }
 }

@@ -22,6 +22,7 @@ use crate::utils::compressed_read::CompressedRead;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::memory_data_size::MemoryDataSize;
+use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
@@ -164,8 +165,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     fn process_group(
         &mut self,
         global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
-        reads: &[ReadRef],
-        memory: &[u8],
+        mut stream: FileReader,
     ) {
         let k = global_data.k;
 
@@ -173,12 +173,14 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         self.query_reads.clear();
         self.query_map.clear();
 
-        for packed_read in reads {
-            let (_, read, sequence_type) = packed_read
-                .unpack::<QueryKmersReferenceData::<CX::MinimizerBucketingSeqColorDataType>,
-                    <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT>
-                (memory);
+        let mut tmp_data = Vec::with_capacity(256);
 
+        while let Some((_, read, sequence_type)) = ReadRef::unpack::<
+            QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>,
+            _,
+            <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
+        >(&mut stream, &mut tmp_data)
+        {
             let hashes = MH::new(read, k);
 
             match sequence_type {

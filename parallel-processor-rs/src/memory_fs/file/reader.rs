@@ -80,6 +80,10 @@ impl FileReader {
         self.file.len()
     }
 
+    pub fn close_and_remove(self, remove_fs: bool) -> bool {
+        MemoryFileInternal::delete(self.path, remove_fs)
+    }
+
     // pub fn get_typed_chunks_mut<T>(&mut self) -> Option<impl Iterator<Item = &mut [T]>> {
     //     todo!();
     //     Some((0..1).into_iter().map(|_| &mut [0, 1][..]))

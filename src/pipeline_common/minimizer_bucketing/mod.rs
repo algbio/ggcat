@@ -3,7 +3,7 @@ mod reader;
 mod sequences_splitter;
 
 use crate::config::{
-    BucketIndexType, MinimizerType, SortingHashType, SwapPriority, DEFAULT_MINIMIZER_MASK,
+    BucketIndexType, MinimizerType, SwapPriority, DEFAULT_MINIMIZER_MASK,
     READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_SIZE,
 };
 use crate::hashes::HashableSequence;
@@ -79,7 +79,7 @@ pub trait MinimizerBucketingExecutor<'a, FACTORY: MinimizerBucketingExecutorFact
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, S, u8, FACTORY::ExtraData, SortingHashType),
+        F: FnMut(BucketIndexType, S, u8, FACTORY::ExtraData),
         const MINIMIZER_MASK: MinimizerType,
     >(
         &mut self,
@@ -142,12 +142,7 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
                     &preprocess_info,
                     sequence,
                     range,
-                    |bucket, seq, flags, extra, _| {
-                        // println!(
-                        //     "Sequence: {} /\t {}",
-                        //     std::str::from_utf8(seq).unwrap(),
-                        //     seq.len()
-                        // );
+                    |bucket, seq, flags, extra| {
                         tmp_reads_buffer.add_read::<E::FLAGS_COUNT>(extra, seq, bucket, flags);
                     },
                 );

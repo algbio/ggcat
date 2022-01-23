@@ -137,6 +137,11 @@ impl ExtendableHashTraitType for ExtForwardRabinKarpHash {
     fn to_unextendable(self) -> Self::HashTypeUnextendable {
         self.0
     }
+
+    #[inline(always)]
+    fn is_forward(&self) -> bool {
+        true
+    }
 }
 
 impl HashFunctionFactory for ForwardRabinKarpHashFactory {

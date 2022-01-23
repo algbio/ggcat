@@ -108,7 +108,7 @@ impl<'a> CompressedRead<'a> {
     //     wr.write(self.get_compr_slice());
     // }
 
-    fn get_compr_slice(&self) -> &[u8] {
+    pub fn get_compr_slice(&self) -> &[u8] {
         unsafe { from_raw_parts(self.data, (self.size + self.start as usize + 3) / 4) }
     }
 
@@ -178,11 +178,6 @@ impl<'a> CompressedRead<'a> {
             (0..self.size)
                 .map(|i| unsafe { Utils::decompress_base(self.get_base_unchecked(i)) as char }),
         )
-    }
-
-    #[inline(always)]
-    pub fn as_ptr(&self) -> *const u8 {
-        self.data
     }
 }
 

@@ -172,6 +172,11 @@ impl ExtendableHashTraitType for ExtCanonicalRabinKarpHash {
     fn to_unextendable(self) -> Self::HashTypeUnextendable {
         min(self.0, self.1)
     }
+
+    #[inline(always)]
+    fn is_forward(&self) -> bool {
+        self.0 < self.1
+    }
 }
 
 impl HashFunctionFactory for CanonicalRabinKarpHashFactory {

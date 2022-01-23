@@ -9,13 +9,12 @@ use crate::io::concurrent::intermediate_storage::SequenceExtraData;
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use crate::utils::compressed_read::CompressedRead;
 use crossbeam::queue::{ArrayQueue, SegQueue};
-use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::multi_thread_buckets::BucketsThreadDispatcher;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::{Condvar, Mutex, RwLock};
-use std::cmp::{max, min};
+use std::cmp::min;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -58,12 +57,7 @@ pub trait KmersTransformExecutor<'x, F: KmersTransformExecutorFactory> {
 
     fn maybe_swap_bucket(&mut self, global_data: &F::GlobalExtraData<'x>);
 
-    fn process_group(
-        &mut self,
-        global_data: &F::GlobalExtraData<'x>,
-        reads: &[ReadRef],
-        memory: &[u8],
-    );
+    fn process_group(&mut self, global_data: &F::GlobalExtraData<'x>, stream: FileReader);
 
     fn finalize(self, global_data: &F::GlobalExtraData<'x>);
 }
@@ -161,9 +155,6 @@ impl KmersTransform {
                             while let Some((queue_path, can_resplit)) = vecs_process_queue.pop() {
                                 let mut reader = FileReader::open(&queue_path).unwrap();
 
-                                let mut temp_readref_vec = TrackedVec::new();
-                                let mut temp_data_vec = TrackedVec::new();
-
                                 executor.maybe_swap_bucket(&global_extra_data);
 
                                 let is_outlier =
@@ -172,8 +163,6 @@ impl KmersTransform {
                                 process_subbucket::process_subbucket::<F>(
                                     &global_extra_data,
                                     reader,
-                                    &mut temp_readref_vec,
-                                    &mut temp_data_vec,
                                     executor,
                                     queue_path.as_ref(),
                                     &vecs_process_queue,
@@ -211,8 +200,7 @@ impl KmersTransform {
                             );
 
                             let mut continue_read = true;
-                            let mut tmp_data =
-                                Vec::with_capacity(max(ReadRef::TMP_DATA_OFFSET, 256));
+                            let mut tmp_data = Vec::with_capacity(256);
 
                             while continue_read {
                                 process_pending_reads(&mut executor);
@@ -227,7 +215,6 @@ impl KmersTransform {
                                         );
 
                                         let packed_slice = ReadRef::pack::<_, F::FLAGS_COUNT>(
-                                            preprocess_info.hash,
                                             preprocess_info.flags,
                                             read,
                                             &preprocess_info.extra_data,

@@ -1,7 +1,7 @@
 use crate::assemble_pipeline::parallel_kmers_merge::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::{BucketIndexType, MinimizerType, SortingHashType};
+use crate::config::{BucketIndexType, MinimizerType};
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
@@ -99,7 +99,7 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData, SortingHashType),
+        F: FnMut(BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData),
         const MINIMIZER_MASK: MinimizerType
     >(
         &mut self,
@@ -136,14 +136,12 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
                 && (preprocess_info.include_last || end_index != index)
             {
                 let bucket = H::get_first_bucket(last_hash);
-                let sorting_hash = H::get_sorting_hash(last_hash);
 
                 push_sequence(
                     bucket,
                     sequence.get_subslice((max(1, last_index) - 1)..(index + self.global_data.k)),
                     include_first as u8,
                     preprocess_info.color_info,
-                    sorting_hash,
                 );
                 last_index = index + 1;
                 last_hash = min_hash;
@@ -158,7 +156,6 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
             sequence.get_subslice(start_index..sequence.seq_len()),
             include_first as u8 | ((include_last as u8) << 1),
             preprocess_info.color_info,
-            H::get_sorting_hash(last_hash),
         );
     }
 }

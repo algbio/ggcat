@@ -1,8 +1,3 @@
-use core::slice::from_raw_parts;
-use std::cmp::min;
-use std::marker::PhantomData;
-use std::path::{Path, PathBuf};
-
 use crate::assemble_pipeline::assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsManager;
@@ -26,14 +21,19 @@ use crate::pipeline_common::minimizer_bucketing::{
 };
 use crate::utils::{get_memory_mode, Utils};
 use crate::CompressedRead;
+use core::slice::from_raw_parts;
 use crossbeam::queue::*;
 use hashbrown::HashMap;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 #[cfg(feature = "mem-analysis")]
 use parallel_processor::mem_tracker::MemoryInfo;
+use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use std::cmp::min;
+use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
 use structs::*;
 
 pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;
@@ -47,7 +47,7 @@ pub mod structs {
 
     pub struct MapEntry<CHI> {
         pub count: usize,
-        pub ignored: bool,
+        pub ignored: u8,
         pub color_index: CHI,
     }
 
@@ -154,7 +154,7 @@ struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, C
     unitigs_temp_colors:
         <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::TempUnitigColorStructure,
 
-    rcorrect_reads: TrackedVec<(MH::HashTypeExtendable, *const u8, u8, bool, bool)>,
+    rcorrect_reads: TrackedVec<(MH::HashTypeExtendable, usize, u8, bool)>,
     rhash_map: HashMap<
         MH::HashTypeUnextendable,
         MapEntry<
@@ -164,6 +164,12 @@ struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, C
     #[cfg(feature = "mem-analysis")]
     hmap_meminfo: Arc<MemoryInfo>,
     _phantom: PhantomData<H>,
+}
+
+fn get_kmer_multiplicity<CHI>(entry: &MapEntry<CHI>) -> usize {
+    // If the current set has both the partial sequences endings, we should divide the counter by 2,
+    // as all the kmers are counted exactly two times
+    entry.count >> ((entry.ignored == (READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END)) as u8)
 }
 
 impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
@@ -221,8 +227,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     fn process_group(
         &mut self,
         global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
-        reads: &[ReadRef],
-        memory: &[u8],
+        mut stream: FileReader,
     ) {
         let k = global_data.k;
         let bucket_index = self.current_bucket.get_bucket_index();
@@ -237,34 +242,40 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         }
         self.rcorrect_reads.clear();
 
-        for packed_read in reads {
-            let (kmer_flags, read, color) = packed_read
-                    .unpack::<_,
-                        <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT
-                    >(memory);
+        let mut tmp_read = Vec::with_capacity(256);
+        let mut saved_reads = Vec::with_capacity(256);
 
+        while let Some((kmer_flags, read, color)) = ReadRef::unpack::<
+            _,
+            _,
+            <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
+        >(&mut stream, &mut tmp_read)
+        {
             let hashes = MH::new(read, k);
 
             let last_hash_pos = read.bases_count() - k;
-            let mut did_max = false;
+            let mut saved_read_offset = None;
 
             for (idx, hash) in hashes.iter_enumerate() {
-                let position_ptr = unsafe { read.as_ptr().add(idx / 4) };
                 let begin_ignored = kmer_flags & READ_FLAG_INCL_BEGIN == 0 && idx == 0;
                 let end_ignored = kmer_flags & READ_FLAG_INCL_END == 0 && idx == last_hash_pos;
-                assert!(idx <= last_hash_pos);
-                did_max |= idx == last_hash_pos;
+
+                let is_forward = hash.is_forward();
 
                 let entry = self
                     .rhash_map
                     .entry(hash.to_unextendable())
                     .or_insert(MapEntry {
-                        ignored: begin_ignored || end_ignored,
+                        ignored: 0,
                         count: 0,
                         color_index: CX::ColorsMergeManagerType::<MH>::new_color_index(),
                     });
 
+                entry.ignored |= ((begin_ignored as u8) << ((!is_forward) as u8))
+                    | ((end_ignored as u8) << (is_forward as u8));
+
                 entry.count += 1;
+
                 CX::ColorsMergeManagerType::<MH>::add_temp_buffer_structure_el(
                     &mut self.temp_colors,
                     &color,
@@ -272,23 +283,41 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 );
 
                 if entry.count == global_data.min_multiplicity {
+                    if saved_read_offset.is_none() {
+                        saved_read_offset = Some(saved_reads.len());
+                        saved_reads.extend_from_slice(read.get_compr_slice())
+                    }
                     self.rcorrect_reads.push((
                         hash,
-                        position_ptr,
+                        saved_read_offset.unwrap() + (idx / 4),
                         (idx % 4) as u8,
-                        begin_ignored,
-                        end_ignored,
+                        is_forward,
                     ));
-
-                    #[cfg(feature = "mem-analysis")]
-                    {
-                        let len = self.rcorrect_reads.len();
-                        self.rcorrect_reads.update_maximum_usage(len);
-                    }
                 }
             }
-            assert!(did_max);
+
+            #[cfg(feature = "mem-analysis")]
+            {
+                let len = self.rcorrect_reads.len();
+                self.rcorrect_reads.update_maximum_usage(len);
+            }
         }
+
+        drop(tmp_read);
+        stream.close_and_remove(true);
+
+        // static MAX_RHS: AtomicUsize = AtomicUsize::new(0);
+        // static MAX_CRR: AtomicUsize = AtomicUsize::new(0);
+        //
+        // if MAX_RHS.fetch_max(self.rhash_map.len(), Ordering::Relaxed) < self.rhash_map.len() {
+        //     println!("Max rhs: {}", self.rhash_map.len());
+        // }
+        //
+        // if MAX_CRR.fetch_max(self.rcorrect_reads.len(), Ordering::Relaxed)
+        //     < self.rcorrect_reads.len()
+        // {
+        //     println!("Max crr: {}", self.rcorrect_reads.len());
+        // }
 
         if CX::COLORS_ENABLED {
             CX::ColorsMergeManagerType::<MH>::process_colors(
@@ -299,20 +328,43 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             );
         }
 
-        for (hash, read_bases_start, reads_offset, begin_ignored, end_ignored) in
-            self.rcorrect_reads.drain(..)
-        {
-            let reads_slice =
-                unsafe { from_raw_parts(read_bases_start, (k + reads_offset as usize + 3) / 4) };
+        for (hash, read_bases_start, reads_offset, is_forward) in self.rcorrect_reads.drain(..) {
+            let reads_slice = unsafe {
+                from_raw_parts(
+                    saved_reads.as_ptr().add(read_bases_start),
+                    (k + reads_offset as usize + 3) / 4,
+                )
+            };
 
             let cread =
                 CompressedRead::from_compressed_reads(reads_slice, reads_offset as usize, k);
 
             let rhentry = self.rhash_map.get_mut(&hash.to_unextendable()).unwrap();
+
+            // If the current set has both the partial sequences endings, we should divide the counter by 2,
+            // as all the kmers are counted exactly two times
+            let count = get_kmer_multiplicity(&rhentry);
+
+            if count < global_data.min_multiplicity {
+                continue;
+            }
+
             if rhentry.count == usize::MAX {
                 continue;
             }
             rhentry.count = usize::MAX;
+
+            let (begin_ignored, end_ignored) = if is_forward {
+                (
+                    rhentry.ignored == READ_FLAG_INCL_BEGIN,
+                    rhentry.ignored == READ_FLAG_INCL_END,
+                )
+            } else {
+                (
+                    rhentry.ignored == READ_FLAG_INCL_END,
+                    rhentry.ignored == READ_FLAG_INCL_BEGIN,
+                )
+            };
 
             CX::ColorsMergeManagerType::<MH>::reset_unitig_color_structure(
                 &mut self.unitigs_temp_colors,
@@ -368,7 +420,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                                 if let Some(hash) =
                                 self.rhash_map.get(&new_hash.to_unextendable())
                                 {
-                                    if hash.count >= global_data.min_multiplicity {
+                                    if get_kmer_multiplicity(&hash) >= global_data.min_multiplicity {
                                         // println!("Forward match extend read {:x?}!", new_hash);
                                         count += 1;
                                         temp_data = (new_hash, idx);
@@ -387,7 +439,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                                         if let Some(hash) =
                                         self.rhash_map.get(&bw_hash.to_unextendable())
                                         {
-                                            if hash.count >= global_data.min_multiplicity {
+                                            if get_kmer_multiplicity(&hash) >= global_data.min_multiplicity {
                                                 // println!("Backward match extend read {:x?}!", bw_hash);
                                                 if ocount > 0 {
                                                     break 'ext_loop (current_hash, false);
@@ -420,7 +472,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                                 output.push(Utils::decompress_base(temp_data.1));
 
                                 // Found a continuation into another bucket
-                                let contig_break = entryref.ignored;
+                                let contig_break = (entryref.ignored == READ_FLAG_INCL_BEGIN) || (entryref.ignored == READ_FLAG_INCL_END);
                                 if contig_break {
                                     break (temp_data.0, contig_break);
                                 }
