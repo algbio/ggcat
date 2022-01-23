@@ -4,7 +4,7 @@ mod sequences_splitter;
 
 use crate::config::{
     BucketIndexType, MinimizerType, SwapPriority, DEFAULT_MINIMIZER_MASK,
-    READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_SIZE,
+    READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
 };
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::intermediate_storage::{
@@ -235,7 +235,7 @@ impl GenericMinimizerBucketing {
                 String::from("assembler-minimizer-bucketing-reader"),
                 max(1, threads_count / 4),
                 &AtomicUsize::new(threads_count),
-                READ_INTERMEDIATE_QUEUE_SIZE.load(Ordering::Relaxed),
+                threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),
                 minb_reader,
             ),
             ThreadPoolDefinition::new(
@@ -244,7 +244,7 @@ impl GenericMinimizerBucketing {
                 String::from("assembler-minimizer-bucketing-writer"),
                 threads_count,
                 &AtomicUsize::new(threads_count),
-                READ_INTERMEDIATE_QUEUE_SIZE.load(Ordering::Relaxed),
+                threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),
                 worker::<E>,
             ),
         );

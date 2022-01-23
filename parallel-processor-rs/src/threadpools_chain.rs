@@ -89,6 +89,11 @@ impl<'a, OS: ThreadChainObject, OR: ThreadChainObject> ObjectsPoolManager<'a, OS
             .pop()
             .unwrap_or_else(|| OS::initialize(self.init_params))
     }
+
+    pub fn deallocate(&self, obj: OS) {
+        self.objects_pool.push(obj);
+    }
+
     pub fn send(&self, object: OS) {
         let _stat_raii = StatRaiiCounter::create("THREADS_BUSY_WAITING_ON_SEND");
         update_stat!("WAITING_THREADS", 1.0, StatMode::Sum);

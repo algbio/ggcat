@@ -12,8 +12,8 @@ pub const SECOND_BUCKET_BITS: usize = 8;
 pub const SORTING_HASH_SHIFT: usize =
     (size_of::<MinimizerType>() - size_of::<SortingHashType>()) * 8;
 
-pub const READ_INTERMEDIATE_CHUNKS_SIZE: usize = 1024 * 1024 * 8;
-pub static READ_INTERMEDIATE_QUEUE_SIZE: AtomicUsize = AtomicUsize::new(32);
+pub const READ_INTERMEDIATE_CHUNKS_SIZE: usize = 1024 * 1024 * 1;
+pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(3);
 
 pub const DEFAULT_MINIMIZER_MASK: MinimizerType = MinimizerType::MAX;
 

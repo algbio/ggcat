@@ -56,6 +56,8 @@ pub fn minb_reader<
         );
         if data.sequences.len() > 0 {
             manager.send(data);
+        } else {
+            manager.deallocate(data);
         }
     }
 }
