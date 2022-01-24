@@ -1,11 +1,3 @@
-//TODO:
-//
-// Fix FileReader for null
-// Fix unwanted files writing when on PreferredMemory
-// Give files different disk-writing priorities
-//
-//
-
 #![feature(type_alias_impl_trait)]
 #![feature(is_sorted, thread_local, panic_info_message)]
 #![feature(slice_group_by)]
