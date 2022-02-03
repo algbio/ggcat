@@ -8,7 +8,7 @@ pub mod vec_slice;
 use crate::config::BucketIndexType;
 use crate::PREFER_MEMORY;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use std::cmp::min;
+use std::cmp::max;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -36,7 +36,7 @@ pub fn get_memory_mode(swap_priority: usize) -> MemoryFileMode {
 
 pub fn compute_best_m(k: usize) -> usize {
     if k < 27 {
-        min(k - 1, ((k + 5) as f64 / 3.0).round() as usize)
+        max(2, (k + 3) / 2)
     } else {
         ((k + 2) as f64 / 3.0).round() as usize
     }

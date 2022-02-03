@@ -83,6 +83,7 @@ arg_enum! {
     }
 }
 
+use crate::utils::compute_best_m;
 use parallel_processor::memory_fs::MemoryFs;
 
 #[derive(StructOpt, Debug)]
@@ -234,6 +235,12 @@ fn initialize(args: &CommonArgs) {
         3,
         32768,
     );
+
+    println!(
+        "Using m: {} with k: {}",
+        args.mlen.unwrap_or(compute_best_m(args.klen)),
+        args.klen
+    )
 
     // #[cfg(feature = "mem-analysis")]
     // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));

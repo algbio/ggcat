@@ -42,9 +42,11 @@ flate2 = { default-features = false, features = ["cloudflare_zlib"], version = "
 static_assertions = "1.1.0"
 typenum = "1.15.0"
 nightly-quirks = { path = "nightly-quirks" }
+fs_extra = "1.2.0"
 
 [profile.release]
 debug = true
+lto = "fat"
 
 [features]
 mem-analysis = ["parallel-processor/track-usage"]
