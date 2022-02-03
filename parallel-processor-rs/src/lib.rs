@@ -1,4 +1,4 @@
-#![deny(warnings)]
+// #![deny(warnings)]
 
 #[macro_use]
 pub mod stats_logger;
