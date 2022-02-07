@@ -35,11 +35,7 @@ pub fn get_memory_mode(swap_priority: usize) -> MemoryFileMode {
 }
 
 pub fn compute_best_m(k: usize) -> usize {
-    if k < 27 {
-        max(2, (k + 3) / 2)
-    } else {
-        ((k + 2) as f64 / 3.0).round() as usize
-    }
+    ((k as f64).log(2.0) * 2.0).ceil() as usize
 }
 
 impl Utils {
