@@ -8,7 +8,6 @@ pub mod vec_slice;
 use crate::config::BucketIndexType;
 use crate::PREFER_MEMORY;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use std::cmp::max;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
