@@ -1,10 +1,10 @@
-use crate::multi_thread_buckets::BucketType;
 use crate::stats_logger::StatRaiiCounter;
 
 use crate::memory_fs::file::internal::MemoryFileMode;
 use crate::memory_fs::file::writer::FileWriter;
 use std::io::Write;
 use std::path::PathBuf;
+use crate::buckets::bucket_type::BucketType;
 
 pub struct LockFreeBinaryWriter {
     writer: FileWriter,

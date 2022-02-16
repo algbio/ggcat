@@ -14,7 +14,6 @@ use crate::io::sequences_reader::FastaSequence;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::reader::minb_reader;
 use crate::pipeline_common::minimizer_bucketing::sequences_splitter::SequencesSplitter;
-use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::threadpools_chain::{
     ObjectsPoolManager, ThreadPoolDefinition, ThreadPoolsChain,
@@ -23,6 +22,7 @@ use std::cmp::max;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use parallel_processor::buckets::MultiThreadBuckets;
 
 pub trait MinimizerInputSequence: HashableSequence + Copy {
     fn get_subslice(&self, range: Range<usize>) -> Self;

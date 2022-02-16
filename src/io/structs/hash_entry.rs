@@ -1,9 +1,9 @@
 use crate::config::BucketIndexType;
 use bincode::serialize_into;
-use parallel_processor::multi_thread_buckets::BucketWriter;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::mem::size_of;
+use parallel_processor::buckets::bucket_writer::BucketWriter;
 
 #[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize, Debug)]
 #[repr(u8)]

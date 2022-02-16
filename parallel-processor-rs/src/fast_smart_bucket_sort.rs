@@ -1,4 +1,3 @@
-use crate::multi_thread_buckets::BucketWriter;
 use rand::{thread_rng, RngCore};
 use rayon::prelude::*;
 use std::cell::UnsafeCell;
@@ -9,6 +8,7 @@ use std::io::Write;
 use std::slice::from_raw_parts_mut;
 use std::sync::atomic::AtomicUsize;
 use unchecked_index::{unchecked_index, UncheckedIndex};
+use crate::buckets::bucket_writer::BucketWriter;
 
 type IndexType = usize;
 

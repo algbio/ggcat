@@ -9,12 +9,12 @@ use crate::{AssemblerStartingStep, KEEP_FILES, SAVE_MEMORY};
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::MemoryFs;
-use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
 use std::fs::remove_file;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
+use parallel_processor::buckets::MultiThreadBuckets;
 
 pub fn run_assembler<
     BucketingHash: HashFunctionFactory,

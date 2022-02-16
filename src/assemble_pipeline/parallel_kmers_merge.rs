@@ -29,11 +29,12 @@ use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 #[cfg(feature = "mem-analysis")]
 use parallel_processor::mem_tracker::MemoryInfo;
 use parallel_processor::memory_fs::file::reader::FileReader;
-use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::MultiThreadBuckets;
 use structs::*;
 
 pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;
@@ -558,7 +559,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 };
                 let bw_bucket_index =
                     MH::get_first_bucket(bw_hash) % (buckets_count as BucketIndexType);
-                
+
                 self.hashes_tmp
                     .add_element(bw_bucket_index, &(), &bw_hash_sr);
             }

@@ -14,13 +14,14 @@ use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::MemoryFs;
-use parallel_processor::multi_thread_buckets::{BucketsThreadDispatcher, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::atomic::Ordering;
+use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::MultiThreadBuckets;
 
 impl AssemblePipeline {
     pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(

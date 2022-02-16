@@ -4,6 +4,7 @@ pub mod debug_functions;
 pub mod debug_utils;
 pub mod fast_rand_bool;
 pub mod vec_slice;
+pub mod vec_reader;
 
 use crate::config::BucketIndexType;
 use crate::PREFER_MEMORY;

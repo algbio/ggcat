@@ -7,12 +7,12 @@ use byteorder::ReadBytesExt;
 use crossbeam::queue::SegQueue;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parking_lot::Condvar;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use parallel_processor::buckets::MultiThreadBuckets;
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct ReadRef(());

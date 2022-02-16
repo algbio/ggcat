@@ -8,15 +8,16 @@ use lz4::{BlockMode, BlockSize, ContentChecksum};
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::file::writer::FileWriter;
 use parallel_processor::memory_fs::MemoryFs;
-use parallel_processor::multi_thread_buckets::{BucketType, MultiThreadBuckets};
+use parallel_processor::buckets::{bucket_type::BucketType, MultiThreadBuckets};
 use replace_with::replace_with_or_abort;
 use serde::{Deserialize, Serialize};
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::fmt::Debug;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use crate::utils::vec_reader::VecReader;
 
 struct PointerDecoder {
     ptr: *const u8,
@@ -129,7 +130,7 @@ impl Read for SequentialReader {
                 file.seek(SeekFrom::Start(
                     self.index.index[self.index_position as usize],
                 ))
-                .unwrap();
+                    .unwrap();
                 lz4::Decoder::new(file).unwrap()
             });
         }
@@ -151,6 +152,7 @@ pub struct IntermediateSequencesStorage<'a, T: SequenceExtraData> {
     buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T>>,
     buffers: Vec<Vec<u8>>,
 }
+
 impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
     const ALLOWED_LEN: usize = 65536;
 
@@ -192,13 +194,6 @@ impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
         {
             self.flush_buffers(bucket);
         }
-
-        // println!(
-        //     "Saving sequence {} to bucket {} with flags {:?}",
-        //     std::str::from_utf8(seq).unwrap(),
-        //     bucket,
-        //     el
-        // );
 
         el.encode(&mut self.buffers[bucket as usize]);
         CompressedRead::from_plain_write_directly_to_buffer_with_flags::<FLAGS_COUNT>(
@@ -302,83 +297,14 @@ impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
                 magic: INTERMEDIATE_READS_MAGIC,
                 index_offset: index_position,
             }
-            .serialize()[..],
+                .serialize()[..],
         )
-        .unwrap();
+            .unwrap();
 
         file.flush().unwrap();
     }
 }
 
-pub struct VecReader<'a, R: Read> {
-    vec: Vec<u8>,
-    fill: usize,
-    pos: usize,
-    reader: &'a mut R,
-    stream_ended: bool,
-}
-
-impl<'a, R: Read> VecReader<'a, R> {
-    pub fn new(capacity: usize, reader: &'a mut R) -> VecReader<'a, R> {
-        let mut vec = vec![];
-        vec.resize(capacity, 0);
-        VecReader {
-            vec,
-            fill: 0,
-            pos: 0,
-            reader,
-            stream_ended: false,
-        }
-    }
-
-    fn update_buffer(&mut self) {
-        self.fill = match self.reader.read(&mut self.vec[..]) {
-            Ok(fill) => fill,
-            Err(_) => 0,
-        };
-        self.stream_ended = self.fill == 0;
-        self.pos = 0;
-    }
-
-    #[inline]
-    pub fn read_bytes(&mut self, slice: &mut [u8]) -> usize {
-        let mut offset = 0;
-
-        while offset < slice.len() {
-            if self.fill == self.pos {
-                self.update_buffer();
-
-                if self.fill == self.pos {
-                    return offset;
-                }
-            }
-
-            let amount = min(slice.len() - offset, self.fill - self.pos);
-
-            unsafe {
-                std::ptr::copy(
-                    self.vec.as_ptr().add(self.pos),
-                    slice.as_mut_ptr().add(offset),
-                    amount,
-                );
-            }
-
-            self.pos += amount;
-            offset += amount;
-        }
-        offset
-    }
-}
-
-impl<'a, R: Read> Read for VecReader<'a, R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        Ok(self.read_bytes(buf))
-    }
-
-    fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
-        Ok(self.read_bytes(buf)).map(|_| ())
-    }
-}
 impl<T: SequenceExtraData> IntermediateReadsReader<T> {
     pub fn new(name: impl AsRef<Path>, remove_file: bool) -> Self {
         let mut file = FileReader::open(&name)

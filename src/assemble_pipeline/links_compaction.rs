@@ -11,15 +11,16 @@ use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey}
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::MemoryFs;
-use parallel_processor::multi_thread_buckets::{
-    BucketWriter, BucketsThreadDispatcher, MultiThreadBuckets,
-};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use parallel_processor::buckets::bucket_writer::BucketWriter;
+use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::buckets::single::SingleBucketThreadDispatcher;
 
 #[derive(Clone, Debug)]
 pub struct LinkMapping {
@@ -74,14 +75,15 @@ impl AssemblePipeline {
         );
 
         links_inputs.par_iter().for_each(|input| {
+            let bucket_index = Utils::get_bucket_index(input);
+
             let mut links_tmp =
                 BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &links_buckets);
             let mut final_links_tmp =
-                BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &final_buckets);
+                SingleBucketThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, bucket_index, &final_buckets);
             let mut results_tmp =
                 BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &result_map_buckets);
 
-            let bucket_index = Utils::get_bucket_index(input);
 
             let mut rand_bool = FastRandBool::new();
 
@@ -175,7 +177,7 @@ impl AssemblePipeline {
                                         x[0].entry as usize,
                                         x[0].flags.is_reverse_complemented(),
                                     )]
-                                    .iter(),
+                                        .iter(),
                                 )
                                 .chain(fw_slice.iter())
                                 .map(|x| *x),
@@ -232,7 +234,6 @@ impl AssemblePipeline {
                                 let entries = VecSlice::new_extend(&mut final_unitigs_vec, linked);
 
                                 final_links_tmp.add_element(
-                                    bucket_index,
                                     &final_unitigs_vec,
                                     &UnitigLink {
                                         entry: entry.entry,

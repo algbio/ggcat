@@ -1,10 +1,10 @@
 use crate::memory_fs::file::internal::MemoryFileMode;
 use crate::memory_fs::file::writer::FileWriter;
-use crate::multi_thread_buckets::BucketType;
 use rand::{thread_rng, RngCore};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use crate::buckets::bucket_type::BucketType;
 
 pub enum StorageMode {
     AppendOrCreate,

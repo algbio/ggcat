@@ -19,13 +19,13 @@ use bstr::ByteSlice;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::MemoryFs;
-use parallel_processor::multi_thread_buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use parallel_processor::buckets::MultiThreadBuckets;
 
 #[derive(Clone, Debug)]
 pub struct ReorganizedReadsExtraData<CX: SequenceExtraData> {
