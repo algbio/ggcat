@@ -543,13 +543,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 let fw_bucket_index =
                     MH::get_first_bucket(fw_hash) % (buckets_count as BucketIndexType);
 
-                if MH::debug_eq_to_u128(fw_hash, 40928720622913193550920092425367690797u128) {
-                    println!(
-                        "Found sequence fw: {}",
-                        std::str::from_utf8(out_seq).unwrap()
-                    );
-                }
-
                 self.hashes_tmp
                     .add_element(fw_bucket_index, &(), &fw_hash_sr);
             }
@@ -565,14 +558,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 };
                 let bw_bucket_index =
                     MH::get_first_bucket(bw_hash) % (buckets_count as BucketIndexType);
-
-                if MH::debug_eq_to_u128(bw_hash, 40928720622913193550920092425367690797u128) {
-                    println!(
-                        "Found sequence bw: {}",
-                        std::str::from_utf8(out_seq).unwrap()
-                    );
-                }
-
+                
                 self.hashes_tmp
                     .add_element(bw_bucket_index, &(), &bw_hash_sr);
             }
