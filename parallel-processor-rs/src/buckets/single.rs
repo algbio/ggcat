@@ -57,6 +57,8 @@ impl<'a, B: BucketType> SingleBucketThreadDispatcher<'a, B> {
         }
         element.write_to(&mut self.buffer, extra_data);
     }
+
+    pub fn finalize(self) {}
 }
 
 impl<'a, B: BucketType> Drop for SingleBucketThreadDispatcher<'a, B> {

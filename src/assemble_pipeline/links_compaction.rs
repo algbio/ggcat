@@ -283,7 +283,6 @@ impl AssemblePipeline {
                                 VecSlice::new_extend(&mut final_unitigs_vec, unitig_entries);
 
                             final_links_tmp.add_element(
-                                bucket_index,
                                 &final_unitigs_vec,
                                 &UnitigLink {
                                     entry: entry.entry,

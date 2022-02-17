@@ -170,6 +170,7 @@ pub fn run_assembler<
                 &mut result_map_buckets,
                 &mut final_buckets,
             );
+
             links = new_links;
             if is_finished {
                 println!("Completed compaction with {} iters", loop_iteration);
