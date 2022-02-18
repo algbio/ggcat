@@ -9,6 +9,7 @@ pub mod vec_reader;
 use crate::config::BucketIndexType;
 use crate::PREFER_MEMORY;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
+use std::cmp::{max, min};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -35,7 +36,7 @@ pub fn get_memory_mode(swap_priority: usize) -> MemoryFileMode {
 }
 
 pub fn compute_best_m(k: usize) -> usize {
-    ((k as f64).log(2.0) * 2.0).ceil() as usize
+    min(k - 1, max(2, ((k as f64).log(2.0) * 2.0).ceil() as usize))
 }
 
 impl Utils {
