@@ -3,6 +3,7 @@ use crate::io::concurrent::temp_reads::{
     IntermediateReadsHeader, IntermediateReadsIndex, INTERMEDIATE_READS_MAGIC,
 };
 use crate::utils::get_memory_mode;
+use crate::CompressedRead;
 use desse::Desse;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
 use parallel_processor::buckets::bucket_type::BucketType;
@@ -32,6 +33,16 @@ impl<T: SequenceExtraData> IntermediateReadsWriter<T> {
             lz4::EncoderBuilder::new().level(0).build(file_buf).unwrap()
         });
         self.chunk_size = 0;
+    }
+
+    #[allow(non_camel_case_types)]
+    pub fn add_read<FLAGS_COUNT: typenum::Unsigned>(&mut self, el: T, seq: &[u8], flags: u8) {
+        el.encode(&mut self.writer);
+        CompressedRead::from_plain_write_directly_to_stream_with_flags::<_, FLAGS_COUNT>(
+            seq,
+            &mut self.writer,
+            flags,
+        );
     }
 }
 

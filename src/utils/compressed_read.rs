@@ -2,6 +2,7 @@ use crate::hashes::HashableSequence;
 use crate::io::varint::encode_varint_flags;
 use crate::pipeline_common::minimizer_bucketing::MinimizerInputSequence;
 use crate::utils::Utils;
+use std::io::Write;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -54,22 +55,39 @@ impl<'a> CompressedRead<'a> {
             seq.len() as u64,
             flags,
         );
-        Self::new_from_plain(seq, buffer);
+        Self::compress_from_plain(seq, |b| {
+            buffer.extend_from_slice(b);
+        });
     }
 
-    pub fn new_from_plain(seq: &'a [u8], storage: &mut Vec<u8>) -> CompressedReadIndipendent {
-        let start = storage.len() * 4;
+    #[inline(always)]
+    #[allow(non_camel_case_types)]
+    pub fn from_plain_write_directly_to_stream_with_flags<
+        W: Write,
+        FLAGS_COUNT: typenum::Unsigned,
+    >(
+        seq: &'a [u8],
+        stream: &mut W,
+        flags: u8,
+    ) {
+        encode_varint_flags::<_, _, FLAGS_COUNT>(
+            |b| stream.write(b).unwrap(),
+            seq.len() as u64,
+            flags,
+        );
+        Self::compress_from_plain(seq, |b| {
+            stream.write(b).unwrap();
+        });
+    }
+
+    #[inline(always)]
+    fn compress_from_plain(seq: &'a [u8], mut writer: impl FnMut(&[u8])) {
         for chunk in seq.chunks(16) {
             let mut value = 0;
             for aa in chunk.iter().rev() {
                 value = (value << 2) | Utils::compress_base(*aa) as u32;
             }
-            storage.extend_from_slice(&value.to_le_bytes()[..(chunk.len() + 3) / 4]);
-        }
-
-        CompressedReadIndipendent {
-            start,
-            size: seq.len(),
+            writer(&value.to_le_bytes()[..(chunk.len() + 3) / 4])
         }
     }
 

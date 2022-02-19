@@ -55,6 +55,11 @@ impl<B: BucketType> MultiThreadBuckets<B> {
         MultiThreadBuckets { buckets }
     }
 
+    pub fn into_buckets(mut self) -> impl Iterator<Item = B> {
+        let buckets = std::mem::take(&mut self.buckets);
+        buckets.into_iter().map(|rl| rl.into_inner())
+    }
+
     pub fn get_path(&self, bucket: u16) -> PathBuf {
         self.buckets[bucket as usize].read().get_path()
     }

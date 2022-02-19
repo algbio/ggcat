@@ -7,9 +7,9 @@ use crate::config::{
     READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
 };
 use crate::hashes::HashableSequence;
-use crate::io::concurrent::intermediate_storage::IntermediateSequencesStorage;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
+use crate::io::concurrent::temp_reads::thread_writer::IntermediateReadsThreadWriter;
 use crate::io::sequences_reader::FastaSequence;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::reader::minb_reader;
@@ -116,7 +116,7 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
     manager: ObjectsPoolManager<(), MinimizerBucketingQueueData<E::FileInfo>>,
 ) {
     let mut tmp_reads_buffer =
-        IntermediateSequencesStorage::new(context.common.buckets_count, &context.buckets);
+        IntermediateReadsThreadWriter::new(context.common.buckets_count, &context.buckets);
 
     let mut buckets_processor = E::new(&context.common);
 

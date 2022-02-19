@@ -8,7 +8,6 @@ use crate::config::{
 };
 use crate::hashes::{ExtendableHashTraitType, HashFunction};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
-use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
 use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::hash_entry::HashEntry;
@@ -19,11 +18,13 @@ use crate::pipeline_common::kmers_transform::{
 use crate::pipeline_common::minimizer_bucketing::{
     MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory,
 };
+use crate::utils::owned_drop::OwnedDrop;
 use crate::utils::{get_memory_mode, Utils};
 use crate::CompressedRead;
 use core::slice::from_raw_parts;
 use crossbeam::queue::*;
 use hashbrown::HashMap;
+use parallel_processor::buckets::bucket_type::BucketType;
 use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
@@ -42,8 +43,10 @@ pub const READ_FLAG_INCL_END: u8 = 1 << 1;
 
 pub mod structs {
     use crate::config::BucketIndexType;
-    use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
     use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
+    use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
+    use crate::utils::owned_drop::OwnedDrop;
+    use parallel_processor::buckets::bucket_type::BucketType;
     use std::path::PathBuf;
 
     pub struct MapEntry<CHI> {
@@ -52,21 +55,28 @@ pub mod structs {
         pub color_index: CHI,
     }
 
-    pub struct ResultsBucket<'a, X: SequenceExtraData> {
+    pub struct ResultsBucket<X: SequenceExtraData> {
         pub read_index: u64,
-        pub bucket_ref: IntermediateSequencesStorageSingleBucket<'a, X>,
+        pub reads_writer: OwnedDrop<IntermediateReadsWriter<X>>,
+        pub bucket_index: BucketIndexType,
     }
 
-    impl<'a, X: SequenceExtraData> ResultsBucket<'a, X> {
+    impl<X: SequenceExtraData> ResultsBucket<X> {
         pub fn add_read(&mut self, el: X, read: &[u8]) -> u64 {
-            self.bucket_ref.add_read::<typenum::U0>(el, read, 0);
+            self.reads_writer.add_read::<typenum::U0>(el, read, 0);
             let read_index = self.read_index;
             self.read_index += 1;
             read_index
         }
 
         pub fn get_bucket_index(&self) -> BucketIndexType {
-            self.bucket_ref.get_bucket_index()
+            self.bucket_index
+        }
+    }
+
+    impl<X: SequenceExtraData> Drop for ResultsBucket<X> {
+        fn drop(&mut self) {
+            unsafe { self.reads_writer.take().finalize() }
         }
     }
 
@@ -82,7 +92,7 @@ struct GlobalMergeData<'a, MH: HashFunctionFactory, CX: ColorsManager> {
     buckets_count: usize,
     min_multiplicity: usize,
     colors_global_table: &'a CX::GlobalColorsTable,
-    output_results_buckets: SegQueue<ResultsBucketType<'a, MH, CX>>,
+    output_results_buckets: SegQueue<ResultsBucketType<MH, CX>>,
     hashes_buckets: &'a MultiThreadBuckets<LockFreeBinaryWriter>,
     #[cfg(feature = "build-links")]
     links_hashes_buckets: &'a MultiThreadBuckets<LockFreeBinaryWriter>,
@@ -90,8 +100,7 @@ struct GlobalMergeData<'a, MH: HashFunctionFactory, CX: ColorsManager> {
 }
 
 #[allow(type_alias_bounds)]
-pub type ResultsBucketType<'a, MH, CX: ColorsManager> = ResultsBucket<
-    'a,
+pub type ResultsBucketType<MH, CX: ColorsManager> = ResultsBucket<
     <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::PartialUnitigsColorStructure,
 >;
 
@@ -151,7 +160,7 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
 struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> {
     results_buckets_counter: usize,
-    current_bucket: ResultsBucketType<'x, MH, CX>,
+    current_bucket: ResultsBucketType<MH, CX>,
     hashes_tmp:
         BucketsThreadDispatcher<'x, LockFreeBinaryWriter, HashEntry<MH::HashTypeUnextendable>>,
     #[cfg(feature = "build-links")]
@@ -651,16 +660,14 @@ impl AssemblePipeline {
             >::new(buckets_count, &(SwapPriority::ResultBuckets, out_directory.as_ref().join("result")), None);
 
         let output_results_buckets = SegQueue::new();
-        for bucket_index in 0..buckets_count {
+        for (index, bucket) in reads_buckets.into_buckets().enumerate() {
             let bucket_read = ResultsBucketType::<MH, CX> {
                 read_index: 0,
-                bucket_ref: IntermediateSequencesStorageSingleBucket::new(
-                    bucket_index as BucketIndexType,
-                    &reads_buckets,
-                ),
+                reads_writer: OwnedDrop::new(bucket),
+                bucket_index: index as BucketIndexType,
             };
 
-            sequences.push(bucket_read.bucket_ref.get_path());
+            sequences.push(bucket_read.reads_writer.get_path());
             output_results_buckets.push(bucket_read);
         }
 

@@ -7,16 +7,15 @@ use crate::io::reads_writer::ReadsWriter;
 use std::io::{Read, Write};
 
 use crate::config::{SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE};
-use crate::io::concurrent::intermediate_storage::IntermediateSequencesStorage;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::concurrent::temp_reads::reads_reader::IntermediateReadsReader;
 use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
+use crate::io::concurrent::temp_reads::thread_writer::IntermediateReadsThreadWriter;
 use crate::io::sequences_reader::FastaSequence;
 use crate::io::structs::unitig_link::UnitigIndex;
 use crate::utils::Utils;
 use crate::KEEP_FILES;
 use bstr::ByteSlice;
-use parallel_processor::buckets::bucket_type::BucketType;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::file::reader::FileReader;
@@ -74,7 +73,8 @@ impl AssemblePipeline {
             >>::PartialUnitigsColorStructure>>,
         >::new(buckets_count, &(SwapPriority::ReorganizeReads, temp_path.join("reads_bucket")), None);
 
-        let final_unitigs_temp_bucket = IntermediateReadsWriter::<ReorganizedReadsExtraData<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
+        #[cfg(feature = "build-links")]
+        let mut final_unitigs_temp_bucket = IntermediateReadsWriter::<ReorganizedReadsExtraData<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
             MH,
             CX,
         >>::PartialUnitigsColorStructure>>::new(&(SwapPriority::ReorganizeReads, temp_path.join("reads_bucket_lonely")), 0);
@@ -85,7 +85,7 @@ impl AssemblePipeline {
         let inputs: Vec<_> = reads.iter().zip(mapping_files.iter()).collect();
 
         inputs.par_iter().for_each(|(read_file, mapping_file)| {
-            let mut tmp_reads_buffer = IntermediateSequencesStorage::new(buckets_count, &buckets);
+            let mut tmp_reads_buffer = IntermediateReadsThreadWriter::new(buckets_count, &buckets);
 
             #[cfg(not(feature = "build-links"))]
             let mut tmp_lonely_unitigs_buffer =
@@ -174,7 +174,11 @@ impl AssemblePipeline {
                         }
 
                         #[cfg(feature = "build-links")] {
-                            final_unitigs_temp_bucket.write_batch_data()
+                            final_unitigs_temp_bucket.add_read::<typenum::U0>(
+                                color,
+                                seq,
+                                0
+                            )
                         }
 
                     }
@@ -191,8 +195,16 @@ impl AssemblePipeline {
             assert_eq!(map_index, mappings.len())
         });
 
-        let final_unitigs_temp_path = final_unitigs_temp_bucket.get_path();
-        final_unitigs_temp_bucket.finalize();
+        let final_unitigs_temp_path = match () {
+            #[cfg(feature = "build-links")]
+            () => {
+                let path = final_unitigs_temp_bucket.get_path();
+                final_unitigs_temp_bucket.finalize();
+                path
+            }
+            #[cfg(not(feature = "build-links"))]
+            () => PathBuf::new(),
+        };
 
         (buckets.finalize(), final_unitigs_temp_path)
     }

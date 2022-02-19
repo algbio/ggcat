@@ -4,12 +4,12 @@ use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
 use crate::utils::compressed_read::CompressedRead;
 use parallel_processor::buckets::MultiThreadBuckets;
 
-pub struct IntermediateSequencesStorage<'a, T: SequenceExtraData> {
+pub struct IntermediateReadsThreadWriter<'a, T: SequenceExtraData> {
     buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T>>,
     buffers: Vec<Vec<u8>>,
 }
 
-impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
+impl<'a, T: SequenceExtraData> IntermediateReadsThreadWriter<'a, T> {
     const ALLOWED_LEN: usize = 65536;
 
     pub fn new(
@@ -62,7 +62,7 @@ impl<'a, T: SequenceExtraData> IntermediateSequencesStorage<'a, T> {
     pub fn finalize(self) {}
 }
 
-impl<'a, T: SequenceExtraData> Drop for IntermediateSequencesStorage<'a, T> {
+impl<'a, T: SequenceExtraData> Drop for IntermediateReadsThreadWriter<'a, T> {
     fn drop(&mut self) {
         for bucket in 0..self.buffers.len() {
             if self.buffers[bucket].len() > 0 {
