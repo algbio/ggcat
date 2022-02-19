@@ -6,6 +6,7 @@ pub mod stats_logger;
 pub mod memory_fs;
 
 pub mod binary_writer;
+pub mod buckets;
 pub mod debug_allocator;
 pub mod fast_smart_bucket_sort;
 pub mod lock_free_binary_writer;
@@ -13,7 +14,6 @@ pub mod mem_tracker;
 pub mod memory_data_size;
 pub mod phase_times_monitor;
 pub mod threadpools_chain;
-pub mod buckets;
 
 pub struct Utils {}
 

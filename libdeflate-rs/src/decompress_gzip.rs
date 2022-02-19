@@ -27,9 +27,9 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-use crate::gzip_constants::*;
-use crate::{DeflateInput, DeflateOutput, LibdeflateDecompressor, LibdeflateError, safety_check};
 use crate::decompress_utils::libdeflate_deflate_decompress;
+use crate::gzip_constants::*;
+use crate::{safety_check, DeflateInput, DeflateOutput, LibdeflateDecompressor, LibdeflateError};
 
 // struct flush_buffer_data {
 // 	flush_buffer_func *user_func;
@@ -44,71 +44,72 @@ use crate::decompress_utils::libdeflate_deflate_decompress;
 // }
 
 pub fn libdeflate_gzip_decompress<I: DeflateInput, O: DeflateOutput>(
-	d: &mut LibdeflateDecompressor,
- 	in_stream: &mut I,
+    d: &mut LibdeflateDecompressor,
+    in_stream: &mut I,
     out_stream: &mut O,
 ) -> Result<(), LibdeflateError> {
+    /* ID1 */
+    if in_stream.read_byte() != GZIP_ID1 {
+        return Err(LibdeflateError::BadData);
+    }
+    /* ID2 */
+    if in_stream.read_byte() != GZIP_ID2 {
+        return Err(LibdeflateError::BadData);
+    }
+    /* CM */
+    if in_stream.read_byte() != GZIP_CM_DEFLATE {
+        return Err(LibdeflateError::BadData);
+    }
+    let flg = in_stream.read_byte();
 
-	/* ID1 */
-	if in_stream.read_byte() != GZIP_ID1 {
-		return Err(LibdeflateError::BadData);
-	}
-	/* ID2 */
-	if in_stream.read_byte() != GZIP_ID2 {
-		return Err(LibdeflateError::BadData);
-	}
-	/* CM */
-	if in_stream.read_byte() != GZIP_CM_DEFLATE {
-		return Err(LibdeflateError::BadData);
-	}
-	let flg = in_stream.read_byte();
+    /* MTIME */
+    safety_check!(in_stream.move_stream_pos(4));
+    /* XFL */
+    safety_check!(in_stream.move_stream_pos(1));
+    /* OS */
+    safety_check!(in_stream.move_stream_pos(1));
 
-	/* MTIME */
-	safety_check!(in_stream.move_stream_pos(4));
-	/* XFL */
-	safety_check!(in_stream.move_stream_pos(1));
-	/* OS */
-	safety_check!(in_stream.move_stream_pos(1));
+    if (flg & GZIP_FRESERVED) != 0 {
+        return Err(LibdeflateError::BadData);
+    }
 
-	if (flg & GZIP_FRESERVED) != 0 {
-		return Err(LibdeflateError::BadData);
-	}
+    /* Extra field */
+    if (flg & GZIP_FEXTRA) != 0 {
+        let xlen = in_stream.read_le_u16();
+        safety_check!(in_stream.move_stream_pos(xlen as isize));
+    }
 
-	/* Extra field */
-	if (flg & GZIP_FEXTRA) != 0 {
-		let xlen = in_stream.read_le_u16();
-		safety_check!(in_stream.move_stream_pos(xlen as isize));
-	}
+    /* Original file name (zero terminated) */
+    if (flg & GZIP_FNAME) != 0 {
+        while in_stream.read_byte() != 0 {}
+    }
 
-	/* Original file name (zero terminated) */
-	if (flg & GZIP_FNAME) != 0 {
-		while in_stream.read_byte() != 0 {}
-	}
+    /* File comment (zero terminated) */
+    if (flg & GZIP_FCOMMENT) != 0 {
+        while in_stream.read_byte() != 0 {}
+    }
 
-	/* File comment (zero terminated) */
-	if (flg & GZIP_FCOMMENT) != 0 {
-		while in_stream.read_byte() != 0 {}
-	}
+    /* CRC16 for gzip header */
+    if (flg & GZIP_FHCRC) != 0 {
+        safety_check!(in_stream.move_stream_pos(2));
+    }
 
-	/* CRC16 for gzip header */
-	if (flg & GZIP_FHCRC) != 0 {
-		safety_check!(in_stream.move_stream_pos(2));
-	}
+    /* Compressed data  */
+    libdeflate_deflate_decompress(d, in_stream, out_stream)?;
 
-	/* Compressed data  */
-	libdeflate_deflate_decompress(d, in_stream, out_stream)?;
+    let result = out_stream
+        .final_flush()
+        .map_err(|_| LibdeflateError::InsufficientSpace)?;
 
-	let result = out_stream.final_flush().map_err(|_| LibdeflateError::InsufficientSpace)?;
+    let gzip_crc = in_stream.read_le_u32();
+    if result.crc32 != gzip_crc {
+        return Err(LibdeflateError::BadData);
+    }
 
-	let gzip_crc = in_stream.read_le_u32();
-	if result.crc32 != gzip_crc {
-		return Err(LibdeflateError::BadData);
-	}
+    /* ISIZE */
+    if result.written as u32 != in_stream.read_le_u32() {
+        return Err(LibdeflateError::BadData);
+    }
 
-	/* ISIZE */
-	if result.written as u32 != in_stream.read_le_u32() {
-		return Err(LibdeflateError::BadData);
-	}
-
-	Ok(())
+    Ok(())
 }

@@ -1,6 +1,6 @@
 use crate::assemble_pipeline::parallel_kmers_merge::structs::MapEntry;
 use crate::hashes::HashFunctionFactory;
-use crate::io::concurrent::intermediate_storage::SequenceExtraData;
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use hashbrown::HashMap;
 use std::io::Write;
 use std::path::Path;

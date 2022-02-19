@@ -9,6 +9,8 @@ use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::get_memory_mode;
 use crate::utils::vec_slice::VecSlice;
 use crate::KEEP_FILES;
+use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
@@ -20,8 +22,6 @@ use rayon::iter::ParallelIterator;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::atomic::Ordering;
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
-use parallel_processor::buckets::MultiThreadBuckets;
 
 impl AssemblePipeline {
     pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(

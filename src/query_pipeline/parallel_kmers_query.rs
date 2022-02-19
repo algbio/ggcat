@@ -6,7 +6,7 @@ use crate::config::{
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
-use crate::io::concurrent::intermediate_storage::SequenceExtraData;
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::pipeline_common::kmers_transform::structs::ReadRef;
 use crate::pipeline_common::kmers_transform::{
@@ -21,6 +21,8 @@ use crate::query_pipeline::QueryPipeline;
 use crate::utils::compressed_read::CompressedRead;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
+use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -29,8 +31,6 @@ use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
-use parallel_processor::buckets::MultiThreadBuckets;
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub enum QueryKmersReferenceData<CX: MinimizerBucketingSeqColorData> {

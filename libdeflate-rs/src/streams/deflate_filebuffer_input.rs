@@ -1,27 +1,28 @@
+use crate::{DeflateInput, DeflateOutput};
+use filebuffer::FileBuffer;
 use std::cmp::min;
 use std::path::Path;
-use filebuffer::FileBuffer;
-use crate::{DeflateInput, DeflateOutput};
 
 pub struct DeflateFileBufferInput {
     file: FileBuffer,
-    position: usize
+    position: usize,
 }
 
 impl DeflateFileBufferInput {
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
             file: FileBuffer::open(path).unwrap(),
-            position: 0
+            position: 0,
         }
     }
 }
 
 impl DeflateInput for DeflateFileBufferInput {
-
     #[inline(always)]
     unsafe fn get_le_word_no_advance(&mut self) -> usize {
-        usize::from_le_bytes(*(self.file.as_ptr().add(self.position) as *const [u8; std::mem::size_of::<usize>()]))
+        usize::from_le_bytes(
+            *(self.file.as_ptr().add(self.position) as *const [u8; std::mem::size_of::<usize>()]),
+        )
     }
 
     #[inline(always)]
@@ -50,7 +51,11 @@ impl DeflateInput for DeflateFileBufferInput {
 
     #[inline(always)]
     unsafe fn read_unchecked(&mut self, out_data: &mut [u8]) {
-        std::ptr::copy_nonoverlapping(self.file.as_ptr().add(self.position), out_data.as_mut_ptr(), out_data.len());
+        std::ptr::copy_nonoverlapping(
+            self.file.as_ptr().add(self.position),
+            out_data.as_mut_ptr(),
+            out_data.len(),
+        );
         self.position += out_data.len();
     }
 

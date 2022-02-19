@@ -3,19 +3,21 @@ use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{ColorsManager, ColorsMergeManager};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
-use crate::io::concurrent::intermediate_storage::{
-    IntermediateReadsReader, IntermediateReadsWriter, IntermediateSequencesStorage,
-    SequenceExtraData,
-};
 use crate::io::reads_writer::ReadsWriter;
 use std::io::{Read, Write};
 
 use crate::config::{SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE};
+use crate::io::concurrent::intermediate_storage::IntermediateSequencesStorage;
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use crate::io::concurrent::temp_reads::reads_reader::IntermediateReadsReader;
+use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
 use crate::io::sequences_reader::FastaSequence;
 use crate::io::structs::unitig_link::UnitigIndex;
 use crate::utils::Utils;
 use crate::KEEP_FILES;
 use bstr::ByteSlice;
+use parallel_processor::buckets::bucket_type::BucketType;
+use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::MemoryFs;
@@ -25,7 +27,6 @@ use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use parallel_processor::buckets::MultiThreadBuckets;
 
 #[derive(Clone, Debug)]
 pub struct ReorganizedReadsExtraData<CX: SequenceExtraData> {
@@ -59,9 +60,9 @@ impl AssemblePipeline {
         mut reads: Vec<PathBuf>,
         mut mapping_files: Vec<PathBuf>,
         temp_path: &Path,
-        out_file: &Mutex<ReadsWriter>,
+        #[cfg(not(feature = "build-links"))] out_file: &Mutex<ReadsWriter>,
         buckets_count: usize,
-    ) -> Vec<PathBuf> {
+    ) -> (Vec<PathBuf>, PathBuf) {
         PHASES_TIMES_MONITOR
             .write()
             .start_phase("phase: reads reorganization".to_string());
@@ -73,6 +74,11 @@ impl AssemblePipeline {
             >>::PartialUnitigsColorStructure>>,
         >::new(buckets_count, &(SwapPriority::ReorganizeReads, temp_path.join("reads_bucket")), None);
 
+        let final_unitigs_temp_bucket = IntermediateReadsWriter::<ReorganizedReadsExtraData<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
+            MH,
+            CX,
+        >>::PartialUnitigsColorStructure>>::new(&(SwapPriority::ReorganizeReads, temp_path.join("reads_bucket_lonely")), 0);
+
         reads.sort();
         mapping_files.sort();
 
@@ -80,6 +86,8 @@ impl AssemblePipeline {
 
         inputs.par_iter().for_each(|(read_file, mapping_file)| {
             let mut tmp_reads_buffer = IntermediateSequencesStorage::new(buckets_count, &buckets);
+
+            #[cfg(not(feature = "build-links"))]
             let mut tmp_lonely_unitigs_buffer =
                 FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE);
 
@@ -122,6 +130,7 @@ impl AssemblePipeline {
             let mut map_index = 0;
 
             let mut decompress_buffer = Vec::new();
+            #[cfg(not(feature = "build-links"))]
             let mut ident_buffer = Vec::new();
 
             IntermediateReadsReader::<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
@@ -150,16 +159,24 @@ impl AssemblePipeline {
                         map_index += 1;
                     } else {
 
-                        ident_buffer.clear();
-                        write!(ident_buffer, "> {} {}", bucket_index, index).unwrap();
-                        CX::ColorsMergeManagerType::<MH>::print_color_data(&color, &mut ident_buffer);
+                        #[cfg(not(feature = "build-links"))]
+                        {
+                            // No mapping, write unitig to file
+                            ident_buffer.clear();
+                            write!(ident_buffer, "> {} {}", bucket_index, index).unwrap();
+                            CX::ColorsMergeManagerType::<MH>::print_color_data(&color, &mut ident_buffer);
 
-                        tmp_lonely_unitigs_buffer.add_read(FastaSequence {
-                            ident: ident_buffer.as_bytes(),
-                            seq,
-                            qual: None,
-                        });
-                        // No mapping, write unitig to file
+                            tmp_lonely_unitigs_buffer.add_read(FastaSequence {
+                                ident: ident_buffer.as_bytes(),
+                                seq,
+                                qual: None,
+                            });
+                        }
+
+                        #[cfg(feature = "build-links")] {
+                            final_unitigs_temp_bucket.write_batch_data()
+                        }
+
                     }
 
                     <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
@@ -169,9 +186,14 @@ impl AssemblePipeline {
 
                     index += 1;
                 });
+            #[cfg(not(feature = "build-links"))]
             tmp_lonely_unitigs_buffer.finalize();
             assert_eq!(map_index, mappings.len())
         });
-        buckets.finalize()
+
+        let final_unitigs_temp_path = final_unitigs_temp_bucket.get_path();
+        final_unitigs_temp_bucket.finalize();
+
+        (buckets.finalize(), final_unitigs_temp_path)
     }
 }

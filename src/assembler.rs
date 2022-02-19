@@ -6,6 +6,7 @@ use crate::hashes::HashFunctionFactory;
 use crate::io::reads_writer::ReadsWriter;
 use crate::utils::{get_memory_mode, Utils};
 use crate::{AssemblerStartingStep, KEEP_FILES, SAVE_MEMORY};
+use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::MemoryFs;
@@ -14,7 +15,6 @@ use parking_lot::Mutex;
 use std::fs::remove_file;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use parallel_processor::buckets::MultiThreadBuckets;
 
 pub fn run_assembler<
     BucketingHash: HashFunctionFactory,
@@ -205,11 +205,18 @@ pub fn run_assembler<
             sequences,
             reads_map,
             temp_dir.as_path(),
+            #[cfg(not(feature = "build-links"))]
             &final_unitigs_file,
             BUCKETS_COUNT,
         )
     } else {
-        Utils::generate_bucket_names(temp_dir.join("reads_bucket"), BUCKETS_COUNT, Some("lz4"))
+        (
+            Utils::generate_bucket_names(temp_dir.join("reads_bucket"), BUCKETS_COUNT, Some("tmp")),
+            Utils::generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
+                .into_iter()
+                .next()
+                .unwrap(),
+        )
     };
 
     if last_step <= AssemblerStartingStep::ReorganizeReads {
@@ -218,7 +225,7 @@ pub fn run_assembler<
 
     if step <= AssemblerStartingStep::BuildUnitigs {
         AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(
-            reorganized_reads,
+            reorganized_reads.0,
             unitigs_map,
             temp_dir.as_path(),
             &final_unitigs_file,

@@ -1,10 +1,10 @@
+use crate::buckets::bucket_type::BucketType;
 use crate::memory_fs::file::internal::MemoryFileMode;
 use crate::memory_fs::file::writer::FileWriter;
 use rand::{thread_rng, RngCore};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use crate::buckets::bucket_type::BucketType;
 
 pub enum StorageMode {
     AppendOrCreate,
@@ -82,12 +82,12 @@ impl BucketType for BinaryWriter {
         Self { writer, path }
     }
 
-    fn write_data(&mut self, bytes: &[u8]) {
+    fn write_batch_data(&mut self, bytes: &[u8]) {
         update_stat!("UNKNOWN_BYTES_WRITTEN", bytes.len() as f64, StatMode::Sum);
         self.writer.write_all(bytes).unwrap();
     }
 
-    fn write_data_lock_free(&self, _bytes: &[u8]) {
+    fn write_batch_data_lock_free(&self, _bytes: &[u8]) {
         todo!()
     }
 

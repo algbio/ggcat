@@ -4,7 +4,7 @@ use crate::colors::colors_manager::{ColorsManager, ColorsMergeManager};
 use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
-use crate::io::concurrent::intermediate_storage::IntermediateReadsReader;
+use crate::io::concurrent::temp_reads::reads_reader::IntermediateReadsReader;
 use crate::io::reads_writer::ReadsWriter;
 use crate::io::sequences_reader::FastaSequence;
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};

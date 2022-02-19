@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-use parking_lot::RwLock;
 use crate::buckets::bucket_type::BucketType;
+use parking_lot::RwLock;
+use std::path::PathBuf;
 
 pub mod bucket_type;
 pub mod bucket_writer;
@@ -62,10 +62,10 @@ impl<B: BucketType> MultiThreadBuckets<B> {
     pub fn add_data(&self, index: u16, data: &[B::DataType]) {
         if B::SUPPORTS_LOCK_FREE {
             let bucket = self.buckets[index as usize].read();
-            bucket.write_data_lock_free(data);
+            bucket.write_batch_data_lock_free(data);
         } else {
             let mut bucket = self.buckets[index as usize].write();
-            bucket.write_data(data);
+            bucket.write_batch_data(data);
         }
     }
 
@@ -89,4 +89,3 @@ impl<B: BucketType> Drop for MultiThreadBuckets<B> {
 unsafe impl<B: BucketType> Send for MultiThreadBuckets<B> {}
 
 unsafe impl<B: BucketType> Sync for MultiThreadBuckets<B> {}
-

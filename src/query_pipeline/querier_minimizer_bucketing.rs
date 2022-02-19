@@ -3,7 +3,7 @@ use crate::config::{BucketIndexType, MinimizerType, DEFAULT_MINIMIZER_MASK};
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
-use crate::io::concurrent::intermediate_storage::SequenceExtraData;
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::pipeline_common::minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,

@@ -8,8 +8,8 @@ use crate::config::{
 };
 use crate::hashes::{ExtendableHashTraitType, HashFunction};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
-use crate::io::concurrent::intermediate_storage::IntermediateReadsWriter;
 use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
+use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::hash_entry::HashEntry;
 use crate::pipeline_common::kmers_transform::structs::ReadRef;
@@ -24,6 +24,8 @@ use crate::CompressedRead;
 use core::slice::from_raw_parts;
 use crossbeam::queue::*;
 use hashbrown::HashMap;
+use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 #[cfg(feature = "mem-analysis")]
@@ -33,8 +35,6 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
-use parallel_processor::buckets::MultiThreadBuckets;
 use structs::*;
 
 pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;
@@ -42,8 +42,8 @@ pub const READ_FLAG_INCL_END: u8 = 1 << 1;
 
 pub mod structs {
     use crate::config::BucketIndexType;
-    use crate::io::concurrent::intermediate_storage::SequenceExtraData;
     use crate::io::concurrent::intermediate_storage_single::IntermediateSequencesStorageSingleBucket;
+    use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
     use std::path::PathBuf;
 
     pub struct MapEntry<CHI> {

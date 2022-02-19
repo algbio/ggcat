@@ -6,7 +6,7 @@ use crate::colors::colors_memmap::ColorsMemMap;
 use crate::colors::storage::roaring::RoaringColorsSerializer;
 use crate::colors::ColorIndexType;
 use crate::hashes::HashFunctionFactory;
-use crate::io::concurrent::intermediate_storage::SequenceExtraData;
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
 use byteorder::ReadBytesExt;
 use hashbrown::HashMap;

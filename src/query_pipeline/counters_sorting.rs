@@ -1,9 +1,10 @@
-use crate::io::concurrent::intermediate_storage::SequenceExtraData;
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::sequences_reader::SequencesReader;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::query_pipeline::QueryPipeline;
 use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
+use parallel_processor::buckets::bucket_writer::BucketWriter;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -14,7 +15,6 @@ use std::mem::size_of;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use parallel_processor::buckets::bucket_writer::BucketWriter;
 
 #[derive(Debug, Clone)]
 pub struct CounterEntry {

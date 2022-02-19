@@ -1,11 +1,11 @@
-use std::cmp::min;
-use std::marker::PhantomData;
-use std::mem::size_of;
-use rand::{RngCore, thread_rng};
 use crate::buckets::bucket_type::BucketType;
 use crate::buckets::bucket_writer::BucketWriter;
 use crate::buckets::MultiThreadBuckets;
 use crate::memory_data_size::MemoryDataSize;
+use rand::{thread_rng, RngCore};
+use std::cmp::min;
+use std::marker::PhantomData;
+use std::mem::size_of;
 
 pub struct BucketsThreadDispatcher<'a, B: BucketType, T: BucketWriter<B::DataType> + ?Sized> {
     mtb: &'a MultiThreadBuckets<B>,
@@ -57,7 +57,7 @@ impl<'a, B: BucketType, T: BucketWriter<B::DataType> + ?Sized> BucketsThreadDisp
 }
 
 impl<'a, B: BucketType, T: BucketWriter<B::DataType> + ?Sized> Drop
-for BucketsThreadDispatcher<'a, B, T>
+    for BucketsThreadDispatcher<'a, B, T>
 {
     fn drop(&mut self) {
         for (index, vec) in self.thread_data.iter_mut().enumerate() {

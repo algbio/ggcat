@@ -1,10 +1,12 @@
 use crate::config::{SwapPriority, SECOND_BUCKETS_COUNT};
 use crate::hashes::HashableSequence;
-use crate::io::concurrent::intermediate_storage::{IntermediateReadsReader, SequenceExtraData};
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use crate::io::concurrent::temp_reads::reads_reader::IntermediateReadsReader;
 use crate::io::varint::{decode_varint_flags, encode_varint_flags};
 use crate::{CompressedRead, KEEP_FILES};
 use byteorder::ReadBytesExt;
 use crossbeam::queue::SegQueue;
+use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parking_lot::Condvar;
@@ -12,7 +14,6 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use parallel_processor::buckets::MultiThreadBuckets;
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct ReadRef(());

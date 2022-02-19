@@ -12,6 +12,7 @@ extern crate test;
 
 #[macro_use]
 extern crate static_assertions;
+extern crate core;
 
 mod assemble_pipeline;
 mod benchmarks;

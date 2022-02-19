@@ -1,13 +1,13 @@
 use crate::config::BucketIndexType;
-use crate::io::concurrent::intermediate_storage::SequenceExtraData;
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::utils::vec_slice::VecSlice;
 use byteorder::ReadBytesExt;
+use parallel_processor::buckets::bucket_writer::BucketWriter;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
-use parallel_processor::buckets::bucket_writer::BucketWriter;
 
 #[repr(transparent)]
 #[derive(Copy, Clone)]

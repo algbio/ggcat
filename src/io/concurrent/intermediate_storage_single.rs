@@ -1,8 +1,9 @@
 use crate::config::BucketIndexType;
-use crate::io::concurrent::intermediate_storage::{IntermediateReadsWriter, SequenceExtraData};
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
 use crate::CompressedRead;
-use std::path::PathBuf;
 use parallel_processor::buckets::MultiThreadBuckets;
+use std::path::PathBuf;
 
 pub struct IntermediateSequencesStorageSingleBucket<'a, T: SequenceExtraData> {
     buckets: &'a MultiThreadBuckets<IntermediateReadsWriter<T>>,
