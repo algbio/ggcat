@@ -227,6 +227,8 @@ pub fn run_assembler<
         AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(
             reorganized_reads.0,
             unitigs_map,
+            #[cfg(feature = "build-links")]
+            reorganized_reads.1,
             temp_dir.as_path(),
             &final_unitigs_file,
             k,

@@ -21,6 +21,8 @@ pub struct IntermediateReadsWriter<T> {
     _phantom: PhantomData<T>,
 }
 
+unsafe impl<T> Sync for IntermediateReadsWriter<T> {}
+
 impl<T: SequenceExtraData> IntermediateReadsWriter<T> {
     fn create_new_block(&mut self) {
         replace_with_or_abort(&mut self.writer, |writer| {

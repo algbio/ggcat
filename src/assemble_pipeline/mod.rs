@@ -1,7 +1,7 @@
 pub struct AssemblePipeline;
 
 pub mod assembler_minimizer_bucketing;
-mod build_unitigs;
+pub mod build_unitigs;
 mod formatter_fasta;
 mod hashes_sorting;
 mod links_compaction;
