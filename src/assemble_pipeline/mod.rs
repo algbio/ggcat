@@ -7,3 +7,4 @@ mod hashes_sorting;
 mod links_compaction;
 pub mod parallel_kmers_merge;
 mod reorganize_reads;
+pub mod unitig_links_manager;

@@ -83,6 +83,8 @@ pub mod structs {
     pub struct RetType {
         pub sequences: Vec<PathBuf>,
         pub hashes: Vec<PathBuf>,
+        #[cfg(feature = "build-links")]
+        pub links_hashes: Vec<PathBuf>,
     }
 }
 
@@ -687,12 +689,11 @@ impl AssemblePipeline {
             save_memory,
         );
 
-        #[cfg(feature = "build-links")]
-        links_hashes_buckets.finalize();
-
         RetType {
             sequences,
             hashes: hashes_buckets.finalize(),
+            #[cfg(feature = "build-links")]
+            links_hashes: links_hashes_buckets.finalize(),
         }
     }
 }

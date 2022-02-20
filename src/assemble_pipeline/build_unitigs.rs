@@ -24,6 +24,7 @@ use std::sync::atomic::Ordering;
 
 #[cfg(feature = "build-links")]
 use crate::assemble_pipeline::reorganize_reads::CompletedReadsExtraData;
+use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 
 #[derive(Copy, Clone, Debug)]
 struct FinalUnitigInfo {
@@ -63,9 +64,10 @@ fn write_fasta_entry<
     writer: &mut FastaWriterConcurrentBuffer,
     color: color_types::PartialUnitigsColorStructure<MH, CX>,
     read: &R,
+    index: usize,
 ) {
     temp_buffer.clear();
-    write!(temp_buffer, "> {} J", "A").unwrap();
+    write!(temp_buffer, "> {} J", index).unwrap();
 
     CX::ColorsMergeManagerType::<MH>::print_color_data(&color, temp_buffer);
 
@@ -89,6 +91,7 @@ impl AssemblePipeline {
         _temp_path: &Path,
         out_file: &Mutex<ReadsWriter>,
         k: usize,
+        links_manager: &UnitigLinksManager,
     ) {
         PHASES_TIMES_MONITOR
             .write()
@@ -109,6 +112,7 @@ impl AssemblePipeline {
                     FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_OUTPUT_BUFFER_SIZE);
 
                 let mut temp_buffer = Vec::new();
+                let mut unitig_index = 0;
 
                 IntermediateReadsReader::<
                     CompletedReadsExtraData<color_types::PartialUnitigsColorStructure<MH, CX>>,
@@ -119,7 +123,9 @@ impl AssemblePipeline {
                         &mut tmp_final_unitigs_buffer,
                         data.color,
                         &seq,
+                        links_manager.get_final_unitig_index(unitig_index),
                     );
+                    unitig_index += 1;
                 });
             });
 
@@ -215,6 +221,7 @@ impl AssemblePipeline {
 
                 let mut temp_sequence = Vec::new();
                 let mut ident_buffer = Vec::new();
+                let mut unitig_index = 0;
 
                 let mut final_unitig_color =
                     CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure();
@@ -305,7 +312,9 @@ impl AssemblePipeline {
                         &mut tmp_final_unitigs_buffer,
                         writable_color,
                         temp_sequence.as_slice(),
+                        links_manager.get_unitig_index(bucket_index, unitig_index),
                     );
+                    unitig_index += 1;
                 }
 
                 CX::ColorsMergeManagerType::<MH>::clear_deserialized_unitigs_colors();

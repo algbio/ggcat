@@ -21,7 +21,7 @@ use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(not(feature = "build-links"))]
 use {
@@ -95,7 +95,7 @@ impl AssemblePipeline {
         temp_path: &Path,
         #[cfg(not(feature = "build-links"))] out_file: &Mutex<ReadsWriter>,
         buckets_count: usize,
-    ) -> (Vec<PathBuf>, PathBuf) {
+    ) -> (Vec<PathBuf>, (PathBuf, usize)) {
         PHASES_TIMES_MONITOR
             .write()
             .start_phase("phase: reads reorganization".to_string());
@@ -129,11 +129,15 @@ impl AssemblePipeline {
 
         let inputs: Vec<_> = reads.iter().zip(mapping_files.iter()).collect();
 
+        let final_reads_count = AtomicUsize::new(0);
+
         inputs.par_iter().for_each(|(read_file, mapping_file)| {
             let mut tmp_reads_buffer = IntermediateReadsThreadWriter::new(buckets_count, &buckets);
             #[cfg(feature = "build-links")]
             let mut tmp_final_reads_buffer =
                 SingleIntermediateReadsThreadWriter::new(&final_unitigs_temp_bucket);
+
+            let mut thread_final_reads_counter = 0;
 
             #[cfg(not(feature = "build-links"))]
             let mut tmp_lonely_unitigs_buffer =
@@ -157,20 +161,7 @@ impl AssemblePipeline {
             drop(reader);
             MemoryFs::remove_file(&mapping_file, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
 
-            struct Compare {}
-            impl SortKey<LinkMapping> for Compare {
-                type KeyType = u64;
-                const KEY_BITS: usize = 64;
-
-                fn compare(left: &LinkMapping, right: &LinkMapping) -> std::cmp::Ordering {
-                    left.entry.cmp(&right.entry)
-                }
-
-                fn get_shifted(value: &LinkMapping, rhs: u8) -> u8 {
-                    (value.entry >> rhs) as u8
-                }
-            }
-
+            crate::make_comparer!(Compare, LinkMapping, entry: u64);
             fast_smart_radix_sort::<_, Compare, false>(&mut mappings[..]);
 
             let mut index = 0;
@@ -228,7 +219,8 @@ impl AssemblePipeline {
                             CompletedReadsExtraData { color },
                             seq,
                             0,
-                        )
+                        );
+                        thread_final_reads_counter += 1;
                     }
                 }
 
@@ -240,23 +232,26 @@ impl AssemblePipeline {
             tmp_lonely_unitigs_buffer.finalize();
 
             #[cfg(feature = "build-links")]
-            tmp_final_reads_buffer.finalize();
+            {
+                tmp_final_reads_buffer.finalize();
+                final_reads_count.fetch_add(thread_final_reads_counter, Ordering::Relaxed);
+            }
 
             assert_eq!(map_index, mappings.len())
         });
 
-        let final_unitigs_temp_path = match () {
+        let final_unitigs_temp_path_and_counter = match () {
             #[cfg(feature = "build-links")]
             () => {
                 let final_unitigs_temp_bucket = final_unitigs_temp_bucket.into_inner();
                 let path = final_unitigs_temp_bucket.get_path();
                 final_unitigs_temp_bucket.finalize();
-                path
+                (path, final_reads_count.into_inner())
             }
             #[cfg(not(feature = "build-links"))]
-            () => PathBuf::new(),
+            () => (PathBuf::new(), 0),
         };
 
-        (buckets.finalize(), final_unitigs_temp_path)
+        (buckets.finalize(), final_unitigs_temp_path_and_counter)
     }
 }

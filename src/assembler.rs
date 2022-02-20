@@ -1,4 +1,5 @@
 use crate::assemble_pipeline::parallel_kmers_merge::structs::RetType;
+use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsManager;
 use crate::config::SwapPriority;
@@ -67,7 +68,12 @@ pub fn run_assembler<
         return;
     }
 
-    let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
+    let RetType {
+        sequences,
+        hashes,
+        #[cfg(feature = "build-links")]
+        links_hashes,
+    } = if step <= AssemblerStartingStep::KmersMerge {
         AssemblePipeline::parallel_kmers_merge::<
             BucketingHash,
             MergingHash,
@@ -92,6 +98,12 @@ pub fn run_assembler<
                 Some("tmp"),
             ),
             hashes: Utils::generate_bucket_names(temp_dir.join("hashes"), BUCKETS_COUNT, None),
+            #[cfg(feature = "build-links")]
+            links_hashes: Utils::generate_bucket_names(
+                temp_dir.join("links_hashes"),
+                BUCKETS_COUNT,
+                None,
+            ),
         }
     };
     if last_step <= AssemblerStartingStep::KmersMerge {
@@ -119,6 +131,8 @@ pub fn run_assembler<
 
     let unames = Utils::generate_bucket_names(temp_dir.join("unitigs_map"), BUCKETS_COUNT, None);
     let rnames = Utils::generate_bucket_names(temp_dir.join("results_map"), BUCKETS_COUNT, None);
+
+    let mut links_manager = UnitigLinksManager::new(BUCKETS_COUNT, temp_dir.clone());
 
     let (unitigs_map, reads_map) = if step <= AssemblerStartingStep::LinksCompaction {
         for file in unames {
@@ -169,6 +183,7 @@ pub fn run_assembler<
                 loop_iteration,
                 &mut result_map_buckets,
                 &mut final_buckets,
+                &links_manager,
             );
 
             links = new_links;
@@ -200,7 +215,9 @@ pub fn run_assembler<
         None => ReadsWriter::new_plain(&output_file),
     });
 
-    let reorganized_reads = if step <= AssemblerStartingStep::ReorganizeReads {
+    let (reorganized_reads, (final_unitigs_bucket, final_unitigs_count)) = if step
+        <= AssemblerStartingStep::ReorganizeReads
+    {
         AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
             sequences,
             reads_map,
@@ -212,10 +229,13 @@ pub fn run_assembler<
     } else {
         (
             Utils::generate_bucket_names(temp_dir.join("reads_bucket"), BUCKETS_COUNT, Some("tmp")),
-            Utils::generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
-                .into_iter()
-                .next()
-                .unwrap(),
+            (
+                Utils::generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
+                    .into_iter()
+                    .next()
+                    .unwrap(),
+                0,
+            ),
         )
     };
 
@@ -223,15 +243,26 @@ pub fn run_assembler<
         return;
     }
 
+    // Sort links and remap them
+    #[cfg(feature = "build-links")]
+    {
+        let _link_pairs =
+            links_manager.build_links::<MergingHash>(temp_dir.clone(), BUCKETS_COUNT, links_hashes);
+
+        links_manager.remap_first_pass(final_unitigs_count);
+        links_manager.remap_second_pass();
+    }
+
     if step <= AssemblerStartingStep::BuildUnitigs {
         AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(
-            reorganized_reads.0,
+            reorganized_reads,
             unitigs_map,
             #[cfg(feature = "build-links")]
-            reorganized_reads.1,
+            final_unitigs_bucket,
             temp_dir.as_path(),
             &final_unitigs_file,
             k,
+            &links_manager
         );
     }
 

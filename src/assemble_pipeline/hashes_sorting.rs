@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::config::SwapPriority;
 use crate::hashes::HashFunctionFactory;
-use crate::io::structs::hash_entry::{Direction, HashEntry};
+use crate::io::structs::hash_entry::{Direction, HashCompare, HashEntry};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::get_memory_mode;
@@ -11,7 +11,7 @@ use crate::utils::vec_slice::VecSlice;
 use crate::KEEP_FILES;
 use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::MultiThreadBuckets;
-use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::reader::FileReader;
@@ -19,8 +19,6 @@ use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use std::marker::PhantomData;
-use std::mem::size_of;
 use std::sync::atomic::Ordering;
 
 impl AssemblePipeline {
@@ -63,27 +61,7 @@ impl AssemblePipeline {
                 drop(reader);
                 MemoryFs::remove_file(&input, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
 
-                struct Compare<H: HashFunctionFactory> {
-                    _phantom: PhantomData<H>,
-                }
-                impl<H: HashFunctionFactory> SortKey<HashEntry<H::HashTypeUnextendable>> for Compare<H> {
-                    type KeyType = H::HashTypeUnextendable;
-                    const KEY_BITS: usize = size_of::<H::HashTypeUnextendable>() * 8;
-
-                    #[inline(always)]
-                    fn compare(left: &HashEntry<<H as HashFunctionFactory>::HashTypeUnextendable>,
-                               right: &HashEntry<<H as HashFunctionFactory>::HashTypeUnextendable>) -> std::cmp::Ordering {
-                        left.hash.cmp(&right.hash)
-                    }
-
-                    #[inline(always)]
-                    fn get_shifted(value: &HashEntry<H::HashTypeUnextendable>, rhs: u8) -> u8 {
-                        H::get_shifted(value.hash, rhs) as u8
-                    }
-                }
-
-                // vec.sort_unstable_by_key(|e| e.hash);
-                fast_smart_radix_sort::<_, Compare<H>, false>(&mut vec[..]);
+                fast_smart_radix_sort::<_, HashCompare<H>, false>(&mut vec[..]);
 
                 let mut unitigs_vec = Vec::new();
 

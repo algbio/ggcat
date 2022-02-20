@@ -11,7 +11,6 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::io::{Cursor, Read, Write};
-use std::mem::size_of;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -93,22 +92,7 @@ impl QueryPipeline {
             drop(file);
             MemoryFs::remove_file(&input, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
 
-            struct Compare;
-            impl SortKey<CounterEntry> for Compare {
-                type KeyType = u64;
-                const KEY_BITS: usize = size_of::<u64>() * 8;
-
-                #[inline(always)]
-                fn compare(left: &CounterEntry, right: &CounterEntry) -> std::cmp::Ordering {
-                    left.query_index.cmp(&right.query_index)
-                }
-
-                #[inline(always)]
-                fn get_shifted(value: &CounterEntry, rhs: u8) -> u8 {
-                    (value.query_index >> rhs) as u8
-                }
-            }
-
+            crate::make_comparer!(Compare, CounterEntry, query_index: u64);
             fast_smart_radix_sort::<_, Compare, false>(&mut vec[..]);
 
             for x in vec.group_by(|a, b| a.query_index == b.query_index) {
