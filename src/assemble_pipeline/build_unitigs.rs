@@ -1,7 +1,7 @@
 use crate::assemble_pipeline::reorganize_reads::ReorganizedReadsExtraData;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
-use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
+use crate::config::{BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
 use crate::io::concurrent::temp_reads::reads_reader::IntermediateReadsReader;
@@ -65,9 +65,10 @@ fn write_fasta_entry<
     color: color_types::PartialUnitigsColorStructure<MH, CX>,
     read: &R,
     index: usize,
+    bucket: BucketIndexType,
 ) {
     temp_buffer.clear();
-    write!(temp_buffer, "> {} J", index).unwrap();
+    write!(temp_buffer, "> {}/{}", index, bucket).unwrap();
 
     CX::ColorsMergeManagerType::<MH>::print_color_data(&color, temp_buffer);
 
@@ -124,6 +125,7 @@ impl AssemblePipeline {
                         data.color,
                         &seq,
                         links_manager.get_final_unitig_index(unitig_index),
+                        inputs.len() as BucketIndexType,
                     );
                     unitig_index += 1;
                 });
@@ -313,6 +315,7 @@ impl AssemblePipeline {
                         writable_color,
                         temp_sequence.as_slice(),
                         links_manager.get_unitig_index(bucket_index, unitig_index),
+                        bucket_index,
                     );
                     unitig_index += 1;
                 }

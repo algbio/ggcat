@@ -111,7 +111,7 @@ impl UnitigLinksManager {
         }
 
         // Set the final unitigs offset
-        self.final_unitig_indexes_offset = self.prefix_indexes[self.links_data.len()] + count;
+        self.final_unitig_indexes_offset = self.prefix_indexes[self.links_data.len()];
 
         println!(
             "Total reads count: {}",

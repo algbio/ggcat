@@ -286,6 +286,17 @@ impl AssemblePipeline {
                             let entries =
                                 VecSlice::new_extend(&mut final_unitigs_vec, unitig_entries);
 
+                            let first_index = UnitigIndex::new(
+                                bucket_index,
+                                entry.entry as usize,
+                                entry.flags.is_reverse_complemented(),
+                            );
+
+                            thread_links_manager.notify_add_read(
+                                first_index,
+                                unitig_entries.last().cloned().unwrap_or(first_index),
+                            );
+
                             final_links_tmp.add_element(
                                 &final_unitigs_vec,
                                 &UnitigLink {
