@@ -40,6 +40,7 @@ impl SwapPriority {
     pub const FinalMaps: usize = 1;
     pub const ResultBuckets: usize = 1;
     pub const HashBuckets: usize = 2;
+    pub const QueryCounters: usize = 2;
     pub const ReorganizeReads: usize = 3;
     pub const LinksBuckets: usize = 3;
     pub const LinkPairs: usize = 4;

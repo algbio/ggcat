@@ -21,7 +21,7 @@ use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 
 #[cfg(not(feature = "build-links"))]
 use {
@@ -33,8 +33,11 @@ use {
 
 #[cfg(feature = "build-links")]
 use {
+    crate::assemble_pipeline::unitig_links_manager::ThreadUnitigsLinkManager,
+    crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager,
+    crate::config::BucketIndexType,
     crate::io::concurrent::temp_reads::single_thread_writer::SingleIntermediateReadsThreadWriter,
-    parallel_processor::buckets::bucket_type::BucketType,
+    parallel_processor::buckets::bucket_type::BucketType, std::sync::atomic::AtomicUsize,
 };
 
 #[derive(Clone, Debug)]
@@ -95,6 +98,7 @@ impl AssemblePipeline {
         temp_path: &Path,
         #[cfg(not(feature = "build-links"))] out_file: &Mutex<ReadsWriter>,
         buckets_count: usize,
+        #[cfg(feature = "build-links")] links_manager: &UnitigLinksManager,
     ) -> (Vec<PathBuf>, (PathBuf, usize)) {
         PHASES_TIMES_MONITOR
             .write()
@@ -129,14 +133,18 @@ impl AssemblePipeline {
 
         let inputs: Vec<_> = reads.iter().zip(mapping_files.iter()).collect();
 
+        #[cfg(feature = "build-links")]
         let final_reads_count = AtomicUsize::new(0);
 
         inputs.par_iter().for_each(|(read_file, mapping_file)| {
             let mut tmp_reads_buffer = IntermediateReadsThreadWriter::new(buckets_count, &buckets);
             #[cfg(feature = "build-links")]
-            let mut tmp_final_reads_buffer =
-                SingleIntermediateReadsThreadWriter::new(&final_unitigs_temp_bucket);
+            let (mut tmp_final_reads_buffer, mut thread_links_manager) = (
+                SingleIntermediateReadsThreadWriter::new(&final_unitigs_temp_bucket),
+                ThreadUnitigsLinkManager::new(links_manager, inputs.len() as BucketIndexType /* Already completed unitigs are in an extra bucket */),
+            );
 
+            #[cfg(feature = "build-links")]
             let mut thread_final_reads_counter = 0;
 
             #[cfg(not(feature = "build-links"))]
@@ -220,7 +228,13 @@ impl AssemblePipeline {
                             seq,
                             0,
                         );
-                        thread_final_reads_counter += 1;
+
+                        let unitig_index = UnitigIndex::new(bucket_index, index as usize, false);
+                        thread_links_manager.notify_add_read(unitig_index, unitig_index);
+
+                        #[cfg(feature = "build-links")] {
+                            thread_final_reads_counter += 1;
+                        }
                     }
                 }
 

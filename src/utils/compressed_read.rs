@@ -218,6 +218,10 @@ impl<'a> FastaCompatibleRead for CompressedRead<'a> {
     ) -> &'b [u8] {
         &buffer[data]
     }
+
+    fn get_length(&self) -> usize {
+        self.bases_count()
+    }
 }
 
 impl<'a> HashableSequence for CompressedRead<'a> {

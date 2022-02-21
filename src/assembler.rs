@@ -132,7 +132,11 @@ pub fn run_assembler<
     let unames = Utils::generate_bucket_names(temp_dir.join("unitigs_map"), BUCKETS_COUNT, None);
     let rnames = Utils::generate_bucket_names(temp_dir.join("results_map"), BUCKETS_COUNT, None);
 
-    let mut links_manager = UnitigLinksManager::new(BUCKETS_COUNT, temp_dir.clone());
+    let mut links_manager = UnitigLinksManager::new(
+        BUCKETS_COUNT,
+        #[cfg(feature = "build-links")]
+        temp_dir.clone(),
+    );
 
     let (unitigs_map, reads_map) = if step <= AssemblerStartingStep::LinksCompaction {
         for file in unames {
@@ -215,7 +219,8 @@ pub fn run_assembler<
         None => ReadsWriter::new_plain(&output_file),
     });
 
-    let (reorganized_reads, (final_unitigs_bucket, final_unitigs_count)) = if step
+    #[allow(unused_variables)]
+    let (reorganized_reads, (final_unitigs_bucket, _final_unitigs_count)) = if step
         <= AssemblerStartingStep::ReorganizeReads
     {
         AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
@@ -225,6 +230,8 @@ pub fn run_assembler<
             #[cfg(not(feature = "build-links"))]
             &final_unitigs_file,
             BUCKETS_COUNT,
+            #[cfg(feature = "build-links")]
+            &links_manager,
         )
     } else {
         (
@@ -243,15 +250,17 @@ pub fn run_assembler<
         return;
     }
 
+    links_manager.compute_id_offsets();
+
     // Sort links and remap them
     #[cfg(feature = "build-links")]
-    {
-        let _link_pairs =
+    let links_final_mappings = {
+        let link_pairs =
             links_manager.build_links::<MergingHash>(temp_dir.clone(), BUCKETS_COUNT, links_hashes);
 
-        links_manager.remap_first_pass(final_unitigs_count);
-        links_manager.remap_second_pass();
-    }
+        let fs_link_pairs = links_manager.remap_first_pass(temp_dir.clone(), link_pairs);
+        links_manager.remap_second_pass(temp_dir.clone(), fs_link_pairs)
+    };
 
     if step <= AssemblerStartingStep::BuildUnitigs {
         AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(
@@ -262,7 +271,9 @@ pub fn run_assembler<
             temp_dir.as_path(),
             &final_unitigs_file,
             k,
-            &links_manager
+            &links_manager,
+            #[cfg(feature = "build-links")]
+            links_final_mappings,
         );
     }
 

@@ -226,6 +226,7 @@ impl AssemblePipeline {
                                 // Write to disk, full unitig!
                                 let entries = VecSlice::new_extend(&mut final_unitigs_vec, linked);
 
+                                #[cfg(feature = "build-links")]
                                 let first_index = UnitigIndex::new(
                                     bucket_index,
                                     entry.entry as usize,
@@ -233,7 +234,9 @@ impl AssemblePipeline {
                                 );
 
                                 thread_links_manager.notify_add_read(
+                                    #[cfg(feature = "build-links")]
                                     first_index,
+                                    #[cfg(feature = "build-links")]
                                     linked.last().cloned().unwrap_or(first_index),
                                 );
 
@@ -286,6 +289,7 @@ impl AssemblePipeline {
                             let entries =
                                 VecSlice::new_extend(&mut final_unitigs_vec, unitig_entries);
 
+                            #[cfg(feature = "build-links")]
                             let first_index = UnitigIndex::new(
                                 bucket_index,
                                 entry.entry as usize,
@@ -293,7 +297,9 @@ impl AssemblePipeline {
                             );
 
                             thread_links_manager.notify_add_read(
+                                #[cfg(feature = "build-links")]
                                 first_index,
+                                #[cfg(feature = "build-links")]
                                 unitig_entries.last().cloned().unwrap_or(first_index),
                             );
 
