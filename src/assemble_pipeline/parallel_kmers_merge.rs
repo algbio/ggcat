@@ -185,6 +185,59 @@ fn get_kmer_multiplicity<CHI>(entry: &MapEntry<CHI>) -> usize {
 }
 
 impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+    ParallelKmersMerge<'x, H, MH, CX>
+{
+    #[inline(always)]
+    fn write_hashes(
+        hashes_tmp: &mut BucketsThreadDispatcher<
+            'x,
+            LockFreeBinaryWriter,
+            HashEntry<MH::HashTypeUnextendable>,
+        >,
+        hash: MH::HashTypeUnextendable,
+        bucket: BucketIndexType,
+        entry: u64,
+        do_merge: bool,
+        direction: Direction,
+        buckets_count: usize,
+        #[cfg(feature = "build-links")] link_hashes_tmp: &mut BucketsThreadDispatcher<
+            'x,
+            LockFreeBinaryWriter,
+            HashEntry<MH::HashTypeUnextendable>,
+        >,
+        #[cfg(feature = "build-links")] link_hash: MH::HashTypeUnextendable,
+        #[cfg(feature = "build-links")] has_edges: bool,
+    ) {
+        if do_merge {
+            hashes_tmp.add_element(
+                MH::get_first_bucket(hash) % (buckets_count as BucketIndexType),
+                &(),
+                &HashEntry {
+                    hash,
+                    bucket,
+                    entry,
+                    direction,
+                },
+            );
+        }
+        #[cfg(feature = "build-links")]
+        if has_edges {
+            #[cfg(feature = "build-links")]
+            link_hashes_tmp.add_element(
+                MH::get_first_bucket(link_hash) % (buckets_count as BucketIndexType),
+                &(),
+                &HashEntry {
+                    hash: link_hash,
+                    bucket,
+                    entry,
+                    direction,
+                },
+            );
+        }
+    }
+}
+
+impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutor<'x, ParallelKmersMergeFactory<H, MH, CX>>
     for ParallelKmersMerge<'x, H, MH, CX>
 {
@@ -317,19 +370,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         drop(tmp_read);
         stream.close_and_remove(true);
-
-        // static MAX_RHS: AtomicUsize = AtomicUsize::new(0);
-        // static MAX_CRR: AtomicUsize = AtomicUsize::new(0);
-        //
-        // if MAX_RHS.fetch_max(self.rhash_map.len(), Ordering::Relaxed) < self.rhash_map.len() {
-        //     println!("Max rhs: {}", self.rhash_map.len());
-        // }
-        //
-        // if MAX_CRR.fetch_max(self.rcorrect_reads.len(), Ordering::Relaxed)
-        //     < self.rcorrect_reads.len()
-        // {
-        //     println!("Max crr: {}", self.rcorrect_reads.len());
-        // }
 
         if CX::COLORS_ENABLED {
             CX::ColorsMergeManagerType::<MH>::process_colors(
@@ -486,11 +526,12 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                             break (temp_data.0, true, false);
                         }
                     } else {
-                        break (temp_data.0, false, count > 0);
+                        break (current_hash, false, count > 0);
                     }
                 };
             };
 
+            #[allow(unused_variables)]
             let (fw_hash, fw_merge, fw_has_edges) = {
                 if end_ignored {
                     (hash, true, false)
@@ -505,6 +546,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 }
             };
 
+            #[allow(unused_variables)]
             let (bw_hash, bw_merge, bw_has_edges) = {
                 if begin_ignored {
                     (hash, true, false)
@@ -532,48 +574,38 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 out_seq,
             );
 
-            if fw_merge || (cfg!(feature = "build-links") && fw_has_edges) {
-                let fw_hash = fw_hash.to_unextendable();
-                let fw_hash_sr = HashEntry {
-                    hash: fw_hash,
-                    bucket: bucket_index,
-                    entry: read_index,
-                    direction: Direction::Forward,
-                };
-                let fw_bucket_index =
-                    MH::get_first_bucket(fw_hash) % (buckets_count as BucketIndexType);
+            Self::write_hashes(
+                &mut self.hashes_tmp,
+                fw_hash.to_unextendable(),
+                bucket_index,
+                read_index,
+                fw_merge,
+                Direction::Forward,
+                buckets_count,
+                #[cfg(feature = "build-links")]
+                &mut self.link_hashes_tmp,
+                #[cfg(feature = "build-links")]
+                MH::manual_remove_only_forward(fw_hash, k, out_seq[out_seq.len() - k])
+                    .to_unextendable(),
+                #[cfg(feature = "build-links")]
+                fw_has_edges,
+            );
 
-                if fw_merge {
-                    self.hashes_tmp
-                        .add_element(fw_bucket_index, &(), &fw_hash_sr);
-                } else {
-                    #[cfg(feature = "build-links")]
-                    self.link_hashes_tmp
-                        .add_element(fw_bucket_index, &(), &fw_hash_sr);
-                }
-            }
-
-            if bw_merge || (cfg!(feature = "build-links") && bw_has_edges) {
-                let bw_hash = bw_hash.to_unextendable();
-
-                let bw_hash_sr = HashEntry {
-                    hash: bw_hash,
-                    bucket: bucket_index,
-                    entry: read_index,
-                    direction: Direction::Backward,
-                };
-                let bw_bucket_index =
-                    MH::get_first_bucket(bw_hash) % (buckets_count as BucketIndexType);
-
-                if bw_merge {
-                    self.hashes_tmp
-                        .add_element(bw_bucket_index, &(), &bw_hash_sr);
-                } else {
-                    #[cfg(feature = "build-links")]
-                    self.link_hashes_tmp
-                        .add_element(bw_bucket_index, &(), &bw_hash_sr);
-                }
-            }
+            Self::write_hashes(
+                &mut self.hashes_tmp,
+                bw_hash.to_unextendable(),
+                bucket_index,
+                read_index,
+                bw_merge,
+                Direction::Backward,
+                buckets_count,
+                #[cfg(feature = "build-links")]
+                &mut self.link_hashes_tmp,
+                #[cfg(feature = "build-links")]
+                MH::manual_remove_only_reverse(bw_hash, k, out_seq[k - 1]).to_unextendable(),
+                #[cfg(feature = "build-links")]
+                bw_has_edges,
+            );
         }
 
         #[cfg(feature = "mem-analysis")]
