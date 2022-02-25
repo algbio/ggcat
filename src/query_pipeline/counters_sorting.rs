@@ -6,7 +6,7 @@ use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
 use parallel_processor::buckets::bucket_writer::BucketWriter;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
-use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
@@ -80,7 +80,13 @@ impl QueryPipeline {
 
         file_counters_inputs.par_iter().for_each(|input| {
             let mut counters_vec: Vec<CounterEntry> = CounterEntry::load_data_to_vec(input, true);
-            MemoryFs::remove_file(&input, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
+            MemoryFs::remove_file(
+                &input,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            )
+            .unwrap();
 
             crate::make_comparer!(Compare, CounterEntry, query_index: u64);
             fast_smart_radix_sort::<_, Compare, false>(&mut counters_vec[..]);

@@ -9,6 +9,7 @@ use crossbeam::queue::SegQueue;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
+use parallel_processor::memory_fs::RemoveFileMode;
 use parking_lot::Condvar;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -90,7 +91,12 @@ impl<E: SequenceExtraData> BucketProcessData<E> {
 
         let tmp_dir = path.as_ref().parent().unwrap_or(Path::new("."));
         Self {
-            reader: IntermediateReadsReader::<E>::new(&path, !KEEP_FILES.load(Ordering::Relaxed)),
+            reader: IntermediateReadsReader::<E>::new(
+                &path,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            ),
             buckets: MultiThreadBuckets::new(
                 SECOND_BUCKETS_COUNT,
                 &(

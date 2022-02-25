@@ -11,7 +11,7 @@ use crate::config::BucketIndexType;
 use crate::{KEEP_FILES, PREFER_MEMORY};
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
-use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use serde::de::DeserializeOwned;
 use std::cmp::{max, min};
 use std::path::{Path, PathBuf};
@@ -107,7 +107,13 @@ impl Utils {
 
         drop(reader);
         if remove {
-            MemoryFs::remove_file(&file, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
+            MemoryFs::remove_file(
+                &file,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            )
+            .unwrap();
         }
 
         vec

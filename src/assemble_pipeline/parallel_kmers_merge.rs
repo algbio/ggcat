@@ -21,6 +21,7 @@ use crate::pipeline_common::minimizer_bucketing::{
 use crate::utils::owned_drop::OwnedDrop;
 use crate::utils::{get_memory_mode, Utils};
 use crate::CompressedRead;
+use bstr::ByteSlice;
 use core::slice::from_raw_parts;
 use crossbeam::queue::*;
 use hashbrown::HashMap;
@@ -205,7 +206,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             LockFreeBinaryWriter,
             HashEntry<MH::HashTypeUnextendable>,
         >,
-        #[cfg(feature = "build-links")] link_hash: MH::HashTypeUnextendable,
+        #[cfg(feature = "build-links")] link_hash: MH::HashTypeExtendable,
         #[cfg(feature = "build-links")] has_edges: bool,
     ) {
         if do_merge {
@@ -222,15 +223,29 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         }
         #[cfg(feature = "build-links")]
         if has_edges {
+            let kmer_dir: bool = link_hash.is_forward();
+            let unitig_dir = match direction {
+                Direction::Forward => false,
+                Direction::Backward => true,
+            };
+
+            let hash = link_hash.to_unextendable();
+
             #[cfg(feature = "build-links")]
             link_hashes_tmp.add_element(
-                MH::get_first_bucket(link_hash) % (buckets_count as BucketIndexType),
+                MH::get_first_bucket(hash) % (buckets_count as BucketIndexType),
                 &(),
                 &HashEntry {
-                    hash: link_hash,
+                    hash,
                     bucket,
                     entry,
-                    direction,
+                    direction: {
+                        if kmer_dir ^ unitig_dir {
+                            Direction::Backward
+                        } else {
+                            Direction::Forward
+                        }
+                    },
                 },
             );
         }
@@ -526,7 +541,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                             break (temp_data.0, true, false);
                         }
                     } else {
-                        break (current_hash, false, count > 0);
+                        break (current_hash, false, true); // count > 0);
                     }
                 };
             };
@@ -574,6 +589,28 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 out_seq,
             );
 
+            let is_debugging = out_seq.contains_str(b"AATGGCCCAAAATATTACCTTCGTTGGTGG")
+                || out_seq.contains_str(b"CCACCAACGAAGGTAATATTTTGGGCCATT");
+
+            if is_debugging {
+                println!(
+                    "Debugging sequence: {}",
+                    std::str::from_utf8(out_seq).unwrap()
+                );
+                println!(
+                    "Forward: e:{} h:{:?}",
+                    fw_has_edges,
+                    MH::manual_remove_only_forward(fw_hash, k, out_seq[out_seq.len() - k])
+                        .to_unextendable()
+                );
+                println!(
+                    "Backward: e:{} h:{:?}",
+                    bw_has_edges,
+                    MH::manual_remove_only_reverse(bw_hash, k, out_seq[out_seq.len() - k])
+                        .to_unextendable()
+                );
+            }
+
             Self::write_hashes(
                 &mut self.hashes_tmp,
                 fw_hash.to_unextendable(),
@@ -585,8 +622,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 #[cfg(feature = "build-links")]
                 &mut self.link_hashes_tmp,
                 #[cfg(feature = "build-links")]
-                MH::manual_remove_only_forward(fw_hash, k, out_seq[out_seq.len() - k])
-                    .to_unextendable(),
+                MH::manual_remove_only_forward(fw_hash, k, out_seq[out_seq.len() - k]),
                 #[cfg(feature = "build-links")]
                 fw_has_edges,
             );
@@ -602,7 +638,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 #[cfg(feature = "build-links")]
                 &mut self.link_hashes_tmp,
                 #[cfg(feature = "build-links")]
-                MH::manual_remove_only_reverse(bw_hash, k, out_seq[k - 1]).to_unextendable(),
+                MH::manual_remove_only_reverse(bw_hash, k, out_seq[k - 1]),
                 #[cfg(feature = "build-links")]
                 bw_has_edges,
             );

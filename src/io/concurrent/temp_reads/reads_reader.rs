@@ -10,7 +10,7 @@ use byteorder::ReadBytesExt;
 use desse::Desse;
 use desse::DesseSized;
 use parallel_processor::memory_fs::file::reader::FileReader;
-use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use replace_with::replace_with_or_abort;
 use std::cmp::max;
 use std::io::{Read, Seek, SeekFrom};
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct IntermediateReadsReader<T: SequenceExtraData> {
-    remove_file: bool,
+    remove_file: RemoveFileMode,
     sequential_reader: SequentialReader,
     parallel_reader: FileReader,
     parallel_index: AtomicU64,
@@ -71,7 +71,7 @@ impl Read for SequentialReader {
 }
 
 impl<T: SequenceExtraData> IntermediateReadsReader<T> {
-    pub fn new(name: impl AsRef<Path>, remove_file: bool) -> Self {
+    pub fn new(name: impl AsRef<Path>, remove_file: RemoveFileMode) -> Self {
         let mut file = FileReader::open(&name)
             .unwrap_or_else(|| panic!("Cannot open file {}", name.as_ref().display()));
 

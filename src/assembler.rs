@@ -10,7 +10,7 @@ use crate::{AssemblerStartingStep, KEEP_FILES, SAVE_MEMORY};
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
-use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
 use std::fs::remove_file;
@@ -199,7 +199,13 @@ pub fn run_assembler<
         };
 
         for link_file in links {
-            MemoryFs::remove_file(&link_file, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
+            MemoryFs::remove_file(
+                &link_file,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            )
+            .unwrap();
         }
         result
     } else {
@@ -220,7 +226,7 @@ pub fn run_assembler<
     });
 
     #[allow(unused_variables)]
-    let (reorganized_reads, (final_unitigs_bucket, _final_unitigs_count)) = if step
+    let (reorganized_reads, final_unitigs_bucket) = if step
         <= AssemblerStartingStep::ReorganizeReads
     {
         AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
@@ -230,19 +236,14 @@ pub fn run_assembler<
             #[cfg(not(feature = "build-links"))]
             &final_unitigs_file,
             BUCKETS_COUNT,
-            #[cfg(feature = "build-links")]
-            &links_manager,
         )
     } else {
         (
             Utils::generate_bucket_names(temp_dir.join("reads_bucket"), BUCKETS_COUNT, Some("tmp")),
-            (
-                Utils::generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
-                    .into_iter()
-                    .next()
-                    .unwrap(),
-                0,
-            ),
+            (Utils::generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
+                .into_iter()
+                .next()
+                .unwrap()),
         )
     };
 
@@ -255,8 +256,12 @@ pub fn run_assembler<
     // Sort links and remap them
     #[cfg(feature = "build-links")]
     let links_final_mappings = {
-        let link_pairs =
-            links_manager.build_links::<MergingHash>(temp_dir.clone(), BUCKETS_COUNT, links_hashes);
+        let link_pairs = links_manager.build_links::<MergingHash, AssemblerColorsManager>(
+            temp_dir.clone(),
+            final_unitigs_bucket.clone(),
+            BUCKETS_COUNT,
+            links_hashes,
+        );
 
         let fs_link_pairs = links_manager.remap_first_pass(temp_dir.clone(), link_pairs);
         links_manager.remap_second_pass(temp_dir.clone(), fs_link_pairs)

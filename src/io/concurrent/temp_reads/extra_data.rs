@@ -1,7 +1,7 @@
 use crate::KEEP_FILES;
 use core::fmt::Debug;
 use parallel_processor::memory_fs::file::reader::FileReader;
-use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use std::sync::atomic::Ordering;
@@ -57,7 +57,13 @@ pub trait SequenceExtraData: Sized + Send + Debug {
 
         drop(reader);
         if remove {
-            MemoryFs::remove_file(&file, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
+            MemoryFs::remove_file(
+                &file,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            )
+            .unwrap();
         }
 
         vec

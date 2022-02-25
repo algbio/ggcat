@@ -1,6 +1,9 @@
+use crate::assemble_pipeline::reorganize_reads::CompletedReadsExtraData;
+use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
 use crate::hashes::HashFunctionFactory;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use crate::io::concurrent::temp_reads::reads_reader::IntermediateReadsReader;
 use crate::io::structs::hash_entry::{HashCompare, HashEntry};
 use crate::io::structs::link_connection::LinkConnection;
 use crate::io::structs::link_remap::LinkRemap;
@@ -12,6 +15,7 @@ use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_fs::file::reader::FileReader;
+use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::prelude::*;
 use std::path::PathBuf;
@@ -61,12 +65,13 @@ impl UnitigLinksManager {
         }
 
         // Set the final unitigs offset
-        self.final_unitig_indexes_offset = self.prefix_indexes[self.links_data.len()];
+        self.final_unitig_indexes_offset = self.prefix_indexes[self.links_data.len() - 1];
     }
 
-    pub fn build_links<H: HashFunctionFactory>(
+    pub fn build_links<H: HashFunctionFactory, C: ColorsManager>(
         &self,
         temp_dir: PathBuf,
+        completed_unitigs_path: PathBuf,
         buckets_count: usize,
         links_buckets: Vec<PathBuf>,
     ) -> Vec<PathBuf> {
@@ -74,41 +79,68 @@ impl UnitigLinksManager {
             .write()
             .start_phase("phase: links building".to_string());
 
-        let mut link_pairs_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
-            buckets_count,
-            &(
-                temp_dir.join("link-pairs"),
-                get_memory_mode(SwapPriority::LinkPairs),
-            ),
-            None,
-        );
+        rayon::scope(|s| {
+            // Read the completed unitigs and add the corresponding remappings
+            s.spawn(|_| {
+                // Map to the last bucket, dedicated to completed unitigs
+                let mut thread_links_writer =
+                    ThreadUnitigsLinkManager::new(self, buckets_count as BucketIndexType);
 
-        links_buckets.into_par_iter().for_each(|input| {
-            let mut thread_link_pairs =
-                BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &link_pairs_buckets);
+                IntermediateReadsReader::<
+                    CompletedReadsExtraData<color_types::PartialUnitigsColorStructure<H, C>>,
+                >::new(completed_unitigs_path, RemoveFileMode::Keep)
+                .for_each::<_, typenum::U0>(|_, data, _seq| {
+                    let unitig_index = UnitigIndex::new(data.bucket, data.index, false);
+                    thread_links_writer.notify_add_read(unitig_index, unitig_index);
+                });
+            });
 
-            let mut vec: Vec<HashEntry<H::HashTypeUnextendable>> =
-                Utils::bincode_deserialize_to_vec(input, true);
+            let mut link_pairs_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+                buckets_count,
+                &(
+                    temp_dir.join("link-pairs"),
+                    get_memory_mode(SwapPriority::LinkPairs),
+                ),
+                None,
+            );
 
-            fast_smart_radix_sort::<_, HashCompare<H>, false>(&mut vec[..]);
+            links_buckets.into_par_iter().for_each(|input| {
+                let mut thread_link_pairs =
+                    BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &link_pairs_buckets);
 
-            for linked in vec.group_by(|a, b| a.hash == b.hash) {
-                for (index, first) in linked.iter().enumerate() {
-                    for second in linked.iter().skip(index + 1) {
-                        thread_link_pairs.add_element(
-                            second.bucket,
-                            &(),
-                            &LinkConnection {
-                                source: UnitigIndex::new(first.bucket, first.entry as usize, false),
-                                dest: UnitigIndex::new(second.bucket, second.entry as usize, false),
-                            },
-                        );
+                let mut vec: Vec<HashEntry<H::HashTypeUnextendable>> =
+                    Utils::bincode_deserialize_to_vec(input, true);
+
+                fast_smart_radix_sort::<_, HashCompare<H>, false>(&mut vec[..]);
+
+                for linked in vec.group_by(|a, b| a.hash == b.hash) {
+                    for (index, first) in linked.iter().enumerate() {
+                        for second in linked.iter().skip(index + 1) {
+                            if first.direction != second.direction {
+                                thread_link_pairs.add_element(
+                                    second.bucket,
+                                    &(),
+                                    &LinkConnection {
+                                        source: UnitigIndex::new(
+                                            first.bucket,
+                                            first.entry as usize,
+                                            false,
+                                        ),
+                                        dest: UnitigIndex::new(
+                                            second.bucket,
+                                            second.entry as usize,
+                                            false,
+                                        ),
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
-            }
-        });
+            });
 
-        link_pairs_buckets.finalize()
+            link_pairs_buckets.finalize()
+        })
     }
 
     fn remap_reads(
@@ -244,11 +276,13 @@ impl UnitigLinksManager {
     }
 
     #[inline(always)]
+    #[track_caller]
     pub fn get_unitig_index(&self, bucket: BucketIndexType, index: usize) -> usize {
         self.prefix_indexes[bucket as usize] + index
     }
 
     #[inline(always)]
+    #[track_caller]
     pub fn get_final_unitig_index(&self, index: usize) -> usize {
         self.final_unitig_indexes_offset + index
     }

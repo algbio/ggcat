@@ -26,6 +26,12 @@ static mut FILES_FLUSH_HASH_MAP: Option<Mutex<HashMap<PathBuf, Vec<Arc<(PathBuf,
 
 pub struct MemoryFs;
 
+#[derive(Copy, Clone)]
+pub enum RemoveFileMode {
+    Keep,
+    Remove { remove_fs: bool },
+}
+
 impl MemoryFs {
     pub fn init(
         memory_size: MemoryDataSize,
@@ -48,11 +54,19 @@ impl MemoryFs {
         }
     }
 
-    pub fn remove_file(file: impl AsRef<Path>, remove_fs: bool) -> Result<(), ()> {
-        if MemoryFileInternal::delete(file, remove_fs) {
-            Ok(())
-        } else {
-            Err(())
+    pub fn remove_file(file: impl AsRef<Path>, remove_mode: RemoveFileMode) -> Result<(), ()> {
+        match remove_mode {
+            RemoveFileMode::Keep => {
+                // Do nothing
+                Ok(())
+            }
+            RemoveFileMode::Remove { remove_fs } => {
+                if MemoryFileInternal::delete(file, remove_fs) {
+                    Ok(())
+                } else {
+                    Err(())
+                }
+            }
         }
     }
 

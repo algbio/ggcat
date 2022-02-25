@@ -11,10 +11,11 @@ use crate::io::concurrent::temp_reads::thread_writer::IntermediateReadsThreadWri
 use crate::io::structs::unitig_link::UnitigIndex;
 use crate::utils::Utils;
 use crate::KEEP_FILES;
+use byteorder::ReadBytesExt;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::file::reader::FileReader;
-use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
 use rayon::iter::IntoParallelRefIterator;
@@ -31,13 +32,12 @@ use {
     bstr::ByteSlice,
 };
 
+use crate::io::varint::{decode_varint, encode_varint};
 #[cfg(feature = "build-links")]
 use {
-    crate::assemble_pipeline::unitig_links_manager::ThreadUnitigsLinkManager,
-    crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager,
     crate::config::BucketIndexType,
     crate::io::concurrent::temp_reads::single_thread_writer::SingleIntermediateReadsThreadWriter,
-    parallel_processor::buckets::bucket_type::BucketType, std::sync::atomic::AtomicUsize,
+    parallel_processor::buckets::bucket_type::BucketType,
 };
 
 #[derive(Clone, Debug)]
@@ -70,6 +70,8 @@ impl<CX: SequenceExtraData> SequenceExtraData for ReorganizedReadsExtraData<CX> 
 #[derive(Clone, Debug)]
 pub struct CompletedReadsExtraData<CX: SequenceExtraData> {
     pub color: CX,
+    pub bucket: BucketIndexType,
+    pub index: usize,
 }
 
 impl<CX: SequenceExtraData> SequenceExtraData for CompletedReadsExtraData<CX> {
@@ -77,12 +79,16 @@ impl<CX: SequenceExtraData> SequenceExtraData for CompletedReadsExtraData<CX> {
     fn decode<'a>(mut reader: &'a mut impl Read) -> Option<Self> {
         Some(Self {
             color: CX::decode(&mut reader)?,
+            bucket: decode_varint(|| reader.read_u8().ok())? as BucketIndexType,
+            index: decode_varint(|| reader.read_u8().ok())? as usize,
         })
     }
 
     #[inline(always)]
     fn encode<'a>(&self, mut writer: &'a mut impl Write) {
         self.color.encode(&mut writer);
+        encode_varint(|x| writer.write_all(x), self.bucket as u64).unwrap();
+        encode_varint(|x| writer.write_all(x), self.index as u64).unwrap();
     }
 
     #[inline(always)]
@@ -98,8 +104,7 @@ impl AssemblePipeline {
         temp_path: &Path,
         #[cfg(not(feature = "build-links"))] out_file: &Mutex<ReadsWriter>,
         buckets_count: usize,
-        #[cfg(feature = "build-links")] links_manager: &UnitigLinksManager,
-    ) -> (Vec<PathBuf>, (PathBuf, usize)) {
+    ) -> (Vec<PathBuf>, PathBuf) {
         PHASES_TIMES_MONITOR
             .write()
             .start_phase("phase: reads reorganization".to_string());
@@ -133,19 +138,11 @@ impl AssemblePipeline {
 
         let inputs: Vec<_> = reads.iter().zip(mapping_files.iter()).collect();
 
-        #[cfg(feature = "build-links")]
-        let final_reads_count = AtomicUsize::new(0);
-
         inputs.par_iter().for_each(|(read_file, mapping_file)| {
             let mut tmp_reads_buffer = IntermediateReadsThreadWriter::new(buckets_count, &buckets);
             #[cfg(feature = "build-links")]
-            let (mut tmp_final_reads_buffer, mut thread_links_manager) = (
-                SingleIntermediateReadsThreadWriter::new(&final_unitigs_temp_bucket),
-                ThreadUnitigsLinkManager::new(links_manager, inputs.len() as BucketIndexType /* Already completed unitigs are in an extra bucket */),
-            );
-
-            #[cfg(feature = "build-links")]
-            let mut thread_final_reads_counter = 0;
+            let mut tmp_final_reads_buffer =
+                SingleIntermediateReadsThreadWriter::new(&final_unitigs_temp_bucket);
 
             #[cfg(not(feature = "build-links"))]
             let mut tmp_lonely_unitigs_buffer =
@@ -167,7 +164,13 @@ impl AssemblePipeline {
             }
 
             drop(reader);
-            MemoryFs::remove_file(&mapping_file, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
+            MemoryFs::remove_file(
+                &mapping_file,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            )
+            .unwrap();
 
             crate::make_comparer!(Compare, LinkMapping, entry: u64);
             fast_smart_radix_sort::<_, Compare, false>(&mut mappings[..]);
@@ -181,7 +184,9 @@ impl AssemblePipeline {
 
             IntermediateReadsReader::<color_types::PartialUnitigsColorStructure<MH, CX>>::new(
                 read_file,
-                !KEEP_FILES.load(Ordering::Relaxed),
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
             )
             .for_each::<_, typenum::U0>(|_, color, seq| {
                 if seq.bases_count() > decompress_buffer.len() {
@@ -224,17 +229,14 @@ impl AssemblePipeline {
                     #[cfg(feature = "build-links")]
                     {
                         tmp_final_reads_buffer.add_read::<typenum::U0>(
-                            CompletedReadsExtraData { color },
+                            CompletedReadsExtraData {
+                                color,
+                                bucket: bucket_index,
+                                index: index as usize,
+                            },
                             seq,
                             0,
                         );
-
-                        let unitig_index = UnitigIndex::new(bucket_index, index as usize, false);
-                        thread_links_manager.notify_add_read(unitig_index, unitig_index);
-
-                        #[cfg(feature = "build-links")] {
-                            thread_final_reads_counter += 1;
-                        }
                     }
                 }
 
@@ -248,7 +250,6 @@ impl AssemblePipeline {
             #[cfg(feature = "build-links")]
             {
                 tmp_final_reads_buffer.finalize();
-                final_reads_count.fetch_add(thread_final_reads_counter, Ordering::Relaxed);
             }
 
             assert_eq!(map_index, mappings.len())
@@ -260,7 +261,7 @@ impl AssemblePipeline {
                 let final_unitigs_temp_bucket = final_unitigs_temp_bucket.into_inner();
                 let path = final_unitigs_temp_bucket.get_path();
                 final_unitigs_temp_bucket.finalize();
-                (path, final_reads_count.into_inner())
+                path
             }
             #[cfg(not(feature = "build-links"))]
             () => (PathBuf::new(), 0),

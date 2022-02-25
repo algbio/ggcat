@@ -13,7 +13,7 @@ use crate::utils::Utils;
 use crate::KEEP_FILES;
 use hashbrown::HashMap;
 use parallel_processor::memory_fs::file::reader::FileReader;
-use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
 use rayon::prelude::*;
@@ -145,7 +145,12 @@ impl AssemblePipeline {
 
                 IntermediateReadsReader::<
                     CompletedReadsExtraData<color_types::PartialUnitigsColorStructure<MH, CX>>,
-                >::new(completed_unitigs_list, !KEEP_FILES.load(Ordering::Relaxed))
+                >::new(
+                    completed_unitigs_list,
+                    RemoveFileMode::Remove {
+                        remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                    },
+                )
                 .for_each::<_, typenum::U0>(|_, data, seq| {
                     write_fasta_entry::<MH, CX, _, _>(
                         &mut temp_buffer,
@@ -249,8 +254,13 @@ impl AssemblePipeline {
                     }
 
                     drop(reader);
-                    MemoryFs::remove_file(&unitigs_map_file, !KEEP_FILES.load(Ordering::Relaxed))
-                        .unwrap();
+                    MemoryFs::remove_file(
+                        &unitigs_map_file,
+                        RemoveFileMode::Remove {
+                            remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                        },
+                    )
+                    .unwrap();
 
                     let mut final_sequences = Vec::with_capacity(counter);
                     let mut temp_storage = Vec::new();
@@ -260,7 +270,12 @@ impl AssemblePipeline {
                         ReorganizedReadsExtraData<
                             color_types::PartialUnitigsColorStructure<MH, CX>,
                         >,
-                    >::new(read_file, !KEEP_FILES.load(Ordering::Relaxed))
+                    >::new(
+                        read_file,
+                        RemoveFileMode::Remove {
+                            remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                        },
+                    )
                     .for_each::<_, typenum::U0>(|_, index, seq| {
                         let &(findex, unitig_info) = unitigs_hashmap.get(&index.unitig).unwrap();
                         final_sequences[findex] = Some((
