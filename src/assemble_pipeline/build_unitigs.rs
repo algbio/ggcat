@@ -64,7 +64,7 @@ fn write_fasta_entry<
     MH: HashFunctionFactory,
     CX: ColorsManager,
     R: FastaCompatibleRead + ?Sized,
-    I: Iterator<Item = usize>,
+    I: Iterator<Item = (bool, bool, usize)>,
 >(
     temp_buffer: &mut Vec<u8>,
     writer: &mut FastaWriterConcurrentBuffer,
@@ -81,8 +81,15 @@ fn write_fasta_entry<
 
     #[cfg(feature = "build-links")]
     {
-        for link in links_iterator {
-            write!(temp_buffer, " L:+:{}:+", link).unwrap();
+        for (rev_this, rev_other, link) in links_iterator {
+            write!(
+                temp_buffer,
+                " L:{}:{}:{}",
+                if rev_this { '-' } else { '+' },
+                link,
+                if rev_other { '-' } else { '+' }
+            )
+            .unwrap();
         }
     }
 
@@ -164,7 +171,13 @@ impl AssemblePipeline {
                                 .get(&unitig_index)
                                 .unwrap_or(&empty_links_vec)
                                 .iter()
-                                .map(|ui| links_manager.get_unitig_index(ui.bucket(), ui.index())),
+                                .map(|ui| {
+                                    (
+                                        ui.0,
+                                        ui.1.is_reverse_complemented(),
+                                        links_manager.get_unitig_index(ui.1.bucket(), ui.1.index()),
+                                    )
+                                }),
                             #[cfg(not(feature = "build-links"))]
                             () => std::iter::empty(),
                         },
@@ -391,7 +404,12 @@ impl AssemblePipeline {
                                     .unwrap_or(&empty_links_vec)
                                     .iter()
                                     .map(|ui| {
-                                        links_manager.get_unitig_index(ui.bucket(), ui.index())
+                                        (
+                                            ui.0,
+                                            ui.1.is_reverse_complemented(),
+                                            links_manager
+                                                .get_unitig_index(ui.1.bucket(), ui.1.index()),
+                                        )
                                     }),
                                 #[cfg(not(feature = "build-links"))]
                                 () => std::iter::empty(),

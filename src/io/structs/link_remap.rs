@@ -7,7 +7,7 @@ pub struct LinkRemap {
     pub index: u64,
     pub new_bucket: BucketIndexType,
     pub new_index: u64,
-    pub at_beginning: bool,
+    pub complemented: bool,
 }
 
 impl BucketWriter for LinkRemap {

@@ -9,6 +9,7 @@ use crate::config::{
 use crate::hashes::{ExtendableHashTraitType, HashFunction};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
+use crate::io::structs::edge_hash_entry::EdgeHashEntry;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::hash_entry::HashEntry;
 use crate::pipeline_common::kmers_transform::structs::ReadRef;
@@ -164,7 +165,7 @@ struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, C
         BucketsThreadDispatcher<'x, LockFreeBinaryWriter, HashEntry<MH::HashTypeUnextendable>>,
     #[cfg(feature = "build-links")]
     link_hashes_tmp:
-        BucketsThreadDispatcher<'x, LockFreeBinaryWriter, HashEntry<MH::HashTypeUnextendable>>,
+        BucketsThreadDispatcher<'x, LockFreeBinaryWriter, EdgeHashEntry<MH::HashTypeUnextendable>>,
 
     forward_seq: Vec<u8>,
     backward_seq: Vec<u8>,
@@ -204,7 +205,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         #[cfg(feature = "build-links")] link_hashes_tmp: &mut BucketsThreadDispatcher<
             'x,
             LockFreeBinaryWriter,
-            HashEntry<MH::HashTypeUnextendable>,
+            EdgeHashEntry<MH::HashTypeUnextendable>,
         >,
         #[cfg(feature = "build-links")] link_hash: MH::HashTypeExtendable,
         #[cfg(feature = "build-links")] has_edges: bool,
@@ -235,17 +236,20 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             link_hashes_tmp.add_element(
                 MH::get_first_bucket(hash) % (buckets_count as BucketIndexType),
                 &(),
-                &HashEntry {
-                    hash,
-                    bucket,
-                    entry,
-                    direction: {
-                        if kmer_dir ^ unitig_dir {
-                            Direction::Backward
-                        } else {
-                            Direction::Forward
-                        }
+                &EdgeHashEntry {
+                    hentry: HashEntry {
+                        hash,
+                        bucket,
+                        entry,
+                        direction: {
+                            if kmer_dir ^ unitig_dir {
+                                Direction::Backward
+                            } else {
+                                Direction::Forward
+                            }
+                        },
                     },
+                    orig_dir: direction,
                 },
             );
         }

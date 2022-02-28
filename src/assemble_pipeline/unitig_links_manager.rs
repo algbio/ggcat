@@ -4,7 +4,8 @@ use crate::config::{BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
 use crate::hashes::HashFunctionFactory;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::concurrent::temp_reads::reads_reader::IntermediateReadsReader;
-use crate::io::structs::hash_entry::{HashCompare, HashEntry};
+use crate::io::structs::edge_hash_entry::{EdgeHashCompare, EdgeHashEntry};
+use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::link_connection::LinkConnection;
 use crate::io::structs::link_remap::LinkRemap;
 use crate::io::structs::unitig_link::UnitigIndex;
@@ -108,28 +109,28 @@ impl UnitigLinksManager {
                 let mut thread_link_pairs =
                     BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &link_pairs_buckets);
 
-                let mut vec: Vec<HashEntry<H::HashTypeUnextendable>> =
+                let mut vec: Vec<EdgeHashEntry<H::HashTypeUnextendable>> =
                     Utils::bincode_deserialize_to_vec(input, true);
 
-                fast_smart_radix_sort::<_, HashCompare<H>, false>(&mut vec[..]);
+                fast_smart_radix_sort::<_, EdgeHashCompare<H>, false>(&mut vec[..]);
 
-                for linked in vec.group_by(|a, b| a.hash == b.hash) {
+                for linked in vec.group_by(|a, b| a.hentry.hash == b.hentry.hash) {
                     for (index, first) in linked.iter().enumerate() {
                         for second in linked.iter().skip(index + 1) {
-                            if first.direction != second.direction {
+                            if first.hentry.direction != second.hentry.direction {
                                 thread_link_pairs.add_element(
-                                    second.bucket,
+                                    second.hentry.bucket,
                                     &(),
                                     &LinkConnection {
                                         source: UnitigIndex::new(
-                                            first.bucket,
-                                            first.entry as usize,
-                                            false,
+                                            first.hentry.bucket,
+                                            first.hentry.entry as usize,
+                                            first.orig_dir == Direction::Backward,
                                         ),
                                         dest: UnitigIndex::new(
-                                            second.bucket,
-                                            second.entry as usize,
-                                            false,
+                                            second.hentry.bucket,
+                                            second.hentry.entry as usize,
+                                            second.orig_dir == Direction::Forward,
                                         ),
                                     },
                                 );
@@ -150,7 +151,7 @@ impl UnitigLinksManager {
         next_buckets_count: usize,
         new_links_prefix: &str,
         get_target_index: impl Fn(&LinkConnection) -> usize + Sync,
-        update_remap: impl Fn(BucketIndexType, usize, &mut LinkConnection) + Sync,
+        update_remap: impl Fn(BucketIndexType, usize, &mut LinkConnection, bool) + Sync,
         write_to_bucket: impl Fn(
                 &mut BucketsThreadDispatcher<LockFreeBinaryWriter, LinkConnection>,
                 &mut LinkConnection,
@@ -181,14 +182,17 @@ impl UnitigLinksManager {
 
             let mut remap_reader = FileReader::open(remap).unwrap();
             while let Ok(pair) = bincode::deserialize_from::<_, LinkRemap>(&mut remap_reader) {
-                remap_hmap.insert(pair.index, (pair.new_bucket, pair.new_index));
+                remap_hmap.insert(
+                    pair.index,
+                    (pair.new_bucket, pair.new_index, pair.complemented),
+                );
             }
 
             let mut pairs_reader = FileReader::open(pairs).unwrap();
             while let Some(mut pair) = LinkConnection::decode(&mut pairs_reader) {
-                let (new_bucket, new_index) =
+                let (new_bucket, new_index, needs_rc) =
                     remap_hmap.get(&(get_target_index(&pair) as u64)).unwrap();
-                update_remap(*new_bucket, *new_index as usize, &mut pair);
+                update_remap(*new_bucket, *new_index as usize, &mut pair, *needs_rc);
                 write_to_bucket(&mut thread_remapped, &mut pair);
             }
 
@@ -218,9 +222,12 @@ impl UnitigLinksManager {
             buckets_count,
             "link-pairs-fp",
             |pair| pair.dest.index(),
-            |new_bucket, new_index, pair| {
-                pair.dest =
-                    UnitigIndex::new(new_bucket, new_index, pair.dest.is_reverse_complemented());
+            |new_bucket, new_index, pair, rc| {
+                pair.dest = UnitigIndex::new(
+                    new_bucket,
+                    new_index,
+                    pair.dest.is_reverse_complemented() ^ rc,
+                );
             },
             |buckets, pair| {
                 buckets.add_element(pair.source.bucket(), &(), &pair);
@@ -247,29 +254,35 @@ impl UnitigLinksManager {
             buckets_count + 1,
             "link-pairs-sp",
             |pair| pair.source.index(),
-            |new_bucket, new_index, pair| {
-                pair.source =
-                    UnitigIndex::new(new_bucket, new_index, pair.dest.is_reverse_complemented());
+            |new_bucket, new_index, pair, rc| {
+                pair.source = UnitigIndex::new(
+                    new_bucket,
+                    new_index,
+                    pair.source.is_reverse_complemented() ^ rc,
+                );
             },
             |buckets, pair| {
                 buckets.add_element(pair.source.bucket(), &(), pair);
                 // FIXME: Check if both links should be always added
                 if pair.source != pair.dest {
                     std::mem::swap(&mut pair.source, &mut pair.dest);
+                    // Swap the reverse complement status as the link is reversed
+                    pair.source.change_reverse_complemented();
+                    pair.dest.change_reverse_complemented();
                     buckets.add_element(pair.source.bucket(), &(), &pair);
                 }
             },
         )
     }
 
-    pub fn get_links_hmap(path: PathBuf) -> HashMap<usize, Vec<UnitigIndex>> {
+    pub fn get_links_hmap(path: PathBuf) -> HashMap<usize, Vec<(bool, UnitigIndex)>> {
         let mut hmap = HashMap::new();
 
         let mut unitig_links_reader = FileReader::open(path).unwrap();
         while let Some(pair) = LinkConnection::decode(&mut unitig_links_reader) {
             hmap.entry(pair.source.index())
                 .or_insert(Vec::new())
-                .push(pair.dest);
+                .push((pair.source.is_reverse_complemented(), pair.dest));
         }
 
         hmap
@@ -329,14 +342,14 @@ impl<'a> ThreadUnitigsLinkManager<'a> {
                 index: first_original_link.index() as u64,
                 new_bucket: self.bucket_index,
                 new_index: new_index as u64,
-                at_beginning: true,
+                complemented: first_original_link.is_reverse_complemented(),
             };
 
             let remap_last = LinkRemap {
                 index: last_original_link.index() as u64,
                 new_bucket: self.bucket_index,
                 new_index: new_index as u64,
-                at_beginning: false,
+                complemented: last_original_link.is_reverse_complemented(),
             };
 
             self.thread_buckets
