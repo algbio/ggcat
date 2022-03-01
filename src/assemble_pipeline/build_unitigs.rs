@@ -60,7 +60,7 @@ impl FastaCompatibleRead for [u8] {
 }
 
 #[allow(unused_variables)]
-fn write_fasta_entry<
+pub fn write_fasta_entry<
     MH: HashFunctionFactory,
     CX: ColorsManager,
     R: FastaCompatibleRead + ?Sized,

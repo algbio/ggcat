@@ -52,6 +52,7 @@ lto = "fat"
 mem-analysis = ["parallel-processor/track-usage"]
 no-stats = ["parallel-processor/no-stats"]
 build-links = []
+process-stats = ["parallel-processor/process-stats"]
 
 [build-dependencies]
 make-cmd = "0.1.0"

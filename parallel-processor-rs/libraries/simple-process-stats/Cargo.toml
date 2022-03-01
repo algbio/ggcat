@@ -1,0 +1,31 @@
+[package]
+name = "simple-process-stats"
+description = "Get memory usage and CPU time on Linux and Windows"
+license = "MIT"
+version = "1.0.0"
+keywords = ["process", "cpu", "memory"]
+categories = ["api-bindings", "asynchronous", "os"]
+repository = "https://github.com/robotty/simple-process-stats"
+readme = "README.md"
+authors = ["Ruben Anders <ruben.anders@robotty.de>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+thiserror = "1.0.20"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = { version = "0.3.9", features = ["psapi", "processthreadsapi"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+procfs = "0.9.0"
+libc = "0.2.72"
+tokio = { version = "1.0.0", features = ["fs"] }
+
+#[target.'cfg(target_os = "macos")'.dependencies]
+#darwin-libproc = "0.2.0"
+#libc = "0.2.72"
+
+[dev-dependencies]
+tokio = { version = "1.0.0", features = ["rt-multi-thread", "macros"] }

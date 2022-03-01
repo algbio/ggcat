@@ -87,12 +87,19 @@ impl UnitigLinksManager {
                 let mut thread_links_writer =
                     ThreadUnitigsLinkManager::new(self, buckets_count as BucketIndexType);
 
+                #[allow(unused_variables)]
                 IntermediateReadsReader::<
                     CompletedReadsExtraData<color_types::PartialUnitigsColorStructure<H, C>>,
                 >::new(completed_unitigs_path, RemoveFileMode::Keep)
                 .for_each::<_, typenum::U0>(|_, data, _seq| {
+                    #[cfg(feature = "build-links")]
                     let unitig_index = UnitigIndex::new(data.bucket, data.index, false);
-                    thread_links_writer.notify_add_read(unitig_index, unitig_index);
+                    thread_links_writer.notify_add_read(
+                        #[cfg(feature = "build-links")]
+                        unitig_index,
+                        #[cfg(feature = "build-links")]
+                        unitig_index,
+                    );
                 });
             });
 

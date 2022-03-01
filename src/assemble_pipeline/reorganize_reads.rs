@@ -4,6 +4,7 @@ use crate::colors::colors_manager::{color_types, ColorsManager, ColorsMergeManag
 use crate::config::SwapPriority;
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 
+use crate::config::BucketIndexType;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::concurrent::temp_reads::reads_reader::IntermediateReadsReader;
 use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
@@ -26,16 +27,15 @@ use std::sync::atomic::Ordering;
 
 #[cfg(not(feature = "build-links"))]
 use {
+    crate::assemble_pipeline::build_unitigs::write_fasta_entry,
     crate::config::DEFAULT_OUTPUT_BUFFER_SIZE,
     crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer,
-    crate::io::reads_writer::ReadsWriter, crate::io::sequences_reader::FastaSequence,
-    bstr::ByteSlice,
+    crate::io::reads_writer::ReadsWriter,
 };
 
 use crate::io::varint::{decode_varint, encode_varint};
 #[cfg(feature = "build-links")]
 use {
-    crate::config::BucketIndexType,
     crate::io::concurrent::temp_reads::single_thread_writer::SingleIntermediateReadsThreadWriter,
     parallel_processor::buckets::bucket_type::BucketType,
 };
@@ -180,7 +180,7 @@ impl AssemblePipeline {
 
             let mut decompress_buffer = Vec::new();
             #[cfg(not(feature = "build-links"))]
-            let mut ident_buffer = Vec::new();
+            let mut fasta_temp_buffer = Vec::new();
 
             IntermediateReadsReader::<color_types::PartialUnitigsColorStructure<MH, CX>>::new(
                 read_file,
@@ -212,18 +212,14 @@ impl AssemblePipeline {
                     #[cfg(not(feature = "build-links"))]
                     {
                         // No mapping, write unitig to file
-                        ident_buffer.clear();
-                        write!(ident_buffer, "> {} {}", bucket_index, index).unwrap();
-                        CX::ColorsMergeManagerType::<MH>::print_color_data(
-                            &color,
-                            &mut ident_buffer,
-                        );
-
-                        tmp_lonely_unitigs_buffer.add_read(FastaSequence {
-                            ident: ident_buffer.as_bytes(),
+                        write_fasta_entry::<MH, CX, _, _>(
+                            &mut fasta_temp_buffer,
+                            &mut tmp_lonely_unitigs_buffer,
+                            color,
                             seq,
-                            qual: None,
-                        });
+                            0,
+                            std::iter::empty(),
+                        );
                     }
 
                     #[cfg(feature = "build-links")]
@@ -264,7 +260,7 @@ impl AssemblePipeline {
                 path
             }
             #[cfg(not(feature = "build-links"))]
-            () => (PathBuf::new(), 0),
+            () => PathBuf::new(),
         };
 
         (buckets.finalize(), final_unitigs_temp_path_and_counter)

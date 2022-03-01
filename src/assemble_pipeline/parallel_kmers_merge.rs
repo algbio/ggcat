@@ -9,7 +9,6 @@ use crate::config::{
 use crate::hashes::{ExtendableHashTraitType, HashFunction};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
-use crate::io::structs::edge_hash_entry::EdgeHashEntry;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::hash_entry::HashEntry;
 use crate::pipeline_common::kmers_transform::structs::ReadRef;
@@ -22,7 +21,6 @@ use crate::pipeline_common::minimizer_bucketing::{
 use crate::utils::owned_drop::OwnedDrop;
 use crate::utils::{get_memory_mode, Utils};
 use crate::CompressedRead;
-use bstr::ByteSlice;
 use core::slice::from_raw_parts;
 use crossbeam::queue::*;
 use hashbrown::HashMap;
@@ -39,6 +37,9 @@ use std::cmp::min;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use structs::*;
+
+#[cfg(feature = "build-links")]
+use crate::io::structs::edge_hash_entry::EdgeHashEntry;
 
 pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;
 pub const READ_FLAG_INCL_END: u8 = 1 << 1;
@@ -592,28 +593,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 ),
                 out_seq,
             );
-
-            let is_debugging = out_seq.contains_str(b"AATGGCCCAAAATATTACCTTCGTTGGTGG")
-                || out_seq.contains_str(b"CCACCAACGAAGGTAATATTTTGGGCCATT");
-
-            if is_debugging {
-                println!(
-                    "Debugging sequence: {}",
-                    std::str::from_utf8(out_seq).unwrap()
-                );
-                println!(
-                    "Forward: e:{} h:{:?}",
-                    fw_has_edges,
-                    MH::manual_remove_only_forward(fw_hash, k, out_seq[out_seq.len() - k])
-                        .to_unextendable()
-                );
-                println!(
-                    "Backward: e:{} h:{:?}",
-                    bw_has_edges,
-                    MH::manual_remove_only_reverse(bw_hash, k, out_seq[out_seq.len() - k])
-                        .to_unextendable()
-                );
-            }
 
             Self::write_hashes(
                 &mut self.hashes_tmp,
