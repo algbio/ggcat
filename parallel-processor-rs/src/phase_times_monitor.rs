@@ -62,7 +62,7 @@ impl ProcessStats {
         };
 
         format!(
-            "(uc:{:.2}% kc:{:.2}% mm:{:.2} cm:{:.2})",
+            "(uc:{:.2} kc:{:.2} mm:{:.2} cm:{:.2})",
             (self.user_cpu_total / (samples_cnt as f64)),
             (self.kernel_cpu_total / (samples_cnt as f64)),
             MemoryDataSize::from_bytes(self.mem_max as usize),
@@ -196,12 +196,14 @@ impl PhaseTimesMonitor {
 
     pub fn get_formatted_counter_without_memory(&self) -> String {
         format!(
-            " ptime: {:.2?} gtime: {:.2?}",
+            " ptime: {:.2?} gtime: {:.2?} GL:{} PH:{}",
             self.phase
                 .as_ref()
                 .map(|pt| pt.1.elapsed())
                 .unwrap_or(Duration::from_millis(0)),
             self.get_wallclock(),
+            GLOBAL_STATS.lock().format(),
+            PHASE_STATS.lock().format()
         )
     }
 

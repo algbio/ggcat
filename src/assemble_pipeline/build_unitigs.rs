@@ -184,6 +184,8 @@ impl AssemblePipeline {
                     );
                     unitig_index += 1;
                 });
+
+                tmp_final_unitigs_buffer.finalize();
             });
 
             inputs
