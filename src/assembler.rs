@@ -1,4 +1,5 @@
 use crate::assemble_pipeline::parallel_kmers_merge::structs::RetType;
+use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsManager;
 use crate::config::SwapPriority;
@@ -9,7 +10,7 @@ use crate::{AssemblerStartingStep, KEEP_FILES, SAVE_MEMORY};
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
-use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
 use std::fs::remove_file;
@@ -120,6 +121,8 @@ pub fn run_assembler<
     let unames = Utils::generate_bucket_names(temp_dir.join("unitigs_map"), BUCKETS_COUNT, None);
     let rnames = Utils::generate_bucket_names(temp_dir.join("results_map"), BUCKETS_COUNT, None);
 
+    let mut links_manager = UnitigLinksManager::new(BUCKETS_COUNT);
+
     let (unitigs_map, reads_map) = if step <= AssemblerStartingStep::LinksCompaction {
         for file in unames {
             let _ = remove_file(file);
@@ -169,6 +172,7 @@ pub fn run_assembler<
                 loop_iteration,
                 &mut result_map_buckets,
                 &mut final_buckets,
+                &links_manager,
             );
 
             links = new_links;
@@ -180,7 +184,13 @@ pub fn run_assembler<
         };
 
         for link_file in links {
-            MemoryFs::remove_file(&link_file, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
+            MemoryFs::remove_file(
+                &link_file,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            )
+            .unwrap();
         }
         result
     } else {
@@ -200,22 +210,23 @@ pub fn run_assembler<
         None => ReadsWriter::new_plain(&output_file),
     });
 
-    let reorganized_reads = if step <= AssemblerStartingStep::ReorganizeReads {
+    let (reorganized_reads, _final_unitigs_bucket) = if step
+        <= AssemblerStartingStep::ReorganizeReads
+    {
         AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
             sequences,
             reads_map,
             temp_dir.as_path(),
-            #[cfg(not(feature = "build-links"))]
             &final_unitigs_file,
             BUCKETS_COUNT,
         )
     } else {
         (
             Utils::generate_bucket_names(temp_dir.join("reads_bucket"), BUCKETS_COUNT, Some("tmp")),
-            Utils::generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
+            (Utils::generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
                 .into_iter()
                 .next()
-                .unwrap(),
+                .unwrap()),
         )
     };
 
@@ -223,13 +234,16 @@ pub fn run_assembler<
         return;
     }
 
+    links_manager.compute_id_offsets();
+
     if step <= AssemblerStartingStep::BuildUnitigs {
         AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(
-            reorganized_reads.0,
+            reorganized_reads,
             unitigs_map,
             temp_dir.as_path(),
             &final_unitigs_file,
             k,
+            &links_manager,
         );
     }
 

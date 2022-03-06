@@ -1,3 +1,6 @@
+use crate::assemble_pipeline::unitig_links_manager::{
+    ThreadUnitigsLinkManager, UnitigLinksManager,
+};
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::config::{BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
@@ -14,7 +17,7 @@ use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_fs::file::reader::FileReader;
-use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
@@ -59,6 +62,7 @@ impl AssemblePipeline {
         elab_index: usize,
         result_map_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
         final_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
+        links_manager: &UnitigLinksManager,
     ) -> (Vec<PathBuf>, bool) {
         let totsum = AtomicU64::new(0);
 
@@ -84,6 +88,8 @@ impl AssemblePipeline {
                 bucket_index,
                 &final_buckets,
             );
+            let mut thread_links_manager =
+                ThreadUnitigsLinkManager::new(links_manager, bucket_index);
             let mut results_tmp =
                 BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &result_map_buckets);
 
@@ -101,22 +107,15 @@ impl AssemblePipeline {
             }
 
             drop(reader);
-            MemoryFs::remove_file(&input, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
+            MemoryFs::remove_file(
+                &input,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            )
+            .unwrap();
 
-            struct Compare {}
-            impl SortKey<UnitigLink> for Compare {
-                type KeyType = u64;
-                const KEY_BITS: usize = 64;
-
-                fn compare(left: &UnitigLink, right: &UnitigLink) -> std::cmp::Ordering {
-                    left.entry.cmp(&right.entry)
-                }
-
-                fn get_shifted(value: &UnitigLink, rhs: u8) -> u8 {
-                    (value.entry >> rhs) as u8
-                }
-            }
-
+            crate::make_comparer!(Compare, UnitigLink, entry: u64);
             fast_smart_radix_sort::<_, Compare, false>(&mut vec[..]);
 
             let mut rem_links = 0;
@@ -235,6 +234,8 @@ impl AssemblePipeline {
                                 // Write to disk, full unitig!
                                 let entries = VecSlice::new_extend(&mut final_unitigs_vec, linked);
 
+                                thread_links_manager.notify_add_read();
+
                                 final_links_tmp.add_element(
                                     &final_unitigs_vec,
                                     &UnitigLink {
@@ -283,6 +284,8 @@ impl AssemblePipeline {
 
                             let entries =
                                 VecSlice::new_extend(&mut final_unitigs_vec, unitig_entries);
+
+                            thread_links_manager.notify_add_read();
 
                             final_links_tmp.add_element(
                                 &final_unitigs_vec,

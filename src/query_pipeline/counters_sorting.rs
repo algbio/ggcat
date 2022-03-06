@@ -6,13 +6,11 @@ use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
 use parallel_processor::buckets::bucket_writer::BucketWriter;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
-use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use std::io::{Cursor, Read, Write};
-use std::mem::size_of;
-use std::ops::Deref;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -81,37 +79,19 @@ impl QueryPipeline {
         final_counters.extend((0..sequences_info.len()).map(|_| AtomicU64::new(0)));
 
         file_counters_inputs.par_iter().for_each(|input| {
-            let file = filebuffer::FileBuffer::open(input).unwrap();
+            let mut counters_vec: Vec<CounterEntry> = CounterEntry::load_data_to_vec(input, true);
+            MemoryFs::remove_file(
+                &input,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            )
+            .unwrap();
 
-            let mut reader = Cursor::new(file.deref());
-            let mut vec: Vec<CounterEntry> = Vec::new();
+            crate::make_comparer!(Compare, CounterEntry, query_index: u64);
+            fast_smart_radix_sort::<_, Compare, false>(&mut counters_vec[..]);
 
-            while let Some(value) = CounterEntry::decode(&mut reader) {
-                vec.push(value);
-            }
-
-            drop(file);
-            MemoryFs::remove_file(&input, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
-
-            struct Compare;
-            impl SortKey<CounterEntry> for Compare {
-                type KeyType = u64;
-                const KEY_BITS: usize = size_of::<u64>() * 8;
-
-                #[inline(always)]
-                fn compare(left: &CounterEntry, right: &CounterEntry) -> std::cmp::Ordering {
-                    left.query_index.cmp(&right.query_index)
-                }
-
-                #[inline(always)]
-                fn get_shifted(value: &CounterEntry, rhs: u8) -> u8 {
-                    (value.query_index >> rhs) as u8
-                }
-            }
-
-            fast_smart_radix_sort::<_, Compare, false>(&mut vec[..]);
-
-            for x in vec.group_by(|a, b| a.query_index == b.query_index) {
+            for x in counters_vec.group_by(|a, b| a.query_index == b.query_index) {
                 let query_index = x[0].query_index;
                 final_counters[query_index as usize - 1]
                     .store(x.iter().map(|e| e.counter).sum(), Ordering::Relaxed);

@@ -12,6 +12,26 @@ pub trait MinimizerBucketingSeqColorData:
     fn create(file_index: u64) -> Self;
 }
 
+pub mod color_types {
+    #![allow(dead_code)]
+
+    use crate::colors::colors_manager::{ColorsManager, ColorsMergeManager};
+
+    macro_rules! color_type_alias {
+        ($tyn:ident) => {
+            pub type $tyn<H, C> =
+                <<C as ColorsManager>::ColorsMergeManagerType<H> as ColorsMergeManager<H, C>>::$tyn;
+        };
+    }
+
+    color_type_alias!(ColorsBufferTempStructure);
+    color_type_alias!(HashMapTempColorIndex);
+    color_type_alias!(PartialUnitigsColorStructure);
+    color_type_alias!(TempUnitigColorStructure);
+
+    pub type ColorsMergeManagerType<H, C> = <C as ColorsManager>::ColorsMergeManagerType<H>;
+}
+
 /// Helper trait to manage colors labeling on KmersMerge step
 pub trait ColorsMergeManager<H: HashFunctionFactory, C: ColorsManager>: Sized {
     /// Temporary buffer that holds color values for each kmer while merging them

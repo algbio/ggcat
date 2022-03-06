@@ -1,7 +1,6 @@
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use crate::config::{
-    BucketIndexType, DEFAULT_MINIMIZER_MASK, DEFAULT_OUTPUT_BUFFER_SIZE,
-    RESPLITTING_MAX_K_M_DIFFERENCE,
+    BucketIndexType, SwapPriority, DEFAULT_MINIMIZER_MASK, RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
@@ -19,10 +18,11 @@ use crate::query_pipeline::counters_sorting::CounterEntry;
 use crate::query_pipeline::querier_minimizer_bucketing::QuerierMinimizerBucketingExecutorFactory;
 use crate::query_pipeline::QueryPipeline;
 use crate::utils::compressed_read::CompressedRead;
+use crate::utils::get_memory_mode;
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use parallel_processor::binary_writer::{BinaryWriter, StorageMode};
 use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -75,7 +75,7 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraData for QueryKmersReferen
 struct GlobalQueryMergeData<'a> {
     k: usize,
     m: usize,
-    counters_buckets: &'a MultiThreadBuckets<BinaryWriter>,
+    counters_buckets: &'a MultiThreadBuckets<LockFreeBinaryWriter>,
     global_resplit_data: MinimizerBucketingCommonData<()>,
 }
 
@@ -116,7 +116,7 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 }
 
 struct ParallelKmersQuery<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> {
-    counters_tmp: BucketsThreadDispatcher<'x, BinaryWriter, CounterEntry>,
+    counters_tmp: BucketsThreadDispatcher<'x, LockFreeBinaryWriter, CounterEntry>,
     phset: hashbrown::HashSet<MH::HashTypeUnextendable>,
     query_map: hashbrown::HashMap<u64, u64>,
     query_reads: Vec<(u64, MH::HashTypeUnextendable)>,
@@ -243,13 +243,11 @@ impl QueryPipeline {
             .write()
             .start_phase("phase: kmers counting".to_string());
 
-        let mut counters_buckets = MultiThreadBuckets::<BinaryWriter>::new(
+        let mut counters_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             &(
                 out_directory.as_ref().join("counters"),
-                StorageMode::Plain {
-                    buffer_size: DEFAULT_OUTPUT_BUFFER_SIZE,
-                },
+                get_memory_mode(SwapPriority::QueryCounters),
             ),
             None,
         );

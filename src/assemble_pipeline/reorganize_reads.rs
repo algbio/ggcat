@@ -1,29 +1,29 @@
 use crate::assemble_pipeline::links_compaction::LinkMapping;
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::colors::colors_manager::{ColorsManager, ColorsMergeManager};
+use crate::colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
+use crate::config::SwapPriority;
 use crate::hashes::{HashFunctionFactory, HashableSequence};
-use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
-use crate::io::reads_writer::ReadsWriter;
-use std::io::{Read, Write};
 
-use crate::config::{SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE};
+use crate::assemble_pipeline::build_unitigs::write_fasta_entry;
+use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
+use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::concurrent::temp_reads::reads_reader::IntermediateReadsReader;
 use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
 use crate::io::concurrent::temp_reads::thread_writer::IntermediateReadsThreadWriter;
-use crate::io::sequences_reader::FastaSequence;
+use crate::io::reads_writer::ReadsWriter;
 use crate::io::structs::unitig_link::UnitigIndex;
 use crate::utils::Utils;
 use crate::KEEP_FILES;
-use bstr::ByteSlice;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::file::reader::FileReader;
-use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -59,7 +59,7 @@ impl AssemblePipeline {
         mut reads: Vec<PathBuf>,
         mut mapping_files: Vec<PathBuf>,
         temp_path: &Path,
-        #[cfg(not(feature = "build-links"))] out_file: &Mutex<ReadsWriter>,
+        out_file: &Mutex<ReadsWriter>,
         buckets_count: usize,
     ) -> (Vec<PathBuf>, PathBuf) {
         PHASES_TIMES_MONITOR
@@ -67,17 +67,17 @@ impl AssemblePipeline {
             .start_phase("phase: reads reorganization".to_string());
 
         let mut buckets = MultiThreadBuckets::<
-            IntermediateReadsWriter<ReorganizedReadsExtraData<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
-                MH,
-                CX,
-            >>::PartialUnitigsColorStructure>>,
-        >::new(buckets_count, &(SwapPriority::ReorganizeReads, temp_path.join("reads_bucket")), None);
-
-        #[cfg(feature = "build-links")]
-        let mut final_unitigs_temp_bucket = IntermediateReadsWriter::<ReorganizedReadsExtraData<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
-            MH,
-            CX,
-        >>::PartialUnitigsColorStructure>>::new(&(SwapPriority::ReorganizeReads, temp_path.join("reads_bucket_lonely")), 0);
+            IntermediateReadsWriter<
+                ReorganizedReadsExtraData<color_types::PartialUnitigsColorStructure<MH, CX>>,
+            >,
+        >::new(
+            buckets_count,
+            &(
+                SwapPriority::ReorganizeReads,
+                temp_path.join("reads_bucket"),
+            ),
+            None,
+        );
 
         reads.sort();
         mapping_files.sort();
@@ -87,7 +87,6 @@ impl AssemblePipeline {
         inputs.par_iter().for_each(|(read_file, mapping_file)| {
             let mut tmp_reads_buffer = IntermediateReadsThreadWriter::new(buckets_count, &buckets);
 
-            #[cfg(not(feature = "build-links"))]
             let mut tmp_lonely_unitigs_buffer =
                 FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE);
 
@@ -100,7 +99,6 @@ impl AssemblePipeline {
 
             let bucket_index = Utils::get_bucket_index(read_file);
 
-
             let mut reader = FileReader::open(&mapping_file).unwrap();
 
             while let Some(link) = LinkMapping::from_stream(&mut reader) {
@@ -108,104 +106,71 @@ impl AssemblePipeline {
             }
 
             drop(reader);
-            MemoryFs::remove_file(&mapping_file, !KEEP_FILES.load(Ordering::Relaxed)).unwrap();
+            MemoryFs::remove_file(
+                &mapping_file,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            )
+            .unwrap();
 
-            struct Compare {}
-            impl SortKey<LinkMapping> for Compare {
-                type KeyType = u64;
-                const KEY_BITS: usize = 64;
-
-                fn compare(left: &LinkMapping, right: &LinkMapping) -> std::cmp::Ordering {
-                    left.entry.cmp(&right.entry)
-                }
-
-                fn get_shifted(value: &LinkMapping, rhs: u8) -> u8 {
-                    (value.entry >> rhs) as u8
-                }
-            }
-
+            crate::make_comparer!(Compare, LinkMapping, entry: u64);
             fast_smart_radix_sort::<_, Compare, false>(&mut mappings[..]);
 
             let mut index = 0;
             let mut map_index = 0;
 
             let mut decompress_buffer = Vec::new();
-            #[cfg(not(feature = "build-links"))]
-            let mut ident_buffer = Vec::new();
 
-            IntermediateReadsReader::<<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
-                MH,
-                CX,
-            >>::PartialUnitigsColorStructure>::new(read_file, !KEEP_FILES.load(Ordering::Relaxed))
-                .for_each::<_, typenum::U0>(|_, color, seq| {
+            let mut fasta_temp_buffer = Vec::new();
 
-                    if seq.bases_count() > decompress_buffer.len() {
-                        decompress_buffer.resize(seq.bases_count(), 0);
-                    }
-                    seq.write_to_slice(&mut decompress_buffer[..seq.bases_count()]);
+            IntermediateReadsReader::<color_types::PartialUnitigsColorStructure<MH, CX>>::new(
+                read_file,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            )
+            .for_each::<_, typenum::U0>(|_, color, seq| {
+                if seq.bases_count() > decompress_buffer.len() {
+                    decompress_buffer.resize(seq.bases_count(), 0);
+                }
+                seq.write_to_slice(&mut decompress_buffer[..seq.bases_count()]);
 
-                    let seq = &decompress_buffer[..seq.bases_count()];
+                let seq = &decompress_buffer[..seq.bases_count()];
 
-                    if map_index < mappings.len() && mappings[map_index].entry == index {
-                        // Mapping found
-                        tmp_reads_buffer.add_read::<typenum::U0>(ReorganizedReadsExtraData {
+                if map_index < mappings.len() && mappings[map_index].entry == index {
+                    // Mapping found
+                    tmp_reads_buffer.add_read::<typenum::U0>(
+                        ReorganizedReadsExtraData {
                             unitig: UnitigIndex::new(bucket_index, index as usize, false),
-                            color
+                            color,
                         },
-                            seq,
-                            mappings[map_index].bucket,
-                            0
-                        );
-                        map_index += 1;
-                    } else {
+                        seq,
+                        mappings[map_index].bucket,
+                        0,
+                    );
+                    map_index += 1;
+                } else {
+                    // No mapping, write unitig to file
+                    write_fasta_entry::<MH, CX, _>(
+                        &mut fasta_temp_buffer,
+                        &mut tmp_lonely_unitigs_buffer,
+                        color,
+                        seq,
+                        0,
+                    );
+                }
 
-                        #[cfg(not(feature = "build-links"))]
-                        {
-                            // No mapping, write unitig to file
-                            ident_buffer.clear();
-                            write!(ident_buffer, "> {} {}", bucket_index, index).unwrap();
-                            CX::ColorsMergeManagerType::<MH>::print_color_data(&color, &mut ident_buffer);
+                color_types::ColorsMergeManagerType::<MH, CX>::clear_deserialized_unitigs_colors();
 
-                            tmp_lonely_unitigs_buffer.add_read(FastaSequence {
-                                ident: ident_buffer.as_bytes(),
-                                seq,
-                                qual: None,
-                            });
-                        }
+                index += 1;
+            });
 
-                        #[cfg(feature = "build-links")] {
-                            final_unitigs_temp_bucket.add_read::<typenum::U0>(
-                                color,
-                                seq,
-                                0
-                            )
-                        }
-
-                    }
-
-                    <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
-                        MH,
-                        CX,
-                    >>::clear_deserialized_unitigs_colors();
-
-                    index += 1;
-                });
-            #[cfg(not(feature = "build-links"))]
             tmp_lonely_unitigs_buffer.finalize();
+
             assert_eq!(map_index, mappings.len())
         });
 
-        let final_unitigs_temp_path = match () {
-            #[cfg(feature = "build-links")]
-            () => {
-                let path = final_unitigs_temp_bucket.get_path();
-                final_unitigs_temp_bucket.finalize();
-                path
-            }
-            #[cfg(not(feature = "build-links"))]
-            () => PathBuf::new(),
-        };
-
-        (buckets.finalize(), final_unitigs_temp_path)
+        (buckets.finalize(), PathBuf::new())
     }
 }

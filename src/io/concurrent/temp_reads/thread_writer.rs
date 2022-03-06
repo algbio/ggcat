@@ -28,10 +28,6 @@ impl<'a, T: SequenceExtraData> IntermediateReadsThreadWriter<'a, T> {
     }
 
     fn flush_buffers(&mut self, bucket: BucketIndexType) {
-        if self.buffers[bucket as usize].len() == 0 {
-            return;
-        }
-
         self.buckets
             .add_data(bucket, &self.buffers[bucket as usize]);
         self.buffers[bucket as usize].clear();

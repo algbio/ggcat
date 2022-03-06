@@ -1,7 +1,7 @@
 use crate::assemble_pipeline::assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::colors::colors_manager::ColorsManager;
 use crate::colors::colors_manager::ColorsMergeManager;
+use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_MINIMIZER_MASK, DEFAULT_PER_CPU_BUFFER_SIZE,
     MERGE_RESULTS_BUCKETS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
@@ -92,17 +92,11 @@ struct GlobalMergeData<'a, MH: HashFunctionFactory, CX: ColorsManager> {
     buckets_count: usize,
     min_multiplicity: usize,
     colors_global_table: &'a CX::GlobalColorsTable,
-    output_results_buckets: SegQueue<ResultsBucketType<MH, CX>>,
+    output_results_buckets:
+        SegQueue<ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>>,
     hashes_buckets: &'a MultiThreadBuckets<LockFreeBinaryWriter>,
-    #[cfg(feature = "build-links")]
-    links_hashes_buckets: &'a MultiThreadBuckets<LockFreeBinaryWriter>,
     global_resplit_data: MinimizerBucketingCommonData<()>,
 }
-
-#[allow(type_alias_bounds)]
-pub type ResultsBucketType<MH, CX: ColorsManager> = ResultsBucket<
-    <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::PartialUnitigsColorStructure,
->;
 
 struct ParallelKmersMergeFactory<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>(
     PhantomData<(H, MH, CX)>,
@@ -140,11 +134,6 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 DEFAULT_PER_CPU_BUFFER_SIZE,
                 &global_data.hashes_buckets,
             ),
-            #[cfg(feature = "build-links")]
-            link_hashes_tmp: BucketsThreadDispatcher::new(
-                DEFAULT_PER_CPU_BUFFER_SIZE,
-                &global_data.links_hashes_buckets,
-            ),
             forward_seq: Vec::with_capacity(global_data.k),
             backward_seq: Vec::with_capacity(global_data.k),
             temp_colors: CX::ColorsMergeManagerType::<MH>::allocate_temp_buffer_structure(),
@@ -160,27 +149,18 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
 struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> {
     results_buckets_counter: usize,
-    current_bucket: ResultsBucketType<MH, CX>,
+    current_bucket: ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>,
     hashes_tmp:
-        BucketsThreadDispatcher<'x, LockFreeBinaryWriter, HashEntry<MH::HashTypeUnextendable>>,
-    #[cfg(feature = "build-links")]
-    link_hashes_tmp:
         BucketsThreadDispatcher<'x, LockFreeBinaryWriter, HashEntry<MH::HashTypeUnextendable>>,
 
     forward_seq: Vec<u8>,
     backward_seq: Vec<u8>,
-    temp_colors:
-        <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::ColorsBufferTempStructure,
-    unitigs_temp_colors:
-        <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::TempUnitigColorStructure,
+    temp_colors: color_types::ColorsBufferTempStructure<MH, CX>,
+    unitigs_temp_colors: color_types::TempUnitigColorStructure<MH, CX>,
 
     rcorrect_reads: TrackedVec<(MH::HashTypeExtendable, usize, u8, bool)>,
-    rhash_map: HashMap<
-        MH::HashTypeUnextendable,
-        MapEntry<
-            <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::HashMapTempColorIndex,
-        >,
-    >,
+    rhash_map:
+        HashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>,
     #[cfg(feature = "mem-analysis")]
     hmap_meminfo: Arc<MemoryInfo>,
     _phantom: PhantomData<H>,
@@ -190,6 +170,38 @@ fn get_kmer_multiplicity<CHI>(entry: &MapEntry<CHI>) -> usize {
     // If the current set has both the partial sequences endings, we should divide the counter by 2,
     // as all the kmers are counted exactly two times
     entry.count >> ((entry.ignored == (READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END)) as u8)
+}
+
+impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+    ParallelKmersMerge<'x, H, MH, CX>
+{
+    #[inline(always)]
+    fn write_hashes(
+        hashes_tmp: &mut BucketsThreadDispatcher<
+            'x,
+            LockFreeBinaryWriter,
+            HashEntry<MH::HashTypeUnextendable>,
+        >,
+        hash: MH::HashTypeUnextendable,
+        bucket: BucketIndexType,
+        entry: u64,
+        do_merge: bool,
+        direction: Direction,
+        buckets_count: usize,
+    ) {
+        if do_merge {
+            hashes_tmp.add_element(
+                MH::get_first_bucket(hash) % (buckets_count as BucketIndexType),
+                &(),
+                &HashEntry {
+                    hash,
+                    bucket,
+                    entry,
+                    direction,
+                },
+            );
+        }
+    }
 }
 
 impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
@@ -326,19 +338,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         drop(tmp_read);
         stream.close_and_remove(true);
 
-        // static MAX_RHS: AtomicUsize = AtomicUsize::new(0);
-        // static MAX_CRR: AtomicUsize = AtomicUsize::new(0);
-        //
-        // if MAX_RHS.fetch_max(self.rhash_map.len(), Ordering::Relaxed) < self.rhash_map.len() {
-        //     println!("Max rhs: {}", self.rhash_map.len());
-        // }
-        //
-        // if MAX_CRR.fetch_max(self.rcorrect_reads.len(), Ordering::Relaxed)
-        //     < self.rcorrect_reads.len()
-        // {
-        //     println!("Max crr: {}", self.rcorrect_reads.len());
-        // }
-
         if CX::COLORS_ENABLED {
             CX::ColorsMergeManagerType::<MH>::process_colors(
                 &global_data.colors_global_table,
@@ -404,129 +403,125 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 rhentry,
             );
 
-            let mut try_extend_function =
-                    |output: &mut Vec<u8>,
-                     compute_hash_fw: fn(
-                         hash: MH::HashTypeExtendable,
-                         klen: usize,
-                         out_b: u8,
-                         in_b: u8,
-                     )
-                         -> MH::HashTypeExtendable,
-                     compute_hash_bw: fn(
-                         hash: MH::HashTypeExtendable,
-                         klen: usize,
-                         out_b: u8,
-                         in_b: u8,
-                     )
-                         -> MH::HashTypeExtendable,
-                     colors_function: fn(
-                         ts: &mut  <CX::ColorsMergeManagerType::<MH> as ColorsMergeManager<MH, CX>>::TempUnitigColorStructure,
-                         entry: &MapEntry< <CX::ColorsMergeManagerType::<MH> as ColorsMergeManager<MH, CX>>::HashMapTempColorIndex>,
-                     )| {
-                        let mut temp_data = (hash, 0);
-                        let mut current_hash;
+            let mut try_extend_function = |output: &mut Vec<u8>,
+                                           compute_hash_fw: fn(
+                hash: MH::HashTypeExtendable,
+                klen: usize,
+                out_b: u8,
+                in_b: u8,
+            )
+                -> MH::HashTypeExtendable,
+                                           compute_hash_bw: fn(
+                hash: MH::HashTypeExtendable,
+                klen: usize,
+                out_b: u8,
+                in_b: u8,
+            )
+                -> MH::HashTypeExtendable,
+                                           colors_function: fn(
+                ts: &mut color_types::TempUnitigColorStructure<MH, CX>,
+                entry: &MapEntry<color_types::HashMapTempColorIndex<MH, CX>>,
+            )| {
+                let mut temp_data = (hash, 0);
+                let mut current_hash;
 
-                        return 'ext_loop: loop {
-                            let mut count = 0;
-                            current_hash = temp_data.0;
+                return 'ext_loop: loop {
+                    let mut count = 0;
+                    current_hash = temp_data.0;
+                    for idx in 0..4 {
+                        let new_hash = compute_hash_fw(
+                            current_hash,
+                            k,
+                            Utils::compress_base(output[output.len() - k]),
+                            idx,
+                        );
+                        if let Some(hash) = self.rhash_map.get(&new_hash.to_unextendable()) {
+                            if get_kmer_multiplicity(&hash) >= global_data.min_multiplicity {
+                                // println!("Forward match extend read {:x?}!", new_hash);
+                                count += 1;
+                                temp_data = (new_hash, idx);
+                            }
+                        }
+                    }
+
+                    if count == 1 {
+                        // Test for backward branches
+                        {
+                            let mut ocount = 0;
+                            let new_hash = temp_data.0;
                             for idx in 0..4 {
-                                let new_hash = compute_hash_fw(
-                                    current_hash,
-                                    k,
-                                    Utils::compress_base(output[output.len() - k]),
-                                    idx,
-                                );
-                                if let Some(hash) =
-                                self.rhash_map.get(&new_hash.to_unextendable())
-                                {
-                                    if get_kmer_multiplicity(&hash) >= global_data.min_multiplicity {
-                                        // println!("Forward match extend read {:x?}!", new_hash);
-                                        count += 1;
-                                        temp_data = (new_hash, idx);
-                                    }
-                                }
-                            }
-
-                            if count == 1 {
-                                // Test for backward branches
-                                {
-                                    let mut ocount = 0;
-                                    let new_hash = temp_data.0;
-                                    for idx in 0..4 {
-                                        let bw_hash =
-                                            compute_hash_bw(new_hash, k, temp_data.1, idx);
-                                        if let Some(hash) =
-                                        self.rhash_map.get(&bw_hash.to_unextendable())
-                                        {
-                                            if get_kmer_multiplicity(&hash) >= global_data.min_multiplicity {
-                                                // println!("Backward match extend read {:x?}!", bw_hash);
-                                                if ocount > 0 {
-                                                    break 'ext_loop (current_hash, false, true);
-                                                }
-                                                ocount += 1;
-                                            }
+                                let bw_hash = compute_hash_bw(new_hash, k, temp_data.1, idx);
+                                if let Some(hash) = self.rhash_map.get(&bw_hash.to_unextendable()) {
+                                    if get_kmer_multiplicity(&hash) >= global_data.min_multiplicity
+                                    {
+                                        if ocount > 0 {
+                                            break 'ext_loop (current_hash, false);
                                         }
+                                        ocount += 1;
                                     }
-                                    assert_eq!(ocount, 1);
                                 }
-
-                                let entryref = self.rhash_map
-                                    .get_mut(&temp_data.0.to_unextendable())
-                                    .unwrap();
-
-                                let already_used = entryref.count == usize::MAX;
-
-                                // Found a cycle unitig
-                                if already_used {
-                                    break (temp_data.0, false, true);
-                                }
-
-                                // Flag the entry as already used
-                                entryref.count = usize::MAX;
-
-                                if CX::COLORS_ENABLED {
-                                    colors_function(&mut self.unitigs_temp_colors, entryref);
-                                }
-
-                                output.push(Utils::decompress_base(temp_data.1));
-
-                                // Found a continuation into another bucket
-                                let contig_break = (entryref.ignored == READ_FLAG_INCL_BEGIN) || (entryref.ignored == READ_FLAG_INCL_END);
-                                if contig_break {
-                                    break (temp_data.0, true, false);
-                                }
-                            } else {
-                                break (temp_data.0, false, count > 0);
                             }
-                        };
-                    };
+                            assert_eq!(ocount, 1);
+                        }
 
-            let (fw_hash, fw_merge, fw_has_edges) = {
+                        let entryref = self
+                            .rhash_map
+                            .get_mut(&temp_data.0.to_unextendable())
+                            .unwrap();
+
+                        let already_used = entryref.count == usize::MAX;
+
+                        // Found a cycle unitig
+                        if already_used {
+                            break (temp_data.0, false);
+                        }
+
+                        // Flag the entry as already used
+                        entryref.count = usize::MAX;
+
+                        if CX::COLORS_ENABLED {
+                            colors_function(&mut self.unitigs_temp_colors, entryref);
+                        }
+
+                        output.push(Utils::decompress_base(temp_data.1));
+
+                        // Found a continuation into another bucket
+                        let contig_break = (entryref.ignored == READ_FLAG_INCL_BEGIN)
+                            || (entryref.ignored == READ_FLAG_INCL_END);
+                        if contig_break {
+                            break (temp_data.0, true);
+                        }
+                    } else {
+                        break (current_hash, false); // count > 0);
+                    }
+                };
+            };
+
+            let (fw_hash, fw_merge) = {
                 if end_ignored {
-                    (hash, true, false)
+                    (hash, true)
                 } else {
-                    let (fw_hash, end_ignored, has_edges) = try_extend_function(
+                    let (fw_hash, end_ignored) = try_extend_function(
                         &mut self.forward_seq,
                         MH::manual_roll_forward,
                         MH::manual_roll_reverse,
                         CX::ColorsMergeManagerType::<MH>::extend_forward,
                     );
-                    (fw_hash, end_ignored, has_edges)
+                    (fw_hash, end_ignored)
                 }
             };
 
-            let (bw_hash, bw_merge, bw_has_edges) = {
+            let (bw_hash, bw_merge) = {
                 if begin_ignored {
-                    (hash, true, false)
+                    (hash, true)
                 } else {
-                    let (bw_hash, begin_ignored, has_edges) = try_extend_function(
+                    let (bw_hash, begin_ignored) = try_extend_function(
                         &mut self.backward_seq,
                         MH::manual_roll_reverse,
                         MH::manual_roll_forward,
                         CX::ColorsMergeManagerType::<MH>::extend_backward,
                     );
-                    (bw_hash, begin_ignored, has_edges)
+                    (bw_hash, begin_ignored)
                 }
             };
 
@@ -536,67 +531,42 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 &self.backward_seq[..]
             };
 
-            // <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
-            //     MH,
-            //     CX,
-            // >>::debug_tucs(&unitigs_temp_colors, out_seq);
+            let read_index = self.current_bucket.add_read(
+                color_types::ColorsMergeManagerType::<MH, CX>::encode_part_unitigs_colors(
+                    &mut self.unitigs_temp_colors,
+                ),
+                out_seq,
+            );
 
-            let read_index = self.current_bucket.add_read(<CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
-                    MH,
-                    CX,
-                >>::encode_part_unitigs_colors(&mut self.unitigs_temp_colors), out_seq);
+            Self::write_hashes(
+                &mut self.hashes_tmp,
+                fw_hash.to_unextendable(),
+                bucket_index,
+                read_index,
+                fw_merge,
+                Direction::Forward,
+                buckets_count,
+            );
 
-            if fw_merge || (cfg!(feature = "build-links") && fw_has_edges) {
-                let fw_hash = fw_hash.to_unextendable();
-                let fw_hash_sr = HashEntry {
-                    hash: fw_hash,
-                    bucket: bucket_index,
-                    entry: read_index,
-                    direction: Direction::Forward,
-                };
-                let fw_bucket_index =
-                    MH::get_first_bucket(fw_hash) % (buckets_count as BucketIndexType);
-
-                if fw_merge {
-                    self.hashes_tmp
-                        .add_element(fw_bucket_index, &(), &fw_hash_sr);
-                } else {
-                    #[cfg(feature = "build-links")]
-                    self.link_hashes_tmp
-                        .add_element(fw_bucket_index, &(), &fw_hash_sr);
-                }
-            }
-
-            if bw_merge || (cfg!(feature = "build-links") && bw_has_edges) {
-                let bw_hash = bw_hash.to_unextendable();
-
-                let bw_hash_sr = HashEntry {
-                    hash: bw_hash,
-                    bucket: bucket_index,
-                    entry: read_index,
-                    direction: Direction::Backward,
-                };
-                let bw_bucket_index =
-                    MH::get_first_bucket(bw_hash) % (buckets_count as BucketIndexType);
-
-                if bw_merge {
-                    self.hashes_tmp
-                        .add_element(bw_bucket_index, &(), &bw_hash_sr);
-                } else {
-                    #[cfg(feature = "build-links")]
-                    self.link_hashes_tmp
-                        .add_element(bw_bucket_index, &(), &bw_hash_sr);
-                }
-            }
+            Self::write_hashes(
+                &mut self.hashes_tmp,
+                bw_hash.to_unextendable(),
+                bucket_index,
+                read_index,
+                bw_merge,
+                Direction::Backward,
+                buckets_count,
+            );
         }
 
         #[cfg(feature = "mem-analysis")]
-            self.hmap_meminfo.bytes.store(self.rhash_map.capacity() * (
-                std::mem::size_of::<MH::HashTypeUnextendable>() +
-                std::mem::size_of::<MapEntry<
-                    <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::HashMapTempColorIndex,
-                >>() + 8
-                ), Ordering::Relaxed)
+        self.hmap_meminfo.bytes.store(
+            self.rhash_map.capacity()
+                * (std::mem::size_of::<MH::HashTypeUnextendable>()
+                    + std::mem::size_of::<MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>()
+                    + 8),
+            Ordering::Relaxed,
+        )
     }
 
     fn finalize(
@@ -637,31 +607,22 @@ impl AssemblePipeline {
             None,
         );
 
-        #[cfg(feature = "build-links")]
-        let mut links_hashes_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        let mut sequences = Vec::new();
+
+        let reads_buckets = MultiThreadBuckets::<
+            IntermediateReadsWriter<color_types::PartialUnitigsColorStructure<MH, CX>>,
+        >::new(
             buckets_count,
             &(
-                out_directory.as_ref().join("links_hashes"),
-                get_memory_mode(SwapPriority::HashBuckets),
+                SwapPriority::ResultBuckets,
+                out_directory.as_ref().join("result"),
             ),
             None,
         );
 
-        let mut sequences = Vec::new();
-
-        let reads_buckets =
-            MultiThreadBuckets::<
-                IntermediateReadsWriter<
-                    <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<
-                        MH,
-                        CX,
-                    >>::PartialUnitigsColorStructure,
-                >,
-            >::new(buckets_count, &(SwapPriority::ResultBuckets, out_directory.as_ref().join("result")), None);
-
         let output_results_buckets = SegQueue::new();
         for (index, bucket) in reads_buckets.into_buckets().enumerate() {
-            let bucket_read = ResultsBucketType::<MH, CX> {
+            let bucket_read = ResultsBucket::<color_types::PartialUnitigsColorStructure<MH, CX>> {
                 read_index: 0,
                 reads_writer: OwnedDrop::new(bucket),
                 bucket_index: index as BucketIndexType,
@@ -679,8 +640,6 @@ impl AssemblePipeline {
             colors_global_table,
             output_results_buckets,
             hashes_buckets: &hashes_buckets,
-            #[cfg(feature = "build-links")]
-            links_hashes_buckets: &links_hashes_buckets,
             global_resplit_data: MinimizerBucketingCommonData {
                 k,
                 m: if k > RESPLITTING_MAX_K_M_DIFFERENCE + 1 {
@@ -700,9 +659,6 @@ impl AssemblePipeline {
             global_data,
             save_memory,
         );
-
-        #[cfg(feature = "build-links")]
-        links_hashes_buckets.finalize();
 
         RetType {
             sequences,

@@ -1,5 +1,10 @@
+use crate::KEEP_FILES;
 use core::fmt::Debug;
+use parallel_processor::memory_fs::file::reader::FileReader;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use std::io::{Cursor, Read, Write};
+use std::path::Path;
+use std::sync::atomic::Ordering;
 
 struct PointerDecoder {
     ptr: *const u8,
@@ -40,6 +45,29 @@ pub trait SequenceExtraData: Sized + Send + Debug {
     fn encode<'a>(&self, writer: &'a mut impl Write);
 
     fn max_size(&self) -> usize;
+
+    fn load_data_to_vec(file: impl AsRef<Path>, remove: bool) -> Vec<Self> {
+        let mut vec = Vec::new();
+
+        let mut reader = FileReader::open(&file).unwrap();
+
+        while let Some(value) = Self::decode(&mut reader) {
+            vec.push(value);
+        }
+
+        drop(reader);
+        if remove {
+            MemoryFs::remove_file(
+                &file,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            )
+            .unwrap();
+        }
+
+        vec
+    }
 }
 
 impl SequenceExtraData for () {

@@ -1,3 +1,4 @@
+use crate::assemble_pipeline::build_unitigs::FastaCompatibleRead;
 use crate::hashes::HashableSequence;
 use crate::io::varint::encode_varint_flags;
 use crate::pipeline_common::minimizer_bucketing::MinimizerInputSequence;
@@ -196,6 +197,30 @@ impl<'a> CompressedRead<'a> {
             (0..self.size)
                 .map(|i| unsafe { Utils::decompress_base(self.get_base_unchecked(i)) as char }),
         )
+    }
+}
+
+impl<'a> FastaCompatibleRead for CompressedRead<'a> {
+    type IntermediateData = Range<usize>;
+
+    fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Self::IntermediateData {
+        let start = buffer.len();
+        buffer.extend(
+            (0..self.size).map(|i| unsafe { Utils::decompress_base(self.get_base_unchecked(i)) }),
+        );
+        start..buffer.len()
+    }
+
+    fn as_slice_from_buffer<'b>(
+        &'b self,
+        buffer: &'b Vec<u8>,
+        data: Self::IntermediateData,
+    ) -> &'b [u8] {
+        &buffer[data]
+    }
+
+    fn get_length(&self) -> usize {
+        self.bases_count()
     }
 }
 

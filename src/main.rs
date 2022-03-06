@@ -6,6 +6,7 @@
 #![feature(test)]
 #![feature(slice_partition_dedup)]
 #![deny(warnings)]
+#![allow(dead_code)]
 
 extern crate alloc;
 extern crate test;
