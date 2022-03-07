@@ -1,3 +1,4 @@
+#![feature(is_sorted)]
 // #![deny(warnings)]
 
 #[macro_use]

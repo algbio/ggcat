@@ -322,7 +322,7 @@ mod test {
         let i1 = MemoryDataSize::from_octets(100.0);
         let r1 = i1.as_kilooctets();
 
-        let i2 = MemoryDataSize::from_kilooctets(100.0);
+        let i2 = MemoryDataSize::from_kilooctets(100);
         let r2 = i2.as_octets();
 
         assert_almost_eq(r1, 0.1);
@@ -334,7 +334,7 @@ mod test {
         let i1 = MemoryDataSize::from_octets(100.0);
         let r1 = i1.as_megaoctets();
 
-        let i2 = MemoryDataSize::from_megaoctets(100.0);
+        let i2 = MemoryDataSize::from_megaoctets(100);
         let r2 = i2.as_octets();
 
         assert_almost_eq(r1, 0.0001);
@@ -346,7 +346,7 @@ mod test {
         let i1 = MemoryDataSize::from_octets(100.0);
         let r1 = i1.as_gigaoctets();
 
-        let i2 = MemoryDataSize::from_gigaoctets(100.0);
+        let i2 = MemoryDataSize::from_gigaoctets(100);
         let r2 = i2.as_octets();
 
         assert_almost_eq(r1, 1e-7);
@@ -358,7 +358,7 @@ mod test {
         let i1 = MemoryDataSize::from_octets(100.0);
         let r1 = i1.as_teraoctets();
 
-        let i2 = MemoryDataSize::from_teraoctets(100.0);
+        let i2 = MemoryDataSize::from_teraoctets(100);
         let r2 = i2.as_octets();
 
         assert_almost_eq(r1, 1e-10);
@@ -371,7 +371,7 @@ mod test {
         let i1 = MemoryDataSize::from_octets(100.0);
         let r1 = i1.as_kibioctets();
 
-        let i2 = MemoryDataSize::from_kibioctets(100.0);
+        let i2 = MemoryDataSize::from_kibioctets(100);
         let r2 = i2.as_octets();
 
         assert_almost_eq(r1, 0.09765625);
@@ -383,7 +383,7 @@ mod test {
         let i1 = MemoryDataSize::from_octets(100.0);
         let r1 = i1.as_mebioctets();
 
-        let i2 = MemoryDataSize::from_mebioctets(100.0);
+        let i2 = MemoryDataSize::from_mebioctets(100);
         let r2 = i2.as_octets();
 
         assert_almost_eq(r1, 9.536743e-5);
@@ -395,7 +395,7 @@ mod test {
         let i1 = MemoryDataSize::from_octets(100.0);
         let r1 = i1.as_gibioctets();
 
-        let i2 = MemoryDataSize::from_gibioctets(100.0);
+        let i2 = MemoryDataSize::from_gibioctets(100);
         let r2 = i2.as_octets();
 
         assert_almost_eq(r1, 9.313226e-8);
@@ -407,7 +407,7 @@ mod test {
         let i1 = MemoryDataSize::from_octets(100.0);
         let r1 = i1.as_tebioctets();
 
-        let i2 = MemoryDataSize::from_tebioctets(100.0);
+        let i2 = MemoryDataSize::from_tebioctets(100);
         let r2 = i2.as_octets();
 
         assert_almost_eq(r1, 9.094947e-11);

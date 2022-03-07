@@ -26,6 +26,9 @@ serde_json = "1.0.74"
 backtrace = "0.3.63"
 simple-process-stats = { path = "libraries/simple-process-stats", optional = true }
 
+[dev-dependencies]
+voracious_radix_sort = { version = "1.1.0", features = ["voracious_multithread"] }
+
 
 [features]
 no-stats = []

@@ -374,7 +374,10 @@ fn smart_radix_sort_<
 
 #[cfg(test)]
 mod tests {
-    use crate::fast_smart_bucket_sort::SortKey;
+    use crate::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+    use rand::{thread_rng, RngCore};
+    use std::time::Instant;
+    use voracious_radix_sort::RadixSort;
 
     const VEC_SIZE: usize = 1000000000;
 
@@ -398,25 +401,71 @@ mod tests {
     }
 
     #[test]
-    fn sorting_test() {
-        let mut data = vec![DataTypeStruct(0, [0; 32 - 16]); VEC_SIZE];
+    fn parallel_sorting() {
+        const ARRAY_SIZE: usize = 5000000000;
+        const EL_MAX_SIZE: u32 = u32::MAX;
 
-        data.par_iter_mut()
-            .enumerate()
-            .for_each(|(i, x)| *x = DataTypeStruct(thread_rng().gen(), [2; 32 - 16]));
+        let mut vec = Vec::with_capacity(ARRAY_SIZE);
 
-        println!("Started sorting...");
+        let mut rng = thread_rng();
+
+        for i in 0..ARRAY_SIZE {
+            vec.push((rng.next_u32()) as u32);
+        }
+        let mut vec2 = vec.clone();
+
+        println!("Starting...");
         let start = Instant::now();
-        fast_smart_radix_sort::<_, U64SortKey, true>(data.as_mut_slice());
-        println!("Done sorting => {:.2?}!", start.elapsed());
-        assert!(data.is_sorted_by(|a, b| {
-            Some(match a.cmp(b) {
-                Ordering::Less => Ordering::Less,
-                Ordering::Equal => Ordering::Equal,
-                Ordering::Greater => {
-                    panic!("{:?} > {:?}!", a, b);
-                }
-            })
-        }));
+
+        struct U16SortKey;
+        impl SortKey<u32> for U16SortKey {
+            type KeyType = u32;
+            const KEY_BITS: usize = std::mem::size_of::<u32>() * 8;
+
+            #[inline(always)]
+            fn compare(left: &u32, right: &u32) -> std::cmp::Ordering {
+                left.cmp(&right)
+            }
+
+            #[inline(always)]
+            fn get_shifted(value: &u32, rhs: u8) -> u8 {
+                (value >> rhs) as u8
+            }
+        }
+
+        fast_smart_radix_sort::<_, U16SortKey, true>(vec.as_mut_slice());
+
+        let end = start.elapsed();
+        println!("Total time: {:.2?}", end);
+
+        println!("Starting2...");
+        let start = Instant::now();
+
+        vec2.voracious_mt_sort(16);
+        let end = start.elapsed();
+        println!("Total time 2: {:.2?}", end);
     }
+
+    // #[test]
+    // fn sorting_test() {
+    //     let mut data = vec![DataTypeStruct(0, [0; 32 - 16]); VEC_SIZE];
+    //
+    //     data.par_iter_mut()
+    //         .enumerate()
+    //         .for_each(|(i, x)| *x = DataTypeStruct(thread_rng().gen(), [2; 32 - 16]));
+    //
+    //     println!("Started sorting...");
+    //     let start = Instant::now();
+    //     fast_smart_radix_sort::<_, U64SortKey, true>(data.as_mut_slice());
+    //     println!("Done sorting => {:.2?}!", start.elapsed());
+    //     assert!(data.is_sorted_by(|a, b| {
+    //         Some(match a.cmp(b) {
+    //             Ordering::Less => Ordering::Less,
+    //             Ordering::Equal => Ordering::Equal,
+    //             Ordering::Greater => {
+    //                 panic!("{:?} > {:?}!", a, b);
+    //             }
+    //         })
+    //     }));
+    // }
 }

@@ -208,25 +208,25 @@ impl MemoryFs {
 
 #[cfg(test)]
 mod tests {
+    use crate::memory_data_size::MemoryDataSize;
     use crate::memory_fs::file::flush::GlobalFlush;
     use crate::memory_fs::file::internal::MemoryFileMode;
     use crate::memory_fs::file::reader::FileReader;
     use crate::memory_fs::file::writer::FileWriter;
     use crate::memory_fs::MemoryFs;
-    use measurements::Data;
     use rayon::prelude::*;
     use std::io::{Read, Seek, SeekFrom, Write};
 
     #[test]
     pub fn memory_fs_test() {
-        MemoryFs::init(Data::from_mebioctets(100.0 * 1024.0), 1024, 3, 0);
+        MemoryFs::init(MemoryDataSize::from_mebioctets(100 * 1024), 1024, 3, 0);
         let mut data = (0..3337).map(|x| (x % 256) as u8).collect::<Vec<u8>>();
 
-        (0..400).into_par_iter().for_each(|i| {
+        (0..400).into_par_iter().for_each(|i: u32| {
             println!("Writing file {}", i);
             let mut file = FileWriter::create(
                 format!("/home/andrea/genome-assembly/test1234/{}.tmp", i),
-                MemoryFileMode::PreferMemory,
+                MemoryFileMode::PreferMemory { swap_priority: 3 },
             );
             for _ in 0..(1024 * 64) {
                 file.write(data.as_slice());
@@ -244,7 +244,7 @@ mod tests {
 
         GlobalFlush::flush_to_disk();
 
-        (0..400).into_par_iter().for_each(|i| {
+        (0..400).into_par_iter().for_each(|i: u32| {
             println!("Reading file {}", i);
             let mut datar = vec![0; 3337];
             let mut file =

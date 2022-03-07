@@ -459,19 +459,26 @@ impl ChunksAllocator {
 
 pub static CHUNKS_ALLOCATOR: ChunksAllocator = ChunksAllocator::new();
 
-#[test]
-fn allocate_memory() {
-    CHUNKS_ALLOCATOR.initialize(MemoryDataSize::from_gibioctets(8.0), 22, 0);
-    for i in 0..5 {
-        let mut allocated_chunks: Vec<_> = std::iter::from_fn(move || {
-            Some(CHUNKS_ALLOCATOR.request_chunk(chunk_usage!(TemporarySpace)))
-        })
-        .take(1024 * 2)
-        .collect();
+#[cfg(test)]
+mod tests {
+    use crate::memory_data_size::MemoryDataSize;
+    use crate::memory_fs::allocator::CHUNKS_ALLOCATOR;
+    use rayon::prelude::*;
 
-        allocated_chunks.par_iter_mut().for_each(|x| {
-            x.zero_memory();
-        });
+    #[test]
+    fn allocate_memory() {
+        CHUNKS_ALLOCATOR.initialize(MemoryDataSize::from_gibioctets(8), 22, 0);
+        for i in 0..5 {
+            let mut allocated_chunks: Vec<_> = std::iter::from_fn(move || {
+                Some(CHUNKS_ALLOCATOR.request_chunk(chunk_usage!(TemporarySpace)))
+            })
+            .take(1024 * 2)
+            .collect();
+
+            allocated_chunks.par_iter_mut().for_each(|x| {
+                x.zero_memory();
+            });
+        }
+        CHUNKS_ALLOCATOR.deinitialize();
     }
-    CHUNKS_ALLOCATOR.deinitialize();
 }
