@@ -70,10 +70,10 @@ impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
 
         let first_block_pos = file.len() as u64;
         let compress_stream = lz4::EncoderBuilder::new()
-            .level(0)
+            .level(3)
             .checksum(ContentChecksum::NoChecksum)
-            .block_mode(BlockMode::Independent)
-            .block_size(BlockSize::Default)
+            .block_mode(BlockMode::Linked)
+            .block_size(BlockSize::Max4MB)
             .build(file)
             .unwrap();
 
