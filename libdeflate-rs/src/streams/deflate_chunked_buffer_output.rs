@@ -19,6 +19,9 @@ pub struct DeflateChunkedBufferOutput<'a> {
 static COUNTER_THREADS_BUSY_READING: AtomicCounter<SumMode> =
     declare_counter_i64!("libdeflate_reading_threads", SumMode, false);
 
+static COUNTER_THREADS_PROCESSING_READS: AtomicCounter<SumMode> =
+    declare_counter_i64!("libdeflate_processing_threads", SumMode, false);
+
 impl<'a> DeflateChunkedBufferOutput<'a> {
     pub fn new<F: FnMut(&[u8]) -> Result<(), ()> + 'a>(write_func: F, buf_size: usize) -> Self {
         COUNTER_THREADS_BUSY_READING.inc();
@@ -36,11 +39,14 @@ impl<'a> DeflateChunkedBufferOutput<'a> {
         self.crc32
             .update(&self.buffer[self.lookback_pos..self.position]);
         COUNTER_THREADS_BUSY_READING.sub(1);
+        COUNTER_THREADS_PROCESSING_READS.inc();
         if (self.func)(&self.buffer[self.lookback_pos..self.position]).is_err() {
             COUNTER_THREADS_BUSY_READING.inc();
+            COUNTER_THREADS_PROCESSING_READS.sub(1);
             return false;
         }
         COUNTER_THREADS_BUSY_READING.inc();
+        COUNTER_THREADS_PROCESSING_READS.sub(1);
         self.written += self.position - self.lookback_pos;
 
         let keep_buf_len = min(self.position, Self::MAX_LOOK_BACK);
