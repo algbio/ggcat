@@ -27,7 +27,7 @@ clap = "2.33.3"
 parallel-processor = { path = "parallel-processor-rs" }
 libdeflate-rs = { path = "libdeflate-rs" }
 fdlimit = "0.2.1"
-parking_lot = { version = "0.11.2" }
+parking_lot = { version = "0.12.0" }
 pcg_rand = "0.13.0"
 dashmap = { version = "4.0.2" }
 serde_json = "1.0.68"

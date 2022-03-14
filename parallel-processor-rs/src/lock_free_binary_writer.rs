@@ -1,8 +1,7 @@
-use crate::stats_logger::StatRaiiCounter;
-
 use crate::buckets::bucket_type::BucketType;
 use crate::memory_fs::file::internal::MemoryFileMode;
 use crate::memory_fs::file::writer::FileWriter;
+use counter_stats::counter::{AtomicCounter, AtomicCounterGuardSum, SumMode};
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -10,6 +9,9 @@ pub struct LockFreeBinaryWriter {
     writer: FileWriter,
 }
 unsafe impl Send for LockFreeBinaryWriter {}
+
+static THREADS_BUSY_WRITING: AtomicCounter<SumMode> =
+    declare_counter_u64!("threads_busy_writing", SumMode, false);
 
 impl BucketType for LockFreeBinaryWriter {
     type InitType = (PathBuf, MemoryFileMode);
@@ -42,7 +44,7 @@ impl BucketType for LockFreeBinaryWriter {
     }
 
     fn write_batch_data_lock_free(&self, bytes: &[u8]) {
-        let stat_raii = StatRaiiCounter::create("THREADS_BUSY_WRITING");
+        let stat_raii = AtomicCounterGuardSum::new(&THREADS_BUSY_WRITING, 1);
         self.writer.write_all_parallel(bytes, 1);
         drop(stat_raii);
     }

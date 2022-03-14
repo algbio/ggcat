@@ -44,6 +44,7 @@ use crate::io::sequences_reader::FastaSequence;
 use crate::querier_generic_dispatcher::dispatch_querier_hash_type;
 use crate::utils::compressed_read::CompressedRead;
 use clap::arg_enum;
+use parallel_processor::enable_counters_logging;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use rayon::ThreadPoolBuilder;
 use std::fs::create_dir_all;
@@ -52,6 +53,7 @@ use std::panic;
 use std::path::PathBuf;
 use std::process::exit;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use structopt::StructOpt;
 
 arg_enum! {
@@ -227,7 +229,10 @@ fn initialize(args: &CommonArgs) {
 
     create_dir_all(&args.temp_dir).unwrap();
 
-    parallel_processor::stats_logger::DEFAULT_STATS_LOGGER.init(args.temp_dir.join("stats.txt"));
+    enable_counters_logging(
+        args.temp_dir.join("stats.json"),
+        Duration::from_millis(1000),
+    );
 
     MemoryFs::init(
         parallel_processor::memory_data_size::MemoryDataSize::from_bytes(

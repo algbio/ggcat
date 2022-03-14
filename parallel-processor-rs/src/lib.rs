@@ -2,7 +2,10 @@
 // #![deny(warnings)]
 
 #[macro_use]
-pub mod stats_logger;
+pub extern crate counter_stats;
+
+pub use counter_stats::logging::enable_counters_logging;
+
 #[macro_use]
 pub mod memory_fs;
 

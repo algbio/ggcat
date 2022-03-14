@@ -1,4 +1,4 @@
-use crate::stats_logger::StatRaiiCounter;
+use counter_stats::counter::{AtomicCounter, AtomicCounterGuardSum, SumMode};
 use crossbeam::channel::*;
 use crossbeam::queue::*;
 use crossbeam::thread;
@@ -25,6 +25,20 @@ impl<T: Sync + Send + Default> ThreadChainObject for T {
         *self = Default::default()
     }
 }
+
+static COUNTER_THREADPOOL_WAITING_SEND: AtomicCounter<SumMode> =
+    declare_counter_u64!("threadpool_waiting_send", SumMode, false);
+static COUNTER_THREADPOOL_WAITING_RECV: AtomicCounter<SumMode> =
+    declare_counter_u64!("threadpool_waiting_recv", SumMode, false);
+static COUNTER_THREADPOOL_WAITING_TOT: AtomicCounter<SumMode> =
+    declare_counter_u64!("threadpool_waiting_tot", SumMode, false);
+
+static COUNTER_THREADS_SINGLE: AtomicCounter<SumMode> =
+    declare_counter_u64!("threads_single", SumMode, false);
+static COUNTER_THREADS_READER: AtomicCounter<SumMode> =
+    declare_counter_u64!("threads_reader", SumMode, false);
+static COUNTER_THREADS_WRITER: AtomicCounter<SumMode> =
+    declare_counter_u64!("threads_writer", SumMode, false);
 
 pub struct ThreadPoolDefinition<
     'a,
@@ -95,20 +109,9 @@ impl<'a, OS: ThreadChainObject, OR: ThreadChainObject> ObjectsPoolManager<'a, OS
     }
 
     pub fn send(&self, object: OS) {
-        let _stat_raii = StatRaiiCounter::create("THREADS_BUSY_WAITING_ON_SEND");
-        update_stat!("WAITING_THREADS", 1.0, StatMode::Sum);
-        update_stat!(
-            self.queue_waiting_name,
-            self.sender.len() as f64,
-            StatMode::Replace
-        );
+        let _stat_raii_send = AtomicCounterGuardSum::new(&COUNTER_THREADPOOL_WAITING_SEND, 1);
+        let _stat_raii_tot = AtomicCounterGuardSum::new(&COUNTER_THREADPOOL_WAITING_TOT, 1);
         self.sender.send(object).unwrap();
-        update_stat!(
-            self.queue_waiting_name,
-            self.sender.len() as f64,
-            StatMode::Replace
-        );
-        update_stat!("WAITING_THREADS", -1.0, StatMode::Sum);
     }
     pub fn return_obj(&self, mut object: OR) {
         object.reset();
@@ -119,21 +122,10 @@ impl<'a, OS: ThreadChainObject, OR: ThreadChainObject> ObjectsPoolManager<'a, OS
             return None;
         }
 
-        let _stat_raii = StatRaiiCounter::create("THREADS_BUSY_WAITING_ON_RECV");
-        update_stat!("WAITING_THREADS_RECV", 1.0, StatMode::Sum);
-        update_stat!(
-            self.queue_waiting_name,
-            self.sender.len() as f64,
-            StatMode::Replace
-        );
+        let _stat_raii_recv = AtomicCounterGuardSum::new(&COUNTER_THREADPOOL_WAITING_RECV, 1);
+        let _stat_raii_tot = AtomicCounterGuardSum::new(&COUNTER_THREADPOOL_WAITING_TOT, 1);
 
         let recv = self.receiver.recv().ok();
-        update_stat!(
-            self.queue_waiting_name,
-            self.sender.len() as f64,
-            StatMode::Replace
-        );
-        update_stat!("WAITING_THREADS_RECV", -1.0, StatMode::Sum);
         recv
     }
     pub fn get_queue_len(&self) -> usize {
@@ -186,7 +178,7 @@ impl ThreadPoolsChain {
                             std::thread::sleep(Duration::from_millis(500));
                             continue;
                         }
-                        let _stat_raii = StatRaiiCounter::create("THREADS_RUNNING_IN_SINGLE_MODE");
+                        let _stat_raii = AtomicCounterGuardSum::new(&COUNTER_THREADS_SINGLE, 1);
                         (first.function)(
                             first.context,
                             ObjectsPoolManager {
@@ -274,7 +266,7 @@ impl ThreadPoolsChain {
                             std::thread::sleep(Duration::from_millis(100));
                             continue;
                         }
-                        let _stat_raii = StatRaiiCounter::create("THREADS_RUNNING_IN_READER_MODE");
+                        let _stat_raii = AtomicCounterGuardSum::new(&COUNTER_THREADS_READER, 1);
                         (first.function)(
                             first.context,
                             ObjectsPoolManager {
@@ -307,7 +299,7 @@ impl ThreadPoolsChain {
                             std::thread::sleep(Duration::from_millis(500));
                             continue;
                         }
-                        let _stat_raii = StatRaiiCounter::create("THREADS_RUNNING_IN_WRITER_MODE");
+                        let _stat_raii = AtomicCounterGuardSum::new(&COUNTER_THREADS_WRITER, 1);
                         (second.function)(
                             second.context,
                             ObjectsPoolManager {

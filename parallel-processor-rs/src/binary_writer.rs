@@ -1,6 +1,7 @@
 use crate::buckets::bucket_type::BucketType;
 use crate::memory_fs::file::internal::MemoryFileMode;
 use crate::memory_fs::file::writer::FileWriter;
+use counter_stats::counter::{AtomicCounter, SumMode};
 use rand::{thread_rng, RngCore};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -27,6 +28,9 @@ impl BinaryWriter {
         self.writer.as_mut()
     }
 }
+
+static COUNTER_UNKNOWN_BYTES: AtomicCounter<SumMode> =
+    declare_counter_u64!("unknown_bytes", SumMode, false);
 
 impl BucketType for BinaryWriter {
     type InitType = (PathBuf, StorageMode);
@@ -83,7 +87,7 @@ impl BucketType for BinaryWriter {
     }
 
     fn write_batch_data(&mut self, bytes: &[u8]) {
-        update_stat!("UNKNOWN_BYTES_WRITTEN", bytes.len() as f64, StatMode::Sum);
+        COUNTER_UNKNOWN_BYTES.inc_by(bytes.len() as u64);
         self.writer.write_all(bytes).unwrap();
     }
 
