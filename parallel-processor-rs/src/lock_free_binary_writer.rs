@@ -11,7 +11,7 @@ pub struct LockFreeBinaryWriter {
 unsafe impl Send for LockFreeBinaryWriter {}
 
 static THREADS_BUSY_WRITING: AtomicCounter<SumMode> =
-    declare_counter_u64!("threads_busy_writing", SumMode, false);
+    declare_counter_i64!("threads_busy_writing", SumMode, false);
 
 impl BucketType for LockFreeBinaryWriter {
     type InitType = (PathBuf, MemoryFileMode);

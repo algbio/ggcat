@@ -30,7 +30,7 @@ impl BinaryWriter {
 }
 
 static COUNTER_UNKNOWN_BYTES: AtomicCounter<SumMode> =
-    declare_counter_u64!("unknown_bytes", SumMode, false);
+    declare_counter_i64!("unknown_bytes", SumMode, false);
 
 impl BucketType for BinaryWriter {
     type InitType = (PathBuf, StorageMode);
@@ -87,7 +87,7 @@ impl BucketType for BinaryWriter {
     }
 
     fn write_batch_data(&mut self, bytes: &[u8]) {
-        COUNTER_UNKNOWN_BYTES.inc_by(bytes.len() as u64);
+        COUNTER_UNKNOWN_BYTES.inc_by(bytes.len() as i64);
         self.writer.write_all(bytes).unwrap();
     }
 

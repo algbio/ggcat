@@ -16,12 +16,12 @@ pub struct DeflateChunkedBufferOutput<'a> {
     func: Box<dyn FnMut(&[u8]) -> Result<(), ()> + 'a>,
 }
 
-static COUNTER_THREADS_BUSY_WRITING: AtomicCounter<SumMode> =
-    declare_counter_u64!("libdeflate_reading_threads", SumMode, false);
+static COUNTER_THREADS_BUSY_READING: AtomicCounter<SumMode> =
+    declare_counter_i64!("libdeflate_reading_threads", SumMode, false);
 
 impl<'a> DeflateChunkedBufferOutput<'a> {
     pub fn new<F: FnMut(&[u8]) -> Result<(), ()> + 'a>(write_func: F, buf_size: usize) -> Self {
-        COUNTER_THREADS_BUSY_WRITING.inc();
+        COUNTER_THREADS_BUSY_READING.inc();
         Self {
             buffer: unsafe { NightlyUtils::box_new_uninit_slice_assume_init(buf_size) },
             lookback_pos: 0,
@@ -35,12 +35,12 @@ impl<'a> DeflateChunkedBufferOutput<'a> {
     fn flush_buffer(&mut self, ensure_size: usize) -> bool {
         self.crc32
             .update(&self.buffer[self.lookback_pos..self.position]);
-        COUNTER_THREADS_BUSY_WRITING.sub(1);
+        COUNTER_THREADS_BUSY_READING.sub(1);
         if (self.func)(&self.buffer[self.lookback_pos..self.position]).is_err() {
-            COUNTER_THREADS_BUSY_WRITING.inc();
+            COUNTER_THREADS_BUSY_READING.inc();
             return false;
         }
-        COUNTER_THREADS_BUSY_WRITING.inc();
+        COUNTER_THREADS_BUSY_READING.inc();
         self.written += self.position - self.lookback_pos;
 
         let keep_buf_len = min(self.position, Self::MAX_LOOK_BACK);
@@ -134,6 +134,6 @@ impl<'a> DeflateOutput for DeflateChunkedBufferOutput<'a> {
 
 impl Drop for DeflateChunkedBufferOutput<'_> {
     fn drop(&mut self) {
-        COUNTER_THREADS_BUSY_WRITING.sub(1);
+        COUNTER_THREADS_BUSY_READING.sub(1);
     }
 }

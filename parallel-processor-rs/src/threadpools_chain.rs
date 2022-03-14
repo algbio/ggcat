@@ -27,18 +27,18 @@ impl<T: Sync + Send + Default> ThreadChainObject for T {
 }
 
 static COUNTER_THREADPOOL_WAITING_SEND: AtomicCounter<SumMode> =
-    declare_counter_u64!("threadpool_waiting_send", SumMode, false);
+    declare_counter_i64!("threadpool_waiting_send", SumMode, false);
 static COUNTER_THREADPOOL_WAITING_RECV: AtomicCounter<SumMode> =
-    declare_counter_u64!("threadpool_waiting_recv", SumMode, false);
+    declare_counter_i64!("threadpool_waiting_recv", SumMode, false);
 static COUNTER_THREADPOOL_WAITING_TOT: AtomicCounter<SumMode> =
-    declare_counter_u64!("threadpool_waiting_tot", SumMode, false);
+    declare_counter_i64!("threadpool_waiting_tot", SumMode, false);
 
 static COUNTER_THREADS_SINGLE: AtomicCounter<SumMode> =
-    declare_counter_u64!("threads_single", SumMode, false);
+    declare_counter_i64!("threads_single", SumMode, false);
 static COUNTER_THREADS_READER: AtomicCounter<SumMode> =
-    declare_counter_u64!("threads_reader", SumMode, false);
+    declare_counter_i64!("threads_reader", SumMode, false);
 static COUNTER_THREADS_WRITER: AtomicCounter<SumMode> =
-    declare_counter_u64!("threads_writer", SumMode, false);
+    declare_counter_i64!("threads_writer", SumMode, false);
 
 pub struct ThreadPoolDefinition<
     'a,

@@ -28,7 +28,7 @@ use parallel_processor::buckets::bucket_type::BucketType;
 use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::counter_stats::counter::{AtomicCounter, AvgMode, MaxMode};
-use parallel_processor::counter_stats::{declare_avg_counter_u64, declare_counter_u64};
+use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter_i64};
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 #[cfg(feature = "mem-analysis")]
@@ -339,13 +339,13 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         {
             static COUNTER_READS_MAX: AtomicCounter<MaxMode> =
-                declare_counter_u64!("correct_reads_max", MaxMode, false);
+                declare_counter_i64!("correct_reads_max", MaxMode, false);
             static COUNTER_READS_MAX_LAST: AtomicCounter<MaxMode> =
-                declare_counter_u64!("correct_reads_max_last", MaxMode, true);
+                declare_counter_i64!("correct_reads_max_last", MaxMode, true);
             static COUNTER_READS_AVG: AtomicCounter<AvgMode> =
-                declare_avg_counter_u64!("correct_reads_avg", false);
+                declare_avg_counter_i64!("correct_reads_avg", false);
 
-            let len = self.rcorrect_reads.len() as u64;
+            let len = self.rcorrect_reads.len() as i64;
             COUNTER_READS_MAX.max(len);
             COUNTER_READS_MAX_LAST.max(len);
             COUNTER_READS_AVG.add_value(len);

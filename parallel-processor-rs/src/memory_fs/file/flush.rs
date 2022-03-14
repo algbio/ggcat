@@ -23,19 +23,19 @@ static TAKE_FROM_QUEUE_MUTEX: Mutex<()> = Mutex::const_new(parking_lot::RawMutex
 static WRITING_CHECK: RwLock<()> = RwLock::const_new(parking_lot::RawRwLock::INIT, ());
 
 static COUNTER_WRITING_APPEND: AtomicCounter<SumMode> =
-    declare_counter_u64!("threads_file_append_count", SumMode, false);
+    declare_counter_i64!("threads_file_append_count", SumMode, false);
 
 static COUNTER_WRITE_AT: AtomicCounter<SumMode> =
-    declare_counter_u64!("threads_write_at_count", SumMode, false);
+    declare_counter_i64!("threads_write_at_count", SumMode, false);
 
 static COUNTER_DISK_FLUSHES: AtomicCounter<SumMode> =
-    declare_counter_u64!("disk_flushes", SumMode, false);
+    declare_counter_i64!("disk_flushes", SumMode, false);
 
 static COUNTER_BYTES_WRITTEN: AtomicCounter<SumMode> =
-    declare_counter_u64!("bytes_written_count", SumMode, false);
+    declare_counter_i64!("bytes_written_count", SumMode, false);
 
 static GLOBAL_QUEUE_MAX_SIZE_NOW: AtomicCounter<MaxMode> =
-    declare_counter_u64!("global_queue_max_size_now", MaxMode, true);
+    declare_counter_i64!("global_queue_max_size_now", MaxMode, true);
 
 pub struct GlobalFlush;
 
@@ -76,7 +76,7 @@ impl GlobalFlush {
                 } => {
                     if let FileChunk::OnMemory { chunk } = file_chunk.deref_mut() {
                         let _stat = AtomicCounterGuardSum::new(&COUNTER_WRITING_APPEND, 1);
-                        GLOBAL_QUEUE_MAX_SIZE_NOW.max(flush_channel_receiver.len() as u64);
+                        GLOBAL_QUEUE_MAX_SIZE_NOW.max(flush_channel_receiver.len() as i64);
                         COUNTER_DISK_FLUSHES.inc();
 
                         let offset = file_lock.stream_position().unwrap();
@@ -84,18 +84,18 @@ impl GlobalFlush {
                         file_lock.write_all(chunk.get()).unwrap();
                         let len = chunk.len();
                         *file_chunk = FileChunk::OnDisk { offset, len };
-                        COUNTER_BYTES_WRITTEN.inc_by(len as u64);
+                        COUNTER_BYTES_WRITTEN.inc_by(len as i64);
                     }
                 }
                 FileFlushMode::WriteAt { buffer, offset } => {
                     let _writing_check = WRITING_CHECK.read();
-                    GLOBAL_QUEUE_MAX_SIZE_NOW.max(flush_channel_receiver.len() as u64);
+                    GLOBAL_QUEUE_MAX_SIZE_NOW.max(flush_channel_receiver.len() as i64);
 
                     COUNTER_DISK_FLUSHES.inc();
                     let _stat = AtomicCounterGuardSum::new(&COUNTER_WRITE_AT, 1);
                     file_lock.seek(SeekFrom::Start(offset)).unwrap();
                     file_lock.write_all(buffer.get()).unwrap();
-                    COUNTER_BYTES_WRITTEN.inc_by(buffer.get().len() as u64);
+                    COUNTER_BYTES_WRITTEN.inc_by(buffer.get().len() as i64);
                 }
             }
 
