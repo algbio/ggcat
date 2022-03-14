@@ -339,11 +339,11 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         {
             static COUNTER_READS_MAX: AtomicCounter<MaxMode> =
-                declare_counter_u64!("CORRECT_READS_MAX", MaxMode, false);
+                declare_counter_u64!("correct_reads_max", MaxMode, false);
             static COUNTER_READS_MAX_LAST: AtomicCounter<MaxMode> =
-                declare_counter_u64!("CORRECT_READS_MAX_LAST", MaxMode, true);
+                declare_counter_u64!("correct_reads_max_last", MaxMode, true);
             static COUNTER_READS_AVG: AtomicCounter<AvgMode> =
-                declare_avg_counter_u64!("CORRECT_READS_AVG", false);
+                declare_avg_counter_u64!("correct_reads_avg", false);
 
             let len = self.rcorrect_reads.len() as u64;
             COUNTER_READS_MAX.max(len);

@@ -76,6 +76,7 @@ impl GlobalFlush {
                 } => {
                     if let FileChunk::OnMemory { chunk } = file_chunk.deref_mut() {
                         let _stat = AtomicCounterGuardSum::new(&COUNTER_WRITING_APPEND, 1);
+                        GLOBAL_QUEUE_MAX_SIZE_NOW.max(flush_channel_receiver.len() as u64);
                         COUNTER_DISK_FLUSHES.inc();
 
                         let offset = file_lock.stream_position().unwrap();

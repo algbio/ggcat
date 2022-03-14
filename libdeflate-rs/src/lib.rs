@@ -10,6 +10,9 @@ mod utils;
 #[macro_use]
 extern crate static_assertions;
 
+#[macro_use]
+extern crate counter_stats;
+
 use crate::decompress_deflate::{
     LenType, OutStreamResult, _DecStruct, LITLEN_ENOUGH, OFFSET_ENOUGH,
 };
@@ -138,13 +141,4 @@ pub fn decompress_file_buffered(
         libdeflate_gzip_decompress(&mut decompressor, &mut input_stream, &mut output_stream)?
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
 }
