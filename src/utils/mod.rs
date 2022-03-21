@@ -54,6 +54,11 @@ impl Utils {
         C_INV_LETTERS[cbase as usize]
     }
 
+    #[inline(always)]
+    pub fn conditional_rc_base(cbase: u8, do_rc: bool) -> u8 {
+        cbase ^ if do_rc { 2 } else { 0 }
+    }
+
     pub fn get_bucket_index(bucket_file: impl AsRef<Path>) -> BucketIndexType {
         let mut file_path = bucket_file.as_ref().to_path_buf();
 

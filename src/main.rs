@@ -5,7 +5,7 @@
 #![feature(trait_alias)]
 #![feature(test)]
 #![feature(slice_partition_dedup)]
-#![deny(warnings)]
+// #![deny(warnings)]
 #![allow(dead_code)]
 
 extern crate alloc;
