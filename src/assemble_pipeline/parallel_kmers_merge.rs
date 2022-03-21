@@ -142,6 +142,7 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             unitigs_temp_colors: CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure(),
             rcorrect_reads: TrackedVec::new(),
             rhash_map: HashMap::with_capacity(4096),
+            nhash_map: HashMap::with_capacity(4096),
             #[cfg(feature = "mem-analysis")]
             hmap_meminfo: info,
             _phantom: PhantomData,
@@ -163,6 +164,7 @@ struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, C
     rcorrect_reads: TrackedVec<(MH::HashTypeExtendable, usize, u8, bool)>,
     rhash_map:
         HashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>,
+    nhash_map: HashMap<MH::HashTypeUnextendable, u8>,
     #[cfg(feature = "mem-analysis")]
     hmap_meminfo: Arc<MemoryInfo>,
     _phantom: PhantomData<H>,
@@ -172,6 +174,10 @@ fn get_kmer_multiplicity<CHI>(entry: &MapEntry<CHI>) -> usize {
     // If the current set has both the partial sequences endings, we should divide the counter by 2,
     // as all the kmers are counted exactly two times
     entry.count >> ((entry.ignored == (READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END)) as u8)
+}
+
+struct NodeState {
+    state: u8,
 }
 
 impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
@@ -203,6 +209,16 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 },
             );
         }
+    }
+}
+
+#[inline]
+fn clear_hashmap<K, V>(hashmap: &mut HashMap<K, V>) {
+    if hashmap.capacity() < 8192 {
+        hashmap.clear();
+    } else {
+        // Reset the hashmap if it gets too big
+        *hashmap = HashMap::with_capacity(4096);
     }
 }
 
@@ -268,12 +284,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         let buckets_count = global_data.buckets_count;
 
         CX::ColorsMergeManagerType::<MH>::reinit_temp_buffer_structure(&mut self.temp_colors);
-        if self.rhash_map.capacity() < 8192 {
-            self.rhash_map.clear();
-        } else {
-            // Reset the hashmap if it gets too big
-            self.rhash_map = HashMap::with_capacity(4096);
-        }
+        clear_hashmap(&mut self.rhash_map);
+        clear_hashmap(&mut self.nhash_map);
         self.rcorrect_reads.clear();
 
         let mut tmp_read = Vec::with_capacity(256);
@@ -327,6 +339,22 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                         (idx % 4) as u8,
                         is_forward,
                     ));
+                    self.nhash_map
+                        .entry(
+                            MH::manual_remove_only_forward(hash, k, unsafe {
+                                read.get_base_unchecked(0)
+                            })
+                            .to_unextendable(),
+                        )
+                        .or_insert(0);
+                    self.nhash_map
+                        .entry(
+                            MH::manual_remove_only_reverse(hash, k, unsafe {
+                                read.get_base_unchecked(k - 1)
+                            })
+                            .to_unextendable(),
+                        )
+                        .or_insert(0);
                 }
             }
 
