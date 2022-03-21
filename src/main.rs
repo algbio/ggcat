@@ -213,7 +213,7 @@ static PREFER_MEMORY: AtomicBool = AtomicBool::new(false);
 // #[cfg(feature = "mem-analysis")]
 // static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
 
-fn initialize(args: &CommonArgs) {
+fn initialize(args: &CommonArgs, out_file: &PathBuf) {
     // Increase the maximum allowed number of open files
     fdlimit::raise_fd_limit();
 
@@ -230,7 +230,7 @@ fn initialize(args: &CommonArgs) {
     create_dir_all(&args.temp_dir).unwrap();
 
     enable_counters_logging(
-        args.temp_dir.join("stats.json"),
+        out_file.with_extension("stats.log"),
         Duration::from_millis(1000),
     );
 
@@ -290,7 +290,7 @@ fn main() {
 
     match args {
         CliArgs::Build(args) => {
-            initialize(&args.common_args);
+            initialize(&args.common_args, &args.output_file);
             if args.colors {
                 dispatch_assembler_hash_type::<DefaultColorsManager, { config::FIRST_BUCKETS_COUNT }>(
                     args,
@@ -310,7 +310,7 @@ fn main() {
             }
         }
         CliArgs::Query(args) => {
-            initialize(&args.common_args);
+            initialize(&args.common_args, &args.output_file);
             if args.colors {
                 dispatch_querier_hash_type::<DefaultColorsManager, { config::FIRST_BUCKETS_COUNT }>(
                     args,
