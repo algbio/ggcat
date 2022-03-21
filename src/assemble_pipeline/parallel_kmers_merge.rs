@@ -378,6 +378,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         }
 
         {
+            static COUNTER_KMERS_MAX: AtomicCounter<MaxMode> =
+                declare_counter_i64!("kmers_cardinality_max", MaxMode, false);
             static COUNTER_READS_MAX: AtomicCounter<MaxMode> =
                 declare_counter_i64!("correct_reads_max", MaxMode, false);
             static COUNTER_READS_MAX_LAST: AtomicCounter<MaxMode> =
@@ -386,6 +388,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 declare_avg_counter_i64!("correct_reads_avg", false);
 
             let len = self.rcorrect_reads.len() as i64;
+            COUNTER_KMERS_MAX.max(self.rhash_map.len() as i64);
             COUNTER_READS_MAX.max(len);
             COUNTER_READS_MAX_LAST.max(len);
             COUNTER_READS_AVG.add_value(len);
