@@ -12,10 +12,12 @@ pub const SECOND_BUCKET_BITS: usize = 8;
 pub const SORTING_HASH_SHIFT: usize =
     (size_of::<MinimizerType>() - size_of::<SortingHashType>()) * 8;
 
-pub const READ_INTERMEDIATE_CHUNKS_SIZE: usize = 1024 * 1024 * 1;
-pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(3);
+pub const READ_INTERMEDIATE_CHUNKS_SIZE: usize = 1024 * 512 * 1;
+pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(2);
 
 pub const DEFAULT_MINIMIZER_MASK: MinimizerType = MinimizerType::MAX;
+
+pub const FLUSH_QUEUE_FACTOR: usize = 1;
 
 /// For the resplit mask, exclude the second bucket bits, as it will not be used while splitting
 pub const RESPLIT_MINIMIZER_MASK: MinimizerType =

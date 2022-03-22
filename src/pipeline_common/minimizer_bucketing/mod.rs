@@ -233,7 +233,7 @@ impl GenericMinimizerBucketing {
                 &execution_context,
                 READ_INTERMEDIATE_CHUNKS_SIZE,
                 String::from("assembler-minimizer-bucketing-reader"),
-                max(1, threads_count / 4),
+                max(1, threads_count / 2),
                 &AtomicUsize::new(threads_count),
                 threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),
                 minb_reader,

@@ -33,6 +33,7 @@ mod query_pipeline;
 mod rolling;
 
 use backtrace::Backtrace;
+use std::cmp::max;
 
 use crate::assembler_generic_dispatcher::dispatch_assembler_hash_type;
 use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
@@ -87,6 +88,7 @@ arg_enum! {
     }
 }
 
+use crate::config::FLUSH_QUEUE_FACTOR;
 use crate::utils::compute_best_m;
 use parallel_processor::memory_fs::MemoryFs;
 
@@ -238,8 +240,8 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) {
         parallel_processor::memory_data_size::MemoryDataSize::from_bytes(
             (args.memory * (MemoryDataSize::OCTET_GIBIOCTET_FACTOR as f64)) as usize,
         ),
-        512,
-        3,
+        FLUSH_QUEUE_FACTOR * args.threads_count,
+        max(1, args.threads_count / 4),
         32768,
     );
 
