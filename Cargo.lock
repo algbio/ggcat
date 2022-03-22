@@ -281,7 +281,7 @@ dependencies = [
 [[package]]
 name = "counter-stats"
 version = "0.1.0"
-source = "git+https://github.com/Guilucand/counter-stats.git#0f6a982f81850e74d2bd0f7123fd3b6ff05b5cec"
+source = "git+https://github.com/Guilucand/counter-stats.git#d5d1399c3c66b591dc1d67429a581b6aa39d3ddc"
 dependencies = [
  "bytesize",
  "json",
