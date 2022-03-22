@@ -91,6 +91,7 @@ arg_enum! {
 use crate::config::FLUSH_QUEUE_FACTOR;
 use crate::utils::compute_best_m;
 use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 
 #[derive(StructOpt, Debug)]
 enum CliArgs {
@@ -234,6 +235,9 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) {
     enable_counters_logging(
         out_file.with_extension("stats.log"),
         Duration::from_millis(1000),
+        |val| {
+            val["phase"] = PHASES_TIMES_MONITOR.read().get_phase_desc().into();
+        },
     );
 
     MemoryFs::init(
