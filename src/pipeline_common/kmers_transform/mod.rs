@@ -14,7 +14,7 @@ use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::{Condvar, Mutex, RwLock};
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -95,7 +95,11 @@ impl KmersTransform {
 
         let opened_buckets_count = Arc::new(AtomicUsize::new(0));
 
-        let max_opened_buckets = if save_memory { 1 } else { threads_count / 2 };
+        let max_opened_buckets = if save_memory {
+            1
+        } else {
+            max(1, threads_count / 2)
+        };
 
         let open_bucket = || {
             while opened_buckets_count.load(Ordering::SeqCst) >= max_opened_buckets {
