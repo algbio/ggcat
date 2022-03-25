@@ -121,71 +121,71 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
     let mut buckets_processor = E::new(&context.common);
 
     while let Some(data) = manager.recv_obj() {
-        let mut total_bases = 0;
-        let mut sequences_splitter = SequencesSplitter::new(context.common.k);
-
-        let mut preprocess_info = E::PreprocessInfo::default();
-
-        let mut sequences_count = 0;
-
-        for (index, x) in data.iter_sequences().enumerate() {
-            total_bases += x.seq.len() as u64;
-            buckets_processor.preprocess_fasta(
-                &data.file_info,
-                data.start_read_index + index as u64,
-                &mut preprocess_info,
-                &x,
-            );
-
-            sequences_splitter.process_sequences(&x, None, &mut |sequence: &[u8], range| {
-                buckets_processor.process_sequence::<_, _, { DEFAULT_MINIMIZER_MASK }>(
-                    &preprocess_info,
-                    sequence,
-                    range,
-                    |bucket, seq, flags, extra| {
-                        tmp_reads_buffer.add_read::<E::FLAGS_COUNT>(extra, seq, bucket, flags);
-                    },
-                );
-            });
-
-            sequences_count += 1;
-        }
-
-        SEQ_COUNT.fetch_add(sequences_count, Ordering::Relaxed);
-        let total_bases_count =
-            TOT_BASES_COUNT.fetch_add(total_bases, Ordering::Relaxed) + total_bases;
-        VALID_BASES_COUNT.fetch_add(sequences_splitter.valid_bases, Ordering::Relaxed);
-
-        const TOTAL_BASES_DIFF_LOG: u64 = 10000000000;
-
-        let do_print_log = LAST_TOTAL_COUNT
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
-                if total_bases_count - x > TOTAL_BASES_DIFF_LOG {
-                    Some(total_bases_count)
-                } else {
-                    None
-                }
-            })
-            .is_ok();
-
-        if do_print_log {
-            let current_file = context.current_file.load(Ordering::Relaxed);
-
-            println!(
-                "Elaborated {} sequences! [{} | {:.2}% qb] ({}/{} => {:.2}%) {}",
-                SEQ_COUNT.load(Ordering::Relaxed),
-                VALID_BASES_COUNT.load(Ordering::Relaxed),
-                (VALID_BASES_COUNT.load(Ordering::Relaxed) as f64)
-                    / (max(1, TOT_BASES_COUNT.load(Ordering::Relaxed)) as f64)
-                    * 100.0,
-                current_file,
-                context.total_files,
-                current_file as f64 / max(1, context.total_files) as f64 * 100.0,
-                PHASES_TIMES_MONITOR
-                    .read()
-                    .get_formatted_counter_without_memory()
-            );
-        }
+        // let mut total_bases = 0;
+        // let mut sequences_splitter = SequencesSplitter::new(context.common.k);
+        //
+        // let mut preprocess_info = E::PreprocessInfo::default();
+        //
+        // let mut sequences_count = 0;
+        //
+        // for (index, x) in data.iter_sequences().enumerate() {
+        //     total_bases += x.seq.len() as u64;
+        //     buckets_processor.preprocess_fasta(
+        //         &data.file_info,
+        //         data.start_read_index + index as u64,
+        //         &mut preprocess_info,
+        //         &x,
+        //     );
+        //
+        //     sequences_splitter.process_sequences(&x, None, &mut |sequence: &[u8], range| {
+        //         buckets_processor.process_sequence::<_, _, { DEFAULT_MINIMIZER_MASK }>(
+        //             &preprocess_info,
+        //             sequence,
+        //             range,
+        //             |bucket, seq, flags, extra| {
+        //                 tmp_reads_buffer.add_read::<E::FLAGS_COUNT>(extra, seq, bucket, flags);
+        //             },
+        //         );
+        //     });
+        //
+        //     sequences_count += 1;
+        // }
+        //
+        // SEQ_COUNT.fetch_add(sequences_count, Ordering::Relaxed);
+        // let total_bases_count =
+        //     TOT_BASES_COUNT.fetch_add(total_bases, Ordering::Relaxed) + total_bases;
+        // VALID_BASES_COUNT.fetch_add(sequences_splitter.valid_bases, Ordering::Relaxed);
+        //
+        // const TOTAL_BASES_DIFF_LOG: u64 = 10000000000;
+        //
+        // let do_print_log = LAST_TOTAL_COUNT
+        //     .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+        //         if total_bases_count - x > TOTAL_BASES_DIFF_LOG {
+        //             Some(total_bases_count)
+        //         } else {
+        //             None
+        //         }
+        //     })
+        //     .is_ok();
+        //
+        // if do_print_log {
+        //     let current_file = context.current_file.load(Ordering::Relaxed);
+        //
+        //     println!(
+        //         "Elaborated {} sequences! [{} | {:.2}% qb] ({}/{} => {:.2}%) {}",
+        //         SEQ_COUNT.load(Ordering::Relaxed),
+        //         VALID_BASES_COUNT.load(Ordering::Relaxed),
+        //         (VALID_BASES_COUNT.load(Ordering::Relaxed) as f64)
+        //             / (max(1, TOT_BASES_COUNT.load(Ordering::Relaxed)) as f64)
+        //             * 100.0,
+        //         current_file,
+        //         context.total_files,
+        //         current_file as f64 / max(1, context.total_files) as f64 * 100.0,
+        //         PHASES_TIMES_MONITOR
+        //             .read()
+        //             .get_formatted_counter_without_memory()
+        //     );
+        // }
 
         manager.return_obj(data);
     }

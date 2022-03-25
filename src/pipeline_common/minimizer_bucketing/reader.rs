@@ -31,7 +31,6 @@ pub fn minb_reader<
                 if x.seq.len() < context.common.k {
                     return;
                 }
-                return;
 
                 if unlikely(!data.push_sequences(x)) {
                     let mut tmp_data = manager.allocate();
