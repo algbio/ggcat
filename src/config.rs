@@ -38,8 +38,6 @@ pub const DEFAULT_PER_CPU_BUFFER_SIZE: MemoryDataSize = MemoryDataSize::from_kib
 
 pub const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(15);
 
-pub const MIN_LINKS_PER_BUCKET: u64 = 100000;
-
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]
 impl SwapPriority {

@@ -57,15 +57,13 @@ impl AssemblePipeline {
     pub fn links_compaction(
         links_inputs: Vec<PathBuf>,
         output_dir: impl AsRef<Path>,
-        buckets_count_log2: usize,
+        buckets_count: usize,
         elab_index: usize,
         result_map_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
         final_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
         links_manager: &UnitigLinksManager,
     ) -> (Vec<PathBuf>, u64) {
         let totsum = AtomicU64::new(0);
-
-        let buckets_count = 1 << buckets_count_log2;
 
         let mut links_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
@@ -193,7 +191,7 @@ impl AssemblePipeline {
 
                         (
                             (
-                                new_entry.bucket() % (buckets_count as BucketIndexType),
+                                new_entry.bucket(),
                                 UnitigLink {
                                     entry: new_entry.index() as u64,
                                     flags,
@@ -201,7 +199,7 @@ impl AssemblePipeline {
                                 },
                             ),
                             Some((
-                                other_entry.bucket() % (buckets_count as BucketIndexType),
+                                other_entry.bucket(),
                                 UnitigLink {
                                     entry: other_entry.index() as u64,
                                     flags: UnitigFlags::new_empty(),
@@ -342,7 +340,7 @@ impl AssemblePipeline {
 
                         (
                             (
-                                new_entry.bucket() % (buckets_count as BucketIndexType),
+                                new_entry.bucket(),
                                 UnitigLink {
                                     entry: new_entry.index() as u64,
                                     flags,
@@ -350,7 +348,7 @@ impl AssemblePipeline {
                                 },
                             ),
                             Some((
-                                oth_entry.bucket() % (buckets_count as BucketIndexType),
+                                oth_entry.bucket(),
                                 UnitigLink {
                                     entry: oth_entry.index() as u64,
                                     flags: UnitigFlags::new_empty(),
