@@ -39,10 +39,10 @@ impl AssemblePipeline {
         file_hashes_inputs
             .par_iter()
             .for_each(|input| {
-                // let mut links_tmp = BucketsThreadDispatcher::new(
-                //     MemoryDataSize::from_kibioctets(64),
-                //     &links_buckets,
-                // );
+                let mut links_tmp = BucketsThreadDispatcher::new(
+                    MemoryDataSize::from_kibioctets(4),
+                    &links_buckets,
+                );
 
                 let mut rand_bool = FastRandBool::new();
 
@@ -69,33 +69,31 @@ impl AssemblePipeline {
 
                             let (slice_fw, slice_bw) = if rand_bool.get_randbool() {
                                 unitigs_vec.push(UnitigIndex::new(x[bw].bucket, x[bw].entry as usize, reverse_complemented[bw]));
-                                // (VecSlice::new(unitigs_vec.len() - 1, 1), VecSlice::EMPTY)
-                                ((), ())
+                                (VecSlice::new(unitigs_vec.len() - 1, 1), VecSlice::EMPTY)
                             } else {
                                 unitigs_vec.push(UnitigIndex::new(x[fw].bucket, x[fw].entry as usize, reverse_complemented[fw]));
-                                // (VecSlice::EMPTY, VecSlice::new(unitigs_vec.len() - 1, 1))
-                                ((), ())
+                                (VecSlice::EMPTY, VecSlice::new(unitigs_vec.len() - 1, 1))
                             };
 
-                            // links_tmp.add_element(
-                            //     x[fw].bucket,
-                            //     &unitigs_vec,
-                            //     &UnitigLink {
-                            //         entry: x[fw].entry,
-                            //         flags: UnitigFlags::new_direction(true, reverse_complemented[fw]),
-                            //         entries: slice_fw,
-                            //     },
-                            // );
-                            // 
-                            // links_tmp.add_element(
-                            //     x[bw].bucket,
-                            //     &unitigs_vec,
-                            //     &UnitigLink {
-                            //         entry: x[bw].entry,
-                            //         flags: UnitigFlags::new_direction(false, reverse_complemented[bw]),
-                            //         entries: slice_bw,
-                            //     },
-                            // );
+                            links_tmp.add_element(
+                                x[fw].bucket,
+                                &unitigs_vec,
+                                &UnitigLink {
+                                    entry: x[fw].entry,
+                                    flags: UnitigFlags::new_direction(true, reverse_complemented[fw]),
+                                    entries: slice_fw,
+                                },
+                            );
+
+                            links_tmp.add_element(
+                                x[bw].bucket,
+                                &unitigs_vec,
+                                &UnitigLink {
+                                    entry: x[bw].entry,
+                                    flags: UnitigFlags::new_direction(false, reverse_complemented[bw]),
+                                    entries: slice_bw,
+                                },
+                            );
                         },
                         1 => {
                             println!("Warning spurious hash detected ({:?}) with index {}, this is a bug or a collision in the KmersMerge phase!", x[0].hash, x[0].entry);
@@ -105,7 +103,7 @@ impl AssemblePipeline {
                         }
                     }
                 }
-                // links_tmp.finalize();
+                links_tmp.finalize();
             });
         links_buckets.finalize()
     }
