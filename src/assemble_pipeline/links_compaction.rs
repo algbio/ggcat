@@ -18,7 +18,6 @@ use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey}
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
-use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::io::{Read, Write};
@@ -63,7 +62,7 @@ impl AssemblePipeline {
         result_map_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
         final_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
         links_manager: &UnitigLinksManager,
-    ) -> (Vec<PathBuf>, bool) {
+    ) -> (Vec<PathBuf>, u64) {
         let totsum = AtomicU64::new(0);
 
         let mut links_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
@@ -372,16 +371,6 @@ impl AssemblePipeline {
             results_tmp.finalize();
         });
 
-        println!(
-            "Remaining: {} {}",
-            totsum.load(Ordering::Relaxed),
-            PHASES_TIMES_MONITOR
-                .read()
-                .get_formatted_counter_without_memory()
-        );
-        (
-            links_buckets.finalize(),
-            totsum.load(Ordering::Relaxed) == 0,
-        )
+        (links_buckets.finalize(), totsum.load(Ordering::Relaxed))
     }
 }

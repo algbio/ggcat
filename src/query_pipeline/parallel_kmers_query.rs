@@ -123,7 +123,7 @@ struct ParallelKmersQuery<'x, H: HashFunctionFactory, MH: HashFunctionFactory, C
     _phantom: PhantomData<(H, CX)>,
 }
 
-const MAX_COUNTERS_FOR_FLUSH: MemoryDataSize = MemoryDataSize::from_kibioctets(64);
+const MAX_COUNTERS_FOR_FLUSH: MemoryDataSize = MemoryDataSize::from_kibioctets(4);
 
 impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutor<'x, ParallelKmersQueryFactory<H, MH, CX>>

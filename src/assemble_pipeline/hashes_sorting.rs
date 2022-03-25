@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::config::SwapPriority;
+use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
 use crate::hashes::HashFunctionFactory;
 use crate::io::structs::hash_entry::{Direction, HashCompare, HashEntry};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
@@ -12,7 +12,6 @@ use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
@@ -40,7 +39,7 @@ impl AssemblePipeline {
             .par_iter()
             .for_each(|input| {
                 let mut links_tmp = BucketsThreadDispatcher::new(
-                    MemoryDataSize::from_kibioctets(64),
+                    DEFAULT_PER_CPU_BUFFER_SIZE,
                     &links_buckets,
                 );
 

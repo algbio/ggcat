@@ -10,7 +10,6 @@ use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
 use std::ops::DerefMut;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;

@@ -10,7 +10,7 @@ pub struct IntermediateReadsThreadWriter<'a, T: SequenceExtraData> {
 }
 
 impl<'a, T: SequenceExtraData> IntermediateReadsThreadWriter<'a, T> {
-    const ALLOWED_LEN: usize = 65536;
+    const ALLOWED_LEN: usize = 8192;
 
     pub fn new(
         buckets_count: usize,
