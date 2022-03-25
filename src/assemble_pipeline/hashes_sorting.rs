@@ -12,7 +12,6 @@ use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;

@@ -477,7 +477,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 ts: &mut color_types::TempUnitigColorStructure<MH, CX>,
                 entry: &MapEntry<color_types::HashMapTempColorIndex<MH, CX>>,
             )| {
-                return 'ext_loop: loop {
+                return loop {
                     if let Some(kmer) = self.nhash_map.get(&nhash.to_unextendable()) {
                         if kmer.is_extendable() {
                             let new_base = Utils::conditional_rc_base(

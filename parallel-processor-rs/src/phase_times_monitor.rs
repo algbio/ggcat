@@ -4,7 +4,6 @@ use nightly_quirks::utils::NightlyUtils;
 use parking_lot::lock_api::RawRwLock;
 use parking_lot::{Mutex, RwLock};
 use std::cmp::max;
-use std::thread::Thread;
 use std::time::{Duration, Instant};
 
 pub struct PhaseResult {

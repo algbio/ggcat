@@ -18,7 +18,6 @@ use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey}
 use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
-use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::io::{Read, Write};
@@ -66,7 +65,7 @@ impl AssemblePipeline {
     ) -> (Vec<PathBuf>, u64) {
         let totsum = AtomicU64::new(0);
 
-        let buckets_count = (1 << buckets_count_log2);
+        let buckets_count = 1 << buckets_count_log2;
 
         let mut links_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,

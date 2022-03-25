@@ -13,7 +13,7 @@ use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::fs::remove_file;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -165,8 +165,9 @@ pub fn run_assembler<
             .start_phase("phase: links compaction".to_string());
 
         let mut log_timer = Instant::now();
-        let mut buckets_log = BUCKETS_COUNT.log2() as usize;
-        let mut min_buckets_log = threads_count.next_power_of_two().log2() as usize;
+        let max_buckets_log = BUCKETS_COUNT.log2() as usize;
+        let min_buckets_log = threads_count.next_power_of_two().log2() as usize;
+        let mut buckets_log = max_buckets_log;
 
         let result = loop {
             let do_logging = if log_timer.elapsed() > MINIMUM_LOG_DELTA_TIME {
@@ -190,7 +191,13 @@ pub fn run_assembler<
                 &links_manager,
             );
 
-            buckets_log = max(min_buckets_log, (remaining / MIN_LINKS_PER_BUCKET) as usize);
+            buckets_log = min(
+                max_buckets_log,
+                max(
+                    min_buckets_log,
+                    (remaining / MIN_LINKS_PER_BUCKET).log2() as usize,
+                ),
+            );
 
             if do_logging {
                 println!(
