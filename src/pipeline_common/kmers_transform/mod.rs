@@ -3,7 +3,7 @@ pub mod structs;
 
 use crate::config::{
     BucketIndexType, SortingHashType, DEFAULT_PER_CPU_BUFFER_SIZE, FIRST_BUCKETS_COUNT,
-    SECOND_BUCKETS_COUNT,
+    MINIMUM_LOG_DELTA_TIME, SECOND_BUCKETS_COUNT,
 };
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutorFactory;
@@ -87,8 +87,6 @@ impl KmersTransform {
         let vecs_process_queue = Arc::new(SegQueue::new());
 
         let last_info_log = Mutex::new(Instant::now());
-
-        const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(15);
 
         let data_wait_condvar = Arc::new(Condvar::new());
         let data_wait_mutex = Mutex::new(());

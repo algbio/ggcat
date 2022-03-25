@@ -58,13 +58,15 @@ impl AssemblePipeline {
     pub fn links_compaction(
         links_inputs: Vec<PathBuf>,
         output_dir: impl AsRef<Path>,
-        buckets_count: usize,
+        buckets_count_log2: usize,
         elab_index: usize,
         result_map_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
         final_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
         links_manager: &UnitigLinksManager,
-    ) -> (Vec<PathBuf>, bool) {
+    ) -> (Vec<PathBuf>, u64) {
         let totsum = AtomicU64::new(0);
+
+        let buckets_count = (1 << buckets_count_log2);
 
         let mut links_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
@@ -192,7 +194,7 @@ impl AssemblePipeline {
 
                         (
                             (
-                                new_entry.bucket(),
+                                new_entry.bucket() % (buckets_count as BucketIndexType),
                                 UnitigLink {
                                     entry: new_entry.index() as u64,
                                     flags,
@@ -200,7 +202,7 @@ impl AssemblePipeline {
                                 },
                             ),
                             Some((
-                                other_entry.bucket(),
+                                other_entry.bucket() % (buckets_count as BucketIndexType),
                                 UnitigLink {
                                     entry: other_entry.index() as u64,
                                     flags: UnitigFlags::new_empty(),
@@ -372,16 +374,6 @@ impl AssemblePipeline {
             results_tmp.finalize();
         });
 
-        println!(
-            "Remaining: {} {}",
-            totsum.load(Ordering::Relaxed),
-            PHASES_TIMES_MONITOR
-                .read()
-                .get_formatted_counter_without_memory()
-        );
-        (
-            links_buckets.finalize(),
-            totsum.load(Ordering::Relaxed) == 0,
-        )
+        (links_buckets.finalize(), totsum.load(Ordering::Relaxed))
     }
 }

@@ -5,6 +5,7 @@
 #![feature(trait_alias)]
 #![feature(test)]
 #![feature(slice_partition_dedup)]
+#![feature(int_log)]
 // #![deny(warnings)]
 #![allow(dead_code)]
 

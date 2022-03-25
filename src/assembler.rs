@@ -2,7 +2,7 @@ use crate::assemble_pipeline::parallel_kmers_merge::structs::RetType;
 use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsManager;
-use crate::config::SwapPriority;
+use crate::config::{SwapPriority, MINIMUM_LOG_DELTA_TIME, MIN_LINKS_PER_BUCKET};
 use crate::hashes::HashFunctionFactory;
 use crate::io::reads_writer::ReadsWriter;
 use crate::utils::{get_memory_mode, Utils};
@@ -13,9 +13,11 @@ use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
+use std::cmp::max;
 use std::fs::remove_file;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 pub fn run_assembler<
     BucketingHash: HashFunctionFactory,
@@ -162,21 +164,46 @@ pub fn run_assembler<
             .write()
             .start_phase("phase: links compaction".to_string());
 
-        let result = loop {
-            println!("Iteration: {}", loop_iteration);
+        let mut log_timer = Instant::now();
+        let mut buckets_log = BUCKETS_COUNT.log2() as usize;
+        let mut min_buckets_log = threads_count.next_power_of_two().log2() as usize;
 
-            let (new_links, is_finished) = AssemblePipeline::links_compaction(
+        let result = loop {
+            let do_logging = if log_timer.elapsed() > MINIMUM_LOG_DELTA_TIME {
+                log_timer = Instant::now();
+                true
+            } else {
+                false
+            };
+
+            if do_logging {
+                println!("Iteration: {}", loop_iteration);
+            }
+
+            let (new_links, remaining) = AssemblePipeline::links_compaction(
                 links,
                 temp_dir.as_path(),
-                BUCKETS_COUNT,
+                buckets_log,
                 loop_iteration,
                 &mut result_map_buckets,
                 &mut final_buckets,
                 &links_manager,
             );
 
+            buckets_log = max(min_buckets_log, (remaining / MIN_LINKS_PER_BUCKET) as usize);
+
+            if do_logging {
+                println!(
+                    "Remaining: {} {}",
+                    remaining,
+                    PHASES_TIMES_MONITOR
+                        .read()
+                        .get_formatted_counter_without_memory()
+                );
+            }
+
             links = new_links;
-            if is_finished {
+            if remaining == 0 {
                 println!("Completed compaction with {} iters", loop_iteration);
                 break (final_buckets.finalize(), result_map_buckets.finalize());
             }
