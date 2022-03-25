@@ -342,7 +342,7 @@ impl AssemblePipeline {
 
                         (
                             (
-                                new_entry.bucket(),
+                                new_entry.bucket() % (buckets_count as BucketIndexType),
                                 UnitigLink {
                                     entry: new_entry.index() as u64,
                                     flags,
@@ -350,7 +350,7 @@ impl AssemblePipeline {
                                 },
                             ),
                             Some((
-                                oth_entry.bucket(),
+                                oth_entry.bucket() % (buckets_count as BucketIndexType),
                                 UnitigLink {
                                     entry: oth_entry.index() as u64,
                                     flags: UnitigFlags::new_empty(),
