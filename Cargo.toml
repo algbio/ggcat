@@ -46,7 +46,8 @@ fs_extra = "1.2.0"
 
 [profile.release]
 debug = true
-lto = "fat"
+lto = "off"
+opt-level = 1
 
 [features]
 mem-analysis = ["parallel-processor/track-usage"]
