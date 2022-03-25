@@ -75,7 +75,7 @@ impl AssemblePipeline {
                                 unitigs_vec.push(UnitigIndex::new(x[fw].bucket, x[fw].entry as usize, reverse_complemented[fw]));
                                 // (VecSlice::EMPTY, VecSlice::new(unitigs_vec.len() - 1, 1))
                                 ((), ())
-s                            };
+                            };
 
                             // links_tmp.add_element(
                             //     x[fw].bucket,
