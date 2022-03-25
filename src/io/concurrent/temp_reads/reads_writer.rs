@@ -25,7 +25,7 @@ unsafe impl<T> Sync for IntermediateReadsWriter<T> {}
 
 fn create_lz4_stream<W: Write>(writer: W) -> lz4::Encoder<W> {
     lz4::EncoderBuilder::new()
-        .level(3)
+        .level(1)
         .checksum(ContentChecksum::NoChecksum)
         .block_mode(BlockMode::Linked)
         .block_size(BlockSize::Max64KB)
