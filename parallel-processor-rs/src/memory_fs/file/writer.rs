@@ -115,7 +115,7 @@ impl FileWriter {
 impl Write for FileWriter {
     #[inline(always)]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        // self.write_all_parallel(buf, 1);
+        self.write_all_parallel(buf, 1);
         Ok(buf.len())
     }
 
