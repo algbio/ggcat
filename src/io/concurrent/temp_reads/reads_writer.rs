@@ -73,7 +73,7 @@ impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
             .level(3)
             .checksum(ContentChecksum::NoChecksum)
             .block_mode(BlockMode::Linked)
-            .block_size(BlockSize::Max4MB)
+            .block_size(BlockSize::Max64KB)
             .build(file)
             .unwrap();
 
@@ -89,7 +89,7 @@ impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
     }
 
     fn write_batch_data(&mut self, bytes: &[u8]) {
-        // self.writer.write_all(bytes).unwrap();
+        self.writer.write_all(bytes).unwrap();
         self.chunk_size += bytes.len() as u64;
         if self.chunk_size > MAXIMUM_CHUNK_SIZE {
             self.create_new_block();

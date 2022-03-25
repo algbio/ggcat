@@ -44,7 +44,6 @@ pub fn minb_reader<
                             <= read_index as usize
                     );
 
-                    // tmp_data.sequences.clear();
                     manager.send(tmp_data);
 
                     if !data.push_sequences(x) {

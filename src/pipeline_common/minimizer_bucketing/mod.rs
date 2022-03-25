@@ -143,9 +143,7 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
                     sequence,
                     range,
                     |bucket, seq, flags, extra| {
-                        if true {
-                            tmp_reads_buffer.add_read::<E::FLAGS_COUNT>(extra, seq, bucket, flags);
-                        }
+                        tmp_reads_buffer.add_read::<E::FLAGS_COUNT>(extra, seq, bucket, flags);
                     },
                 );
             });
