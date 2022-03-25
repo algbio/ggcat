@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::config::SwapPriority;
+use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
 use crate::hashes::HashFunctionFactory;
 use crate::io::structs::hash_entry::{Direction, HashCompare, HashEntry};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
@@ -40,7 +40,7 @@ impl AssemblePipeline {
             .par_iter()
             .for_each(|input| {
                 let mut links_tmp = BucketsThreadDispatcher::new(
-                    MemoryDataSize::from_kibioctets(4),
+                    DEFAULT_PER_CPU_BUFFER_SIZE,
                     &links_buckets,
                 );
 

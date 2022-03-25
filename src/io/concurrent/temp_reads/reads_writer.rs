@@ -23,6 +23,16 @@ pub struct IntermediateReadsWriter<T> {
 
 unsafe impl<T> Sync for IntermediateReadsWriter<T> {}
 
+fn create_lz4_stream<W: Write>(writer: W) -> lz4::Encoder<W> {
+    lz4::EncoderBuilder::new()
+        .level(3)
+        .checksum(ContentChecksum::NoChecksum)
+        .block_mode(BlockMode::Linked)
+        .block_size(BlockSize::Max64KB)
+        .build(writer)
+        .unwrap()
+}
+
 impl<T: SequenceExtraData> IntermediateReadsWriter<T> {
     fn create_new_block(&mut self) {
         replace_with_or_abort(&mut self.writer, |writer| {
@@ -32,7 +42,7 @@ impl<T: SequenceExtraData> IntermediateReadsWriter<T> {
             let checkpoint_pos = file_buf.len();
             self.index.index.push(checkpoint_pos as u64);
 
-            lz4::EncoderBuilder::new().level(0).build(file_buf).unwrap()
+            create_lz4_stream(file_buf)
         });
         self.chunk_size = 0;
     }
@@ -69,13 +79,7 @@ impl<T: SequenceExtraData> BucketType for IntermediateReadsWriter<T> {
             .unwrap();
 
         let first_block_pos = file.len() as u64;
-        let compress_stream = lz4::EncoderBuilder::new()
-            .level(3)
-            .checksum(ContentChecksum::NoChecksum)
-            .block_mode(BlockMode::Linked)
-            .block_size(BlockSize::Max64KB)
-            .build(file)
-            .unwrap();
+        let compress_stream = create_lz4_stream(file);
 
         IntermediateReadsWriter {
             writer: compress_stream,
