@@ -1,22 +1,26 @@
 use crate::assemble_pipeline::links_compaction::LinkMapping;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
-use crate::config::SwapPriority;
+use crate::config::{SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 
 use crate::assemble_pipeline::build_unitigs::write_fasta_entry;
 use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
+use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
-use crate::io::concurrent::temp_reads::reads_reader::IntermediateReadsReader;
-use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
-use crate::io::concurrent::temp_reads::thread_writer::IntermediateReadsThreadWriter;
 use crate::io::reads_writer::ReadsWriter;
 use crate::io::structs::unitig_link::UnitigIndex;
-use crate::utils::Utils;
+use crate::utils::{get_memory_mode, Utils};
 use crate::KEEP_FILES;
+use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
+use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -66,17 +70,14 @@ impl AssemblePipeline {
             .write()
             .start_phase("phase: reads reorganization".to_string());
 
-        let mut buckets = MultiThreadBuckets::<
-            IntermediateReadsWriter<
-                ReorganizedReadsExtraData<color_types::PartialUnitigsColorStructure<MH, CX>>,
-            >,
-        >::new(
+        let mut buckets = MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
+            temp_path.join("reads_bucket"),
             &(
-                SwapPriority::ReorganizeReads,
-                temp_path.join("reads_bucket"),
+                get_memory_mode(SwapPriority::ReorganizeReads),
+                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
+                DEFAULT_LZ4_COMPRESSION_LEVEL,
             ),
-            None,
         );
 
         reads.sort();
@@ -85,7 +86,8 @@ impl AssemblePipeline {
         let inputs: Vec<_> = reads.iter().zip(mapping_files.iter()).collect();
 
         inputs.par_iter().for_each(|(read_file, mapping_file)| {
-            let mut tmp_reads_buffer = IntermediateReadsThreadWriter::new(buckets_count, &buckets);
+            let mut tmp_reads_buffer =
+                BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets);
 
             let mut tmp_lonely_unitigs_buffer =
                 FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE);
@@ -99,20 +101,15 @@ impl AssemblePipeline {
 
             let bucket_index = Utils::get_bucket_index(read_file);
 
-            let mut reader = FileReader::open(&mapping_file).unwrap();
-
-            while let Some(link) = LinkMapping::from_stream(&mut reader) {
-                mappings.push(link);
-            }
-
-            drop(reader);
-            MemoryFs::remove_file(
-                &mapping_file,
+            LockFreeBinaryReader::new(
+                mapping_file,
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
             )
-            .unwrap();
+            .decode_all_bucket_items::<LinkMapping, _>((), |link| {
+                mappings.push(link);
+            });
 
             crate::make_comparer!(Compare, LinkMapping, entry: u64);
             fast_smart_radix_sort::<_, Compare, false>(&mut mappings[..]);
@@ -124,13 +121,16 @@ impl AssemblePipeline {
 
             let mut fasta_temp_buffer = Vec::new();
 
-            IntermediateReadsReader::<color_types::PartialUnitigsColorStructure<MH, CX>>::new(
+            CompressedBinaryReader::new(
                 read_file,
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
             )
-            .for_each::<_, typenum::U0>(|_, color, seq| {
+            .decode_all_bucket_items::<CompressedReadsBucketHelper<
+                color_types::PartialUnitigsColorStructure<MH, CX>,
+                typenum::U0,
+            >, _>(Vec::new(), |(_, color, seq)| {
                 if seq.bases_count() > decompress_buffer.len() {
                     decompress_buffer.resize(seq.bases_count(), 0);
                 }
@@ -140,14 +140,18 @@ impl AssemblePipeline {
 
                 if map_index < mappings.len() && mappings[map_index].entry == index {
                     // Mapping found
-                    tmp_reads_buffer.add_read::<typenum::U0>(
-                        ReorganizedReadsExtraData {
+                    tmp_reads_buffer.add_element(
+                        mappings[map_index].bucket,
+                        &ReorganizedReadsExtraData {
                             unitig: UnitigIndex::new(bucket_index, index as usize, false),
                             color,
                         },
-                        seq,
-                        mappings[map_index].bucket,
-                        0,
+                        &CompressedReadsBucketHelper::<
+                            ReorganizedReadsExtraData<
+                                color_types::PartialUnitigsColorStructure<MH, CX>,
+                            >,
+                            typenum::U0,
+                        >::new(seq, 0),
                     );
                     map_index += 1;
                 } else {

@@ -1,10 +1,11 @@
 use crate::config::BucketIndexType;
 use crate::hashes::HashFunctionFactory;
-use bincode::serialize_into;
-use parallel_processor::buckets::bucket_writer::BucketWriter;
+use bincode::{deserialize_from, serialize_into};
+use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::fast_smart_bucket_sort::SortKey;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::marker::PhantomData;
 use std::mem::size_of;
 
@@ -23,16 +24,25 @@ pub struct HashEntry<H: Copy> {
     pub direction: Direction,
 }
 
-impl<H: Serialize + DeserializeOwned + Copy> BucketWriter for HashEntry<H> {
+impl<H: Serialize + DeserializeOwned + Copy> BucketItem for HashEntry<H> {
     type ExtraData = ();
+    type ReadBuffer = ();
+    type ReadType<'a> = Self;
 
     #[inline(always)]
     fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
         serialize_into(bucket, self).unwrap();
     }
 
+    fn read_from<'a, S: Read>(
+        stream: S,
+        _read_buffer: &'a mut Self::ReadBuffer,
+    ) -> Option<Self::ReadType<'a>> {
+        deserialize_from(stream).ok()
+    }
+
     #[inline(always)]
-    fn get_size(&self) -> usize {
+    fn get_size(&self, _: &()) -> usize {
         size_of::<H>() + size_of::<BucketIndexType>() + 8 + 1
     }
 }

@@ -1,16 +1,16 @@
 use std::cmp::min;
 use std::io::Read;
 
-pub struct VecReader<'a, R: Read> {
+pub struct VecReader<R: Read> {
     vec: Vec<u8>,
     fill: usize,
     pos: usize,
-    reader: &'a mut R,
+    reader: R,
     stream_ended: bool,
 }
 
-impl<'a, R: Read> VecReader<'a, R> {
-    pub fn new(capacity: usize, reader: &'a mut R) -> VecReader<'a, R> {
+impl<R: Read> VecReader<R> {
+    pub fn new(capacity: usize, reader: R) -> VecReader<R> {
         let mut vec = vec![];
         vec.resize(capacity, 0);
         VecReader {
@@ -59,9 +59,13 @@ impl<'a, R: Read> VecReader<'a, R> {
         }
         offset
     }
+
+    pub fn into_inner(self) -> R {
+        self.reader
+    }
 }
 
-impl<'a, R: Read> Read for VecReader<'a, R> {
+impl<R: Read> Read for VecReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         Ok(self.read_bytes(buf))
     }

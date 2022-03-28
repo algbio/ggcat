@@ -906,14 +906,17 @@ name = "parallel-processor"
 version = "0.1.0"
 dependencies = [
  "backtrace",
+ "bincode",
  "byteorder",
  "counter-stats",
  "crossbeam",
  "dashmap 5.2.0",
+ "desse",
  "filebuffer",
  "heapless 0.7.10",
  "lazy_static",
  "libc",
+ "lz4",
  "nightly-quirks",
  "parking_lot",
  "rand 0.8.5",

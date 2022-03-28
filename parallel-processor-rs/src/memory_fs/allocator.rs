@@ -99,7 +99,7 @@ impl AllocatedChunk {
         slice
     }
 
-    pub fn write_bytes_noextend(&self, data: &[u8]) -> bool {
+    pub fn write_bytes_noextend(&self, data: &[u8]) -> Option<u64> {
         let result = self
             .len
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
@@ -119,9 +119,9 @@ impl AllocatedChunk {
                         data.len(),
                     );
                 }
-                true
+                Some(addr_offset as u64)
             }
-            Err(_) => false,
+            Err(_) => None,
         }
     }
 

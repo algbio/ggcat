@@ -6,7 +6,6 @@ use crate::utils::get_memory_mode;
 use crate::CompressedRead;
 use desse::Desse;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
-use parallel_processor::buckets::bucket_type::BucketType;
 use parallel_processor::memory_fs::file::writer::FileWriter;
 use replace_with::replace_with_or_abort;
 use std::io::Write;

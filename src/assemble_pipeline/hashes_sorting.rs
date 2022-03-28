@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
@@ -8,10 +9,13 @@ use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::vec_slice::VecSlice;
 use crate::utils::{get_memory_mode, Utils};
+use crate::KEEP_FILES;
 use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
-use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
+use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
@@ -28,11 +32,11 @@ impl AssemblePipeline {
 
         let mut links_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
+            output_dir.as_ref().join("links"),
             &(
-                output_dir.as_ref().join("links"),
                 get_memory_mode(SwapPriority::LinksBuckets as usize),
+                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
-            None,
         );
 
         file_hashes_inputs
@@ -45,7 +49,14 @@ impl AssemblePipeline {
 
                 let mut rand_bool = FastRandBool::new();
 
-                let mut hashes_vec: Vec<HashEntry<H::HashTypeUnextendable>> = Utils::bincode_deserialize_to_vec(input, true);
+                let mut hashes_vec = Vec::new();
+
+                LockFreeBinaryReader::new(input, RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed)
+                }).decode_all_bucket_items::<HashEntry<H::HashTypeUnextendable>, _>((), |h| {
+                    hashes_vec.push(h);
+                });
+
                 fast_smart_radix_sort::<_, HashCompare<H>, false>(&mut hashes_vec[..]);
 
                 let mut unitigs_vec = Vec::new();

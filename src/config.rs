@@ -38,6 +38,12 @@ pub const DEFAULT_PER_CPU_BUFFER_SIZE: MemoryDataSize = MemoryDataSize::from_kib
 
 pub const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(15);
 
+pub const READS_MAXIMUM_CHUNK_SIZE: usize = 1024 * 1024 * 8;
+
+pub const DEFAULT_LZ4_COMPRESSION_LEVEL: u32 = 0;
+
+pub const EXTRA_BUFFERS_COUNT: usize = SECOND_BUCKETS_COUNT * 20 / 3;
+
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]
 impl SwapPriority {

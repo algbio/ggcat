@@ -4,7 +4,7 @@ pub mod debug_functions;
 pub mod debug_utils;
 pub mod fast_rand_bool;
 pub mod owned_drop;
-pub mod vec_reader;
+pub mod resource_counter;
 pub mod vec_slice;
 
 use crate::config::BucketIndexType;
@@ -96,32 +96,6 @@ impl Utils {
                 ))
             })
             .collect()
-    }
-
-    pub fn bincode_deserialize_to_vec<T: DeserializeOwned, P: AsRef<Path>>(
-        file: P,
-        remove: bool,
-    ) -> Vec<T> {
-        let mut vec = Vec::new();
-
-        let mut reader = FileReader::open(&file).unwrap();
-
-        while let Ok(value) = bincode::deserialize_from(&mut reader) {
-            vec.push(value);
-        }
-
-        drop(reader);
-        if remove {
-            MemoryFs::remove_file(
-                &file,
-                RemoveFileMode::Remove {
-                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-                },
-            )
-            .unwrap();
-        }
-
-        vec
     }
 }
 

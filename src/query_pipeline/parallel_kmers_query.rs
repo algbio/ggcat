@@ -1,6 +1,7 @@
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use crate::config::{
-    BucketIndexType, SwapPriority, DEFAULT_MINIMIZER_MASK, RESPLITTING_MAX_K_M_DIFFERENCE,
+    BucketIndexType, SwapPriority, DEFAULT_MINIMIZER_MASK, EXTRA_BUFFERS_COUNT,
+    RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
@@ -21,8 +22,9 @@ use crate::utils::compressed_read::CompressedRead;
 use crate::utils::get_memory_mode;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
-use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -116,7 +118,7 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 }
 
 struct ParallelKmersQuery<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> {
-    counters_tmp: BucketsThreadDispatcher<'x, LockFreeBinaryWriter, CounterEntry>,
+    counters_tmp: BucketsThreadDispatcher<'x, LockFreeBinaryWriter>,
     phset: hashbrown::HashSet<MH::HashTypeUnextendable>,
     query_map: hashbrown::HashMap<u64, u64>,
     query_reads: Vec<(u64, MH::HashTypeUnextendable)>,
@@ -129,9 +131,9 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutor<'x, ParallelKmersQueryFactory<H, MH, CX>>
     for ParallelKmersQuery<'x, H, MH, CX>
 {
-    fn preprocess_bucket(
+    fn preprocess_bucket<'y: 'x>(
         &mut self,
-        global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
         _flags: u8,
         input_extra_data: <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraData,
         read: CompressedRead,
@@ -157,16 +159,16 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         }
     }
 
-    fn maybe_swap_bucket(
+    fn maybe_swap_bucket<'y: 'x>(
         &mut self,
-        _global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        _global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
     ) {
     }
 
-    fn process_group(
+    fn process_group<'y: 'x>(
         &mut self,
-        global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
-        mut stream: FileReader,
+        global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
+        mut reader: LockFreeBinaryReader,
     ) {
         let k = global_data.k;
 
@@ -174,29 +176,28 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         self.query_reads.clear();
         self.query_map.clear();
 
-        let mut tmp_data = Vec::with_capacity(256);
-
-        while let Some((_, read, sequence_type)) = ReadRef::unpack::<
-            QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>,
-            _,
-            <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
-        >(&mut stream, &mut tmp_data)
-        {
-            let hashes = MH::new(read, k);
-
-            match sequence_type {
-                QueryKmersReferenceData::Graph(_col_info) => {
-                    for hash in hashes.iter() {
-                        self.phset.insert(hash.to_unextendable());
-                    }
-                }
-                QueryKmersReferenceData::Query(index) => {
-                    for hash in hashes.iter() {
-                        self.query_reads.push((index.get(), hash.to_unextendable()));
-                    }
-                }
-            }
-        }
+        // reader.decode_all_bucket_items::<ReadRef<
+        //     QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>,
+        //     <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
+        // >, _>(
+        //     Vec::new(),
+        //     |(ReadRef { flags, read, .. }, sequence_type)| {
+        //         let hashes = MH::new(read, k);
+        //
+        //         match sequence_type {
+        //             QueryKmersReferenceData::Graph(_col_info) => {
+        //                 for hash in hashes.iter() {
+        //                     self.phset.insert(hash.to_unextendable());
+        //                 }
+        //             }
+        //             QueryKmersReferenceData::Query(index) => {
+        //                 for hash in hashes.iter() {
+        //                     self.query_reads.push((index.get(), hash.to_unextendable()));
+        //                 }
+        //             }
+        //         }
+        //     },
+        // );
 
         for (query_index, kmer_hash) in self.query_reads.drain(..) {
             if self.phset.contains(&kmer_hash) {
@@ -216,9 +217,9 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         }
     }
 
-    fn finalize(
+    fn finalize<'y: 'x>(
         self,
-        _global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        _global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
     ) {
         self.counters_tmp.finalize();
     }
@@ -245,11 +246,11 @@ impl QueryPipeline {
 
         let mut counters_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
+            out_directory.as_ref().join("counters"),
             &(
-                out_directory.as_ref().join("counters"),
                 get_memory_mode(SwapPriority::QueryCounters),
+                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
-            None,
         );
 
         let global_data = GlobalQueryMergeData {
@@ -268,13 +269,14 @@ impl QueryPipeline {
             },
         };
 
-        KmersTransform::parallel_kmers_transform::<ParallelKmersQueryFactory<H, MH, CX>>(
+        KmersTransform::<ParallelKmersQueryFactory<H, MH, CX>>::new(
             file_inputs,
             buckets_count,
+            EXTRA_BUFFERS_COUNT,
             threads_count,
             global_data,
-            save_memory,
-        );
+        )
+        .parallel_kmers_transform(threads_count);
 
         counters_buckets.finalize()
     }

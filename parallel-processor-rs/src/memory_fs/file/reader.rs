@@ -76,7 +76,7 @@ impl FileReader {
         Some(reader)
     }
 
-    pub fn total_file_size(&mut self) -> usize {
+    pub fn total_file_size(&self) -> usize {
         self.file.len()
     }
 

@@ -5,7 +5,7 @@ use crate::colors::colors_manager::{color_types, ColorsManager, ColorsMergeManag
 use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
-use crate::io::concurrent::temp_reads::reads_reader::IntermediateReadsReader;
+use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::reads_writer::ReadsWriter;
 use crate::io::sequences_reader::FastaSequence;
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
@@ -13,6 +13,9 @@ use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::utils::Utils;
 use crate::KEEP_FILES;
 use hashbrown::HashMap;
+use parallel_processor::buckets::bucket_writer::BucketItem;
+use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
+use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -124,13 +127,21 @@ impl AssemblePipeline {
 
                     let bucket_index = Utils::get_bucket_index(read_file);
 
-                    let mut reader = FileReader::open(&unitigs_map_file).unwrap();
+                    let mut unitigs_map_reader = LockFreeBinaryReader::new(
+                        &unitigs_map_file,
+                        RemoveFileMode::Remove {
+                            remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                        },
+                    );
+
+                    let mut unitigs_map_stream = unitigs_map_reader.get_single_stream();
 
                     let mut unitigs_hashmap = HashMap::new();
                     let mut unitigs_tmp_vec = Vec::new();
 
                     let mut counter: usize = 0;
-                    while let Some(link) = UnitigLink::read_from(&mut reader, &mut unitigs_tmp_vec)
+                    while let Some(link) =
+                        UnitigLink::read_from(&mut unitigs_map_stream, &mut unitigs_tmp_vec)
                     {
                         let start_unitig = UnitigIndex::new(
                             bucket_index,
@@ -184,30 +195,25 @@ impl AssemblePipeline {
                         unitigs_tmp_vec.clear();
                     }
 
-                    drop(reader);
-                    MemoryFs::remove_file(
-                        &unitigs_map_file,
-                        RemoveFileMode::Remove {
-                            remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-                        },
-                    )
-                    .unwrap();
+                    drop(unitigs_map_stream);
+                    drop(unitigs_map_reader);
 
                     let mut final_sequences = Vec::with_capacity(counter);
                     let mut temp_storage = Vec::new();
                     final_sequences.resize(counter, None);
 
-                    IntermediateReadsReader::<
-                        ReorganizedReadsExtraData<
-                            color_types::PartialUnitigsColorStructure<MH, CX>,
-                        >,
-                    >::new(
+                    CompressedBinaryReader::new(
                         read_file,
                         RemoveFileMode::Remove {
                             remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                         },
                     )
-                    .for_each::<_, typenum::U0>(|_, index, seq| {
+                    .decode_all_bucket_items::<CompressedReadsBucketHelper<
+                        ReorganizedReadsExtraData<
+                            color_types::PartialUnitigsColorStructure<MH, CX>,
+                        >,
+                        typenum::U0,
+                    >, _>(Vec::new(), |(_, index, seq)| {
                         let &(findex, unitig_info) = unitigs_hashmap.get(&index.unitig).unwrap();
                         final_sequences[findex] = Some((
                             CompressedReadIndipendent::from_read(&seq, &mut temp_storage),

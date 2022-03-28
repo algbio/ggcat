@@ -7,8 +7,8 @@ use crate::hashes::HashFunctionFactory;
 use crate::io::reads_writer::ReadsWriter;
 use crate::utils::{get_memory_mode, Utils};
 use crate::{AssemblerStartingStep, KEEP_FILES, SAVE_MEMORY};
+use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
-use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -135,20 +135,20 @@ pub fn run_assembler<
 
         let mut result_map_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             BUCKETS_COUNT,
+            temp_dir.join("results_map"),
             &(
-                temp_dir.join("results_map"),
                 get_memory_mode(SwapPriority::FinalMaps as usize),
+                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
-            None,
         );
 
         let mut final_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             BUCKETS_COUNT,
+            temp_dir.join("unitigs_map"),
             &(
-                temp_dir.join("unitigs_map"),
                 get_memory_mode(SwapPriority::FinalMaps as usize),
+                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
-            None,
         );
 
         if loop_iteration != 0 {
