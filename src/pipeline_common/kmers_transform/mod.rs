@@ -1,27 +1,35 @@
-mod process_subbucket;
 pub mod structs;
 
 use crate::config::{
     BucketIndexType, SortingHashType, DEFAULT_PER_CPU_BUFFER_SIZE, FIRST_BUCKETS_COUNT,
-    MINIMUM_LOG_DELTA_TIME, SECOND_BUCKETS_COUNT,
+    MINIMUM_LOG_DELTA_TIME, RESPLIT_MINIMIZER_MASK, SECOND_BUCKETS_COUNT,
 };
+use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::pipeline_common::kmers_transform::structs::{BucketProcessData, ProcessQueueItem};
+use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutor;
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use crate::utils::compressed_read::CompressedRead;
 use crate::utils::resource_counter::ResourceCounter;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
-use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::readers::compressed_binary_reader::{
+    CompressedBinaryReader, CompressedStreamDecoder,
+};
+use parallel_processor::buckets::readers::generic_binary_reader::ChunkDecoder;
+use parallel_processor::buckets::readers::lock_free_binary_reader::{
+    LockFreeBinaryReader, LockFreeStreamDecoder,
+};
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parking_lot::{Condvar, Mutex, RwLock};
-use std::cmp::{max, min};
+use parking_lot::lock_api::MutexGuard;
+use parking_lot::{Mutex, RwLock};
+use std::cmp::min;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 use structs::ReadRef;
@@ -80,10 +88,13 @@ pub struct KmersTransform<'a, F: KmersTransformExecutorFactory> {
 
     files_queue: ArrayQueue<PathBuf>,
 
-    current_bucket: RwLock<Weak<BucketProcessData>>,
+    current_bucket: RwLock<Weak<BucketProcessData<CompressedStreamDecoder>>>,
+    current_resplit_bucket: RwLock<Weak<BucketProcessData<LockFreeStreamDecoder>>>,
 
     process_queue: Arc<SegQueue<ProcessQueueItem>>,
-    reprocess_queue: Arc<SegQueue<u8>>,
+    reprocess_queue: Arc<SegQueue<PathBuf>>,
+
+    resplit_buckets_index: AtomicU32,
 
     last_info_log: Mutex<Instant>,
     _phantom: PhantomData<F>,
@@ -108,22 +119,64 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
 
         Self {
             buckets_count,
-            buckets_total_size: 0,
+            buckets_total_size: buckets_total_size as u64,
             buffer_files_counter: ResourceCounter::new(
                 (SECOND_BUCKETS_COUNT + extra_buffers_count) as u64,
             ),
             global_extra_data,
             files_queue,
             current_bucket: RwLock::new(Weak::new()),
+            current_resplit_bucket: RwLock::new(Weak::new()),
             process_queue: Arc::new(SegQueue::new()),
             reprocess_queue: Arc::new(SegQueue::new()),
+            resplit_buckets_index: AtomicU32::new(0),
             last_info_log: Mutex::new(Instant::now()),
             _phantom: Default::default(),
         }
     }
 
-    fn get_current_bucket(&self) -> Option<Arc<BucketProcessData>> {
-        fn get_valid_bucket(bucket: &Weak<BucketProcessData>) -> Option<Arc<BucketProcessData>> {
+    fn do_logging(&self) {
+        let mut last_info_log = match self.last_info_log.try_lock() {
+            None => return,
+            Some(x) => x,
+        };
+        if last_info_log.elapsed() > MINIMUM_LOG_DELTA_TIME {
+            let monitor = PHASES_TIMES_MONITOR.read();
+
+            let processed_count = self.buckets_count - self.files_queue.len();
+
+            let eta = Duration::from_secs(
+                (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
+                    * (self.files_queue.len() as f64)) as u64,
+            );
+
+            let est_tot = Duration::from_secs(
+                (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
+                    * (self.buckets_count as f64)) as u64,
+            );
+
+            println!(
+                "Processing bucket {} of {} {} phase eta: {:.0?} est.tot: {:.0?}",
+                processed_count,
+                self.buckets_count,
+                monitor.get_formatted_counter_without_memory(),
+                eta,
+                est_tot
+            );
+            *last_info_log = Instant::now();
+        }
+    }
+
+    fn get_current_bucket<
+        FileType: ChunkDecoder,
+        Allocator: Fn() -> Option<Arc<BucketProcessData<FileType>>>,
+    >(
+        current_bucket: &RwLock<Weak<BucketProcessData<FileType>>>,
+        alloc_fn: Allocator,
+    ) -> Option<Arc<BucketProcessData<FileType>>> {
+        fn get_valid_bucket<FileType: ChunkDecoder>(
+            bucket: &Weak<BucketProcessData<FileType>>,
+        ) -> Option<Arc<BucketProcessData<FileType>>> {
             if let Some(bucket) = bucket.upgrade() {
                 if !bucket.reader.is_finished() {
                     return Some(bucket);
@@ -133,62 +186,32 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         }
 
         loop {
-            let bucket = self.current_bucket.read();
+            let bucket = current_bucket.read();
 
             if let Some(bucket) = get_valid_bucket(&bucket) {
                 return Some(bucket);
             }
 
             drop(bucket);
-            let mut bucket = self.current_bucket.write();
+            let mut bucket = current_bucket.write();
 
             if let Some(bucket) = get_valid_bucket(&bucket) {
                 return Some(bucket);
             }
 
-            let file = self.files_queue.pop()?;
-
-            let new_bucket = Arc::new(structs::BucketProcessData::new_blocking(
-                file,
-                self.process_queue.clone(),
-                self.buffer_files_counter.clone(),
-            ));
+            let new_bucket = alloc_fn()?;
 
             *bucket = Arc::downgrade(&new_bucket);
-
-            let mut last_info_log = self.last_info_log.lock();
-            if last_info_log.elapsed() > MINIMUM_LOG_DELTA_TIME {
-                let monitor = PHASES_TIMES_MONITOR.read();
-
-                let processed_count = self.buckets_count - self.files_queue.len();
-
-                let eta = Duration::from_secs(
-                    (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
-                        * (self.files_queue.len() as f64)) as u64,
-                );
-
-                let est_tot = Duration::from_secs(
-                    (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
-                        * (self.buckets_count as f64)) as u64,
-                );
-
-                println!(
-                    "Processing bucket {} of {} {} phase eta: {:.0?} est.tot: {:.0?}",
-                    processed_count,
-                    self.buckets_count,
-                    monitor.get_formatted_counter_without_memory(),
-                    eta,
-                    est_tot
-                );
-                *last_info_log = Instant::now();
-            }
-            drop(last_info_log);
 
             return Some(new_bucket);
         }
     }
 
-    fn read_bucket(&self, executor: &mut F::ExecutorType<'a>, bucket: &BucketProcessData) {
+    fn read_bucket(
+        &self,
+        executor: &mut F::ExecutorType<'a>,
+        bucket: &BucketProcessData<CompressedStreamDecoder>,
+    ) {
         let mut continue_read = true;
 
         if bucket.reader.is_finished() {
@@ -222,6 +245,65 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         }
     }
 
+    fn resplit_buckets<'b>(
+        &self,
+        resplitter: &mut <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType<'b>,
+    ) -> bool {
+        let mut did_resplit = false;
+        let mut preproc_info = <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::PreprocessInfo::default();
+
+        if let Some(resplit_bucket) = Self::get_current_bucket(&self.current_resplit_bucket, || {
+            let path = self.reprocess_queue.pop()?;
+            let file_name = path.file_name().unwrap().to_os_string();
+            Some(Arc::new(
+                BucketProcessData::<LockFreeStreamDecoder>::new_blocking(
+                    path,
+                    file_name.to_str().unwrap(),
+                    self.process_queue.clone(),
+                    self.buffer_files_counter.clone(),
+                    true,
+                ),
+            ))
+        }) {
+            did_resplit = true;
+
+            let mut thread_buckets =
+                BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &resplit_bucket.buckets);
+
+            while resplit_bucket
+                .reader
+                .decode_bucket_items_parallel::<ReadRef<F::AssociatedExtraData, F::FLAGS_COUNT>, _>(
+                    Vec::new(),
+                    |(ReadRef { flags, read, .. }, extra)| {
+                        resplitter.reprocess_sequence(flags, &extra, &mut preproc_info);
+                        resplitter.process_sequence::<_, _, { RESPLIT_MINIMIZER_MASK }>(
+                            &preproc_info,
+                            read,
+                            0..read.bases_count(),
+                            |bucket, seq, flags, extra| {
+                                thread_buckets.add_element(
+                                    bucket % (SECOND_BUCKETS_COUNT as BucketIndexType),
+                                    &extra,
+                                    &ReadRef::<F::AssociatedExtraData, F::FLAGS_COUNT> {
+                                        flags,
+                                        read: seq,
+                                        _phantom: PhantomData,
+                                    },
+                                );
+                            },
+                        );
+                    },
+                )
+            {
+                continue;
+            }
+
+            thread_buckets.finalize();
+        }
+
+        did_resplit
+    }
+
     fn process_buffers(&self, executor: &mut F::ExecutorType<'a>, typical_sub_bucket_size: usize) {
         while let Some(ProcessQueueItem {
             ref path,
@@ -229,21 +311,25 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             ..
         }) = self.process_queue.pop()
         {
-            let mut reader =
-                LockFreeBinaryReader::new(path, RemoveFileMode::Remove { remove_fs: true });
-
             executor.maybe_swap_bucket(&self.global_extra_data);
 
-            let is_outlier = false; //reader > typical_sub_bucket_size * 512;
+            let file_size = FileReader::open(path).unwrap().total_file_size();
+            let is_outlier = file_size > typical_sub_bucket_size * SECOND_BUCKETS_COUNT * 4;
 
-            process_subbucket::process_subbucket::<F>(
-                &self.global_extra_data,
-                reader,
-                executor,
-                path,
-                *can_resplit,
-                is_outlier,
-            );
+            if !is_outlier || !*can_resplit {
+                let reader =
+                    LockFreeBinaryReader::new(path, RemoveFileMode::Remove { remove_fs: true });
+                executor.process_group(&self.global_extra_data, reader);
+            } else {
+                println!(
+                    "Resplitting bucket {} size: {} / {} [{}]",
+                    path.display(),
+                    file_size,
+                    typical_sub_bucket_size * SECOND_BUCKETS_COUNT * 4,
+                    typical_sub_bucket_size
+                );
+                self.reprocess_queue.push(path.clone());
+            }
         }
     }
 
@@ -257,17 +343,44 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     .name("kmers-transform".to_string())
                     .spawn(|_| {
                         let mut executor = F::new(&self.global_extra_data);
+                        let mut splitter = F::new_resplitter(&self.global_extra_data);
+
                         loop {
                             self.process_buffers(&mut executor, typical_sub_bucket_size);
 
-                            // if resplit_all(&gdata, &mut queue, &mut rqueue) > 0 {
-                            //     continue;
-                            // }
+                            if self.resplit_buckets(&mut splitter) {
+                                continue;
+                            }
 
-                            let bucket = match self.get_current_bucket() {
-                                None => break,
-                                Some(x) => x,
-                            };
+                            let bucket =
+                                match Self::get_current_bucket(&self.current_bucket, || {
+                                    let file = self.files_queue.pop()?;
+
+                                    Some(Arc::new(BucketProcessData::new_blocking(
+                                        file,
+                                        &format!(
+                                            "vec{}",
+                                            self.resplit_buckets_index
+                                                .fetch_add(1, Ordering::Relaxed)
+                                        ),
+                                        self.process_queue.clone(),
+                                        self.buffer_files_counter.clone(),
+                                        false,
+                                    )))
+                                }) {
+                                    None => {
+                                        if self.process_queue.is_empty()
+                                            && self.reprocess_queue.is_empty()
+                                        {
+                                            break;
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                    Some(x) => x,
+                                };
+
+                            self.do_logging();
 
                             self.read_bucket(&mut executor, &bucket);
                         }

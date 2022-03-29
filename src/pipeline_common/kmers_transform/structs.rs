@@ -1,4 +1,4 @@
-use crate::config::{SwapPriority, SECOND_BUCKETS_COUNT};
+use crate::config::{SwapPriority, PARTIAL_VECS_CHECKPOINT_SIZE, SECOND_BUCKETS_COUNT};
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint_flags, encode_varint_flags};
@@ -9,6 +9,9 @@ use byteorder::ReadBytesExt;
 use crossbeam::queue::SegQueue;
 use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
+use parallel_processor::buckets::readers::generic_binary_reader::{
+    ChunkDecoder, GenericChunkedBinaryReader,
+};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
@@ -18,7 +21,7 @@ use parking_lot::Condvar;
 use std::io::Read;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[derive(Copy, Clone, Debug)]
@@ -97,26 +100,30 @@ impl Drop for ProcessQueueItem {
     }
 }
 
-pub struct BucketProcessData {
-    pub reader: CompressedBinaryReader,
+pub struct BucketProcessData<FileType: ChunkDecoder> {
+    pub reader: GenericChunkedBinaryReader<FileType>,
     pub buckets: MultiThreadBuckets<LockFreeBinaryWriter>,
     process_queue: Arc<SegQueue<ProcessQueueItem>>,
     buffers_counter: Arc<ResourceCounter>,
+    can_resplit: bool,
 }
 
-static QUEUE_IDENTIFIER: AtomicU64 = AtomicU64::new(0);
-
-impl BucketProcessData {
+impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
     pub fn new_blocking(
         path: impl AsRef<Path>,
+        split_name: &str,
         process_queue: Arc<SegQueue<ProcessQueueItem>>,
         buffers_counter: Arc<ResourceCounter>,
+        resplit_phase: bool,
     ) -> Self {
-        buffers_counter.allocate_blocking(SECOND_BUCKETS_COUNT as u64);
-
+        if resplit_phase {
+            buffers_counter.allocate_overflow(SECOND_BUCKETS_COUNT as u64);
+        } else {
+            buffers_counter.allocate_blocking(SECOND_BUCKETS_COUNT as u64);
+        }
         let tmp_dir = path.as_ref().parent().unwrap_or(Path::new("."));
         Self {
-            reader: CompressedBinaryReader::new(
+            reader: GenericChunkedBinaryReader::<FileType>::new(
                 &path,
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
@@ -124,27 +131,25 @@ impl BucketProcessData {
             ),
             buckets: MultiThreadBuckets::new(
                 SECOND_BUCKETS_COUNT,
-                PathBuf::from(tmp_dir).join(format!(
-                    "vec{}",
-                    QUEUE_IDENTIFIER.fetch_add(1, Ordering::Relaxed)
-                )),
+                PathBuf::from(tmp_dir).join(split_name),
                 &(
                     get_memory_mode(SwapPriority::KmersMergeBuckets),
-                    LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
+                    PARTIAL_VECS_CHECKPOINT_SIZE,
                 ),
             ),
             process_queue,
             buffers_counter,
+            can_resplit: !resplit_phase,
         }
     }
 }
 
-impl Drop for BucketProcessData {
+impl<FileType: ChunkDecoder> Drop for BucketProcessData<FileType> {
     fn drop(&mut self) {
         for path in self.buckets.finalize() {
             self.process_queue.push(ProcessQueueItem {
                 path,
-                can_resplit: true,
+                can_resplit: self.can_resplit,
                 buffers_counter: self.buffers_counter.clone(),
             });
         }

@@ -3,8 +3,6 @@ use core::fmt::Debug;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use std::io::{Cursor, Read, Write};
-use std::path::Path;
-use std::sync::atomic::Ordering;
 
 struct PointerDecoder {
     ptr: *const u8,
