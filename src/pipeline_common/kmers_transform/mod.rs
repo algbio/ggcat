@@ -2,7 +2,7 @@ pub mod structs;
 
 use crate::config::{
     BucketIndexType, SortingHashType, DEFAULT_PER_CPU_BUFFER_SIZE, FIRST_BUCKETS_COUNT,
-    MINIMUM_LOG_DELTA_TIME, RESPLIT_MINIMIZER_MASK, SECOND_BUCKETS_COUNT,
+    MINIMUM_LOG_DELTA_TIME, MINIMUM_RESPLIT_SIZE, RESPLIT_MINIMIZER_MASK, SECOND_BUCKETS_COUNT,
 };
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -314,9 +314,9 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             executor.maybe_swap_bucket(&self.global_extra_data);
 
             let file_size = FileReader::open(path).unwrap().total_file_size();
-            let is_outlier = file_size > typical_sub_bucket_size * SECOND_BUCKETS_COUNT * 4;
+            let is_outlier = file_size > typical_sub_bucket_size * SECOND_BUCKETS_COUNT;
 
-            if !is_outlier || !*can_resplit {
+            if !is_outlier || !*can_resplit && (file_size > MINIMUM_RESPLIT_SIZE) {
                 let reader =
                     LockFreeBinaryReader::new(path, RemoveFileMode::Remove { remove_fs: true });
                 executor.process_group(&self.global_extra_data, reader);
@@ -325,7 +325,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     "Resplitting bucket {} size: {} / {} [{}]",
                     path.display(),
                     file_size,
-                    typical_sub_bucket_size * SECOND_BUCKETS_COUNT * 4,
+                    typical_sub_bucket_size * SECOND_BUCKETS_COUNT,
                     typical_sub_bucket_size
                 );
                 self.reprocess_queue.push(path.clone());
