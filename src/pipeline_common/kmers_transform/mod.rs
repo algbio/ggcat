@@ -257,15 +257,16 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         if let Some(resplit_bucket) = Self::get_current_bucket(&self.current_resplit_bucket, || {
             let path = self.reprocess_queue.pop()?;
             let file_name = path.file_name().unwrap().to_os_string();
-            Some(Arc::new(
-                BucketProcessData::<LockFreeStreamDecoder>::new_blocking(
-                    path,
-                    file_name.to_str().unwrap(),
-                    self.process_queue.clone(),
-                    self.buffer_files_counter.clone(),
-                    true,
-                ),
-            ))
+            unimplemented!()
+            // Some(Arc::new(
+            //     BucketProcessData::<LockFreeStreamDecoder>::new_blocking(
+            //         path,
+            //         file_name.to_str().unwrap(),
+            //         self.process_queue.clone(),
+            //         self.buffer_files_counter.clone(),
+            //         true,
+            //     ),
+            // ))
         }) {
             did_resplit = true;
 

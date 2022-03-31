@@ -115,32 +115,27 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
         process_queue: Arc<SegQueue<ProcessQueueItem>>,
         buffers_counter: Arc<ResourceCounter>,
         resplit_phase: bool,
-    ) -> Self {
+    ) {
         if resplit_phase {
             buffers_counter.allocate_overflow(SECOND_BUCKETS_COUNT as u64);
         } else {
             buffers_counter.allocate_blocking(SECOND_BUCKETS_COUNT as u64);
         }
         let tmp_dir = path.as_ref().parent().unwrap_or(Path::new("."));
-        Self {
-            reader: GenericChunkedBinaryReader::<FileType>::new(
-                &path,
-                RemoveFileMode::Remove {
-                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-                },
+        GenericChunkedBinaryReader::<FileType>::new(
+            &path,
+            RemoveFileMode::Remove {
+                remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+            },
+        );
+        MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+            SECOND_BUCKETS_COUNT,
+            PathBuf::from(tmp_dir).join(split_name),
+            &(
+                get_memory_mode(SwapPriority::KmersMergeBuckets),
+                PARTIAL_VECS_CHECKPOINT_SIZE,
             ),
-            buckets: MultiThreadBuckets::new(
-                SECOND_BUCKETS_COUNT,
-                PathBuf::from(tmp_dir).join(split_name),
-                &(
-                    get_memory_mode(SwapPriority::KmersMergeBuckets),
-                    PARTIAL_VECS_CHECKPOINT_SIZE,
-                ),
-            ),
-            process_queue,
-            buffers_counter,
-            can_resplit: !resplit_phase,
-        }
+        );
     }
 }
 
