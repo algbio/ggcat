@@ -219,7 +219,6 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             return;
         }
 
-        // TODO: Reuse the dispatcher
         let mut cmp_reads = BucketsThreadDispatcher::new(&bucket.buckets, buffer);
 
         while continue_read {
@@ -347,7 +346,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                         let mut splitter = F::new_resplitter(&self.global_extra_data);
                         let mut local_buffer = BucketsThreadBuffer::new(
                             DEFAULT_PER_CPU_BUFFER_SIZE,
-                            self.buckets_count,
+                            SECOND_BUCKETS_COUNT,
                         );
 
                         loop {
