@@ -44,7 +44,14 @@ impl<'a, T> DerefMut for ThreadLocalVariable<'a, T> {
 
 impl<'a, T> Drop for ThreadLocalVariable<'a, T> {
     #[inline(always)]
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        let obj_entry = THREADS_MAP.get(&self.index).unwrap();
+        let entry = obj_entry
+            .get(&std::thread::current().id())
+            .unwrap()
+            .taken
+            .store(false, Ordering::Relaxed);
+    }
 }
 
 pub struct ScopedThreadLocal<T: 'static> {
