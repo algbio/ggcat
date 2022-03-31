@@ -174,6 +174,8 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         current_bucket: &RwLock<Weak<BucketProcessData<FileType>>>,
         alloc_fn: Allocator,
     ) -> Option<Arc<BucketProcessData<FileType>>> {
+        return alloc_fn();
+
         fn get_valid_bucket<FileType: ChunkDecoder>(
             bucket: &Weak<BucketProcessData<FileType>>,
         ) -> Option<Arc<BucketProcessData<FileType>>> {
@@ -350,11 +352,11 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                         );
 
                         loop {
-                            self.process_buffers(&mut executor, typical_sub_bucket_size);
-
-                            if self.resplit_buckets(&mut splitter, &mut local_buffer) {
-                                continue;
-                            }
+                            // self.process_buffers(&mut executor, typical_sub_bucket_size);
+                            //
+                            // if self.resplit_buckets(&mut splitter, &mut local_buffer) {
+                            //     continue;
+                            // }
 
                             let bucket =
                                 match Self::get_current_bucket(&self.current_bucket, || {
@@ -369,10 +371,11 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                         ),
                                         self.process_queue.clone(),
                                         self.buffer_files_counter.clone(),
-                                        false,
+                                        true,
                                     )))
                                 }) {
                                     None => {
+                                        break;
                                         if self.process_queue.is_empty()
                                             && self.reprocess_queue.is_empty()
                                         {
@@ -384,9 +387,9 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                     Some(x) => x,
                                 };
 
-                            self.do_logging();
+                            // self.do_logging();
 
-                            self.read_bucket(&mut executor, &bucket, &mut local_buffer);
+                            // self.read_bucket(&mut executor, &bucket, &mut local_buffer);
                         }
                         executor.finalize(&self.global_extra_data);
                     })
