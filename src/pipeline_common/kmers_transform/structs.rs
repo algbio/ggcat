@@ -122,20 +122,20 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
             buffers_counter.allocate_blocking(SECOND_BUCKETS_COUNT as u64);
         }
         let tmp_dir = path.as_ref().parent().unwrap_or(Path::new("."));
-        GenericChunkedBinaryReader::<FileType>::new(
-            &path,
-            RemoveFileMode::Remove {
-                remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-            },
-        );
-        MultiThreadBuckets::<LockFreeBinaryWriter>::new(
-            SECOND_BUCKETS_COUNT,
-            PathBuf::from(tmp_dir).join(split_name),
-            &(
-                get_memory_mode(SwapPriority::KmersMergeBuckets),
-                PARTIAL_VECS_CHECKPOINT_SIZE,
-            ),
-        );
+        // GenericChunkedBinaryReader::<FileType>::new(
+        //     &path,
+        //     RemoveFileMode::Remove {
+        //         remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+        //     },
+        // );
+        // MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        //     SECOND_BUCKETS_COUNT,
+        //     PathBuf::from(tmp_dir).join(split_name),
+        //     &(
+        //         get_memory_mode(SwapPriority::KmersMergeBuckets),
+        //         PARTIAL_VECS_CHECKPOINT_SIZE,
+        //     ),
+        // );
     }
 }
 
