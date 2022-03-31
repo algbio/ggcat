@@ -335,7 +335,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
 
     pub fn parallel_kmers_transform(&self, threads_count: usize) {
         let typical_sub_bucket_size =
-            self.buckets_total_size as usize / (FIRST_BUCKETS_COUNT * SECOND_BUCKETS_COUNT);
+            self.buckets_total_size as usize / (FIRST_BUCKETS_COUNT * SECOND_BUCKETS_COUNT) * 10000;
 
         crossbeam::thread::scope(|s| {
             for _ in 0..min(self.buckets_count, threads_count) {
@@ -352,9 +352,9 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                         loop {
                             self.process_buffers(&mut executor, typical_sub_bucket_size);
 
-                            if self.resplit_buckets(&mut splitter, &mut local_buffer) {
-                                continue;
-                            }
+                            // if self.resplit_buckets(&mut splitter, &mut local_buffer) {
+                            //     continue;
+                            // }
 
                             let bucket =
                                 match Self::get_current_bucket(&self.current_bucket, || {
@@ -384,7 +384,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                     Some(x) => x,
                                 };
 
-                            self.do_logging();
+                            // self.do_logging();
 
                             self.read_bucket(&mut executor, &bucket, &mut local_buffer);
                         }
