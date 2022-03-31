@@ -13,7 +13,7 @@ use parallel_processor::buckets::readers::generic_binary_reader::{
     ChunkDecoder, GenericChunkedBinaryReader,
 };
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::RemoveFileMode;
@@ -128,14 +128,19 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
         //         remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
         //     },
         // );
-        // MultiThreadBuckets::<LockFreeBinaryWriter>::new(
-        //     SECOND_BUCKETS_COUNT,
-        //     PathBuf::from(tmp_dir).join(split_name),
-        //     &(
-        //         get_memory_mode(SwapPriority::KmersMergeBuckets),
-        //         PARTIAL_VECS_CHECKPOINT_SIZE,
-        //     ),
-        // );
+
+        let mut buckets = Vec::with_capacity(SECOND_BUCKETS_COUNT);
+
+        for i in 0..SECOND_BUCKETS_COUNT {
+            buckets.push(LockFreeBinaryWriter::new(
+                &PathBuf::from(tmp_dir).join(split_name),
+                &(
+                    get_memory_mode(SwapPriority::KmersMergeBuckets),
+                    PARTIAL_VECS_CHECKPOINT_SIZE,
+                ),
+                i,
+            ));
+        }
     }
 }
 
