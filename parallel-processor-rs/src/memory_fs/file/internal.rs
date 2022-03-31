@@ -123,7 +123,7 @@ pub struct MemoryFileInternal {
 impl MemoryFileInternal {
     pub fn create_new(path: impl AsRef<Path>, mode: MemoryFileMode) -> Arc<Self> {
         // Remove the file if it existed from a previous run
-        let _ = remove_file(&path);
+        // let _ = remove_file(&path);
 
         let new_file = Arc::new(Self {
             path: path.as_ref().into(),
