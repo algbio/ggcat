@@ -1,7 +1,7 @@
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use crate::config::{
-    BucketIndexType, SwapPriority, DEFAULT_MINIMIZER_MASK, EXTRA_BUFFERS_COUNT,
-    RESPLITTING_MAX_K_M_DIFFERENCE,
+    BucketIndexType, SwapPriority, DEFAULT_MINIMIZER_MASK, DEFAULT_PER_CPU_BUFFER_SIZE,
+    EXTRA_BUFFERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
@@ -21,7 +21,7 @@ use crate::query_pipeline::QueryPipeline;
 use crate::utils::compressed_read::CompressedRead;
 use crate::utils::get_memory_mode;
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
@@ -32,6 +32,7 @@ use std::cmp::min;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
+use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
@@ -104,11 +105,16 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     }
 
     fn new<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a> {
+        let mut counters_buffers = Box::new(BucketsThreadBuffer::new(
+            DEFAULT_PER_CPU_BUFFER_SIZE,
+            global_data.counters_buckets.count(),
+        ));
+
+        let buffers = unsafe { &mut *(counters_buffers.deref_mut() as *mut BucketsThreadBuffer) };
+
         Self::ExecutorType::<'a> {
-            counters_tmp: BucketsThreadDispatcher::new(
-                MAX_COUNTERS_FOR_FLUSH,
-                &global_data.counters_buckets,
-            ),
+            counters_tmp: BucketsThreadDispatcher::new(&global_data.counters_buckets, buffers),
+            counters_buffers,
             phset: hashbrown::HashSet::new(),
             query_map: hashbrown::HashMap::new(),
             query_reads: Vec::new(),
@@ -119,13 +125,13 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
 struct ParallelKmersQuery<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> {
     counters_tmp: BucketsThreadDispatcher<'x, LockFreeBinaryWriter>,
+    // This field has to appear after hashes_tmp so that it's dropped only when not used anymore
+    counters_buffers: Box<BucketsThreadBuffer>,
     phset: hashbrown::HashSet<MH::HashTypeUnextendable>,
     query_map: hashbrown::HashMap<u64, u64>,
     query_reads: Vec<(u64, MH::HashTypeUnextendable)>,
     _phantom: PhantomData<(H, CX)>,
 }
-
-const MAX_COUNTERS_FOR_FLUSH: MemoryDataSize = MemoryDataSize::from_kibioctets(4);
 
 impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutor<'x, ParallelKmersQueryFactory<H, MH, CX>>

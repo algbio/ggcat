@@ -40,7 +40,7 @@ impl AssemblePipeline {
             ),
         );
 
-        let buckets_thread_buffers = ScopedThreadLocal::new(|| {
+        let buckets_thread_buffers = ScopedThreadLocal::new(move || {
             BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
         });
 

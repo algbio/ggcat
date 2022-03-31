@@ -2,16 +2,18 @@ use crate::assemble_pipeline::parallel_kmers_merge::structs::RetType;
 use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsManager;
-use crate::config::{SwapPriority, MINIMUM_LOG_DELTA_TIME};
+use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_LOG_DELTA_TIME};
 use crate::hashes::HashFunctionFactory;
 use crate::io::reads_writer::ReadsWriter;
 use crate::utils::{get_memory_mode, Utils};
 use crate::{AssemblerStartingStep, KEEP_FILES, SAVE_MEMORY};
+use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use parking_lot::Mutex;
 use std::fs::remove_file;
 use std::path::PathBuf;
@@ -165,6 +167,13 @@ pub fn run_assembler<
 
         let mut log_timer = Instant::now();
 
+        let links_scoped_buffer = ScopedThreadLocal::new(|| {
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, BUCKETS_COUNT)
+        });
+        let results_map_scoped_buffer = ScopedThreadLocal::new(|| {
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, BUCKETS_COUNT)
+        });
+
         let result = loop {
             let do_logging = if log_timer.elapsed() > MINIMUM_LOG_DELTA_TIME {
                 log_timer = Instant::now();
@@ -185,6 +194,8 @@ pub fn run_assembler<
                 &mut result_map_buckets,
                 &mut final_buckets,
                 &links_manager,
+                &links_scoped_buffer,
+                &results_map_scoped_buffer,
             );
 
             if do_logging {

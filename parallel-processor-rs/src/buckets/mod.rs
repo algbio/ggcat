@@ -42,6 +42,10 @@ impl<B: LockFreeBucket> MultiThreadBuckets<B> {
         self.buckets[index as usize].write_data(data);
     }
 
+    pub fn count(&self) -> usize {
+        self.buckets.len()
+    }
+
     pub fn finalize(&mut self) -> Vec<PathBuf> {
         self.buckets
             .drain(..)

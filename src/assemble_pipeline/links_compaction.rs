@@ -71,6 +71,7 @@ impl AssemblePipeline {
         final_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
         links_manager: &UnitigLinksManager,
         link_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
+        result_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
     ) -> (Vec<PathBuf>, u64) {
         let totsum = AtomicU64::new(0);
 
@@ -89,8 +90,8 @@ impl AssemblePipeline {
         links_inputs.par_iter().for_each(|input| {
             let bucket_index = Utils::get_bucket_index(input);
 
-            let mut buffers = link_thread_buffers.get();
-            let mut links_tmp = BucketsThreadDispatcher::new(&links_buckets, &mut buffers);
+            let mut link_buffers = link_thread_buffers.get();
+            let mut links_tmp = BucketsThreadDispatcher::new(&links_buckets, &mut link_buffers);
             let mut final_links_tmp = SingleBucketThreadDispatcher::new(
                 DEFAULT_PER_CPU_BUFFER_SIZE,
                 bucket_index,
@@ -98,8 +99,10 @@ impl AssemblePipeline {
             );
             let mut thread_links_manager =
                 ThreadUnitigsLinkManager::new(links_manager, bucket_index);
+
+            let mut result_buffers = result_thread_buffers.get();
             let mut results_tmp =
-                BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &result_map_buckets);
+                BucketsThreadDispatcher::new(&result_map_buckets, &mut result_buffers);
 
             let mut rand_bool = FastRandBool::new();
 

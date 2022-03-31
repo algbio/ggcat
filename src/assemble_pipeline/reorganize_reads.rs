@@ -13,7 +13,7 @@ use crate::io::reads_writer::ReadsWriter;
 use crate::io::structs::unitig_link::UnitigIndex;
 use crate::utils::{get_memory_mode, Utils};
 use crate::KEEP_FILES;
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
@@ -24,6 +24,7 @@ use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use parking_lot::Mutex;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
@@ -85,9 +86,14 @@ impl AssemblePipeline {
 
         let inputs: Vec<_> = reads.iter().zip(mapping_files.iter()).collect();
 
+        let reads_thread_buffers = ScopedThreadLocal::new(move || {
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
+        });
+
         inputs.par_iter().for_each(|(read_file, mapping_file)| {
-            let mut tmp_reads_buffer =
-                BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets);
+            let mut buffers = reads_thread_buffers.get();
+
+            let mut tmp_reads_buffer = BucketsThreadDispatcher::new(&buckets, &mut buffers);
 
             let mut tmp_lonely_unitigs_buffer =
                 FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE);

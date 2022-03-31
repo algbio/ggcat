@@ -15,7 +15,7 @@ use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQ
 use crate::pipeline_common::minimizer_bucketing::reader::minb_reader;
 use crate::pipeline_common::minimizer_bucketing::sequences_splitter::SequencesSplitter;
 use crate::utils::get_memory_mode;
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
@@ -120,8 +120,9 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
     context: &MinimizerBucketingExecutionContext<E::GlobalData>,
     manager: ObjectsPoolManager<(), MinimizerBucketingQueueData<E::FileInfo>>,
 ) {
-    let mut tmp_reads_buffer =
-        BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &context.buckets);
+    let mut buffer = BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, context.buckets.count());
+
+    let mut tmp_reads_buffer = BucketsThreadDispatcher::new(&context.buckets, &mut buffer);
 
     let mut buckets_processor = E::new(&context.common);
 

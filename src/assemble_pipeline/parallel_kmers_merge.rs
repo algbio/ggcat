@@ -25,7 +25,7 @@ use crate::CompressedRead;
 use core::slice::from_raw_parts;
 use crossbeam::queue::*;
 use hashbrown::HashMap;
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
@@ -40,6 +40,7 @@ use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
+use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use structs::*;
@@ -142,13 +143,18 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             "HashMap",
         );
 
+        let mut hashes_buffer = Box::new(BucketsThreadBuffer::new(
+            DEFAULT_PER_CPU_BUFFER_SIZE,
+            global_data.buckets_count,
+        ));
+
+        let buffers = unsafe { &mut *(hashes_buffer.deref_mut() as *mut BucketsThreadBuffer) };
+
         Self::ExecutorType::<'a> {
             results_buckets_counter: MERGE_RESULTS_BUCKETS_COUNT,
             current_bucket: global_data.output_results_buckets.pop().unwrap(),
-            hashes_tmp: BucketsThreadDispatcher::new(
-                DEFAULT_PER_CPU_BUFFER_SIZE,
-                &global_data.hashes_buckets,
-            ),
+            hashes_tmp: BucketsThreadDispatcher::new(&global_data.hashes_buckets, buffers),
+            hashes_buffer,
             forward_seq: Vec::with_capacity(global_data.k),
             backward_seq: Vec::with_capacity(global_data.k),
             temp_colors: CX::ColorsMergeManagerType::<MH>::allocate_temp_buffer_structure(),
@@ -166,7 +172,10 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> {
     results_buckets_counter: usize,
     current_bucket: ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>,
+
     hashes_tmp: BucketsThreadDispatcher<'x, LockFreeBinaryWriter>,
+    // This field has to appear after hashes_tmp so that it's dropped only when not used anymore
+    hashes_buffer: Box<BucketsThreadBuffer>,
 
     forward_seq: Vec<u8>,
     backward_seq: Vec<u8>,

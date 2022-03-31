@@ -13,7 +13,7 @@ use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutorFacto
 use crate::utils::compressed_read::CompressedRead;
 use crate::utils::resource_counter::ResourceCounter;
 use crossbeam::queue::{ArrayQueue, SegQueue};
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::{
     CompressedBinaryReader, CompressedStreamDecoder,
 };
@@ -211,6 +211,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         &self,
         executor: &mut F::ExecutorType<'a>,
         bucket: &BucketProcessData<CompressedStreamDecoder>,
+        buffer: &mut BucketsThreadBuffer,
     ) {
         let mut continue_read = true;
 
@@ -219,8 +220,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         }
 
         // TODO: Reuse the dispatcher
-        let mut cmp_reads =
-            BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &bucket.buckets);
+        let mut cmp_reads = BucketsThreadDispatcher::new(&bucket.buckets, buffer);
 
         while continue_read {
             continue_read = bucket.reader.decode_bucket_items_parallel::<CompressedReadsBucketHelper<F::AssociatedExtraData, F::FLAGS_COUNT>, _>(Vec::new(), |(flags, read_extra_data, read)| {
@@ -248,6 +248,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
     fn resplit_buckets<'b>(
         &self,
         resplitter: &mut <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType<'b>,
+        resplit_buffer: &mut BucketsThreadBuffer,
     ) -> bool {
         let mut did_resplit = false;
         let mut preproc_info = <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::PreprocessInfo::default();
@@ -268,7 +269,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             did_resplit = true;
 
             let mut thread_buckets =
-                BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &resplit_bucket.buckets);
+                BucketsThreadDispatcher::new(&resplit_bucket.buckets, resplit_buffer);
 
             while resplit_bucket
                 .reader
@@ -344,11 +345,15 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     .spawn(|_| {
                         let mut executor = F::new(&self.global_extra_data);
                         let mut splitter = F::new_resplitter(&self.global_extra_data);
+                        let mut local_buffer = BucketsThreadBuffer::new(
+                            DEFAULT_PER_CPU_BUFFER_SIZE,
+                            self.buckets_count,
+                        );
 
                         loop {
                             self.process_buffers(&mut executor, typical_sub_bucket_size);
 
-                            if self.resplit_buckets(&mut splitter) {
+                            if self.resplit_buckets(&mut splitter, &mut local_buffer) {
                                 continue;
                             }
 
@@ -382,7 +387,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
 
                             self.do_logging();
 
-                            self.read_bucket(&mut executor, &bucket);
+                            self.read_bucket(&mut executor, &bucket, &mut local_buffer);
                         }
                         executor.finalize(&self.global_extra_data);
                     })
