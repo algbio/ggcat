@@ -13,7 +13,7 @@ use parallel_processor::buckets::readers::generic_binary_reader::{
     ChunkDecoder, GenericChunkedBinaryReader,
 };
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
+use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::RemoveFileMode;
@@ -115,31 +115,31 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
         process_queue: Arc<SegQueue<ProcessQueueItem>>,
         buffers_counter: Arc<ResourceCounter>,
         resplit_phase: bool,
-    ) {
+    ) -> Self {
         if resplit_phase {
             buffers_counter.allocate_overflow(SECOND_BUCKETS_COUNT as u64);
         } else {
             buffers_counter.allocate_blocking(SECOND_BUCKETS_COUNT as u64);
         }
         let tmp_dir = path.as_ref().parent().unwrap_or(Path::new("."));
-        // GenericChunkedBinaryReader::<FileType>::new(
-        //     &path,
-        //     RemoveFileMode::Remove {
-        //         remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-        //     },
-        // );
-
-        let mut buckets = Vec::with_capacity(SECOND_BUCKETS_COUNT);
-
-        for i in 0..SECOND_BUCKETS_COUNT {
-            buckets.push(LockFreeBinaryWriter::new(
-                &PathBuf::from(tmp_dir).join(split_name),
+        Self {
+            reader: GenericChunkedBinaryReader::<FileType>::new(
+                &path,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            ),
+            buckets: MultiThreadBuckets::new(
+                SECOND_BUCKETS_COUNT,
+                PathBuf::from(tmp_dir).join(split_name),
                 &(
                     get_memory_mode(SwapPriority::KmersMergeBuckets),
                     PARTIAL_VECS_CHECKPOINT_SIZE,
                 ),
-                i,
-            ));
+            ),
+            process_queue,
+            buffers_counter,
+            can_resplit: !resplit_phase,
         }
     }
 }
