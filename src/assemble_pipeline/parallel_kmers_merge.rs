@@ -193,7 +193,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 {
     #[inline(always)]
     fn write_hashes(
-        hashes_tmp: &mut BucketsThreadDispatcher<'x, LockFreeBinaryWriter>,
+        hashes_tmp: &mut BucketsThreadDispatcher<LockFreeBinaryWriter>,
         hash: MH::HashTypeUnextendable,
         bucket: BucketIndexType,
         entry: u64,
@@ -256,6 +256,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         let bucket = H::get_second_bucket(minimizer.to_unextendable());
 
+        assert!(read.bases_count() >= global_data.k);
+
         ReadDispatchInfo {
             bucket,
             hash: H::get_sorting_hash(minimizer.to_unextendable()),
@@ -299,6 +301,12 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             _,
             <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
         >, _>(Vec::new(), |(ReadRef { flags, read, .. }, color)| {
+            assert!(
+                read.bases_count() >= k,
+                "xyz {} >= {}",
+                read.bases_count(),
+                k
+            );
             let hashes = MH::new(read, k);
 
             let last_hash_pos = read.bases_count() - k;
@@ -672,7 +680,7 @@ impl AssemblePipeline {
             out_directory.as_ref().join("result"),
             &(
                 get_memory_mode(SwapPriority::ResultBuckets),
-                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
+                CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
                 DEFAULT_LZ4_COMPRESSION_LEVEL,
             ),
         );

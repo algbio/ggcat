@@ -1,7 +1,9 @@
 use crate::buckets::writers::{finalize_bucket_file, initialize_bucket_file, THREADS_BUSY_WRITING};
 use crate::buckets::LockFreeBucket;
+use crate::memory_data_size::MemoryDataSize;
 use crate::memory_fs::file::internal::MemoryFileMode;
 use crate::memory_fs::file::writer::FileWriter;
+use crate::utils::memory_size_to_log2;
 use counter_stats::counter::AtomicCounterGuardSum;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
 use parking_lot::Mutex;
@@ -10,6 +12,16 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const COMPRESSED_BUCKET_MAGIC: &[u8; 16] = b"CPLZ4_INTR_BKT_M";
+
+pub struct CompressedCheckpointSize(u8);
+impl CompressedCheckpointSize {
+    pub const fn new_from_size(size: MemoryDataSize) -> Self {
+        Self(memory_size_to_log2(size))
+    }
+    pub const fn new_from_log2(val: u8) -> Self {
+        Self(val)
+    }
+}
 
 fn create_lz4_stream<W: Write>(writer: W, level: u32) -> lz4::Encoder<W> {
     lz4::EncoderBuilder::new()
@@ -50,12 +62,21 @@ impl CompressedBinaryWriterInternal {
     }
 }
 
+impl CompressedBinaryWriter {
+    pub const CHECKPOINT_SIZE_UNLIMITED: CompressedCheckpointSize =
+        CompressedCheckpointSize::new_from_log2(62);
+}
+
 impl LockFreeBucket for CompressedBinaryWriter {
-    type InitData = (MemoryFileMode, u64, u32);
+    type InitData = (MemoryFileMode, CompressedCheckpointSize, u32);
 
     fn new(
         path_prefix: &Path,
-        (file_mode, checkpoint_max_size, compression_level): &(MemoryFileMode, u64, u32),
+        (file_mode, checkpoint_max_size, compression_level): &(
+            MemoryFileMode,
+            CompressedCheckpointSize,
+            u32,
+        ),
         index: usize,
     ) -> Self {
         let path = path_prefix.parent().unwrap().join(format!(
@@ -73,7 +94,7 @@ impl LockFreeBucket for CompressedBinaryWriter {
         Self {
             inner: Mutex::new(CompressedBinaryWriterInternal {
                 writer,
-                checkpoint_max_size: *checkpoint_max_size,
+                checkpoint_max_size: (1 << checkpoint_max_size.0),
                 checkpoints: vec![first_checkpoint],
                 current_chunk_size: 0,
                 level: *compression_level,
@@ -84,7 +105,7 @@ impl LockFreeBucket for CompressedBinaryWriter {
 
     fn write_data(&self, bytes: &[u8]) {
         let stat_raii = AtomicCounterGuardSum::new(&THREADS_BUSY_WRITING, 1);
-
+        //
         let mut inner = self.inner.lock();
 
         inner.writer.write_all(bytes).unwrap();

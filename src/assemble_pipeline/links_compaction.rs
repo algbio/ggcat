@@ -11,7 +11,7 @@ use crate::utils::{get_memory_mode, Utils};
 use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
 use parallel_processor::buckets::bucket_writer::BucketItem;
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::single::SingleBucketThreadDispatcher;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
@@ -19,6 +19,7 @@ use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
+use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::io::{Read, Write};
@@ -69,6 +70,7 @@ impl AssemblePipeline {
         result_map_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
         final_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
         links_manager: &UnitigLinksManager,
+        link_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
     ) -> (Vec<PathBuf>, u64) {
         let totsum = AtomicU64::new(0);
 
@@ -87,8 +89,8 @@ impl AssemblePipeline {
         links_inputs.par_iter().for_each(|input| {
             let bucket_index = Utils::get_bucket_index(input);
 
-            let mut links_tmp =
-                BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &links_buckets);
+            let mut buffers = link_thread_buffers.get();
+            let mut links_tmp = BucketsThreadDispatcher::new(&links_buckets, &mut buffers);
             let mut final_links_tmp = SingleBucketThreadDispatcher::new(
                 DEFAULT_PER_CPU_BUFFER_SIZE,
                 bucket_index,

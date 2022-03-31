@@ -10,13 +10,14 @@ use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::vec_slice::VecSlice;
 use crate::utils::{get_memory_mode, Utils};
 use crate::KEEP_FILES;
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parallel_processor::utils::scoped_thread_local::{ScopedThreadLocal, ThreadLocalVariable};
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 
@@ -39,12 +40,18 @@ impl AssemblePipeline {
             ),
         );
 
+        let buckets_thread_buffers = ScopedThreadLocal::new(|| {
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
+        });
+
         file_hashes_inputs
             .par_iter()
             .for_each(|input| {
+
+                let mut buffers = buckets_thread_buffers.get();
                 let mut links_tmp = BucketsThreadDispatcher::new(
-                    DEFAULT_PER_CPU_BUFFER_SIZE,
                     &links_buckets,
+                    &mut buffers
                 );
 
                 let mut rand_bool = FastRandBool::new();

@@ -75,7 +75,7 @@ impl AssemblePipeline {
             temp_path.join("reads_bucket"),
             &(
                 get_memory_mode(SwapPriority::ReorganizeReads),
-                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
+                CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
                 DEFAULT_LZ4_COMPRESSION_LEVEL,
             ),
         );

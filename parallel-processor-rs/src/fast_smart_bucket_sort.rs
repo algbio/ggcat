@@ -32,8 +32,7 @@ impl<const LEN: usize> BucketItem for SortedData<LEN> {
 
     #[inline(always)]
     fn write_to(&self, bucket: &mut Vec<u8>, _: &Self::ExtraData) {
-        #[allow(unaligned_references)] // Safe because the aligment of bytes is always 1
-        bucket.write(&self.data[..]).unwrap();
+        bucket.write(self.data.as_slice()).unwrap();
     }
 
     #[inline(always)]
@@ -41,7 +40,7 @@ impl<const LEN: usize> BucketItem for SortedData<LEN> {
         mut stream: S,
         read_buffer: &'a mut Self::ReadBuffer,
     ) -> Option<Self::ReadType<'a>> {
-        stream.read(&mut read_buffer.data[..]).ok()?;
+        stream.read(read_buffer.data.as_mut_slice()).ok()?;
         Some(read_buffer)
     }
 

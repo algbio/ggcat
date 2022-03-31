@@ -316,7 +316,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             let file_size = FileReader::open(path).unwrap().total_file_size();
             let is_outlier = file_size > typical_sub_bucket_size * SECOND_BUCKETS_COUNT;
 
-            if !is_outlier || !*can_resplit && (file_size > MINIMUM_RESPLIT_SIZE) {
+            if !is_outlier || !*can_resplit || (file_size < MINIMUM_RESPLIT_SIZE) {
                 let reader =
                     LockFreeBinaryReader::new(path, RemoveFileMode::Remove { remove_fs: true });
                 executor.process_group(&self.global_extra_data, reader);

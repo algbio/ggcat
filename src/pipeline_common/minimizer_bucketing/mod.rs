@@ -4,8 +4,8 @@ mod sequences_splitter;
 
 use crate::config::{
     BucketIndexType, MinimizerType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
-    DEFAULT_MINIMIZER_MASK, DEFAULT_PER_CPU_BUFFER_SIZE, READ_INTERMEDIATE_CHUNKS_SIZE,
-    READ_INTERMEDIATE_QUEUE_MULTIPLIER,
+    DEFAULT_MINIMIZER_MASK, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
 };
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -216,7 +216,7 @@ impl GenericMinimizerBucketing {
             output_path.join("bucket"),
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
-                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
+                MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
                 DEFAULT_LZ4_COMPRESSION_LEVEL,
             ),
         );

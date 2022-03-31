@@ -1,4 +1,4 @@
-#![feature(is_sorted, generic_associated_types)]
+#![feature(is_sorted, generic_associated_types, int_log)]
 // #![deny(warnings)]
 
 #[macro_use]
@@ -15,7 +15,7 @@ pub mod mem_tracker;
 pub mod memory_data_size;
 pub mod phase_times_monitor;
 pub mod threadpools_chain;
-mod utils;
+pub mod utils;
 
 pub struct Utils {}
 

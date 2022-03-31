@@ -57,7 +57,7 @@ pub fn run_assembler<
             m,
         )
     } else {
-        Utils::generate_bucket_names(temp_dir.join("bucket"), BUCKETS_COUNT, Some("tmp"))
+        Utils::generate_bucket_names(temp_dir.join("bucket"), BUCKETS_COUNT, None)
     };
 
     println!(
