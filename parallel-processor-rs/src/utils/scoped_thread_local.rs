@@ -20,9 +20,9 @@ lazy_static! {
 }
 static THREAD_LOCAL_VAR_INDEX: AtomicU64 = AtomicU64::new(0);
 
-#[repr(transparent)]
 pub struct ThreadLocalVariable<'a, T> {
     var: &'a mut T,
+    index: u64,
     _not_send_sync: PhantomData<*mut ()>,
 }
 
@@ -46,7 +46,7 @@ impl<'a, T> Drop for ThreadLocalVariable<'a, T> {
     #[inline(always)]
     fn drop(&mut self) {
         let obj_entry = THREADS_MAP.get(&self.index).unwrap();
-        let entry = obj_entry
+        obj_entry
             .get(&std::thread::current().id())
             .unwrap()
             .taken
@@ -91,6 +91,7 @@ impl<T: 'static> ScopedThreadLocal<T> {
 
         ThreadLocalVariable {
             var: unsafe { (*entry.val.get()).downcast_mut::<T>().unwrap() },
+            index: self.index,
             _not_send_sync: PhantomData,
         }
     }
