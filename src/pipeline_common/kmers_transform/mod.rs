@@ -388,10 +388,18 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                             //     };
                             let file = match self.files_queue.pop() {
                                 None => break,
-                                Some(_) => {
-                                    continue;
-                                }
+                                Some(p) => p,
                             };
+                            BucketProcessData::<CompressedStreamDecoder>::new_blocking(
+                                file,
+                                &format!(
+                                    "vec{}",
+                                    self.resplit_buckets_index.fetch_add(1, Ordering::Relaxed)
+                                ),
+                                self.process_queue.clone(),
+                                self.buffer_files_counter.clone(),
+                                true,
+                            );
 
                             // self.do_logging();
 
