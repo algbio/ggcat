@@ -358,34 +358,40 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                             //     continue;
                             // }
 
-                            let bucket =
-                                match Self::get_current_bucket(&self.current_bucket, || {
-                                    let file = self.files_queue.pop()?;
-
-                                    Some(Arc::new(BucketProcessData::new_blocking(
-                                        file,
-                                        &format!(
-                                            "vec{}",
-                                            self.resplit_buckets_index
-                                                .fetch_add(1, Ordering::Relaxed)
-                                        ),
-                                        self.process_queue.clone(),
-                                        self.buffer_files_counter.clone(),
-                                        true,
-                                    )))
-                                }) {
-                                    None => {
-                                        break;
-                                        if self.process_queue.is_empty()
-                                            && self.reprocess_queue.is_empty()
-                                        {
-                                            break;
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    Some(x) => x,
-                                };
+                            // let bucket =
+                            //     match Self::get_current_bucket(&self.current_bucket, || {
+                            //         let file = self.files_queue.pop()?;
+                            //
+                            //         Some(Arc::new(BucketProcessData::new_blocking(
+                            //             file,
+                            //             &format!(
+                            //                 "vec{}",
+                            //                 self.resplit_buckets_index
+                            //                     .fetch_add(1, Ordering::Relaxed)
+                            //             ),
+                            //             self.process_queue.clone(),
+                            //             self.buffer_files_counter.clone(),
+                            //             true,
+                            //         )))
+                            //     }) {
+                            //         None => {
+                            //             break;
+                            //             if self.process_queue.is_empty()
+                            //                 && self.reprocess_queue.is_empty()
+                            //             {
+                            //                 break;
+                            //             } else {
+                            //                 continue;
+                            //             }
+                            //         }
+                            //         Some(x) => x,
+                            //     };
+                            let file = match self.files_queue.pop() {
+                                None => break,
+                                Some(_) => {
+                                    continue;
+                                }
+                            };
 
                             // self.do_logging();
 
