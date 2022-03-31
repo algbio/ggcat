@@ -95,8 +95,8 @@ pub struct ProcessQueueItem {
 
 impl Drop for ProcessQueueItem {
     fn drop(&mut self) {
-        self.buffers_counter
-            .deallocate(1, SECOND_BUCKETS_COUNT as u64);
+        // self.buffers_counter
+        //     .deallocate(1, SECOND_BUCKETS_COUNT as u64);
     }
 }
 
@@ -116,11 +116,11 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
         buffers_counter: Arc<ResourceCounter>,
         resplit_phase: bool,
     ) -> Self {
-        if resplit_phase {
-            buffers_counter.allocate_overflow(SECOND_BUCKETS_COUNT as u64);
-        } else {
-            buffers_counter.allocate_blocking(SECOND_BUCKETS_COUNT as u64);
-        }
+        // if resplit_phase {
+        //     buffers_counter.allocate_overflow(SECOND_BUCKETS_COUNT as u64);
+        // } else {
+        //     buffers_counter.allocate_blocking(SECOND_BUCKETS_COUNT as u64);
+        // }
         let tmp_dir = path.as_ref().parent().unwrap_or(Path::new("."));
         Self {
             reader: GenericChunkedBinaryReader::<FileType>::new(
