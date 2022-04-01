@@ -149,11 +149,11 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
                     sequence,
                     range,
                     |bucket, seq, flags, extra| {
-                        tmp_reads_buffer.add_element(
-                            bucket,
-                            &extra,
-                            &CompressedReadsBucketHelper::<_, E::FLAGS_COUNT>::new(seq, flags),
-                        );
+                        // tmp_reads_buffer.add_element(
+                        //     bucket,
+                        //     &extra,
+                        //     &CompressedReadsBucketHelper::<_, E::FLAGS_COUNT>::new(seq, flags),
+                        // );
                     },
                 );
             });
