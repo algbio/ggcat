@@ -8,10 +8,7 @@ use std::mem::swap;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
-pub fn minb_reader<
-    GlobalData,
-    FileInfo: Clone + Sync + Send + Default,
->(
+pub fn minb_reader<GlobalData, FileInfo: Clone + Sync + Send + Default>(
     context: &MinimizerBucketingExecutionContext<GlobalData>,
     manager: ObjectsPoolManager<MinimizerBucketingQueueData<FileInfo>, (PathBuf, FileInfo)>,
 ) {
@@ -31,24 +28,24 @@ pub fn minb_reader<
                     return;
                 }
 
-                if unlikely(!data.push_sequences(x)) {
-                    let mut tmp_data = manager.allocate();
-
-                    swap(&mut data, &mut tmp_data);
-                    data.file_info = file_info.clone();
-                    data.start_read_index = read_index;
-
-                    assert!(
-                        tmp_data.start_read_index as usize + tmp_data.sequences.len()
-                            <= read_index as usize
-                    );
-
-                    manager.send(tmp_data);
-
-                    if !data.push_sequences(x) {
-                        panic!("Out of memory!");
-                    }
-                }
+                // if unlikely(!data.push_sequences(x)) {
+                //     let mut tmp_data = manager.allocate();
+                //
+                //     swap(&mut data, &mut tmp_data);
+                //     data.file_info = file_info.clone();
+                //     data.start_read_index = read_index;
+                //
+                //     assert!(
+                //         tmp_data.start_read_index as usize + tmp_data.sequences.len()
+                //             <= read_index as usize
+                //     );
+                //
+                //     manager.send(tmp_data);
+                //
+                //     if !data.push_sequences(x) {
+                //         panic!("Out of memory!");
+                //     }
+                // }
                 read_index += 1;
             },
             false,
