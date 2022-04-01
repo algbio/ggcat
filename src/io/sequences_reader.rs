@@ -85,7 +85,7 @@ impl SequencesReader {
         mut func: impl FnMut(FastaSequence),
         remove_file: bool,
     ) {
-        let mut intermediate = [Vec::new(), Vec::new()];
+        // let mut intermediate = [Vec::new(), Vec::new()];
 
         LinesReader::process_lines(
             source,
