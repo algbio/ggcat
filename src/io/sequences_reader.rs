@@ -90,26 +90,26 @@ impl SequencesReader {
         LinesReader::process_lines(
             source,
             |line: &[u8], finished| {
-                if finished || (line.len() > 0 && line[0] == b'>') {
-                    if intermediate[SEQ_STATE].len() > 0 {
-                        Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
-                        func(FastaSequence {
-                            ident: &intermediate[IDENT_STATE],
-                            seq: &intermediate[SEQ_STATE],
-                            qual: None,
-                        });
-                        intermediate[SEQ_STATE].clear();
-                    }
-                    intermediate[IDENT_STATE].clear();
-                    intermediate[IDENT_STATE].extend_from_slice(line);
-                }
-                // Comment line, ignore it
-                else if line.len() > 0 && line[0] == b';' {
-                    return;
-                } else {
-                    // Sequence line
-                    intermediate[SEQ_STATE].extend_from_slice(line);
-                }
+                // if finished || (line.len() > 0 && line[0] == b'>') {
+                //     if intermediate[SEQ_STATE].len() > 0 {
+                //         Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
+                //         func(FastaSequence {
+                //             ident: &intermediate[IDENT_STATE],
+                //             seq: &intermediate[SEQ_STATE],
+                //             qual: None,
+                //         });
+                //         intermediate[SEQ_STATE].clear();
+                //     }
+                //     intermediate[IDENT_STATE].clear();
+                //     intermediate[IDENT_STATE].extend_from_slice(line);
+                // }
+                // // Comment line, ignore it
+                // else if line.len() > 0 && line[0] == b';' {
+                //     return;
+                // } else {
+                //     // Sequence line
+                //     intermediate[SEQ_STATE].extend_from_slice(line);
+                // }
             },
             remove_file,
         );
