@@ -310,7 +310,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             use std::io::Read;
             let mut stream = reader.get_read_parallel_stream().unwrap();
             let mut data = [0; 1024];
-            while stream.read(&mut data).is_ok() {
+            while stream.read(&mut data).map(|x| x > 0).unwrap_or(false) {
                 continue;
             }
             return;
