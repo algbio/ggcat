@@ -33,7 +33,7 @@ impl<F: Clone + Sync + Send + Default> MinimizerBucketingQueueData<F> {
         let mut req_incr = false;
 
         if (self.data.capacity() - self.data.len()) < tot_len {
-            println!("Requesting size increase for length: {} // {} + {} + {}!", tot_len, qual_len, ident_len, seq_len);
+            println!("Requesting size increase for length: {} // {} + {} + {} => {}!", tot_len, qual_len, ident_len, seq_len, std::str::from_utf8(&seq.seq[0..100]).unwrap());
             assert!(self.data.len() == 0);
             req_incr = true;
         }
