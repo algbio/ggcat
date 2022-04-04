@@ -90,6 +90,7 @@ impl SequencesReader {
         LinesReader::process_lines(
             source,
             |line: &[u8], finished| {
+                assert!(line.len() < 1000);
                 if finished || (line.len() > 0 && line[0] == b'>') {
                     if intermediate[SEQ_STATE].len() > 0 {
                         Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
