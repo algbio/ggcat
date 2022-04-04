@@ -285,6 +285,17 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         clear_hashmap(&mut self.nhash_map);
         self.rcorrect_reads.clear();
 
+        if cfg!(feature = "kmerge-read-only-reading") {
+            use std::io::Read;
+            let mut stream = reader.get_read_parallel_stream().unwrap();
+            let mut data = [0; 1024];
+            while stream.read(&mut data).is_ok() {
+                continue;
+            }
+            stream.close_and_remove(true);
+            return;
+        }
+
         let mut tmp_read = Vec::with_capacity(256);
         let mut saved_reads = Vec::with_capacity(256);
 
