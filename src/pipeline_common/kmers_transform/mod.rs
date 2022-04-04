@@ -209,14 +209,14 @@ impl KmersTransform {
 
                                 continue_read = bucket.reader.read_parallel::<_, F::FLAGS_COUNT>(
                                     |flags, read_extra_data, read| {
-                                        let preprocess_info = executor.preprocess_bucket(
-                                            &global_extra_data,
-                                            flags,
-                                            read_extra_data,
-                                            read,
-                                        );
-
                                         if cfg!(not(feature = "kmerge-read-push-disable")) {
+                                            let preprocess_info = executor.preprocess_bucket(
+                                                &global_extra_data,
+                                                flags,
+                                                read_extra_data,
+                                                read,
+                                            );
+
                                             let packed_slice = ReadRef::pack::<_, F::FLAGS_COUNT>(
                                                 preprocess_info.flags,
                                                 read,
