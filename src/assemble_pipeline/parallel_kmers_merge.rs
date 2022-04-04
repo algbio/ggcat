@@ -311,7 +311,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
         >, _>(Vec::new(), |(ReadRef { flags, read, .. }, color)| {
             if cfg!(feature = "kmerge-read-only-deserializing") {
-                continue;
+                return;
             }
 
             assert!(
