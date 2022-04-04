@@ -121,7 +121,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             buckets_count,
             buckets_total_size: buckets_total_size as u64,
             buffer_files_counter: ResourceCounter::new(
-                (SECOND_BUCKETS_COUNT + extra_buffers_count) as u64,
+                (SECOND_BUCKETS_COUNT*16 + extra_buffers_count) as u64,
             ),
             global_extra_data,
             files_queue,
