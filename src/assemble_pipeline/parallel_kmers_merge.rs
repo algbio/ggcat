@@ -306,6 +306,16 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         let mut saved_reads = Vec::with_capacity(256);
 
+        if cfg!(feature = "kmerge-read-only-reading") {
+            use std::io::Read;
+            let mut stream = reader.get_read_parallel_stream().unwrap();
+            let mut data = [0; 1024];
+            while stream.read(&mut data).is_ok() {
+                continue;
+            }
+            return;
+        }
+
         reader.decode_all_bucket_items::<ReadRef<
             _,
             <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
