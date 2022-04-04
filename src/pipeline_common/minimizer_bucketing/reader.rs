@@ -33,6 +33,7 @@ pub fn minb_reader<
                     return;
                 }
 
+                #[cfg(not(feature = "minimizer-read-queue-disable"))]
                 if unlikely(!data.push_sequences(x)) {
                     let mut tmp_data = manager.allocate();
 
@@ -45,7 +46,6 @@ pub fn minb_reader<
                             <= read_index as usize
                     );
 
-                    #[cfg(not(feature = "minimizer-read-queue-disable"))]
                     manager.send(tmp_data);
 
                     if !data.push_sequences(x) {
