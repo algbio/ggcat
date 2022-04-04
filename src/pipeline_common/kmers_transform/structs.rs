@@ -16,7 +16,7 @@ use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinar
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
-use parallel_processor::memory_fs::{RemoveFileMode, MemoryFs};
+use parallel_processor::memory_fs::RemoveFileMode;
 use parking_lot::Condvar;
 use std::io::Read;
 use std::marker::PhantomData;
@@ -95,8 +95,8 @@ pub struct ProcessQueueItem {
 
 impl Drop for ProcessQueueItem {
     fn drop(&mut self) {
-        // self.buffers_counter
-        //     .deallocate(1, SECOND_BUCKETS_COUNT as u64);
+        self.buffers_counter
+            .deallocate(1, SECOND_BUCKETS_COUNT as u64);
     }
 }
 
@@ -116,11 +116,11 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
         buffers_counter: Arc<ResourceCounter>,
         resplit_phase: bool,
     ) -> Self {
-        // if resplit_phase {
-        //     buffers_counter.allocate_overflow(SECOND_BUCKETS_COUNT as u64);
-        // } else {
-        //     buffers_counter.allocate_blocking(SECOND_BUCKETS_COUNT as u64);
-        // }
+        if resplit_phase {
+            buffers_counter.allocate_overflow(SECOND_BUCKETS_COUNT as u64);
+        } else {
+            buffers_counter.allocate_blocking(SECOND_BUCKETS_COUNT as u64);
+        }
         let tmp_dir = path.as_ref().parent().unwrap_or(Path::new("."));
         Self {
             reader: GenericChunkedBinaryReader::<FileType>::new(
@@ -147,12 +147,11 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
 impl<FileType: ChunkDecoder> Drop for BucketProcessData<FileType> {
     fn drop(&mut self) {
         for path in self.buckets.finalize() {
-            MemoryFs::remove_file(path, RemoveFileMode::Remove { remove_fs: true });
-            // self.process_queue.push(ProcessQueueItem {
-            //     path,
-            //     can_resplit: self.can_resplit,
-            //     buffers_counter: self.buffers_counter.clone(),
-            // });
+            self.process_queue.push(ProcessQueueItem {
+                path,
+                can_resplit: self.can_resplit,
+                buffers_counter: self.buffers_counter.clone(),
+            });
         }
     }
 }
