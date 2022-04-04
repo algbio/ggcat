@@ -287,7 +287,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         if cfg!(feature = "kmerge-read-only-reading") {
             use std::io::Read;
-            let mut stream = reader.get_read_parallel_stream().unwrap();
             let mut data = [0; 1024];
             while stream.read(&mut data).is_ok() {
                 continue;
