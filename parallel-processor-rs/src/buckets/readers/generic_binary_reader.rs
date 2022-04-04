@@ -128,7 +128,7 @@ impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
             >= self.sequential_reader.index.index.len()
     }
 
-    pub fn get_single_stream<'a>(&'a mut self) -> impl Read + 'a {
+    pub fn get_single_stream<'a>(&'a mut self) -> &'a mut SequentialReader<D> {
         &mut self.sequential_reader
     }
 
