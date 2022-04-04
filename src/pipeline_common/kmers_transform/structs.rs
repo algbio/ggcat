@@ -16,7 +16,7 @@ use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinar
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
-use parallel_processor::memory_fs::RemoveFileMode;
+use parallel_processor::memory_fs::{RemoveFileMode, MemoryFs};
 use parking_lot::Condvar;
 use std::io::Read;
 use std::marker::PhantomData;
@@ -102,7 +102,7 @@ impl Drop for ProcessQueueItem {
 
 pub struct BucketProcessData<FileType: ChunkDecoder> {
     pub reader: GenericChunkedBinaryReader<FileType>,
-    // pub buckets: MultiThreadBuckets<LockFreeBinaryWriter>,
+    pub buckets: MultiThreadBuckets<LockFreeBinaryWriter>,
     process_queue: Arc<SegQueue<ProcessQueueItem>>,
     buffers_counter: Arc<ResourceCounter>,
     can_resplit: bool,
@@ -129,14 +129,14 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
             ),
-            // buckets: MultiThreadBuckets::new(
-            //     SECOND_BUCKETS_COUNT,
-            //     PathBuf::from(tmp_dir).join(split_name),
-            //     &(
-            //         get_memory_mode(SwapPriority::KmersMergeBuckets),
-            //         PARTIAL_VECS_CHECKPOINT_SIZE,
-            //     ),
-            // ),
+            buckets: MultiThreadBuckets::new(
+                SECOND_BUCKETS_COUNT,
+                PathBuf::from(tmp_dir).join(split_name),
+                &(
+                    get_memory_mode(SwapPriority::KmersMergeBuckets),
+                    PARTIAL_VECS_CHECKPOINT_SIZE,
+                ),
+            ),
             process_queue,
             buffers_counter,
             can_resplit: !resplit_phase,
@@ -146,12 +146,13 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
 
 impl<FileType: ChunkDecoder> Drop for BucketProcessData<FileType> {
     fn drop(&mut self) {
-        // for path in self.buckets.finalize() {
+        for path in self.buckets.finalize() {
+            MemoryFs::remove_file(path, RemoveFileMode::Remove { remove_fs: true });
             // self.process_queue.push(ProcessQueueItem {
             //     path,
             //     can_resplit: self.can_resplit,
             //     buffers_counter: self.buffers_counter.clone(),
             // });
-        // }
+        }
     }
 }
