@@ -223,14 +223,14 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
 
         while continue_read {
             continue_read = bucket.reader.decode_bucket_items_parallel::<CompressedReadsBucketHelper<F::AssociatedExtraData, F::FLAGS_COUNT>, _>(Vec::new(), |(flags, read_extra_data, read)| {
-                    let preprocess_info = executor.preprocess_bucket(
-                        &self.global_extra_data,
-                        flags,
-                        read_extra_data,
-                        read,
-                    );
-
                     if cfg!(not(feature = "kmerge-read-push-disable")) {
+                        let preprocess_info = executor.preprocess_bucket(
+                            &self.global_extra_data,
+                            flags,
+                            read_extra_data,
+                            read,
+                        );
+
                         cmp_reads.add_element(
                             preprocess_info.bucket,
                             &preprocess_info.extra_data,
