@@ -26,8 +26,16 @@ pub fn process_subbucket<'a, F: KmersTransformExecutorFactory>(
 ) {
     let mut paths: Vec<_> = Vec::new();
 
-    if !is_outlier || !can_resplit || bucket_stream.total_file_size() < 1000000 {
-        executor.process_group(global_data, bucket_stream);
+    if !is_outlier
+        || !can_resplit
+        || bucket_stream.total_file_size() < 1000000
+        || cfg!(feature = "kmerge-read-resplit-disable")
+    {
+        if cfg!(feature = "kmerge-read-processing-disable") {
+            bucket_stream.close_and_remove(true);
+        } else {
+            executor.process_group(global_data, bucket_stream);
+        }
     } else {
         let buckets_log2 = FIRST_BUCKET_BITS;
         let buckets_count = 1 << buckets_log2;

@@ -397,6 +397,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         drop(tmp_read);
         stream.close_and_remove(true);
 
+        if cfg!(feature = "kmerge-kmers-extension-disable") {
+            return;
+        }
+
         if CX::COLORS_ENABLED {
             CX::ColorsMergeManagerType::<MH>::process_colors(
                 &global_data.colors_global_table,
@@ -580,6 +584,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                     (bw_hash, begin_ignored)
                 }
             };
+
+            if cfg!(feature = "kmerge-kmers-writing-disable") {
+                return;
+            }
 
             let out_seq = {
                 self.backward_seq.reverse();

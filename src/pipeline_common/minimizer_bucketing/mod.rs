@@ -143,6 +143,10 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
                     sequence,
                     range,
                     |bucket, seq, flags, extra| {
+                        if cfg!(feature = "minimizer-writing-disable") {
+                            return;
+                        }
+
                         tmp_reads_buffer.add_read::<E::FLAGS_COUNT>(extra, seq, bucket, flags);
                     },
                 );

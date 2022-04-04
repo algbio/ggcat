@@ -216,18 +216,20 @@ impl KmersTransform {
                                             read,
                                         );
 
-                                        let packed_slice = ReadRef::pack::<_, F::FLAGS_COUNT>(
-                                            preprocess_info.flags,
-                                            read,
-                                            &preprocess_info.extra_data,
-                                            &mut tmp_data,
-                                        );
+                                        if cfg!(not(feature = "kmerge-read-push-disable")) {
+                                            let packed_slice = ReadRef::pack::<_, F::FLAGS_COUNT>(
+                                                preprocess_info.flags,
+                                                read,
+                                                &preprocess_info.extra_data,
+                                                &mut tmp_data,
+                                            );
 
-                                        cmp_reads.add_element(
-                                            preprocess_info.bucket,
-                                            &(),
-                                            packed_slice,
-                                        );
+                                            cmp_reads.add_element(
+                                                preprocess_info.bucket,
+                                                &(),
+                                                packed_slice,
+                                            );
+                                        }
                                     },
                                 );
                             }
