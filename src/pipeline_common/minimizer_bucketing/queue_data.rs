@@ -30,6 +30,12 @@ impl<F: Clone + Sync + Send + Default> MinimizerBucketingQueueData<F> {
             return false;
         }
 
+        if (self.data.capacity() - self.data.len()) < tot_len {
+            println!("Requesting size increase for length: {}!", tot_len);
+        }
+
+        let capacity = self.data.capacity();
+
         let start = self.data.len();
         self.data.extend_from_slice(seq.ident);
         self.data.extend_from_slice(seq.seq);
@@ -39,6 +45,10 @@ impl<F: Clone + Sync + Send + Default> MinimizerBucketingQueueData<F> {
 
         self.sequences.push((start, ident_len, seq_len, qual_len));
 
+        if self.data.len() != 0 {
+            assert_eq!(self.data.capacity(), capacity);
+        }
+        
         true
     }
 
