@@ -95,14 +95,14 @@ pub struct ProcessQueueItem {
 
 impl Drop for ProcessQueueItem {
     fn drop(&mut self) {
-        self.buffers_counter
-            .deallocate(1, SECOND_BUCKETS_COUNT as u64);
+        // self.buffers_counter
+        //     .deallocate(1, SECOND_BUCKETS_COUNT as u64);
     }
 }
 
 pub struct BucketProcessData<FileType: ChunkDecoder> {
     pub reader: GenericChunkedBinaryReader<FileType>,
-    pub buckets: MultiThreadBuckets<LockFreeBinaryWriter>,
+    // pub buckets: MultiThreadBuckets<LockFreeBinaryWriter>,
     process_queue: Arc<SegQueue<ProcessQueueItem>>,
     buffers_counter: Arc<ResourceCounter>,
     can_resplit: bool,
@@ -116,11 +116,11 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
         buffers_counter: Arc<ResourceCounter>,
         resplit_phase: bool,
     ) -> Self {
-        if resplit_phase {
-            buffers_counter.allocate_overflow(SECOND_BUCKETS_COUNT as u64);
-        } else {
-            buffers_counter.allocate_blocking(SECOND_BUCKETS_COUNT as u64);
-        }
+        // if resplit_phase {
+        //     buffers_counter.allocate_overflow(SECOND_BUCKETS_COUNT as u64);
+        // } else {
+        //     buffers_counter.allocate_blocking(SECOND_BUCKETS_COUNT as u64);
+        // }
         let tmp_dir = path.as_ref().parent().unwrap_or(Path::new("."));
         Self {
             reader: GenericChunkedBinaryReader::<FileType>::new(
@@ -129,14 +129,14 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
             ),
-            buckets: MultiThreadBuckets::new(
-                SECOND_BUCKETS_COUNT,
-                PathBuf::from(tmp_dir).join(split_name),
-                &(
-                    get_memory_mode(SwapPriority::KmersMergeBuckets),
-                    PARTIAL_VECS_CHECKPOINT_SIZE,
-                ),
-            ),
+            // buckets: MultiThreadBuckets::new(
+            //     SECOND_BUCKETS_COUNT,
+            //     PathBuf::from(tmp_dir).join(split_name),
+            //     &(
+            //         get_memory_mode(SwapPriority::KmersMergeBuckets),
+            //         PARTIAL_VECS_CHECKPOINT_SIZE,
+            //     ),
+            // ),
             process_queue,
             buffers_counter,
             can_resplit: !resplit_phase,
@@ -146,12 +146,12 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
 
 impl<FileType: ChunkDecoder> Drop for BucketProcessData<FileType> {
     fn drop(&mut self) {
-        for path in self.buckets.finalize() {
-            self.process_queue.push(ProcessQueueItem {
-                path,
-                can_resplit: self.can_resplit,
-                buffers_counter: self.buffers_counter.clone(),
-            });
-        }
+        // for path in self.buckets.finalize() {
+            // self.process_queue.push(ProcessQueueItem {
+            //     path,
+            //     can_resplit: self.can_resplit,
+            //     buffers_counter: self.buffers_counter.clone(),
+            // });
+        // }
     }
 }

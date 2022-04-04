@@ -219,7 +219,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             return;
         }
 
-        let mut cmp_reads = BucketsThreadDispatcher::new(&bucket.buckets, buffer);
+        // let mut cmp_reads = BucketsThreadDispatcher::new(&bucket.buckets, buffer);
 
         while continue_read {
             continue_read = bucket.reader.decode_bucket_items_parallel::<CompressedReadsBucketHelper<F::AssociatedExtraData, F::FLAGS_COUNT>, _>(Vec::new(), |(flags, read_extra_data, read)| {
@@ -231,21 +231,22 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                             read,
                         );
 
-                        cmp_reads.add_element(
-                            preprocess_info.bucket,
-                            &preprocess_info.extra_data,
-                            &ReadRef::<_, F::FLAGS_COUNT> {
-                                flags,
-                                read,
-                                _phantom: Default::default()
-                            },
-                        );
+                        // cmp_reads.add_element(
+                        //     preprocess_info.bucket,
+                        //     &preprocess_info.extra_data,
+                        //     &ReadRef::<_, F::FLAGS_COUNT> {
+                        //         flags,
+                        //         read,
+                        //         _phantom: Default::default()
+                        //     },
+                        // );
                     }
                 },
             );
         }
     }
 
+    #[cfg(test)]
     fn resplit_buckets<'b>(
         &self,
         resplitter: &mut <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType<'b>,
@@ -358,11 +359,11 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                         );
 
                         loop {
-                            self.process_buffers(&mut executor, typical_sub_bucket_size);
+                            // self.process_buffers(&mut executor, typical_sub_bucket_size);
 
-                            if self.resplit_buckets(&mut splitter, &mut local_buffer) {
-                                continue;
-                            }
+                            // if self.resplit_buckets(&mut splitter, &mut local_buffer) {
+                            //     continue;
+                            // }
 
                             let bucket =
                                 match Self::get_current_bucket(&self.current_bucket, || {
@@ -392,7 +393,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                     Some(x) => x,
                                 };
 
-                            self.do_logging();
+                            // self.do_logging();
 
                             self.read_bucket(&mut executor, &bucket, &mut local_buffer);
                         }
