@@ -286,11 +286,11 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         self.rcorrect_reads.clear();
 
         if cfg!(feature = "kmerge-read-only-reading") {
-            use std::io::Read;
-            let mut data = [0; 1024];
-            while stream.read(&mut data).map(|x| x > 0).unwrap_or(false) {
-                continue;
-            }
+            // use std::io::Read;
+            // let mut data = [0; 1024];
+            // while stream.read(&mut data).map(|x| x > 0).unwrap_or(false) {
+            //     continue;
+            // }
             stream.close_and_remove(true);
             return;
         }
