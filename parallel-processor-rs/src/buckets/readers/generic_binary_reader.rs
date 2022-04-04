@@ -28,7 +28,7 @@ pub struct GenericChunkedBinaryReader<D: ChunkDecoder> {
 unsafe impl<D: ChunkDecoder> Sync for GenericChunkedBinaryReader<D> {}
 
 struct SequentialReader<D: ChunkDecoder> {
-    reader: D::ReaderType,
+    pub reader: D::ReaderType,
     index: BucketCheckpoints,
     last_byte_position: u64,
     index_position: u64,
