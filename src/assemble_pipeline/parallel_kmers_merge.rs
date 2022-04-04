@@ -294,6 +294,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
         >(&mut stream, &mut tmp_read)
         {
+            if cfg!(feature = "kmerge-read-only-deserializing") {
+                continue;
+            }
+
             let hashes = MH::new(read, k);
 
             let last_hash_pos = read.bases_count() - k;

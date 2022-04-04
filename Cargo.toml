@@ -62,6 +62,7 @@ minimizer-writing-disable = []
 kmerge-read-push-disable = []
 kmerge-read-resplit-disable = []
 kmerge-read-processing-disable = []
+kmerge-read-only-deserializing = ["kmerge-kmers-extension-disable"]
 kmerge-kmers-extension-disable = []
 kmerge-kmers-writing-disable = []
 
