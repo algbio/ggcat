@@ -37,6 +37,8 @@ pub fn minb_reader<
                 if unlikely(!data.push_sequences(x)) {
                     let mut tmp_data = manager.allocate();
 
+                    println!("Capacity: {}", data.data.capacity());
+
                     swap(&mut data, &mut tmp_data);
                     data.file_info = file_info.clone();
                     data.start_read_index = read_index;

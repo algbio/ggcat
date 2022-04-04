@@ -3,7 +3,7 @@ use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 use parallel_processor::threadpools_chain::ThreadChainObject;
 
 pub struct MinimizerBucketingQueueData<F: Clone + Sync + Send + Default> {
-    data: TrackedVec<u8>,
+    pub data: TrackedVec<u8>,
     pub sequences: TrackedVec<(usize, usize, usize, usize)>,
     pub file_info: F,
     pub start_read_index: u64,
