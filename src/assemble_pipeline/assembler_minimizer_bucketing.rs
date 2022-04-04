@@ -108,6 +108,10 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
         _range: Range<usize>,
         mut push_sequence: F,
     ){
+        if cfg!(feature = "minimizer-processing-disable") {
+            return;
+        }
+
         let hashes = H::new(sequence, self.global_data.m);
 
         let mut rolling_iter = self

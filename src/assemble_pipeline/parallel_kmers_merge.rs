@@ -416,6 +416,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             COUNTER_READS_AVG.add_value(len);
         }
 
+        if cfg!(feature = "kmerge-kmers-extension-disable") {
+            return;
+        }
+
         if CX::COLORS_ENABLED {
             CX::ColorsMergeManagerType::<MH>::process_colors(
                 &global_data.colors_global_table,
@@ -605,6 +609,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 self.backward_seq.extend_from_slice(&self.forward_seq[k..]);
                 &self.backward_seq[..]
             };
+
+            if cfg!(feature = "kmerge-kmers-writing-disable") {
+                return;
+            }
 
             let read_index = self.current_bucket.add_read(
                 color_types::ColorsMergeManagerType::<MH, CX>::encode_part_unitigs_colors(

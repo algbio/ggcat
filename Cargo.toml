@@ -53,5 +53,20 @@ mem-analysis = ["parallel-processor/track-usage"]
 no-stats = ["parallel-processor/no-stats"]
 process-stats = ["parallel-processor/process-stats"]
 
+
+
+minimizer-read-disable = []
+minimizer-read-queue-disable = []
+minimizer-processing-disable = []
+minimizer-writing-disable = []
+
+kmerge-read-push-disable = []
+kmerge-read-resplit-disable = []
+kmerge-read-processing-disable = []
+kmerge-kmers-extension-disable = []
+kmerge-kmers-writing-disable = []
+
+
+
 [build-dependencies]
 make-cmd = "0.1.0"

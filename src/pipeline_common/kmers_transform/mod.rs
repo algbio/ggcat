@@ -230,15 +230,17 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                         read,
                     );
 
-                    cmp_reads.add_element(
-                        preprocess_info.bucket,
-                        &preprocess_info.extra_data,
-                        &ReadRef::<_, F::FLAGS_COUNT> {
-                            flags,
-                            read,
-                            _phantom: Default::default()
-                        },
-                    );
+                    if cfg!(not(feature = "kmerge-read-push-disable")) {
+                        cmp_reads.add_element(
+                            preprocess_info.bucket,
+                            &preprocess_info.extra_data,
+                            &ReadRef::<_, F::FLAGS_COUNT> {
+                                flags,
+                                read,
+                                _phantom: Default::default()
+                            },
+                        );
+                    }
                 },
             );
         }
@@ -316,10 +318,16 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             let file_size = FileReader::open(path).unwrap().total_file_size();
             let is_outlier = file_size > typical_sub_bucket_size * SECOND_BUCKETS_COUNT;
 
-            if !is_outlier || !*can_resplit || (file_size < MINIMUM_RESPLIT_SIZE) {
+            if !is_outlier
+                || !*can_resplit
+                || (file_size < MINIMUM_RESPLIT_SIZE)
+                || cfg!(feature = "kmerge-read-resplit-disable")
+            {
                 let reader =
                     LockFreeBinaryReader::new(path, RemoveFileMode::Remove { remove_fs: true });
-                executor.process_group(&self.global_extra_data, reader);
+                if cfg!(not(feature = "kmerge-read-processing-disable")) {
+                    executor.process_group(&self.global_extra_data, reader);
+                }
             } else {
                 println!(
                     "Resplitting bucket {} size: {} / {} [{}]",

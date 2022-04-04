@@ -8,10 +8,7 @@ use std::mem::swap;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
-pub fn minb_reader<
-    GlobalData,
-    FileInfo: Clone + Sync + Send + Default,
->(
+pub fn minb_reader<GlobalData, FileInfo: Clone + Sync + Send + Default>(
     context: &MinimizerBucketingExecutionContext<GlobalData>,
     manager: ObjectsPoolManager<MinimizerBucketingQueueData<FileInfo>, (PathBuf, FileInfo)>,
 ) {
@@ -24,6 +21,7 @@ pub fn minb_reader<
 
         context.current_file.fetch_add(1, Ordering::Relaxed);
 
+        #[cfg(not(feature = "minimizer-read-disable"))]
         SequencesReader::process_file_extended(
             input,
             |x| {
@@ -43,6 +41,7 @@ pub fn minb_reader<
                             <= read_index as usize
                     );
 
+                    #[cfg(not(feature = "minimizer-read-queue-disable"))]
                     manager.send(tmp_data);
 
                     if !data.push_sequences(x) {
