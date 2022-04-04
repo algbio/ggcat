@@ -308,7 +308,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         if cfg!(feature = "kmerge-read-only-reading") {
             use std::io::Read;
-            let mut stream = reader.get_single_stream().unwrap();
+            let mut stream = reader.get_single_stream();
             let mut data = [0; 1024];
             while stream.read(&mut data).map(|x| x > 0).unwrap_or(false) {
                 continue;
