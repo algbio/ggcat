@@ -2,8 +2,8 @@ pub mod structs;
 
 use crate::config::{
     BucketIndexType, SortingHashType, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_LOG_DELTA_TIME,
-    MINIMUM_RESPLIT_SIZE, OUTLIER_MAX_RATIO, OUTLIER_MIN_DIFFERENCE, RESPLIT_MINIMIZER_MASK,
-    SECOND_BUCKETS_COUNT, SUBBUCKET_OUTLIER_DIVISOR,
+    MINIMUM_RESPLIT_SIZE, OUTLIER_MAX_NUMBER_RATIO, OUTLIER_MAX_SIZE_RATIO, OUTLIER_MIN_DIFFERENCE,
+    RESPLIT_MINIMIZER_MASK, SECOND_BUCKETS_COUNT, SUBBUCKET_OUTLIER_DIVISOR,
 };
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -123,12 +123,13 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
          * Bucket outlier definition:
          * - More than 30% difference from the next smaller
          * - less than 50% difference from the biggest bucket
+         * -
          */
-        for idx in 0..(files_with_sizes.len() - 1) {
+        for idx in 0..(files_with_sizes.len() / OUTLIER_MAX_NUMBER_RATIO) {
             let crt_size = files_with_sizes[idx].1;
             let next_size = files_with_sizes[idx].1;
             let distance_req = crt_size as f64 > next_size as f64 * (1.0 + OUTLIER_MIN_DIFFERENCE);
-            let maxim_req = crt_size as f64 > max_size as f64 * OUTLIER_MAX_RATIO;
+            let maxim_req = crt_size as f64 > max_size as f64 * OUTLIER_MAX_SIZE_RATIO;
             if distance_req && maxim_req {
                 for midx in 0..=idx {
                     files_with_sizes[midx].2 = true;
