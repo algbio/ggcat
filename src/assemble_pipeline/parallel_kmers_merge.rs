@@ -161,7 +161,6 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             unitigs_temp_colors: CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure(),
             rcorrect_reads: TrackedVec::new(),
             rhash_map: HashMap::with_capacity(4096),
-            nhash_map: HashMap::with_capacity(4096),
             #[cfg(feature = "mem-analysis")]
             hmap_meminfo: info,
             _phantom: PhantomData,
@@ -185,7 +184,6 @@ struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, C
     rcorrect_reads: TrackedVec<(MH::HashTypeExtendable, usize, u8, bool)>,
     rhash_map:
         HashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>,
-    nhash_map: HashMap<MH::HashTypeUnextendable, NodeState>,
     #[cfg(feature = "mem-analysis")]
     hmap_meminfo: Arc<MemoryInfo>,
     _phantom: PhantomData<H>,
@@ -301,7 +299,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         CX::ColorsMergeManagerType::<MH>::reinit_temp_buffer_structure(&mut self.temp_colors);
         clear_hashmap(&mut self.rhash_map);
-        clear_hashmap(&mut self.nhash_map);
         self.rcorrect_reads.clear();
 
         let mut saved_reads = Vec::with_capacity(256);
@@ -358,37 +355,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                         (idx % 4) as u8,
                         is_forward,
                     ));
-
-                    let first_base = unsafe { read.get_base_unchecked(idx) };
-                    let fwd_key = MH::manual_remove_only_forward(hash, k, first_base);
-
-                    let last_base = unsafe { read.get_base_unchecked(idx + k - 1) };
-                    let bwd_key = MH::manual_remove_only_reverse(hash, k, last_base);
-
-                    // println!(
-                    //     "Processing kmer: {} first: {}/{} last: {}/{}",
-                    //     read.sub_slice(idx..(idx + k)).to_string(),
-                    //     first_base,
-                    //     Utils::decompress_base(first_base) as char,
-                    //     last_base,
-                    //     Utils::decompress_base(last_base) as char
-                    // );
-
-                    self.nhash_map
-                        .entry(fwd_key.to_unextendable())
-                        .or_insert(NodeState::new())
-                        .update(
-                            fwd_key.is_forward(),
-                            Utils::conditional_rc_base(first_base, !fwd_key.is_forward()),
-                        );
-
-                    self.nhash_map
-                        .entry(bwd_key.to_unextendable())
-                        .or_insert(NodeState::new())
-                        .update(
-                            !bwd_key.is_forward(),
-                            Utils::conditional_rc_base(last_base, !bwd_key.is_forward()),
-                        );
                 }
             }
 
@@ -481,11 +447,15 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 rhentry,
             );
 
-            let mut try_extend_function = |mut nhash: MH::HashTypeExtendable,
-                                           mut ehash: MH::HashTypeExtendable,
-                                           output: &mut Vec<u8>,
-                                           is_forward: bool,
+            let mut try_extend_function = |output: &mut Vec<u8>,
                                            compute_hash_fw: fn(
+                hash: MH::HashTypeExtendable,
+                klen: usize,
+                out_b: u8,
+                in_b: u8,
+            )
+                -> MH::HashTypeExtendable,
+                                           compute_hash_bw: fn(
                 hash: MH::HashTypeExtendable,
                 klen: usize,
                 out_b: u8,
@@ -496,75 +466,78 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 ts: &mut color_types::TempUnitigColorStructure<MH, CX>,
                 entry: &MapEntry<color_types::HashMapTempColorIndex<MH, CX>>,
             )| {
-                return loop {
-                    if let Some(kmer) = self.nhash_map.get(&nhash.to_unextendable()) {
-                        if kmer.is_extendable() {
-                            let new_base = Utils::conditional_rc_base(
-                                kmer.get_base(nhash.is_forward() ^ is_forward),
-                                !nhash.is_forward(),
-                            );
+                let mut temp_data = (hash, 0);
+                let mut current_hash;
 
-                            let new_ehash = compute_hash_fw(
-                                ehash,
-                                k,
-                                Utils::compress_base(output[output.len() - k]),
-                                new_base,
-                            );
-
-                            // println!(
-                            //     "Extending sequence: {} fwd:{} with base {} and state: {:?}",
-                            //     std::str::from_utf8(&output).unwrap(),
-                            //     is_forward,
-                            //     Utils::decompress_base(new_base) as char,
-                            //     kmer
-                            // );
-
-                            let entry_ref = self
-                                .rhash_map
-                                .get_mut(&new_ehash.to_unextendable())
-                                .unwrap();
-
-                            let already_used = entry_ref.count == usize::MAX;
-
-                            // Found a cycle unitig
-                            if already_used {
-                                break (ehash, false);
+                return 'ext_loop: loop {
+                    let mut count = 0;
+                    current_hash = temp_data.0;
+                    for idx in 0..4 {
+                        let new_hash = compute_hash_fw(
+                            current_hash,
+                            k,
+                            Utils::compress_base(output[output.len() - k]),
+                            idx,
+                        );
+                        if let Some(hash) = self.rhash_map.get(&new_hash.to_unextendable()) {
+                            if get_kmer_multiplicity(&hash) >= global_data.min_multiplicity {
+                                // println!("Forward match extend read {:x?}!", new_hash);
+                                count += 1;
+                                temp_data = (new_hash, idx);
                             }
-
-                            // Flag the entry as already used
-                            entry_ref.count = usize::MAX;
-
-                            if CX::COLORS_ENABLED {
-                                colors_function(&mut self.unitigs_temp_colors, entry_ref);
-                            }
-
-                            output.push(Utils::decompress_base(new_base));
-                            ehash = new_ehash;
-
-                            // Found a continuation into another bucket
-                            let contig_break = (entry_ref.ignored == READ_FLAG_INCL_BEGIN)
-                                || (entry_ref.ignored == READ_FLAG_INCL_END);
-                            if contig_break {
-                                break (ehash, true);
-                            }
-
-                            nhash = compute_hash_fw(
-                                nhash,
-                                k - 1,
-                                Utils::compress_base(output[output.len() - (k - 1)]),
-                                new_base,
-                            );
-                        } else {
-                            return (ehash, false);
                         }
                     }
 
-                    // if count == 1 {
-                    //     // Test for backward branches
-                    //
-                    // } else {
-                    //     break (current_hash, false); // count > 0);
-                    // }
+                    if count == 1 {
+                        // Test for backward branches
+                        {
+                            let mut ocount = 0;
+                            let new_hash = temp_data.0;
+                            for idx in 0..4 {
+                                let bw_hash = compute_hash_bw(new_hash, k, temp_data.1, idx);
+                                if let Some(hash) = self.rhash_map.get(&bw_hash.to_unextendable()) {
+                                    if get_kmer_multiplicity(&hash) >= global_data.min_multiplicity
+                                    {
+                                        if ocount > 0 {
+                                            break 'ext_loop (current_hash, false);
+                                        }
+                                        ocount += 1;
+                                    }
+                                }
+                            }
+                            assert_eq!(ocount, 1);
+                        }
+
+                        let entryref = self
+                            .rhash_map
+                            .get_mut(&temp_data.0.to_unextendable())
+                            .unwrap();
+
+                        let already_used = entryref.count == usize::MAX;
+
+                        // Found a cycle unitig
+                        if already_used {
+                            break (temp_data.0, false);
+                        }
+
+                        // Flag the entry as already used
+                        entryref.count = usize::MAX;
+
+                        if CX::COLORS_ENABLED {
+                            colors_function(&mut self.unitigs_temp_colors, entryref);
+                        }
+
+                        output.push(Utils::decompress_base(temp_data.1));
+
+                        // Found a continuation into another bucket
+                        let contig_break = (entryref.ignored == READ_FLAG_INCL_BEGIN)
+                            || (entryref.ignored == READ_FLAG_INCL_END);
+                        if contig_break {
+                            break (temp_data.0, true);
+                        }
+                    } else {
+                        break (current_hash, false);
+                    }
                 };
             };
 
@@ -573,11 +546,9 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                     (hash, true)
                 } else {
                     let (fw_hash, end_ignored) = try_extend_function(
-                        MH::manual_remove_only_forward(hash, k, self.forward_seq[0]),
-                        hash,
                         &mut self.forward_seq,
-                        true,
                         MH::manual_roll_forward,
+                        MH::manual_roll_reverse,
                         CX::ColorsMergeManagerType::<MH>::extend_forward,
                     );
                     (fw_hash, end_ignored)
@@ -589,11 +560,9 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                     (hash, true)
                 } else {
                     let (bw_hash, begin_ignored) = try_extend_function(
-                        MH::manual_remove_only_reverse(hash, k, self.backward_seq[0]),
-                        hash,
                         &mut self.backward_seq,
-                        false,
                         MH::manual_roll_reverse,
+                        MH::manual_roll_forward,
                         CX::ColorsMergeManagerType::<MH>::extend_backward,
                     );
                     (bw_hash, begin_ignored)
