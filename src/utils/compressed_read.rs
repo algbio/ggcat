@@ -3,6 +3,7 @@ use crate::hashes::HashableSequence;
 use crate::io::varint::encode_varint_flags;
 use crate::pipeline_common::minimizer_bucketing::MinimizerInputSequence;
 use crate::utils::Utils;
+use core::fmt::{Debug, Formatter};
 use std::io::Write;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
@@ -15,6 +16,12 @@ pub struct CompressedRead<'a> {
     pub start: u8,
     data: *const u8,
     _phantom: PhantomData<&'a ()>,
+}
+
+impl<'a> Debug for CompressedRead<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.to_string())
+    }
 }
 
 #[derive(Copy, Clone)]

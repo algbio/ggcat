@@ -3,18 +3,23 @@ mod reader;
 mod sequences_splitter;
 
 use crate::config::{
-    BucketIndexType, MinimizerType, SwapPriority, DEFAULT_MINIMIZER_MASK,
+    BucketIndexType, MinimizerType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
+    DEFAULT_MINIMIZER_MASK, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
     READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
 };
 use crate::hashes::HashableSequence;
+use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
-use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
-use crate::io::concurrent::temp_reads::thread_writer::IntermediateReadsThreadWriter;
 use crate::io::sequences_reader::FastaSequence;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::reader::minb_reader;
 use crate::pipeline_common::minimizer_bucketing::sequences_splitter::SequencesSplitter;
+use crate::utils::get_memory_mode;
+use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::threadpools_chain::{
     ObjectsPoolManager, ThreadPoolDefinition, ThreadPoolsChain,
@@ -97,8 +102,8 @@ pub struct MinimizerBucketingCommonData<GlobalData> {
     pub global_data: GlobalData,
 }
 
-pub struct MinimizerBucketingExecutionContext<ReadAssociatedData: SequenceExtraData, GlobalData> {
-    pub buckets: MultiThreadBuckets<IntermediateReadsWriter<ReadAssociatedData>>,
+pub struct MinimizerBucketingExecutionContext<GlobalData> {
+    pub buckets: MultiThreadBuckets<CompressedBinaryWriter>,
     pub common: MinimizerBucketingCommonData<GlobalData>,
     pub current_file: AtomicUsize,
     pub total_files: usize,
@@ -112,11 +117,12 @@ static TOT_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 static VALID_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 
 fn worker<E: MinimizerBucketingExecutorFactory>(
-    context: &MinimizerBucketingExecutionContext<E::ExtraData, E::GlobalData>,
+    context: &MinimizerBucketingExecutionContext<E::GlobalData>,
     manager: ObjectsPoolManager<(), MinimizerBucketingQueueData<E::FileInfo>>,
 ) {
-    let mut tmp_reads_buffer =
-        IntermediateReadsThreadWriter::new(context.common.buckets_count, &context.buckets);
+    let mut buffer = BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, context.buckets.count());
+
+    let mut tmp_reads_buffer = BucketsThreadDispatcher::new(&context.buckets, &mut buffer);
 
     let mut buckets_processor = E::new(&context.common);
 
@@ -143,7 +149,11 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
                     sequence,
                     range,
                     |bucket, seq, flags, extra| {
-                        tmp_reads_buffer.add_read::<E::FLAGS_COUNT>(extra, seq, bucket, flags);
+                        tmp_reads_buffer.add_element(
+                            bucket,
+                            &extra,
+                            &CompressedReadsBucketHelper::<_, E::FLAGS_COUNT>::new(seq, flags),
+                        );
                     },
                 );
             });
@@ -202,10 +212,14 @@ impl GenericMinimizerBucketing {
         m: usize,
         global_data: E::GlobalData,
     ) -> Vec<PathBuf> {
-        let buckets = MultiThreadBuckets::<IntermediateReadsWriter<E::ExtraData>>::new(
+        let buckets = MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
-            &(SwapPriority::MinimizerBuckets, output_path.join("bucket")),
-            None,
+            output_path.join("bucket"),
+            &(
+                get_memory_mode(SwapPriority::MinimizerBuckets),
+                MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+                DEFAULT_LZ4_COMPRESSION_LEVEL,
+            ),
         );
 
         input_files.sort_by_cached_key(|(file, _)| {

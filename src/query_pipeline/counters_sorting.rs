@@ -4,7 +4,8 @@ use crate::io::varint::{decode_varint, encode_varint};
 use crate::query_pipeline::QueryPipeline;
 use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
-use parallel_processor::buckets::bucket_writer::BucketWriter;
+use parallel_processor::buckets::bucket_writer::BucketItem;
+use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -40,16 +41,25 @@ impl SequenceExtraData for CounterEntry {
     }
 }
 
-impl BucketWriter for CounterEntry {
+impl BucketItem for CounterEntry {
     type ExtraData = ();
+    type ReadBuffer = ();
+    type ReadType<'a> = Self;
 
     #[inline(always)]
     fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
         self.encode(bucket);
     }
 
+    fn read_from<'a, S: Read>(
+        mut stream: S,
+        _read_buffer: &'a mut Self::ReadBuffer,
+    ) -> Option<Self::ReadType<'a>> {
+        Self::decode(&mut stream)
+    }
+
     #[inline(always)]
-    fn get_size(&self) -> usize {
+    fn get_size(&self, _: &()) -> usize {
         self.max_size()
     }
 }
@@ -79,14 +89,16 @@ impl QueryPipeline {
         final_counters.extend((0..sequences_info.len()).map(|_| AtomicU64::new(0)));
 
         file_counters_inputs.par_iter().for_each(|input| {
-            let mut counters_vec: Vec<CounterEntry> = CounterEntry::load_data_to_vec(input, true);
-            MemoryFs::remove_file(
-                &input,
+            let mut counters_vec: Vec<CounterEntry> = Vec::new();
+            LockFreeBinaryReader::new(
+                input,
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
             )
-            .unwrap();
+            .decode_all_bucket_items::<CounterEntry, _>((), |h| {
+                counters_vec.push(h);
+            });
 
             crate::make_comparer!(Compare, CounterEntry, query_index: u64);
             fast_smart_radix_sort::<_, Compare, false>(&mut counters_vec[..]);

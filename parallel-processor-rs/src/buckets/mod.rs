@@ -1,96 +1,71 @@
-use crate::buckets::bucket_type::BucketType;
-use parking_lot::RwLock;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-pub mod bucket_type;
 pub mod bucket_writer;
 pub mod concurrent;
+pub mod readers;
 pub mod single;
+pub mod writers;
 
-pub struct MultiThreadBuckets<B: BucketType> {
-    buckets: Vec<RwLock<B>>,
+pub trait LockFreeBucket {
+    type InitData;
+
+    fn new(path: &Path, data: &Self::InitData, index: usize) -> Self;
+    fn write_data(&self, bytes: &[u8]);
+    fn get_path(&self) -> PathBuf;
+    fn finalize(self);
 }
 
-#[derive(Clone, Debug)]
-pub struct DecimationFactor {
-    pub numerator: usize,
-    pub denominator: usize,
+pub struct MultiThreadBuckets<B: LockFreeBucket> {
+    buckets: Vec<B>,
 }
 
-impl DecimationFactor {
-    pub fn from_ratio(mut ratio: f64) -> DecimationFactor {
-        if ratio > 1.0 {
-            ratio = 1.0;
-        }
-
-        DecimationFactor {
-            numerator: (ratio * 32.0) as usize,
-            denominator: 32,
-        }
-    }
-}
-
-impl<B: BucketType> MultiThreadBuckets<B> {
-    pub fn new(
-        size: usize,
-        init_data: &B::InitType,
-        alternative_data: Option<(&B::InitType, DecimationFactor)>,
-    ) -> MultiThreadBuckets<B> {
+impl<B: LockFreeBucket> MultiThreadBuckets<B> {
+    pub fn new(size: usize, path: PathBuf, init_data: &B::InitData) -> MultiThreadBuckets<B> {
         let mut buckets = Vec::with_capacity(size);
 
         for i in 0..size {
-            let init_data = match &alternative_data {
-                None => init_data,
-                Some((alt_data, decimation)) => {
-                    if i % decimation.denominator < decimation.numerator {
-                        *alt_data
-                    } else {
-                        init_data
-                    }
-                }
-            };
-
-            buckets.push(RwLock::new(B::new(init_data, i)));
+            buckets.push(B::new(&path, init_data, i));
         }
         MultiThreadBuckets { buckets }
     }
 
     pub fn into_buckets(mut self) -> impl Iterator<Item = B> {
         let buckets = std::mem::take(&mut self.buckets);
-        buckets.into_iter().map(|rl| rl.into_inner())
+        buckets.into_iter()
     }
 
     pub fn get_path(&self, bucket: u16) -> PathBuf {
-        self.buckets[bucket as usize].read().get_path()
+        self.buckets[bucket as usize].get_path()
     }
 
-    pub fn add_data(&self, index: u16, data: &[B::DataType]) {
-        if B::SUPPORTS_LOCK_FREE {
-            let bucket = self.buckets[index as usize].read();
-            bucket.write_batch_data_lock_free(data);
-        } else {
-            let mut bucket = self.buckets[index as usize].write();
-            bucket.write_batch_data(data);
-        }
+    pub fn add_data(&self, index: u16, data: &[u8]) {
+        self.buckets[index as usize].write_data(data);
+    }
+
+    pub fn count(&self) -> usize {
+        self.buckets.len()
     }
 
     pub fn finalize(&mut self) -> Vec<PathBuf> {
-        let paths = self.buckets.iter().map(|b| b.read().get_path()).collect();
-        self.buckets.drain(..).for_each(|bucket| {
-            bucket.into_inner().finalize();
-        });
-        paths
+        self.buckets
+            .drain(..)
+            .map(|bucket| {
+                let path = bucket.get_path();
+                bucket.finalize();
+                path
+            })
+            .collect()
     }
 }
 
-impl<B: BucketType> Drop for MultiThreadBuckets<B> {
+impl<B: LockFreeBucket> Drop for MultiThreadBuckets<B> {
     fn drop(&mut self) {
         self.buckets.drain(..).for_each(|bucket| {
-            bucket.into_inner().finalize();
+            bucket.finalize();
         });
     }
 }
 
-unsafe impl<B: BucketType> Send for MultiThreadBuckets<B> {}
+unsafe impl<B: LockFreeBucket> Send for MultiThreadBuckets<B> {}
 
-unsafe impl<B: BucketType> Sync for MultiThreadBuckets<B> {}
+unsafe impl<B: LockFreeBucket> Sync for MultiThreadBuckets<B> {}

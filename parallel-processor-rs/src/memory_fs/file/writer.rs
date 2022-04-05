@@ -2,25 +2,29 @@ use crate::memory_fs::allocator::{AllocatedChunk, CHUNKS_ALLOCATOR};
 use crate::memory_fs::file::internal::{
     FileChunk, MemoryFileInternal, MemoryFileMode, OpenMode, UnderlyingFile,
 };
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockWriteGuard};
 use std::io::{Seek, SeekFrom, Write};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 pub struct FileWriter {
     path: PathBuf,
     current_buffer: RwLock<AllocatedChunk>,
+    file_length: AtomicU64,
     file: Arc<MemoryFileInternal>,
 }
 
 impl FileWriter {
+    /// Creates a new file with the specified mode
     pub fn create(path: impl AsRef<Path>, mode: MemoryFileMode) -> Self {
         Self {
             path: PathBuf::from(path.as_ref()),
             current_buffer: RwLock::new(
                 CHUNKS_ALLOCATOR.request_chunk(chunk_usage!(TemporarySpace)),
             ),
+            file_length: AtomicU64::new(0),
             file: {
                 let file = MemoryFileInternal::create_new(path, mode);
                 file.open(OpenMode::Write).unwrap();
@@ -29,6 +33,7 @@ impl FileWriter {
         }
     }
 
+    /// Returns the total length of the file (slow method)
     pub fn len(&self) -> usize {
         self.file.len() + self.current_buffer.read().len()
     }
@@ -76,15 +81,21 @@ impl FileWriter {
         }
     }
 
-    pub fn write_all_parallel(&self, buf: &[u8], el_size: usize) {
+    /// Appends atomically all the buffer to the file, returning the start position of the buffer in the file
+    pub fn write_all_parallel(&self, buf: &[u8], el_size: usize) -> u64 {
         let buffer = self.current_buffer.read();
-        if buffer.write_bytes_noextend(buf) {
-            return;
+        if let Some(chunk_position) = buffer.write_bytes_noextend(buf) {
+            self.file_length.load(Ordering::Relaxed) + chunk_position
         } else {
             drop(buffer);
             let mut buffer = self.current_buffer.write();
 
             let mut temp_vec = Vec::new();
+
+            let position = self
+                .file_length
+                .fetch_add(buffer.len() as u64, Ordering::SeqCst)
+                + (buffer.len() as u64);
 
             replace_with::replace_with_or_abort(buffer.deref_mut(), |buffer| {
                 let new_buffer = self
@@ -92,6 +103,12 @@ impl FileWriter {
                     .reserve_space(buffer, &mut temp_vec, buf.len(), el_size);
                 new_buffer
             });
+
+            // Add the completely filled chunks to the file, removing the last size as it is already used
+            self.file_length
+                .fetch_add((buf.len() - buffer.len()) as u64, Ordering::SeqCst);
+
+            let _buffer_read = RwLockWriteGuard::downgrade(buffer);
 
             let mut offset = 0;
             for (_lock, part) in temp_vec.drain(..) {
@@ -102,6 +119,7 @@ impl FileWriter {
             if self.file.is_on_disk() {
                 self.file.flush_chunks(usize::MAX);
             }
+            position
         }
     }
 

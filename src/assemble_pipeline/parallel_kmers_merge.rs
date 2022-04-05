@@ -4,12 +4,12 @@ use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{
-    BucketIndexType, SwapPriority, DEFAULT_MINIMIZER_MASK, DEFAULT_PER_CPU_BUFFER_SIZE,
-    MERGE_RESULTS_BUCKETS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
+    BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_MINIMIZER_MASK,
+    DEFAULT_PER_CPU_BUFFER_SIZE, EXTRA_BUFFERS_COUNT, MERGE_RESULTS_BUCKETS_COUNT,
+    RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use crate::hashes::{ExtendableHashTraitType, HashFunction};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
-use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::hash_entry::HashEntry;
 use crate::pipeline_common::kmers_transform::structs::ReadRef;
@@ -25,20 +25,24 @@ use crate::CompressedRead;
 use core::slice::from_raw_parts;
 use crossbeam::queue::*;
 use hashbrown::HashMap;
-use parallel_processor::buckets::bucket_type::BucketType;
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
-use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
+use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
+use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
 use parallel_processor::counter_stats::counter::{AtomicCounter, AvgMode, MaxMode};
 use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter_i64};
-use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 #[cfg(feature = "mem-analysis")]
 use parallel_processor::mem_tracker::MemoryInfo;
+use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
+use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use structs::*;
 
 pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;
@@ -46,10 +50,13 @@ pub const READ_FLAG_INCL_END: u8 = 1 << 1;
 
 pub mod structs {
     use crate::config::BucketIndexType;
+    use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
     use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
-    use crate::io::concurrent::temp_reads::reads_writer::IntermediateReadsWriter;
     use crate::utils::owned_drop::OwnedDrop;
-    use parallel_processor::buckets::bucket_type::BucketType;
+    use parallel_processor::buckets::bucket_writer::BucketItem;
+    use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+    use parallel_processor::buckets::LockFreeBucket;
+    use std::marker::PhantomData;
     use std::path::PathBuf;
 
     pub struct MapEntry<CHI> {
@@ -60,13 +67,19 @@ pub mod structs {
 
     pub struct ResultsBucket<X: SequenceExtraData> {
         pub read_index: u64,
-        pub reads_writer: OwnedDrop<IntermediateReadsWriter<X>>,
+        pub reads_writer: OwnedDrop<CompressedBinaryWriter>,
+        pub temp_buffer: Vec<u8>,
         pub bucket_index: BucketIndexType,
+        pub _phantom: PhantomData<X>,
     }
 
     impl<X: SequenceExtraData> ResultsBucket<X> {
         pub fn add_read(&mut self, el: X, read: &[u8]) -> u64 {
-            self.reads_writer.add_read::<typenum::U0>(el, read, 0);
+            self.temp_buffer.clear();
+            CompressedReadsBucketHelper::<X, typenum::U0>::new(read, 0)
+                .write_to(&mut self.temp_buffer, &el);
+            self.reads_writer.write_data(self.temp_buffer.as_slice());
+
             let read_index = self.read_index;
             self.read_index += 1;
             read_index
@@ -130,20 +143,24 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             "HashMap",
         );
 
+        let mut hashes_buffer = Box::new(BucketsThreadBuffer::new(
+            DEFAULT_PER_CPU_BUFFER_SIZE,
+            global_data.buckets_count,
+        ));
+
+        let buffers = unsafe { &mut *(hashes_buffer.deref_mut() as *mut BucketsThreadBuffer) };
+
         Self::ExecutorType::<'a> {
             results_buckets_counter: MERGE_RESULTS_BUCKETS_COUNT,
             current_bucket: global_data.output_results_buckets.pop().unwrap(),
-            hashes_tmp: BucketsThreadDispatcher::new(
-                DEFAULT_PER_CPU_BUFFER_SIZE,
-                &global_data.hashes_buckets,
-            ),
+            hashes_tmp: BucketsThreadDispatcher::new(&global_data.hashes_buckets, buffers),
+            hashes_buffer,
             forward_seq: Vec::with_capacity(global_data.k),
             backward_seq: Vec::with_capacity(global_data.k),
             temp_colors: CX::ColorsMergeManagerType::<MH>::allocate_temp_buffer_structure(),
             unitigs_temp_colors: CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure(),
             rcorrect_reads: TrackedVec::new(),
             rhash_map: HashMap::with_capacity(4096),
-            nhash_map: HashMap::with_capacity(4096),
             #[cfg(feature = "mem-analysis")]
             hmap_meminfo: info,
             _phantom: PhantomData,
@@ -154,8 +171,10 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> {
     results_buckets_counter: usize,
     current_bucket: ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>,
-    hashes_tmp:
-        BucketsThreadDispatcher<'x, LockFreeBinaryWriter, HashEntry<MH::HashTypeUnextendable>>,
+
+    hashes_tmp: BucketsThreadDispatcher<'x, LockFreeBinaryWriter>,
+    // This field has to appear after hashes_tmp so that it's dropped only when not used anymore
+    hashes_buffer: Box<BucketsThreadBuffer>,
 
     forward_seq: Vec<u8>,
     backward_seq: Vec<u8>,
@@ -165,7 +184,6 @@ struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, C
     rcorrect_reads: TrackedVec<(MH::HashTypeExtendable, usize, u8, bool)>,
     rhash_map:
         HashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>,
-    nhash_map: HashMap<MH::HashTypeUnextendable, NodeState>,
     #[cfg(feature = "mem-analysis")]
     hmap_meminfo: Arc<MemoryInfo>,
     _phantom: PhantomData<H>,
@@ -182,11 +200,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 {
     #[inline(always)]
     fn write_hashes(
-        hashes_tmp: &mut BucketsThreadDispatcher<
-            'x,
-            LockFreeBinaryWriter,
-            HashEntry<MH::HashTypeUnextendable>,
-        >,
+        hashes_tmp: &mut BucketsThreadDispatcher<LockFreeBinaryWriter>,
         hash: MH::HashTypeUnextendable,
         bucket: BucketIndexType,
         entry: u64,
@@ -223,9 +237,9 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutor<'x, ParallelKmersMergeFactory<H, MH, CX>>
     for ParallelKmersMerge<'x, H, MH, CX>
 {
-    fn preprocess_bucket(
+    fn preprocess_bucket<'y: 'x>(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
         flags: u8,
         input_extra_data: <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraData,
         read: CompressedRead,
@@ -249,6 +263,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         let bucket = H::get_second_bucket(minimizer.to_unextendable());
 
+        assert!(read.bases_count() >= global_data.k);
+
         ReadDispatchInfo {
             bucket,
             hash: H::get_sorting_hash(minimizer.to_unextendable()),
@@ -257,9 +273,9 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         }
     }
 
-    fn maybe_swap_bucket(
+    fn maybe_swap_bucket<'y: 'x>(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
     ) {
         if self.results_buckets_counter == 0 {
             self.results_buckets_counter = MERGE_RESULTS_BUCKETS_COUNT;
@@ -271,37 +287,40 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         self.results_buckets_counter -= 1;
     }
 
-    fn process_group(
+    fn process_group<'y: 'x>(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
-        mut stream: FileReader,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
+        mut reader: LockFreeBinaryReader,
     ) {
         let k = global_data.k;
+
         let bucket_index = self.current_bucket.get_bucket_index();
         let buckets_count = global_data.buckets_count;
 
         CX::ColorsMergeManagerType::<MH>::reinit_temp_buffer_structure(&mut self.temp_colors);
         clear_hashmap(&mut self.rhash_map);
-        clear_hashmap(&mut self.nhash_map);
         self.rcorrect_reads.clear();
 
-        let mut tmp_read = Vec::with_capacity(256);
         let mut saved_reads = Vec::with_capacity(256);
 
-        while let Some((kmer_flags, read, color)) = ReadRef::unpack::<
-            _,
+        reader.decode_all_bucket_items::<ReadRef<
             _,
             <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
-        >(&mut stream, &mut tmp_read)
-        {
+        >, _>(Vec::new(), |(ReadRef { flags, read, .. }, color)| {
+            assert!(
+                read.bases_count() >= k,
+                "xyz {} >= {}",
+                read.bases_count(),
+                k
+            );
             let hashes = MH::new(read, k);
 
             let last_hash_pos = read.bases_count() - k;
             let mut saved_read_offset = None;
 
             for (idx, hash) in hashes.iter_enumerate() {
-                let begin_ignored = kmer_flags & READ_FLAG_INCL_BEGIN == 0 && idx == 0;
-                let end_ignored = kmer_flags & READ_FLAG_INCL_END == 0 && idx == last_hash_pos;
+                let begin_ignored = flags & READ_FLAG_INCL_BEGIN == 0 && idx == 0;
+                let end_ignored = flags & READ_FLAG_INCL_END == 0 && idx == last_hash_pos;
 
                 let is_forward = hash.is_forward();
 
@@ -336,37 +355,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                         (idx % 4) as u8,
                         is_forward,
                     ));
-
-                    let first_base = unsafe { read.get_base_unchecked(idx) };
-                    let fwd_key = MH::manual_remove_only_forward(hash, k, first_base);
-
-                    let last_base = unsafe { read.get_base_unchecked(idx + k - 1) };
-                    let bwd_key = MH::manual_remove_only_reverse(hash, k, last_base);
-
-                    // println!(
-                    //     "Processing kmer: {} first: {}/{} last: {}/{}",
-                    //     read.sub_slice(idx..(idx + k)).to_string(),
-                    //     first_base,
-                    //     Utils::decompress_base(first_base) as char,
-                    //     last_base,
-                    //     Utils::decompress_base(last_base) as char
-                    // );
-
-                    self.nhash_map
-                        .entry(fwd_key.to_unextendable())
-                        .or_insert(NodeState::new())
-                        .update(
-                            fwd_key.is_forward(),
-                            Utils::conditional_rc_base(first_base, !fwd_key.is_forward()),
-                        );
-
-                    self.nhash_map
-                        .entry(bwd_key.to_unextendable())
-                        .or_insert(NodeState::new())
-                        .update(
-                            !bwd_key.is_forward(),
-                            Utils::conditional_rc_base(last_base, !bwd_key.is_forward()),
-                        );
                 }
             }
 
@@ -375,7 +363,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 let len = self.rcorrect_reads.len();
                 self.rcorrect_reads.update_maximum_usage(len);
             }
-        }
+        });
 
         {
             static COUNTER_KMERS_MAX: AtomicCounter<MaxMode> =
@@ -393,9 +381,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             COUNTER_READS_MAX_LAST.max(len);
             COUNTER_READS_AVG.add_value(len);
         }
-
-        drop(tmp_read);
-        stream.close_and_remove(true);
 
         if CX::COLORS_ENABLED {
             CX::ColorsMergeManagerType::<MH>::process_colors(
@@ -462,11 +447,15 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 rhentry,
             );
 
-            let mut try_extend_function = |mut nhash: MH::HashTypeExtendable,
-                                           mut ehash: MH::HashTypeExtendable,
-                                           output: &mut Vec<u8>,
-                                           is_forward: bool,
+            let mut try_extend_function = |output: &mut Vec<u8>,
                                            compute_hash_fw: fn(
+                hash: MH::HashTypeExtendable,
+                klen: usize,
+                out_b: u8,
+                in_b: u8,
+            )
+                -> MH::HashTypeExtendable,
+                                           compute_hash_bw: fn(
                 hash: MH::HashTypeExtendable,
                 klen: usize,
                 out_b: u8,
@@ -477,75 +466,78 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 ts: &mut color_types::TempUnitigColorStructure<MH, CX>,
                 entry: &MapEntry<color_types::HashMapTempColorIndex<MH, CX>>,
             )| {
-                return loop {
-                    if let Some(kmer) = self.nhash_map.get(&nhash.to_unextendable()) {
-                        if kmer.is_extendable() {
-                            let new_base = Utils::conditional_rc_base(
-                                kmer.get_base(nhash.is_forward() ^ is_forward),
-                                !nhash.is_forward(),
-                            );
+                let mut temp_data = (hash, 0);
+                let mut current_hash;
 
-                            let new_ehash = compute_hash_fw(
-                                ehash,
-                                k,
-                                Utils::compress_base(output[output.len() - k]),
-                                new_base,
-                            );
-
-                            // println!(
-                            //     "Extending sequence: {} fwd:{} with base {} and state: {:?}",
-                            //     std::str::from_utf8(&output).unwrap(),
-                            //     is_forward,
-                            //     Utils::decompress_base(new_base) as char,
-                            //     kmer
-                            // );
-
-                            let entry_ref = self
-                                .rhash_map
-                                .get_mut(&new_ehash.to_unextendable())
-                                .unwrap();
-
-                            let already_used = entry_ref.count == usize::MAX;
-
-                            // Found a cycle unitig
-                            if already_used {
-                                break (ehash, false);
+                return 'ext_loop: loop {
+                    let mut count = 0;
+                    current_hash = temp_data.0;
+                    for idx in 0..4 {
+                        let new_hash = compute_hash_fw(
+                            current_hash,
+                            k,
+                            Utils::compress_base(output[output.len() - k]),
+                            idx,
+                        );
+                        if let Some(hash) = self.rhash_map.get(&new_hash.to_unextendable()) {
+                            if get_kmer_multiplicity(&hash) >= global_data.min_multiplicity {
+                                // println!("Forward match extend read {:x?}!", new_hash);
+                                count += 1;
+                                temp_data = (new_hash, idx);
                             }
-
-                            // Flag the entry as already used
-                            entry_ref.count = usize::MAX;
-
-                            if CX::COLORS_ENABLED {
-                                colors_function(&mut self.unitigs_temp_colors, entry_ref);
-                            }
-
-                            output.push(Utils::decompress_base(new_base));
-                            ehash = new_ehash;
-
-                            // Found a continuation into another bucket
-                            let contig_break = (entry_ref.ignored == READ_FLAG_INCL_BEGIN)
-                                || (entry_ref.ignored == READ_FLAG_INCL_END);
-                            if contig_break {
-                                break (ehash, true);
-                            }
-
-                            nhash = compute_hash_fw(
-                                nhash,
-                                k - 1,
-                                Utils::compress_base(output[output.len() - (k - 1)]),
-                                new_base,
-                            );
-                        } else {
-                            return (ehash, false);
                         }
                     }
 
-                    // if count == 1 {
-                    //     // Test for backward branches
-                    //
-                    // } else {
-                    //     break (current_hash, false); // count > 0);
-                    // }
+                    if count == 1 {
+                        // Test for backward branches
+                        {
+                            let mut ocount = 0;
+                            let new_hash = temp_data.0;
+                            for idx in 0..4 {
+                                let bw_hash = compute_hash_bw(new_hash, k, temp_data.1, idx);
+                                if let Some(hash) = self.rhash_map.get(&bw_hash.to_unextendable()) {
+                                    if get_kmer_multiplicity(&hash) >= global_data.min_multiplicity
+                                    {
+                                        if ocount > 0 {
+                                            break 'ext_loop (current_hash, false);
+                                        }
+                                        ocount += 1;
+                                    }
+                                }
+                            }
+                            assert_eq!(ocount, 1);
+                        }
+
+                        let entryref = self
+                            .rhash_map
+                            .get_mut(&temp_data.0.to_unextendable())
+                            .unwrap();
+
+                        let already_used = entryref.count == usize::MAX;
+
+                        // Found a cycle unitig
+                        if already_used {
+                            break (temp_data.0, false);
+                        }
+
+                        // Flag the entry as already used
+                        entryref.count = usize::MAX;
+
+                        if CX::COLORS_ENABLED {
+                            colors_function(&mut self.unitigs_temp_colors, entryref);
+                        }
+
+                        output.push(Utils::decompress_base(temp_data.1));
+
+                        // Found a continuation into another bucket
+                        let contig_break = (entryref.ignored == READ_FLAG_INCL_BEGIN)
+                            || (entryref.ignored == READ_FLAG_INCL_END);
+                        if contig_break {
+                            break (temp_data.0, true);
+                        }
+                    } else {
+                        break (current_hash, false);
+                    }
                 };
             };
 
@@ -554,11 +546,9 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                     (hash, true)
                 } else {
                     let (fw_hash, end_ignored) = try_extend_function(
-                        MH::manual_remove_only_forward(hash, k, self.forward_seq[0]),
-                        hash,
                         &mut self.forward_seq,
-                        true,
                         MH::manual_roll_forward,
+                        MH::manual_roll_reverse,
                         CX::ColorsMergeManagerType::<MH>::extend_forward,
                     );
                     (fw_hash, end_ignored)
@@ -570,11 +560,9 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                     (hash, true)
                 } else {
                     let (bw_hash, begin_ignored) = try_extend_function(
-                        MH::manual_remove_only_reverse(hash, k, self.backward_seq[0]),
-                        hash,
                         &mut self.backward_seq,
-                        false,
                         MH::manual_roll_reverse,
+                        MH::manual_roll_forward,
                         CX::ColorsMergeManagerType::<MH>::extend_backward,
                     );
                     (bw_hash, begin_ignored)
@@ -625,9 +613,9 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         )
     }
 
-    fn finalize(
+    fn finalize<'y: 'x>(
         self,
-        _global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        _global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
     ) {
         self.hashes_tmp.finalize();
     }
@@ -656,34 +644,35 @@ impl AssemblePipeline {
 
         let mut hashes_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
+            out_directory.as_ref().join("hashes"),
             &(
-                out_directory.as_ref().join("hashes"),
                 get_memory_mode(SwapPriority::HashBuckets),
+                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
-            None,
         );
 
         let mut sequences = Vec::new();
 
-        let reads_buckets = MultiThreadBuckets::<
-            IntermediateReadsWriter<color_types::PartialUnitigsColorStructure<MH, CX>>,
-        >::new(
+        let reads_buckets = MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
+            out_directory.as_ref().join("result"),
             &(
-                SwapPriority::ResultBuckets,
-                out_directory.as_ref().join("result"),
+                get_memory_mode(SwapPriority::ResultBuckets),
+                CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
+                DEFAULT_LZ4_COMPRESSION_LEVEL,
             ),
-            None,
         );
 
+        // IntermediateReadsWriter<color_types::PartialUnitigsColorStructure<MH, CX>>,
         let output_results_buckets = SegQueue::new();
         for (index, bucket) in reads_buckets.into_buckets().enumerate() {
             let bucket_read = ResultsBucket::<color_types::PartialUnitigsColorStructure<MH, CX>> {
                 read_index: 0,
                 reads_writer: OwnedDrop::new(bucket),
+                temp_buffer: Vec::with_capacity(256),
                 bucket_index: index as BucketIndexType,
+                _phantom: PhantomData,
             };
-
             sequences.push(bucket_read.reads_writer.get_path());
             output_results_buckets.push(bucket_read);
         }
@@ -708,13 +697,14 @@ impl AssemblePipeline {
             },
         };
 
-        KmersTransform::parallel_kmers_transform::<ParallelKmersMergeFactory<H, MH, CX>>(
+        KmersTransform::<ParallelKmersMergeFactory<H, MH, CX>>::new(
             file_inputs,
             buckets_count,
+            EXTRA_BUFFERS_COUNT,
             threads_count,
             global_data,
-            save_memory,
-        );
+        )
+        .parallel_kmers_transform(threads_count);
 
         RetType {
             sequences,

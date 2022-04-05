@@ -36,7 +36,7 @@ pub trait ExtendableHashTraitType: Copy + Clone + Debug + Eq + Ord + Send + Sync
     fn is_forward(&self) -> bool;
 }
 
-pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + 'static {
+pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + Send + Sync + 'static {
     type HashTypeUnextendable: UnextendableHashTraitType;
     type HashTypeExtendable: ExtendableHashTraitType<
         HashTypeUnextendable = Self::HashTypeUnextendable,

@@ -1,32 +1,26 @@
-use crate::buckets::bucket_type::BucketType;
-use crate::buckets::bucket_writer::BucketWriter;
-use crate::buckets::MultiThreadBuckets;
+use crate::buckets::bucket_writer::BucketItem;
+use crate::buckets::{LockFreeBucket, MultiThreadBuckets};
 use crate::memory_data_size::MemoryDataSize;
-use std::cmp::min;
 use std::path::PathBuf;
 
-pub struct SingleBucketThreadDispatcher<'a, B: BucketType> {
+pub struct SingleBucketThreadDispatcher<'a, B: LockFreeBucket> {
     buckets: &'a MultiThreadBuckets<B>,
     bucket_index: u16,
-    buffer: Vec<B::DataType>,
-    max_bucket_size: usize,
+    buffer: Vec<u8>,
 }
 
-impl<'a, B: BucketType> SingleBucketThreadDispatcher<'a, B> {
-    const ALLOWED_LEN: usize = 65536;
-
+impl<'a, B: LockFreeBucket> SingleBucketThreadDispatcher<'a, B> {
     pub fn new(
-        max_buffersize: MemoryDataSize,
+        buffer_size: MemoryDataSize,
         bucket_index: u16,
         buckets: &'a MultiThreadBuckets<B>,
     ) -> Self {
-        let buffer = Vec::with_capacity(crate::Utils::multiply_by(Self::ALLOWED_LEN, 1.05));
+        let buffer = Vec::with_capacity(buffer_size.as_bytes());
 
         Self {
             buckets,
             bucket_index,
             buffer,
-            max_bucket_size: max_buffersize.as_bytes(),
         }
     }
 
@@ -47,14 +41,8 @@ impl<'a, B: BucketType> SingleBucketThreadDispatcher<'a, B> {
         self.buffer.clear();
     }
 
-    pub fn add_element<T: BucketWriter<B::DataType> + ?Sized>(
-        &mut self,
-        extra_data: &T::ExtraData,
-        element: &T,
-    ) {
-        if element.get_size() + self.buffer.len()
-            > min(self.buffer.capacity(), self.max_bucket_size)
-        {
+    pub fn add_element<T: BucketItem + ?Sized>(&mut self, extra_data: &T::ExtraData, element: &T) {
+        if element.get_size(extra_data) + self.buffer.len() > self.buffer.capacity() {
             self.flush_buffer();
         }
         element.write_to(&mut self.buffer, extra_data);
@@ -63,7 +51,7 @@ impl<'a, B: BucketType> SingleBucketThreadDispatcher<'a, B> {
     pub fn finalize(self) {}
 }
 
-impl<'a, B: BucketType> Drop for SingleBucketThreadDispatcher<'a, B> {
+impl<'a, B: LockFreeBucket> Drop for SingleBucketThreadDispatcher<'a, B> {
     fn drop(&mut self) {
         self.flush_buffer();
     }

@@ -1,11 +1,11 @@
-use crate::buckets::bucket_writer::BucketWriter;
+use crate::buckets::bucket_writer::BucketItem;
 use rand::{thread_rng, RngCore};
 use rayon::prelude::*;
 use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::cmp::Ordering;
 use std::fmt::Debug;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::slice::from_raw_parts_mut;
 use std::sync::atomic::AtomicUsize;
 use unchecked_index::{unchecked_index, UncheckedIndex};
@@ -25,16 +25,27 @@ impl<const LEN: usize> SortedData<LEN> {
     }
 }
 
-impl<const LEN: usize> BucketWriter for SortedData<LEN> {
+impl<const LEN: usize> BucketItem for SortedData<LEN> {
     type ExtraData = ();
+    type ReadBuffer = Self;
+    type ReadType<'a> = &'a Self;
 
     #[inline(always)]
     fn write_to(&self, bucket: &mut Vec<u8>, _: &Self::ExtraData) {
-        #[allow(unaligned_references)] // Safe because the aligment of bytes is always 1
-        bucket.write(&self.data[..]).unwrap();
+        bucket.write(self.data.as_slice()).unwrap();
     }
+
     #[inline(always)]
-    fn get_size(&self) -> usize {
+    fn read_from<'a, S: Read>(
+        mut stream: S,
+        read_buffer: &'a mut Self::ReadBuffer,
+    ) -> Option<Self::ReadType<'a>> {
+        stream.read(read_buffer.data.as_mut_slice()).ok()?;
+        Some(read_buffer)
+    }
+
+    #[inline(always)]
+    fn get_size(&self, _: &()) -> usize {
         LEN
     }
 }
@@ -328,6 +339,7 @@ fn smart_radix_sort_<
 
         if !SINGLE_STEP && shift >= RADIX_SIZE_LOG {
             if PARALLEL && shift as usize == (F::KEY_BITS - RADIX_SIZE_LOG as usize) {
+                let data_ptr = &data_ptr;
                 (0..256usize)
                     .into_par_iter()
                     .filter(|x| (counts[(*x as usize) + 1] - counts[*x as usize]) > 1)

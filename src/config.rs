@@ -1,3 +1,7 @@
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
+use parallel_processor::buckets::writers::lock_free_binary_writer::{
+    LockFreeBinaryWriter, LockFreeCheckpointSize,
+};
 use parallel_processor::memory_data_size::MemoryDataSize;
 use std::mem::size_of;
 use std::sync::atomic::AtomicUsize;
@@ -31,12 +35,24 @@ const_assert!(FIRST_BUCKET_BITS + SECOND_BUCKET_BITS >= 16);
 pub const FIRST_BUCKETS_COUNT: usize = 1 << FIRST_BUCKET_BITS;
 pub const SECOND_BUCKETS_COUNT: usize = 1 << SECOND_BUCKET_BITS;
 
+pub const PARTIAL_VECS_CHECKPOINT_SIZE: LockFreeCheckpointSize =
+    LockFreeCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(2));
+
+pub const MINIMIZER_BUCKETS_CHECKPOINT_SIZE: CompressedCheckpointSize =
+    CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(8));
+
 pub const MERGE_RESULTS_BUCKETS_COUNT: usize = 256;
 
 pub const DEFAULT_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024 * 4;
 pub const DEFAULT_PER_CPU_BUFFER_SIZE: MemoryDataSize = MemoryDataSize::from_kibioctets(4);
 
 pub const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(15);
+
+pub const MINIMUM_RESPLIT_SIZE: usize = 1024 * 1024 * 32;
+
+pub const DEFAULT_LZ4_COMPRESSION_LEVEL: u32 = 1;
+
+pub const EXTRA_BUFFERS_COUNT: usize = SECOND_BUCKETS_COUNT * 20 / 3;
 
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]

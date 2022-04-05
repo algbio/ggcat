@@ -122,9 +122,6 @@ pub struct MemoryFileInternal {
 
 impl MemoryFileInternal {
     pub fn create_new(path: impl AsRef<Path>, mode: MemoryFileMode) -> Arc<Self> {
-        // Remove the file if it existed from a previous run
-        let _ = remove_file(&path);
-
         let new_file = Arc::new(Self {
             path: path.as_ref().into(),
             file: RwLock::new(UnderlyingFile::NotOpened),
@@ -229,6 +226,9 @@ impl MemoryFileInternal {
     }
 
     fn create_writing_underlying_file(&self) -> UnderlyingFile {
+        // Remove the file if it existed from a previous run
+        let _ = remove_file(&self.path);
+
         UnderlyingFile::WriteMode {
             file: Arc::new((
                 self.path.clone(),

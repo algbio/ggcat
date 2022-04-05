@@ -10,14 +10,16 @@ use crate::utils::vec_slice::VecSlice;
 use crate::utils::{get_memory_mode, Utils};
 use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
-use parallel_processor::buckets::bucket_writer::BucketWriter;
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
+use parallel_processor::buckets::bucket_writer::BucketItem;
+use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
+use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::single::SingleBucketThreadDispatcher;
+use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
-use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
+use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::io::{Read, Write};
@@ -30,16 +32,10 @@ pub struct LinkMapping {
     pub entry: u64,
 }
 
-impl LinkMapping {
-    pub fn from_stream(mut reader: impl Read) -> Option<LinkMapping> {
-        let bucket = decode_varint(|| reader.read_u8().ok())? as BucketIndexType;
-        let entry = decode_varint(|| reader.read_u8().ok())?;
-        Some(LinkMapping { bucket, entry })
-    }
-}
-
-impl BucketWriter for LinkMapping {
+impl BucketItem for LinkMapping {
     type ExtraData = ();
+    type ReadBuffer = ();
+    type ReadType<'a> = Self;
 
     #[inline(always)]
     fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
@@ -47,8 +43,20 @@ impl BucketWriter for LinkMapping {
         encode_varint(|b| bucket.write_all(b), self.entry).unwrap();
     }
 
+    fn read_from<'a, S: Read>(
+        mut stream: S,
+        _read_buffer: &'a mut Self::ReadBuffer,
+    ) -> Option<Self::ReadType<'a>> {
+        let bucket = decode_varint(|| stream.read_u8().ok())?;
+        let entry = decode_varint(|| stream.read_u8().ok())?;
+        Some(Self {
+            bucket: bucket as BucketIndexType,
+            entry,
+        })
+    }
+
     #[inline(always)]
-    fn get_size(&self) -> usize {
+    fn get_size(&self, _: &()) -> usize {
         16
     }
 }
@@ -62,26 +70,28 @@ impl AssemblePipeline {
         result_map_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
         final_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
         links_manager: &UnitigLinksManager,
+        link_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
+        result_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
     ) -> (Vec<PathBuf>, u64) {
         let totsum = AtomicU64::new(0);
 
         let mut links_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
+            output_dir
+                .as_ref()
+                .to_path_buf()
+                .join(format!("linksi{}", elab_index)),
             &(
-                output_dir
-                    .as_ref()
-                    .to_path_buf()
-                    .join(format!("linksi{}", elab_index)),
                 get_memory_mode(SwapPriority::LinksBuckets as usize),
+                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
-            None,
         );
 
         links_inputs.par_iter().for_each(|input| {
             let bucket_index = Utils::get_bucket_index(input);
 
-            let mut links_tmp =
-                BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &links_buckets);
+            let mut link_buffers = link_thread_buffers.get();
+            let mut links_tmp = BucketsThreadDispatcher::new(&links_buckets, &mut link_buffers);
             let mut final_links_tmp = SingleBucketThreadDispatcher::new(
                 DEFAULT_PER_CPU_BUFFER_SIZE,
                 bucket_index,
@@ -89,30 +99,33 @@ impl AssemblePipeline {
             );
             let mut thread_links_manager =
                 ThreadUnitigsLinkManager::new(links_manager, bucket_index);
+
+            let mut result_buffers = result_thread_buffers.get();
             let mut results_tmp =
-                BucketsThreadDispatcher::new(DEFAULT_PER_CPU_BUFFER_SIZE, &result_map_buckets);
+                BucketsThreadDispatcher::new(&result_map_buckets, &mut result_buffers);
 
             let mut rand_bool = FastRandBool::new();
 
-            let mut reader = FileReader::open(&input).unwrap();
+            let mut file_reader = LockFreeBinaryReader::new(
+                input,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+            );
+
+            let mut stream = file_reader.get_read_parallel_stream().unwrap();
+
             let mut vec = Vec::new();
 
             let mut last_unitigs_vec = Vec::new();
             let mut current_unitigs_vec = Vec::new();
             let mut final_unitigs_vec = Vec::new();
 
-            while let Some(entry) = UnitigLink::read_from(&mut reader, &mut last_unitigs_vec) {
+            while let Some(entry) = UnitigLink::read_from(&mut stream, &mut last_unitigs_vec) {
                 vec.push(entry);
             }
 
-            drop(reader);
-            MemoryFs::remove_file(
-                &input,
-                RemoveFileMode::Remove {
-                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-                },
-            )
-            .unwrap();
+            drop(file_reader);
 
             crate::make_comparer!(Compare, UnitigLink, entry: u64);
             fast_smart_radix_sort::<_, Compare, false>(&mut vec[..]);

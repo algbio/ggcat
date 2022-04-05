@@ -1,97 +1,129 @@
-use crate::config::{SwapPriority, SECOND_BUCKETS_COUNT};
+use crate::config::{SwapPriority, PARTIAL_VECS_CHECKPOINT_SIZE, SECOND_BUCKETS_COUNT};
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
-use crate::io::concurrent::temp_reads::reads_reader::IntermediateReadsReader;
 use crate::io::varint::{decode_varint_flags, encode_varint_flags};
+use crate::utils::get_memory_mode;
+use crate::utils::resource_counter::ResourceCounter;
 use crate::{CompressedRead, KEEP_FILES};
 use byteorder::ReadBytesExt;
 use crossbeam::queue::SegQueue;
+use parallel_processor::buckets::bucket_writer::BucketItem;
+use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
+use parallel_processor::buckets::readers::generic_binary_reader::{
+    ChunkDecoder, GenericChunkedBinaryReader,
+};
+use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
-use parallel_processor::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
+use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parking_lot::Condvar;
 use std::io::Read;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
-pub struct ReadRef(());
+#[derive(Copy, Clone, Debug)]
+pub struct ReadRef<'a, E: SequenceExtraData, FlagsCount: typenum::Unsigned> {
+    pub flags: u8,
+    pub read: CompressedRead<'a>,
+    pub _phantom: PhantomData<(E, FlagsCount)>,
+}
 
-impl ReadRef {
-    #[inline(always)]
-    #[allow(non_camel_case_types)]
-    pub fn pack<'a, E: SequenceExtraData, FLAGS_COUNT: typenum::Unsigned>(
-        flags: u8,
-        read: CompressedRead,
-        extra: &E,
-        memory: &'a mut Vec<u8>,
-    ) -> &'a [u8] {
-        memory.clear();
+impl<'x, E: SequenceExtraData, FlagsCount: typenum::Unsigned> BucketItem
+    for ReadRef<'x, E, FlagsCount>
+{
+    type ExtraData = E;
+    type ReadBuffer = Vec<u8>;
+    type ReadType<'a> = (ReadRef<'a, E, FlagsCount>, E);
 
-        encode_varint_flags::<_, _, FLAGS_COUNT>(
-            |slice| memory.extend_from_slice(slice),
-            read.bases_count() as u64,
-            flags,
+    fn write_to(&self, bucket: &mut Vec<u8>, extra_data: &Self::ExtraData) {
+        encode_varint_flags::<_, _, FlagsCount>(
+            |slice| bucket.extend_from_slice(slice),
+            self.read.bases_count() as u64,
+            self.flags,
         );
-        read.copy_to_buffer(memory);
-        extra.encode(memory);
-
-        memory.as_slice()
+        self.read.copy_to_buffer(bucket);
+        extra_data.encode(bucket);
     }
 
-    #[inline(always)]
-    #[allow(non_camel_case_types)]
-    pub fn unpack<'a, E: SequenceExtraData, R: Read, FLAGS_COUNT: typenum::Unsigned>(
-        stream: &mut R,
-        tmp_read_bases: &'a mut Vec<u8>,
-    ) -> Option<(u8, CompressedRead<'a>, E)> {
-        let (read_len, flags) = decode_varint_flags::<_, FLAGS_COUNT>(|| stream.read_u8().ok())?;
+    fn read_from<'b, S: Read>(
+        mut stream: S,
+        read_buffer: &'b mut Self::ReadBuffer,
+    ) -> Option<Self::ReadType<'b>> {
+        let (read_len, flags) = decode_varint_flags::<_, FlagsCount>(|| stream.read_u8().ok())?;
 
         let read_len = read_len as usize;
         let read_len_bytes = (read_len + 3) / 4;
 
-        tmp_read_bases.clear();
-        tmp_read_bases.reserve(read_len_bytes);
+        read_buffer.clear();
+        read_buffer.reserve(read_len_bytes);
         unsafe {
-            tmp_read_bases.set_len(read_len_bytes);
+            read_buffer.set_len(read_len_bytes);
         }
-        stream.read_exact(tmp_read_bases.as_mut_slice()).unwrap();
+        stream.read_exact(read_buffer.as_mut_slice()).unwrap();
 
-        let read = CompressedRead::new_from_compressed(tmp_read_bases.as_slice(), read_len);
+        let read = CompressedRead::<'b>::new_from_compressed(read_buffer.as_slice(), read_len);
 
-        let extra_data = E::decode(stream).unwrap();
+        let extra = E::decode(&mut stream).unwrap();
 
-        Some((flags, read, extra_data))
+        Some((
+            ReadRef {
+                flags,
+                read,
+                _phantom: PhantomData,
+            },
+            extra,
+        ))
+    }
+
+    fn get_size(&self, extra: &Self::ExtraData) -> usize {
+        extra.max_size() + 12 + (self.read.bases_count() / 4)
     }
 }
 
-unsafe impl Sync for ReadRef {}
-unsafe impl Send for ReadRef {}
+// pub struct ReprocessData<E: SequenceExtraData> {
+//     pub reader: FileReader,
+// }
 
-pub struct BucketProcessData<E: SequenceExtraData> {
-    pub reader: IntermediateReadsReader<E>,
-    pub buckets: MultiThreadBuckets<LockFreeBinaryWriter>,
-    vecs_queue: Arc<SegQueue<(PathBuf, bool)>>,
-    instances_count: Arc<AtomicUsize>,
-    notify_condvar: Arc<Condvar>,
+pub struct ProcessQueueItem {
+    pub path: PathBuf,
+    pub can_resplit: bool,
+    pub buffers_counter: Arc<ResourceCounter>,
 }
 
-static QUEUE_IDENTIFIER: AtomicU64 = AtomicU64::new(0);
+impl Drop for ProcessQueueItem {
+    fn drop(&mut self) {
+        self.buffers_counter
+            .deallocate(1, SECOND_BUCKETS_COUNT as u64);
+    }
+}
 
-impl<E: SequenceExtraData> BucketProcessData<E> {
-    pub fn new(
+pub struct BucketProcessData<FileType: ChunkDecoder> {
+    pub reader: GenericChunkedBinaryReader<FileType>,
+    pub buckets: MultiThreadBuckets<LockFreeBinaryWriter>,
+    process_queue: Arc<SegQueue<ProcessQueueItem>>,
+    buffers_counter: Arc<ResourceCounter>,
+    can_resplit: bool,
+}
+
+impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
+    pub fn new_blocking(
         path: impl AsRef<Path>,
-        vecs_queue: Arc<SegQueue<(PathBuf, bool)>>,
-        instances_count: Arc<AtomicUsize>,
-        notify_condvar: Arc<Condvar>,
+        split_name: &str,
+        process_queue: Arc<SegQueue<ProcessQueueItem>>,
+        buffers_counter: Arc<ResourceCounter>,
+        resplit_phase: bool,
     ) -> Self {
-        instances_count.fetch_add(1, Ordering::Relaxed);
-
+        if resplit_phase {
+            buffers_counter.allocate_overflow(SECOND_BUCKETS_COUNT as u64);
+        } else {
+            buffers_counter.allocate_blocking(SECOND_BUCKETS_COUNT as u64);
+        }
         let tmp_dir = path.as_ref().parent().unwrap_or(Path::new("."));
         Self {
-            reader: IntermediateReadsReader::<E>::new(
+            reader: GenericChunkedBinaryReader::<FileType>::new(
                 &path,
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
@@ -99,30 +131,27 @@ impl<E: SequenceExtraData> BucketProcessData<E> {
             ),
             buckets: MultiThreadBuckets::new(
                 SECOND_BUCKETS_COUNT,
+                PathBuf::from(tmp_dir).join(split_name),
                 &(
-                    PathBuf::from(tmp_dir).join(format!(
-                        "vec{}",
-                        QUEUE_IDENTIFIER.fetch_add(1, Ordering::Relaxed)
-                    )),
-                    MemoryFileMode::PreferMemory {
-                        swap_priority: SwapPriority::KmersMergeBuckets,
-                    },
+                    get_memory_mode(SwapPriority::KmersMergeBuckets),
+                    PARTIAL_VECS_CHECKPOINT_SIZE,
                 ),
-                None,
             ),
-            vecs_queue,
-            instances_count,
-            notify_condvar,
+            process_queue,
+            buffers_counter,
+            can_resplit: !resplit_phase,
         }
     }
 }
 
-impl<E: SequenceExtraData> Drop for BucketProcessData<E> {
+impl<FileType: ChunkDecoder> Drop for BucketProcessData<FileType> {
     fn drop(&mut self) {
         for path in self.buckets.finalize() {
-            self.vecs_queue.push((path, true));
+            self.process_queue.push(ProcessQueueItem {
+                path,
+                can_resplit: self.can_resplit,
+                buffers_counter: self.buffers_counter.clone(),
+            });
         }
-        self.instances_count.fetch_sub(1, Ordering::Relaxed);
-        self.notify_condvar.notify_all();
     }
 }

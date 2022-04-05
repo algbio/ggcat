@@ -90,7 +90,7 @@ pub trait ColorsMergeManager<H: HashFunctionFactory, C: ColorsManager>: Sized {
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]);
 }
 
-pub trait ColorsManager: 'static + Sized {
+pub trait ColorsManager: 'static + Sync + Send + Sized {
     const COLORS_ENABLED: bool;
 
     type GlobalColorsTable: Sync + 'static;

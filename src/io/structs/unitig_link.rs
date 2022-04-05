@@ -3,7 +3,7 @@ use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::utils::vec_slice::VecSlice;
 use byteorder::ReadBytesExt;
-use parallel_processor::buckets::bucket_writer::BucketWriter;
+use parallel_processor::buckets::bucket_writer::BucketItem;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -241,30 +241,10 @@ pub struct UnitigLink {
     pub entries: VecSlice<UnitigIndex>,
 }
 
-impl UnitigLink {
-    pub fn read_from(mut reader: impl Read, out_vec: &mut Vec<UnitigIndex>) -> Option<Self> {
-        let entry = decode_varint(|| reader.read_u8().ok())?;
-        let flags = reader.read_u8().ok()?;
-
-        let len = decode_varint(|| reader.read_u8().ok())? as usize;
-
-        let start = out_vec.len();
-        for _i in 0..len {
-            let bucket = decode_varint(|| reader.read_u8().ok())? as BucketIndexType;
-            let index = decode_varint(|| reader.read_u8().ok())?;
-            out_vec.push(UnitigIndex::new_raw(bucket, index as usize));
-        }
-
-        Some(Self {
-            entry,
-            flags: UnitigFlags(flags),
-            entries: VecSlice::new(start, len),
-        })
-    }
-}
-
-impl BucketWriter for UnitigLink {
+impl BucketItem for UnitigLink {
     type ExtraData = Vec<UnitigIndex>;
+    type ReadBuffer = Vec<UnitigIndex>;
+    type ReadType<'a> = Self;
 
     #[inline(always)]
     fn write_to(&self, bucket: &mut Vec<u8>, extra_data: &Self::ExtraData) {
@@ -284,7 +264,30 @@ impl BucketWriter for UnitigLink {
         }
     }
 
-    fn get_size(&self) -> usize {
+    fn read_from<'a, S: Read>(
+        mut stream: S,
+        read_buffer: &'a mut Self::ReadBuffer,
+    ) -> Option<Self::ReadType<'a>> {
+        let entry = decode_varint(|| stream.read_u8().ok())?;
+        let flags = stream.read_u8().ok()?;
+
+        let len = decode_varint(|| stream.read_u8().ok())? as usize;
+
+        let start = read_buffer.len();
+        for _i in 0..len {
+            let bucket = decode_varint(|| stream.read_u8().ok())? as BucketIndexType;
+            let index = decode_varint(|| stream.read_u8().ok())?;
+            read_buffer.push(UnitigIndex::new_raw(bucket, index as usize));
+        }
+
+        Some(Self {
+            entry,
+            flags: UnitigFlags(flags),
+            entries: VecSlice::new(start, len),
+        })
+    }
+
+    fn get_size(&self, _: &Vec<UnitigIndex>) -> usize {
         16 + self.entries.len() * 8
     }
 }

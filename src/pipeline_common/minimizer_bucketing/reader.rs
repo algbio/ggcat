@@ -9,11 +9,10 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 pub fn minb_reader<
-    ReadAssociatedData: SequenceExtraData,
     GlobalData,
     FileInfo: Clone + Sync + Send + Default,
 >(
-    context: &MinimizerBucketingExecutionContext<ReadAssociatedData, GlobalData>,
+    context: &MinimizerBucketingExecutionContext<GlobalData>,
     manager: ObjectsPoolManager<MinimizerBucketingQueueData<FileInfo>, (PathBuf, FileInfo)>,
 ) {
     while let Some((input, file_info)) = manager.recv_obj() {
