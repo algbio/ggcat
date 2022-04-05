@@ -3,7 +3,10 @@ use parking_lot::lock_api::RawRwLock;
 use parking_lot::RwLock;
 use std::time::{Duration, Instant};
 #[cfg(feature = "process-stats")]
-use {nightly_quirks::utils::NightlyUtils, parking_lot::Mutex, std::cmp::max};
+use {
+    crate::memory_data_size::MemoryDataSize, nightly_quirks::utils::NightlyUtils,
+    parking_lot::Mutex, std::cmp::max,
+};
 
 pub struct PhaseResult {
     name: String,
