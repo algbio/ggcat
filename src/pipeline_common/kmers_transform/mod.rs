@@ -1,8 +1,9 @@
 pub mod structs;
 
 use crate::config::{
-    BucketIndexType, SortingHashType, DEFAULT_PER_CPU_BUFFER_SIZE, FIRST_BUCKETS_COUNT,
-    MINIMUM_LOG_DELTA_TIME, MINIMUM_RESPLIT_SIZE, RESPLIT_MINIMIZER_MASK, SECOND_BUCKETS_COUNT,
+    BucketIndexType, SortingHashType, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_LOG_DELTA_TIME,
+    MINIMUM_RESPLIT_SIZE, OUTLIER_MAX_RATIO, OUTLIER_MIN_DIFFERENCE, RESPLIT_MINIMIZER_MASK,
+    SECOND_BUCKETS_COUNT, SUBBUCKET_OUTLIER_DIVISOR,
 };
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -14,9 +15,7 @@ use crate::utils::compressed_read::CompressedRead;
 use crate::utils::resource_counter::ResourceCounter;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::compressed_binary_reader::{
-    CompressedBinaryReader, CompressedStreamDecoder,
-};
+use parallel_processor::buckets::readers::compressed_binary_reader::CompressedStreamDecoder;
 use parallel_processor::buckets::readers::generic_binary_reader::ChunkDecoder;
 use parallel_processor::buckets::readers::lock_free_binary_reader::{
     LockFreeBinaryReader, LockFreeStreamDecoder,
@@ -24,12 +23,11 @@ use parallel_processor::buckets::readers::lock_free_binary_reader::{
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parking_lot::lock_api::MutexGuard;
 use parking_lot::{Mutex, RwLock};
 use std::cmp::min;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 use structs::ReadRef;
@@ -81,12 +79,11 @@ pub trait KmersTransformExecutor<'x, F: KmersTransformExecutorFactory> {
 
 pub struct KmersTransform<'a, F: KmersTransformExecutorFactory> {
     buckets_count: usize,
-    buckets_total_size: u64,
     buffer_files_counter: Arc<ResourceCounter>,
 
     global_extra_data: F::GlobalExtraData<'a>,
 
-    files_queue: ArrayQueue<PathBuf>,
+    files_queue: ArrayQueue<(PathBuf, bool)>,
 
     current_bucket: RwLock<Weak<BucketProcessData<CompressedStreamDecoder>>>,
     current_resplit_bucket: RwLock<Weak<BucketProcessData<LockFreeStreamDecoder>>>,
@@ -105,21 +102,46 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         file_inputs: Vec<PathBuf>,
         buckets_count: usize,
         extra_buffers_count: usize,
-        threads_count: usize,
         global_extra_data: F::GlobalExtraData<'a>,
     ) -> Self {
         let files_queue = ArrayQueue::new(file_inputs.len());
 
-        let mut buckets_total_size = 0;
+        let mut files_with_sizes: Vec<_> = file_inputs
+            .into_iter()
+            .map(|f| {
+                let file_size = MemoryFs::get_file_size(&f).unwrap_or(0);
+                (f, file_size, false)
+            })
+            .collect();
 
-        file_inputs.into_iter().for_each(|f| {
-            buckets_total_size += MemoryFs::get_file_size(&f).unwrap_or(0);
-            files_queue.push(f).unwrap()
-        });
+        files_with_sizes.sort_by_key(|x| x.1);
+        files_with_sizes.reverse();
+
+        let max_size = files_with_sizes[0].1;
+
+        /*
+         * Bucket outlier definition:
+         * - More than 30% difference from the next smaller
+         * - less than 50% difference from the biggest bucket
+         */
+        for idx in 0..(files_with_sizes.len() - 1) {
+            let crt_size = files_with_sizes[idx].1;
+            let next_size = files_with_sizes[idx].1;
+            let distance_req = crt_size as f64 > next_size as f64 * (1.0 + OUTLIER_MIN_DIFFERENCE);
+            let maxim_req = crt_size as f64 > max_size as f64 * OUTLIER_MAX_RATIO;
+            if distance_req && maxim_req {
+                for midx in 0..=idx {
+                    files_with_sizes[midx].2 = true;
+                }
+            }
+        }
+
+        for (file, _size, outlier) in files_with_sizes.into_iter() {
+            files_queue.push((file, outlier)).unwrap();
+        }
 
         Self {
             buckets_count,
-            buckets_total_size: buckets_total_size as u64,
             buffer_files_counter: ResourceCounter::new(
                 (SECOND_BUCKETS_COUNT + extra_buffers_count) as u64,
             ),
@@ -262,6 +284,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     self.process_queue.clone(),
                     self.buffer_files_counter.clone(),
                     true,
+                    false,
                 ),
             ))
         }) {
@@ -304,19 +327,25 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         did_resplit
     }
 
-    fn process_buffers(&self, executor: &mut F::ExecutorType<'a>, typical_sub_bucket_size: usize) {
+    fn process_buffers(&self, executor: &mut F::ExecutorType<'a>) {
         while let Some(ProcessQueueItem {
             ref path,
             ref can_resplit,
+            ref potential_outlier,
+            ref main_bucket_size,
             ..
         }) = self.process_queue.pop()
         {
             executor.maybe_swap_bucket(&self.global_extra_data);
 
             let file_size = FileReader::open(path).unwrap().total_file_size();
-            let is_outlier = file_size > typical_sub_bucket_size * SECOND_BUCKETS_COUNT;
+            let subbucket_outlier = file_size > main_bucket_size / SUBBUCKET_OUTLIER_DIVISOR;
 
-            if !is_outlier || !*can_resplit || (file_size < MINIMUM_RESPLIT_SIZE) {
+            if !*potential_outlier
+                || !subbucket_outlier
+                || !*can_resplit
+                || (file_size < MINIMUM_RESPLIT_SIZE)
+            {
                 let reader =
                     LockFreeBinaryReader::new(path, RemoveFileMode::Remove { remove_fs: true });
                 executor.process_group(&self.global_extra_data, reader);
@@ -325,8 +354,8 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     "Resplitting bucket {} size: {} / {} [{}]",
                     path.display(),
                     file_size,
-                    typical_sub_bucket_size * SECOND_BUCKETS_COUNT,
-                    typical_sub_bucket_size
+                    main_bucket_size / SUBBUCKET_OUTLIER_DIVISOR,
+                    main_bucket_size
                 );
                 self.reprocess_queue.push(path.clone());
             }
@@ -334,9 +363,6 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
     }
 
     pub fn parallel_kmers_transform(&self, threads_count: usize) {
-        let typical_sub_bucket_size =
-            self.buckets_total_size as usize / (FIRST_BUCKETS_COUNT * SECOND_BUCKETS_COUNT);
-
         crossbeam::thread::scope(|s| {
             for _ in 0..min(self.buckets_count, threads_count) {
                 s.builder()
@@ -350,7 +376,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                         );
 
                         loop {
-                            self.process_buffers(&mut executor, typical_sub_bucket_size);
+                            self.process_buffers(&mut executor);
 
                             if self.resplit_buckets(&mut splitter, &mut local_buffer) {
                                 continue;
@@ -358,7 +384,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
 
                             let bucket =
                                 match Self::get_current_bucket(&self.current_bucket, || {
-                                    let file = self.files_queue.pop()?;
+                                    let (file, outlier) = self.files_queue.pop()?;
 
                                     Some(Arc::new(BucketProcessData::new_blocking(
                                         file,
@@ -370,6 +396,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                         self.process_queue.clone(),
                                         self.buffer_files_counter.clone(),
                                         false,
+                                        outlier,
                                     )))
                                 }) {
                                     None => {

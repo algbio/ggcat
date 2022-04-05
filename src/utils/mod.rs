@@ -8,10 +8,8 @@ pub mod resource_counter;
 pub mod vec_slice;
 
 use crate::config::BucketIndexType;
-use crate::{KEEP_FILES, PREFER_MEMORY};
+use crate::PREFER_MEMORY;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use parallel_processor::memory_fs::file::reader::FileReader;
-use serde::de::DeserializeOwned;
 use std::cmp::{max, min};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;

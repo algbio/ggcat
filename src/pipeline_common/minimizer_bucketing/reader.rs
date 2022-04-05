@@ -1,4 +1,3 @@
-use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::sequences_reader::SequencesReader;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutionContext;
@@ -8,10 +7,7 @@ use std::mem::swap;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
-pub fn minb_reader<
-    GlobalData,
-    FileInfo: Clone + Sync + Send + Default,
->(
+pub fn minb_reader<GlobalData, FileInfo: Clone + Sync + Send + Default>(
     context: &MinimizerBucketingExecutionContext<GlobalData>,
     manager: ObjectsPoolManager<MinimizerBucketingQueueData<FileInfo>, (PathBuf, FileInfo)>,
 ) {

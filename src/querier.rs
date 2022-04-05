@@ -2,10 +2,9 @@ use crate::colors::colors_manager::ColorsManager;
 use crate::hashes::HashFunctionFactory;
 use crate::query_pipeline::QueryPipeline;
 use crate::utils::Utils;
-use crate::{QuerierStartingStep, SAVE_MEMORY};
+use crate::QuerierStartingStep;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 
 pub fn run_query<
     BucketingHash: HashFunctionFactory,
@@ -56,7 +55,6 @@ pub fn run_query<
             k,
             m,
             threads_count,
-            SAVE_MEMORY.load(Ordering::Relaxed),
         )
     } else {
         Utils::generate_bucket_names(temp_dir.join("counters"), BUCKETS_COUNT, Some("tmp"))

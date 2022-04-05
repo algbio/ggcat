@@ -2,7 +2,6 @@ use crate::buckets::bucket_writer::BucketItem;
 use crate::buckets::{LockFreeBucket, MultiThreadBuckets};
 use crate::memory_data_size::MemoryDataSize;
 use rand::{thread_rng, RngCore};
-use std::marker::PhantomData;
 
 pub struct BucketsThreadBuffer {
     buffers: Vec<Vec<u8>>,

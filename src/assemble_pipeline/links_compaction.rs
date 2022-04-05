@@ -17,8 +17,7 @@ use parallel_processor::buckets::single::SingleBucketThreadDispatcher;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
-use parallel_processor::memory_fs::file::reader::FileReader;
-use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
+use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
@@ -106,7 +105,7 @@ impl AssemblePipeline {
 
             let mut rand_bool = FastRandBool::new();
 
-            let mut file_reader = LockFreeBinaryReader::new(
+            let file_reader = LockFreeBinaryReader::new(
                 input,
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),

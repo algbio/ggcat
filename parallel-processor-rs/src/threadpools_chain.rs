@@ -93,7 +93,6 @@ pub struct ObjectsPoolManager<'a, OS: ThreadChainObject, OR: ThreadChainObject> 
     recv_objects_pool: &'a SegQueue<OR>,
     sender: &'a Sender<OS>,
     receiver: &'a Receiver<OR>,
-    queue_waiting_name: &'static str,
     thread_index: usize,
     concurrency_limit: &'a AtomicUsize,
 }
@@ -146,9 +145,6 @@ impl ThreadPoolsChain {
     ) -> Vec<OO> {
         let mut output = Vec::new();
 
-        let waiting_name_1 = Box::new(format!("{}{}", first.name, "_WAITING_QUEUE_SIZE"));
-        let waiting_name_1 = waiting_name_1.as_str();
-
         thread::scope(|s| {
             let mut threads = Vec::with_capacity(first.max_threads_count);
 
@@ -187,7 +183,6 @@ impl ThreadPoolsChain {
                                 recv_objects_pool: in_pool_arc.as_ref(),
                                 sender: out_sender_arc.as_ref(),
                                 receiver: in_receiver_arc.as_ref(),
-                                queue_waiting_name: unsafe { core::mem::transmute(waiting_name_1) },
                                 thread_index,
                                 concurrency_limit: first.current_thread_count,
                             },
@@ -225,12 +220,6 @@ impl ThreadPoolsChain {
         second: ThreadPoolDefinition<C2, O2, O1, F2>,
     ) -> Vec<O2> {
         let mut output = Vec::new();
-
-        let waiting_name_1 = Box::new(format!("{}{}", first.name, "_WAITING_QUEUE_SIZE"));
-        let waiting_name_2 = Box::new(format!("{}{}", second.name, "_WAITING_QUEUE_SIZE"));
-
-        let waiting_name_1 = waiting_name_1.as_str();
-        let waiting_name_2 = waiting_name_2.as_str();
 
         thread::scope(|s| {
             let mut first_threads = Vec::with_capacity(first.max_threads_count);
@@ -275,7 +264,6 @@ impl ThreadPoolsChain {
                                 recv_objects_pool: in_pool_arc.as_ref(),
                                 sender: f_sender_arc.as_ref(),
                                 receiver: in_receiver_arc.as_ref(),
-                                queue_waiting_name: unsafe { core::mem::transmute(waiting_name_1) },
                                 thread_index,
                                 concurrency_limit: first.current_thread_count,
                             },
@@ -308,7 +296,6 @@ impl ThreadPoolsChain {
                                 recv_objects_pool: f_pool_arc.as_ref(),
                                 sender: s_sender_arc.as_ref(),
                                 receiver: f_receiver_arc.as_ref(),
-                                queue_waiting_name: unsafe { core::mem::transmute(waiting_name_2) },
                                 thread_index,
                                 concurrency_limit: second.current_thread_count,
                             },

@@ -6,7 +6,7 @@ use std::cmp::min;
 use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::io::{Read, Write};
-use std::slice::from_raw_parts_mut;
+use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::atomic::AtomicUsize;
 use unchecked_index::{unchecked_index, UncheckedIndex};
 
@@ -32,7 +32,9 @@ impl<const LEN: usize> BucketItem for SortedData<LEN> {
 
     #[inline(always)]
     fn write_to(&self, bucket: &mut Vec<u8>, _: &Self::ExtraData) {
-        bucket.write(self.data.as_slice()).unwrap();
+        bucket
+            .write(unsafe { from_raw_parts(self as *const Self as *const u8, LEN) })
+            .unwrap();
     }
 
     #[inline(always)]
@@ -40,7 +42,9 @@ impl<const LEN: usize> BucketItem for SortedData<LEN> {
         mut stream: S,
         read_buffer: &'a mut Self::ReadBuffer,
     ) -> Option<Self::ReadType<'a>> {
-        stream.read(read_buffer.data.as_mut_slice()).ok()?;
+        stream
+            .read(unsafe { from_raw_parts_mut(read_buffer as *mut Self as *mut u8, LEN) })
+            .ok()?;
         Some(read_buffer)
     }
 

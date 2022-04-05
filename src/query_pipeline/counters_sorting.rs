@@ -7,7 +7,7 @@ use byteorder::ReadBytesExt;
 use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
-use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
+use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;

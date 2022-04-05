@@ -1,5 +1,4 @@
 use crate::assemble_pipeline::assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
-use crate::assemble_pipeline::node_state::NodeState;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_manager::{color_types, ColorsManager};
@@ -35,14 +34,11 @@ use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter
 use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 #[cfg(feature = "mem-analysis")]
 use parallel_processor::mem_tracker::MemoryInfo;
-use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use structs::*;
 
 pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;
@@ -636,7 +632,6 @@ impl AssemblePipeline {
         k: usize,
         m: usize,
         threads_count: usize,
-        save_memory: bool,
     ) -> RetType {
         PHASES_TIMES_MONITOR
             .write()
@@ -701,7 +696,6 @@ impl AssemblePipeline {
             file_inputs,
             buckets_count,
             EXTRA_BUFFERS_COUNT,
-            threads_count,
             global_data,
         )
         .parallel_kmers_transform(threads_count);

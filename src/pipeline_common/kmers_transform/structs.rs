@@ -8,16 +8,12 @@ use crate::{CompressedRead, KEEP_FILES};
 use byteorder::ReadBytesExt;
 use crossbeam::queue::SegQueue;
 use parallel_processor::buckets::bucket_writer::BucketItem;
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::generic_binary_reader::{
     ChunkDecoder, GenericChunkedBinaryReader,
 };
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
-use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::RemoveFileMode;
-use parking_lot::Condvar;
 use std::io::Read;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -90,6 +86,8 @@ impl<'x, E: SequenceExtraData, FlagsCount: typenum::Unsigned> BucketItem
 pub struct ProcessQueueItem {
     pub path: PathBuf,
     pub can_resplit: bool,
+    pub potential_outlier: bool,
+    pub main_bucket_size: usize,
     pub buffers_counter: Arc<ResourceCounter>,
 }
 
@@ -106,6 +104,7 @@ pub struct BucketProcessData<FileType: ChunkDecoder> {
     process_queue: Arc<SegQueue<ProcessQueueItem>>,
     buffers_counter: Arc<ResourceCounter>,
     can_resplit: bool,
+    is_outlier: bool,
 }
 
 impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
@@ -115,6 +114,7 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
         process_queue: Arc<SegQueue<ProcessQueueItem>>,
         buffers_counter: Arc<ResourceCounter>,
         resplit_phase: bool,
+        is_outlier: bool,
     ) -> Self {
         if resplit_phase {
             buffers_counter.allocate_overflow(SECOND_BUCKETS_COUNT as u64);
@@ -140,16 +140,20 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
             process_queue,
             buffers_counter,
             can_resplit: !resplit_phase,
+            is_outlier,
         }
     }
 }
 
 impl<FileType: ChunkDecoder> Drop for BucketProcessData<FileType> {
     fn drop(&mut self) {
+        let bucket_file_size = self.reader.get_length();
         for path in self.buckets.finalize() {
             self.process_queue.push(ProcessQueueItem {
                 path,
                 can_resplit: self.can_resplit,
+                potential_outlier: self.is_outlier,
+                main_bucket_size: bucket_file_size,
                 buffers_counter: self.buffers_counter.clone(),
             });
         }

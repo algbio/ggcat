@@ -1,7 +1,4 @@
-use crate::KEEP_FILES;
 use core::fmt::Debug;
-use parallel_processor::memory_fs::file::reader::FileReader;
-use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use std::io::{Cursor, Read, Write};
 
 struct PointerDecoder {

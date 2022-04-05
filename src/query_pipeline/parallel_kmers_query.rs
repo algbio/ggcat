@@ -25,8 +25,6 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
-use parallel_processor::memory_data_size::MemoryDataSize;
-use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::io::{Read, Write};
@@ -185,25 +183,22 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         reader.decode_all_bucket_items::<ReadRef<
             QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>,
             <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
-        >, _>(
-            Vec::new(),
-            |(ReadRef { flags, read, .. }, sequence_type)| {
-                let hashes = MH::new(read, k);
+        >, _>(Vec::new(), |(ReadRef { read, .. }, sequence_type)| {
+            let hashes = MH::new(read, k);
 
-                match sequence_type {
-                    QueryKmersReferenceData::Graph(_col_info) => {
-                        for hash in hashes.iter() {
-                            self.phset.insert(hash.to_unextendable());
-                        }
-                    }
-                    QueryKmersReferenceData::Query(index) => {
-                        for hash in hashes.iter() {
-                            self.query_reads.push((index.get(), hash.to_unextendable()));
-                        }
+            match sequence_type {
+                QueryKmersReferenceData::Graph(_col_info) => {
+                    for hash in hashes.iter() {
+                        self.phset.insert(hash.to_unextendable());
                     }
                 }
-            },
-        );
+                QueryKmersReferenceData::Query(index) => {
+                    for hash in hashes.iter() {
+                        self.query_reads.push((index.get(), hash.to_unextendable()));
+                    }
+                }
+            }
+        });
 
         for (query_index, kmer_hash) in self.query_reads.drain(..) {
             if self.phset.contains(&kmer_hash) {
@@ -244,7 +239,6 @@ impl QueryPipeline {
         k: usize,
         m: usize,
         threads_count: usize,
-        save_memory: bool,
     ) -> Vec<PathBuf> {
         PHASES_TIMES_MONITOR
             .write()
@@ -279,7 +273,6 @@ impl QueryPipeline {
             file_inputs,
             buckets_count,
             EXTRA_BUFFERS_COUNT,
-            threads_count,
             global_data,
         )
         .parallel_kmers_transform(threads_count);

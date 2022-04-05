@@ -1,10 +1,9 @@
-use crate::memory_data_size::MemoryDataSize;
 use crate::memory_fs::allocator::CHUNKS_ALLOCATOR;
-use nightly_quirks::utils::NightlyUtils;
 use parking_lot::lock_api::RawRwLock;
-use parking_lot::{Mutex, RwLock};
-use std::cmp::max;
+use parking_lot::RwLock;
 use std::time::{Duration, Instant};
+#[cfg(feature = "process-stats")]
+use {nightly_quirks::utils::NightlyUtils, parking_lot::Mutex, std::cmp::max};
 
 pub struct PhaseResult {
     name: String,
@@ -20,6 +19,7 @@ pub struct PhaseTimesMonitor {
 pub static PHASES_TIMES_MONITOR: RwLock<PhaseTimesMonitor> =
     RwLock::const_new(parking_lot::RawRwLock::INIT, PhaseTimesMonitor::new());
 
+#[cfg(feature = "process-stats")]
 struct ProcessStats {
     user_cpu_total: f64,
     kernel_cpu_total: f64,
@@ -28,6 +28,7 @@ struct ProcessStats {
     samples_cnt: u64,
 }
 
+#[cfg(feature = "process-stats")]
 impl ProcessStats {
     const fn new() -> Self {
         ProcessStats {
@@ -74,8 +75,9 @@ impl ProcessStats {
     }
 }
 
+#[cfg(feature = "process-stats")]
 static GLOBAL_STATS: Mutex<ProcessStats> = NightlyUtils::new_mutex(ProcessStats::new());
-
+#[cfg(feature = "process-stats")]
 static PHASE_STATS: Mutex<ProcessStats> = NightlyUtils::new_mutex(ProcessStats::new());
 
 impl PhaseTimesMonitor {
@@ -133,12 +135,11 @@ impl PhaseTimesMonitor {
         if let Some((name, phase_timer)) = self.phase.take() {
             let elapsed = phase_timer.elapsed();
             println!(
-                "Finished {}. phase duration: {:.2?} gtime: {:.2?} GL:{} PH:{}", // memory: {:.2} {:.2}%
+                "Finished {}. phase duration: {:.2?} gtime: {:.2?}{}", // memory: {:.2} {:.2}%
                 name,
                 &elapsed,
                 self.get_wallclock(),
-                GLOBAL_STATS.lock().format(),
-                PHASE_STATS.lock().format()
+                Self::format_process_stats()
             );
             self.results.push(PhaseResult {
                 name,
@@ -150,6 +151,7 @@ impl PhaseTimesMonitor {
     pub fn start_phase(&mut self, name: String) {
         self.end_phase();
         println!("Started {}", name);
+        #[cfg(feature = "process-stats")]
         PHASE_STATS.lock().reset();
         self.phase = Some((name, Instant::now()));
     }
@@ -175,12 +177,25 @@ impl PhaseTimesMonitor {
             .unwrap_or(Duration::from_millis(0))
     }
 
+    fn format_process_stats() -> String {
+        #[cfg(feature = "process-stats")]
+        {
+            format!(
+                " GL:{} PH:{}",
+                GLOBAL_STATS.lock().format(),
+                PHASE_STATS.lock().format()
+            )
+        }
+        #[cfg(not(feature = "process-stats"))]
+        String::new()
+    }
+
     pub fn get_formatted_counter(&self) -> String {
         let total_mem = CHUNKS_ALLOCATOR.get_total_memory();
         let free_mem = CHUNKS_ALLOCATOR.get_free_memory();
 
         format!(
-            " ptime: {:.2?} gtime: {:.2?} memory: {:.2} {:.2}% GL:{} PH:{}",
+            " ptime: {:.2?} gtime: {:.2?} memory: {:.2} {:.2}%{}",
             self.phase
                 .as_ref()
                 .map(|pt| pt.1.elapsed())
@@ -188,21 +203,19 @@ impl PhaseTimesMonitor {
             self.get_wallclock(),
             total_mem - free_mem,
             ((1.0 - free_mem / total_mem) * 100.0),
-            GLOBAL_STATS.lock().format(),
-            PHASE_STATS.lock().format()
+            Self::format_process_stats()
         )
     }
 
     pub fn get_formatted_counter_without_memory(&self) -> String {
         format!(
-            " ptime: {:.2?} gtime: {:.2?} GL:{} PH:{}",
+            " ptime: {:.2?} gtime: {:.2?}{}",
             self.phase
                 .as_ref()
                 .map(|pt| pt.1.elapsed())
                 .unwrap_or(Duration::from_millis(0)),
             self.get_wallclock(),
-            GLOBAL_STATS.lock().format(),
-            PHASE_STATS.lock().format()
+            Self::format_process_stats()
         )
     }
 

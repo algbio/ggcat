@@ -1,7 +1,5 @@
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
-use parallel_processor::buckets::writers::lock_free_binary_writer::{
-    LockFreeBinaryWriter, LockFreeCheckpointSize,
-};
+use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeCheckpointSize;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use std::mem::size_of;
 use std::sync::atomic::AtomicUsize;
@@ -53,6 +51,10 @@ pub const MINIMUM_RESPLIT_SIZE: usize = 1024 * 1024 * 32;
 pub const DEFAULT_LZ4_COMPRESSION_LEVEL: u32 = 1;
 
 pub const EXTRA_BUFFERS_COUNT: usize = SECOND_BUCKETS_COUNT * 20 / 3;
+
+pub const OUTLIER_MIN_DIFFERENCE: f64 = 0.3;
+pub const OUTLIER_MAX_RATIO: f64 = 0.5;
+pub const SUBBUCKET_OUTLIER_DIVISOR: usize = 16;
 
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]

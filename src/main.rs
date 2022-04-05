@@ -258,8 +258,6 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) {
     // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
 }
 
-pub static SAVE_MEMORY: AtomicBool = AtomicBool::new(true);
-
 fn main() {
     let args: CliArgs = CliArgs::from_args();
 

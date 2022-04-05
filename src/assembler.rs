@@ -6,7 +6,7 @@ use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_LOG_DELTA
 use crate::hashes::HashFunctionFactory;
 use crate::io::reads_writer::ReadsWriter;
 use crate::utils::{get_memory_mode, Utils};
-use crate::{AssemblerStartingStep, KEEP_FILES, SAVE_MEMORY};
+use crate::{AssemblerStartingStep, KEEP_FILES};
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
@@ -86,7 +86,6 @@ pub fn run_assembler<
             k,
             m,
             threads_count,
-            SAVE_MEMORY.load(Ordering::Relaxed),
         )
     } else {
         RetType {
