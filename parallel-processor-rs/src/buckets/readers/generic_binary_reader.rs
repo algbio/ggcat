@@ -103,7 +103,11 @@ impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
         file.seek(SeekFrom::Start(header.index_offset)).unwrap();
         let index: BucketCheckpoints = bincode::deserialize_from(&mut file).unwrap();
 
-        // println!("Index: {:?} tot: {}", index.index, header.index_offset);
+        println!(
+            "Index: {} for {}",
+            index.index.len(),
+            name.as_ref().display()
+        );
 
         file.seek(SeekFrom::Start(index.index[0])).unwrap();
 
