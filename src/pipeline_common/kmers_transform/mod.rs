@@ -141,8 +141,29 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             }
         }
 
-        for (file, _size, outlier) in files_with_sizes.into_iter() {
-            files_queue.push((file, outlier)).unwrap();
+        {
+            let mut start_idx = 0;
+            let mut end_idx = files_with_sizes.len();
+
+            let mut matched_size = 0i64;
+
+            while start_idx != end_idx {
+                let file_entry = if matched_size <= 0 {
+                    let target_file = &files_with_sizes[start_idx];
+                    let entry = (target_file.0.clone(), target_file.2);
+                    matched_size = target_file.1 as i64;
+                    start_idx += 1;
+                    entry
+                } else {
+                    let target_file = &files_with_sizes[end_idx - 1];
+                    let entry = (target_file.0.clone(), target_file.2);
+                    matched_size -= target_file.1 as i64;
+                    end_idx -= 1;
+                    entry
+                };
+
+                files_queue.push(file_entry);
+            }
         }
 
         Self {
