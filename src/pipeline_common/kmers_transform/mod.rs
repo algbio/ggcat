@@ -130,6 +130,10 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             let next_size = files_with_sizes[idx].1;
             let distance_req = crt_size as f64 > next_size as f64 * (1.0 + OUTLIER_MIN_DIFFERENCE);
             let maxim_req = crt_size as f64 > max_size as f64 * OUTLIER_MAX_SIZE_RATIO;
+            println!(
+                "Outlier test: {} {} {} {}/{}",
+                idx, crt_size, next_size, distance_req, maxim_req
+            );
             if distance_req && maxim_req {
                 for midx in 0..=idx {
                     files_with_sizes[midx].2 = true;
