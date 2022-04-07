@@ -1,3 +1,4 @@
+use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use bstr::ByteSlice;
 use libdeflate_rs::decompress_file_buffered;
 use std::fs::File;
@@ -12,7 +13,7 @@ impl LinesReader {
         mut stream: impl Read,
         mut callback: impl FnMut(&[u8]),
     ) -> Result<(), ()> {
-        let mut buffer = [0; 1024 * 512];
+        let mut buffer = [0; DEFAULT_OUTPUT_BUFFER_SIZE];
         while let Ok(count) = stream.read(&mut buffer) {
             if count == 0 {
                 callback(&[]);
@@ -31,7 +32,7 @@ impl LinesReader {
                     callback(data);
                     Ok(())
                 },
-                1024 * 512,
+                DEFAULT_OUTPUT_BUFFER_SIZE,
             ) {
                 println!(
                     "WARNING: Error while reading file {}",
