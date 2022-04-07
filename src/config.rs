@@ -53,9 +53,9 @@ pub const DEFAULT_LZ4_COMPRESSION_LEVEL: u32 = 1;
 pub const EXTRA_BUFFERS_COUNT: usize = SECOND_BUCKETS_COUNT * 20 / 3;
 
 pub const OUTLIER_MIN_DIFFERENCE: f64 = 0.3;
-pub const OUTLIER_MAX_SIZE_RATIO: f64 = 0.3;
+pub const OUTLIER_MAX_SIZE_RATIO: f64 = 0.1;
 pub const SUBBUCKET_OUTLIER_DIVISOR: usize = 16;
-pub const OUTLIER_MAX_NUMBER_RATIO: usize = 16;
+pub const OUTLIER_MAX_NUMBER_RATIO: usize = 64;
 
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]
