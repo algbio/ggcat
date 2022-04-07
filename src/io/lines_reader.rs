@@ -13,8 +13,8 @@ impl LinesReader {
         mut stream: impl Read,
         mut callback: impl FnMut(&[u8]),
     ) -> Result<(), ()> {
-        let mut buffer = [0; DEFAULT_OUTPUT_BUFFER_SIZE];
-        while let Ok(count) = stream.read(&mut buffer) {
+        let mut buffer = vec![0; DEFAULT_OUTPUT_BUFFER_SIZE];
+        while let Ok(count) = stream.read(buffer.as_mut_slice()) {
             if count == 0 {
                 callback(&[]);
                 return Ok(());

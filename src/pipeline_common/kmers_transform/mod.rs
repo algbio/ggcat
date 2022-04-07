@@ -162,7 +162,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     entry
                 };
 
-                files_queue.push(file_entry);
+                files_queue.push(file_entry).unwrap();
             }
         }
 
