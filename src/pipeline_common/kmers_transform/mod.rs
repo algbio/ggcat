@@ -13,9 +13,12 @@ use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutor;
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use crate::utils::compressed_read::CompressedRead;
 use crate::utils::resource_counter::ResourceCounter;
+use crate::KEEP_FILES;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedStreamDecoder;
+use parallel_processor::buckets::readers::compressed_binary_reader::{
+    CompressedBinaryReader, CompressedStreamDecoder,
+};
 use parallel_processor::buckets::readers::generic_binary_reader::{
     ChunkDecoder, GenericChunkedBinaryReader,
 };
@@ -84,8 +87,7 @@ pub struct KmersTransform<'a, F: KmersTransformExecutorFactory> {
 
     global_extra_data: F::GlobalExtraData<'a>,
 
-    files_queue: ArrayQueue<(PathBuf, bool)>,
-
+    // files_queue: ArrayQueue<(PathBuf, bool)>,
     current_bucket: RwLock<Weak<BucketProcessData<CompressedStreamDecoder>>>,
     current_resplit_bucket: RwLock<Weak<BucketProcessData<LockFreeStreamDecoder>>>,
 
@@ -105,7 +107,8 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         extra_buffers_count: usize,
         global_extra_data: F::GlobalExtraData<'a>,
     ) -> Self {
-        let files_queue = ArrayQueue::new(file_inputs.len());
+        // let files_queue = ArrayQueue::new(file_inputs.len());
+        let process_queue = SegQueue::new();
 
         let mut files_with_sizes: Vec<_> = file_inputs
             .into_iter()
@@ -143,6 +146,8 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         }
 
         {
+            let dummy_counter = ResourceCounter::new(1024);
+
             let mut start_idx = 0;
             let mut end_idx = files_with_sizes.len();
 
@@ -163,7 +168,15 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     entry
                 };
 
-                files_queue.push(file_entry).unwrap();
+                process_queue
+                    .push(ProcessQueueItem {
+                        path: file_entry.0,
+                        can_resplit: false,
+                        potential_outlier: !file_entry.1,
+                        main_bucket_size: 0,
+                        buffers_counter: dummy_counter.clone(),
+                    })
+                    .unwrap();
             }
         }
 
@@ -173,10 +186,10 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                 (SECOND_BUCKETS_COUNT + extra_buffers_count) as u64,
             ),
             global_extra_data,
-            files_queue,
+            // files_queue,
             current_bucket: RwLock::new(Weak::new()),
             current_resplit_bucket: RwLock::new(Weak::new()),
-            process_queue: Arc::new(SegQueue::new()),
+            // process_queue: Arc::new(SegQueue::new()),
             reprocess_queue: Arc::new(SegQueue::new()),
             resplit_buckets_index: AtomicU32::new(0),
             last_info_log: Mutex::new(Instant::now()),
@@ -192,11 +205,11 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         if last_info_log.elapsed() > MINIMUM_LOG_DELTA_TIME {
             let monitor = PHASES_TIMES_MONITOR.read();
 
-            let processed_count = self.buckets_count - self.files_queue.len();
+            let processed_count = self.buckets_count - self.process_queue.len();
 
             let eta = Duration::from_secs(
                 (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
-                    * (self.files_queue.len() as f64)) as u64,
+                    * (self.process_queue.len() as f64)) as u64,
             );
 
             let est_tot = Duration::from_secs(
@@ -365,8 +378,12 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                 || !*can_resplit
                 || (file_size < MINIMUM_RESPLIT_SIZE)
             {
-                let reader =
-                    LockFreeBinaryReader::new(path, RemoveFileMode::Remove { remove_fs: true });
+                let reader = CompressedBinaryReader::new(
+                    path,
+                    RemoveFileMode::Remove {
+                        remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                    },
+                );
                 executor.process_group(&self.global_extra_data, reader);
             } else {
                 println!(
@@ -396,43 +413,48 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
 
                         loop {
                             self.process_buffers(&mut executor);
-
-                            if self.resplit_buckets(&mut splitter, &mut local_buffer) {
-                                continue;
+                            if self.process_queue.len() == 0 {
+                                break;
                             }
 
-                            let bucket =
-                                match Self::get_current_bucket(&self.current_bucket, || {
-                                    let (file, outlier) = self.files_queue.pop()?;
+                            // if self.resplit_buckets(&mut splitter, &mut local_buffer) {
+                            //     continue;
+                            // } else {
+                            //     break;
+                            // }
 
-                                    Some(Arc::new(BucketProcessData::new_blocking(
-                                        file,
-                                        &format!(
-                                            "vec{}",
-                                            self.resplit_buckets_index
-                                                .fetch_add(1, Ordering::Relaxed)
-                                        ),
-                                        self.process_queue.clone(),
-                                        self.buffer_files_counter.clone(),
-                                        false,
-                                        outlier,
-                                    )))
-                                }) {
-                                    None => {
-                                        if self.process_queue.is_empty()
-                                            && self.reprocess_queue.is_empty()
-                                        {
-                                            break;
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    Some(x) => x,
-                                };
-
+                            // let bucket =
+                            //     match Self::get_current_bucket(&self.current_bucket, || {
+                            //         let (file, outlier) = self.files_queue.pop()?;
+                            //
+                            //         Some(Arc::new(BucketProcessData::new_blocking(
+                            //             file,
+                            //             &format!(
+                            //                 "vec{}",
+                            //                 self.resplit_buckets_index
+                            //                     .fetch_add(1, Ordering::Relaxed)
+                            //             ),
+                            //             self.process_queue.clone(),
+                            //             self.buffer_files_counter.clone(),
+                            //             false,
+                            //             outlier,
+                            //         )))
+                            //     }) {
+                            //         None => {
+                            //             if self.process_queue.is_empty()
+                            //                 && self.reprocess_queue.is_empty()
+                            //             {
+                            //                 break;
+                            //             } else {
+                            //                 continue;
+                            //             }
+                            //         }
+                            //         Some(x) => x,
+                            //     };
+                            //
                             self.do_logging();
-
-                            self.read_bucket(&mut executor, &bucket, &mut local_buffer);
+                            //
+                            // self.read_bucket(&mut executor, &bucket, &mut local_buffer);
                         }
                         executor.finalize(&self.global_extra_data);
                     })
