@@ -395,6 +395,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                 );
                 self.reprocess_queue.push(path.clone());
             }
+            self.do_logging();
         }
     }
 
@@ -452,7 +453,6 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                             //         Some(x) => x,
                             //     };
                             //
-                            self.do_logging();
                             //
                             // self.read_bucket(&mut executor, &bucket, &mut local_buffer);
                         }
