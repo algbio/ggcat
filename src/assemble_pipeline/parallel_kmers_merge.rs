@@ -9,9 +9,9 @@ use crate::config::{
 };
 use crate::hashes::{ExtendableHashTraitType, HashFunction};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
+use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::hash_entry::HashEntry;
-use crate::pipeline_common::kmers_transform::structs::ReadRef;
 use crate::pipeline_common::kmers_transform::{
     KmersTransform, KmersTransformExecutor, KmersTransformExecutorFactory, ReadDispatchInfo,
 };
@@ -25,7 +25,9 @@ use core::slice::from_raw_parts;
 use crossbeam::queue::*;
 use hashbrown::HashMap;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::readers::generic_binary_reader::{
+    ChunkDecoder, GenericChunkedBinaryReader,
+};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
@@ -283,10 +285,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         self.results_buckets_counter -= 1;
     }
 
-    fn process_group<'y: 'x>(
+    fn process_group<'y: 'x, D: ChunkDecoder>(
         &mut self,
         global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
-        mut reader: LockFreeBinaryReader,
+        mut reader: GenericChunkedBinaryReader<D>,
     ) {
         let k = global_data.k;
 
@@ -299,10 +301,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         let mut saved_reads = Vec::with_capacity(256);
 
-        reader.decode_all_bucket_items::<ReadRef<
+        reader.decode_all_bucket_items::<CompressedReadsBucketHelper<
             _,
             <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
-        >, _>(Vec::new(), |(ReadRef { flags, read, .. }, color)| {
+        >, _>(Vec::new(), |(flags, color, read)| {
             assert!(
                 read.bases_count() >= k,
                 "xyz {} >= {}",
@@ -343,7 +345,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 if entry.count == global_data.min_multiplicity {
                     if saved_read_offset.is_none() {
                         saved_read_offset = Some(saved_reads.len());
-                        saved_reads.extend_from_slice(read.get_compr_slice())
+                        saved_reads.extend_from_slice(read.get_packed_slice())
                     }
                     self.rcorrect_reads.push((
                         hash,
@@ -434,7 +436,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 self.backward_seq.set_len(k);
             }
 
-            cread.write_to_slice(&mut self.forward_seq[..]);
+            cread.write_unpacked_to_slice(&mut self.forward_seq[..]);
             self.backward_seq[..].copy_from_slice(&self.forward_seq[..]);
             self.backward_seq.reverse();
 

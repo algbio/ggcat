@@ -137,7 +137,7 @@ impl AssemblePipeline {
                 if seq.bases_count() > decompress_buffer.len() {
                     decompress_buffer.resize(seq.bases_count(), 0);
                 }
-                seq.write_to_slice(&mut decompress_buffer[..seq.bases_count()]);
+                seq.write_unpacked_to_slice(&mut decompress_buffer[..seq.bases_count()]);
 
                 let seq = &decompress_buffer[..seq.bases_count()];
 

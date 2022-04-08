@@ -6,9 +6,9 @@ use crate::config::{
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
+use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
-use crate::pipeline_common::kmers_transform::structs::ReadRef;
 use crate::pipeline_common::kmers_transform::{
     KmersTransform, KmersTransformExecutor, KmersTransformExecutorFactory, ReadDispatchInfo,
 };
@@ -22,7 +22,9 @@ use crate::utils::compressed_read::CompressedRead;
 use crate::utils::get_memory_mode;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::readers::generic_binary_reader::{
+    ChunkDecoder, GenericChunkedBinaryReader,
+};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -169,10 +171,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     ) {
     }
 
-    fn process_group<'y: 'x>(
+    fn process_group<'y: 'x, D: ChunkDecoder>(
         &mut self,
         global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
-        mut reader: LockFreeBinaryReader,
+        mut reader: GenericChunkedBinaryReader<D>,
     ) {
         let k = global_data.k;
 
@@ -180,10 +182,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         self.query_reads.clear();
         self.query_map.clear();
 
-        reader.decode_all_bucket_items::<ReadRef<
+        reader.decode_all_bucket_items::<CompressedReadsBucketHelper<
             QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>,
             <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
-        >, _>(Vec::new(), |(ReadRef { read, .. }, sequence_type)| {
+        >, _>(Vec::new(), |(_flags, sequence_type, read)| {
             let hashes = MH::new(read, k);
 
             match sequence_type {

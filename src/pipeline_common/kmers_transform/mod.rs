@@ -16,7 +16,9 @@ use crate::utils::resource_counter::ResourceCounter;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedStreamDecoder;
-use parallel_processor::buckets::readers::generic_binary_reader::ChunkDecoder;
+use parallel_processor::buckets::readers::generic_binary_reader::{
+    ChunkDecoder, GenericChunkedBinaryReader,
+};
 use parallel_processor::buckets::readers::lock_free_binary_reader::{
     LockFreeBinaryReader, LockFreeStreamDecoder,
 };
@@ -30,7 +32,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
-use structs::ReadRef;
 
 pub struct ReadDispatchInfo<E: SequenceExtraData> {
     pub bucket: BucketIndexType,
@@ -68,10 +69,10 @@ pub trait KmersTransformExecutor<'x, F: KmersTransformExecutorFactory> {
 
     fn maybe_swap_bucket<'y: 'x>(&mut self, global_data: &F::GlobalExtraData<'y>);
 
-    fn process_group<'y: 'x>(
+    fn process_group<'y: 'x, D: ChunkDecoder>(
         &mut self,
         global_data: &F::GlobalExtraData<'y>,
-        reader: LockFreeBinaryReader,
+        reader: GenericChunkedBinaryReader<D>,
     );
 
     fn finalize<'y: 'x>(self, global_data: &F::GlobalExtraData<'y>);
@@ -281,11 +282,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     cmp_reads.add_element(
                         preprocess_info.bucket,
                         &preprocess_info.extra_data,
-                        &ReadRef::<_, F::FLAGS_COUNT> {
-                            flags,
-                            read,
-                            _phantom: Default::default()
-                        },
+                        &CompressedReadsBucketHelper::<_, F::FLAGS_COUNT>::new_packed(read, flags),
                     );
                 },
             );
@@ -321,9 +318,9 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
 
             while resplit_bucket
                 .reader
-                .decode_bucket_items_parallel::<ReadRef<F::AssociatedExtraData, F::FLAGS_COUNT>, _>(
+                .decode_bucket_items_parallel::<CompressedReadsBucketHelper<F::AssociatedExtraData, F::FLAGS_COUNT>, _>(
                     Vec::new(),
-                    |(ReadRef { flags, read, .. }, extra)| {
+                    |(flags, extra, read)| {
                         resplitter.reprocess_sequence(flags, &extra, &mut preproc_info);
                         resplitter.process_sequence::<_, _, { RESPLIT_MINIMIZER_MASK }>(
                             &preproc_info,
@@ -333,11 +330,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                 thread_buckets.add_element(
                                     bucket % (SECOND_BUCKETS_COUNT as BucketIndexType),
                                     &extra,
-                                    &ReadRef::<F::AssociatedExtraData, F::FLAGS_COUNT> {
-                                        flags,
-                                        read: seq,
-                                        _phantom: PhantomData,
-                                    },
+                                    &CompressedReadsBucketHelper::<F::AssociatedExtraData, F::FLAGS_COUNT>::new_packed(seq, flags)
                                 );
                             },
                         );

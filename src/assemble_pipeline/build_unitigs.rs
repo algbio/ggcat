@@ -33,7 +33,7 @@ struct FinalUnitigInfo {
 
 pub trait FastaCompatibleRead {
     type IntermediateData;
-    fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Self::IntermediateData;
+    fn write_unpacked_to_buffer(&self, buffer: &mut Vec<u8>) -> Self::IntermediateData;
     fn as_slice_from_buffer<'a>(
         &'a self,
         buffer: &'a Vec<u8>,
@@ -46,7 +46,7 @@ impl FastaCompatibleRead for [u8] {
     type IntermediateData = ();
 
     #[inline(always)]
-    fn write_to_buffer(&self, _buffer: &mut Vec<u8>) -> Self::IntermediateData {}
+    fn write_unpacked_to_buffer(&self, _buffer: &mut Vec<u8>) -> Self::IntermediateData {}
 
     #[inline(always)]
     fn as_slice_from_buffer<'a>(&'a self, _: &'a Vec<u8>, _: ()) -> &'a [u8] {
@@ -80,7 +80,7 @@ pub fn write_fasta_entry<
 
     let ident_buffer_size = temp_buffer.len();
 
-    let int_data = read.write_to_buffer(temp_buffer);
+    let int_data = read.write_unpacked_to_buffer(temp_buffer);
     let read_slice = read.as_slice_from_buffer(temp_buffer, int_data);
 
     writer.add_read(FastaSequence {

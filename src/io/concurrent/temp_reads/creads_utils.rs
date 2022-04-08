@@ -1,14 +1,19 @@
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
-use crate::io::varint::decode_varint_flags;
+use crate::io::varint::{decode_varint_flags, encode_varint_flags};
 use crate::CompressedRead;
 use byteorder::ReadBytesExt;
 use parallel_processor::buckets::bucket_writer::BucketItem;
 use std::io::Read;
 use std::marker::PhantomData;
 
+enum ReadData<'a> {
+    Plain(&'a [u8]),
+    Packed(CompressedRead<'a>),
+}
+
 pub struct CompressedReadsBucketHelper<'a, E: SequenceExtraData, FlagsCount: typenum::Unsigned> {
-    read: &'a [u8],
+    read: ReadData<'a>,
     flags: u8,
     _phantom: PhantomData<(E, FlagsCount)>,
 }
@@ -19,7 +24,16 @@ impl<'a, E: SequenceExtraData, FlagsCount: typenum::Unsigned>
     #[inline(always)]
     pub fn new(read: &'a [u8], flags: u8) -> Self {
         Self {
-            read,
+            read: ReadData::Plain(read),
+            flags,
+            _phantom: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    pub fn new_packed(read: CompressedRead<'a>, flags: u8) -> Self {
+        Self {
+            read: ReadData::Packed(read),
             flags,
             _phantom: PhantomData,
         }
@@ -36,9 +50,21 @@ impl<'a, E: SequenceExtraData, FlagsCount: typenum::Unsigned> BucketItem
     #[inline(always)]
     fn write_to(&self, bucket: &mut Vec<u8>, extra_data: &Self::ExtraData) {
         extra_data.encode(bucket);
-        CompressedRead::from_plain_write_directly_to_buffer_with_flags::<FlagsCount>(
-            self.read, bucket, self.flags,
-        );
+        match self.read {
+            ReadData::Plain(read) => {
+                CompressedRead::from_plain_write_directly_to_buffer_with_flags::<FlagsCount>(
+                    read, bucket, self.flags,
+                );
+            }
+            ReadData::Packed(read) => {
+                encode_varint_flags::<_, _, FlagsCount>(
+                    |b| bucket.extend_from_slice(b),
+                    read.bases_count() as u64,
+                    self.flags,
+                );
+                read.copy_to_buffer(bucket);
+            }
+        }
     }
 
     #[inline]
@@ -71,6 +97,11 @@ impl<'a, E: SequenceExtraData, FlagsCount: typenum::Unsigned> BucketItem
 
     #[inline(always)]
     fn get_size(&self, extra: &Self::ExtraData) -> usize {
-        ((self.read.bases_count() + 3) / 4) + extra.max_size() + 10
+        let bases_count = match self.read {
+            ReadData::Plain(read) => read.bases_count(),
+            ReadData::Packed(read) => read.bases_count(),
+        };
+
+        ((bases_count + 3) / 4) + extra.max_size() + 10
     }
 }
