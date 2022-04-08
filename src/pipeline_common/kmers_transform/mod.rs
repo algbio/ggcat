@@ -168,15 +168,14 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     entry
                 };
 
-                process_queue
-                    .push(ProcessQueueItem {
-                        path: file_entry.0,
-                        can_resplit: false,
-                        potential_outlier: !file_entry.1,
-                        main_bucket_size: 0,
-                        buffers_counter: dummy_counter.clone(),
-                    })
-                    .unwrap();
+                process_queue.push(ProcessQueueItem {
+                    path: file_entry.0,
+                    can_resplit: false,
+                    potential_outlier: !file_entry.1,
+                    main_bucket_size: 0,
+                    buffers_counter: dummy_counter.clone(),
+                })
+                // .unwrap();
             }
         }
 
@@ -190,6 +189,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             current_bucket: RwLock::new(Weak::new()),
             current_resplit_bucket: RwLock::new(Weak::new()),
             // process_queue: Arc::new(SegQueue::new()),
+            process_queue: Arc::new(process_queue),
             reprocess_queue: Arc::new(SegQueue::new()),
             resplit_buckets_index: AtomicU32::new(0),
             last_info_log: Mutex::new(Instant::now()),
