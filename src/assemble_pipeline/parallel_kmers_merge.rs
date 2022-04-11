@@ -305,6 +305,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             _,
             <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
         >, _>(Vec::new(), |(flags, color, read)| {
+            continue;
             let hashes = MH::new(read, k);
 
             let last_hash_pos = read.bases_count() - k;
@@ -356,6 +357,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 self.rcorrect_reads.update_maximum_usage(len);
             }
         });
+
+        return;
 
         {
             static COUNTER_KMERS_MAX: AtomicCounter<MaxMode> =
