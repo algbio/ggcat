@@ -65,7 +65,7 @@ impl<D: ChunkDecoder> Read for SequentialReader<D> {
             self.index_position += 1;
 
             if self.index_position >= self.index.index.len() as u64 {
-                return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+                return Ok(0);
             }
 
             replace_with_or_abort(&mut self.reader, |reader| {
