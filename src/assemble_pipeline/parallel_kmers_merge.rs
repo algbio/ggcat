@@ -316,6 +316,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
                 let is_forward = hash.is_forward();
 
+                continue;
+
                 let entry = self
                     .rhash_map
                     .entry(hash.to_unextendable())
