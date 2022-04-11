@@ -195,7 +195,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             reprocess_queue: Arc::new(SegQueue::new()),
             resplit_buckets_index: AtomicU32::new(0),
             async_readers: ScopedThreadLocal::new(|| {
-                AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE / 2, 3)
+                AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE / 2, 4)
             }),
             last_info_log: Mutex::new(Instant::now()),
             _phantom: Default::default(),
