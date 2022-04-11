@@ -316,6 +316,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
                 let is_forward = hash.is_forward();
 
+                if hash % 1003849023 == 0 {
+                    saved_reads.push(34);
+                }
+
                 continue;
 
                 let entry = self
