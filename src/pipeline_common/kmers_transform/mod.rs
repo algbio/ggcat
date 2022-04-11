@@ -1,10 +1,10 @@
 pub mod structs;
 
 use crate::config::{
-    BucketIndexType, SortingHashType, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
-    MINIMUM_LOG_DELTA_TIME, MINIMUM_RESPLIT_SIZE, OUTLIER_MAX_NUMBER_RATIO, OUTLIER_MAX_SIZE_RATIO,
-    OUTLIER_MIN_DIFFERENCE, RESPLIT_MINIMIZER_MASK, SECOND_BUCKETS_COUNT,
-    SUBBUCKET_OUTLIER_DIVISOR,
+    BucketIndexType, SortingHashType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE,
+    DEFAULT_PREFETCH_AMOUNT, MINIMUM_LOG_DELTA_TIME, MINIMUM_RESPLIT_SIZE,
+    OUTLIER_MAX_NUMBER_RATIO, OUTLIER_MAX_SIZE_RATIO, OUTLIER_MIN_DIFFERENCE,
+    RESPLIT_MINIMIZER_MASK, SECOND_BUCKETS_COUNT, SUBBUCKET_OUTLIER_DIVISOR,
 };
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -17,6 +17,9 @@ use crate::utils::resource_counter::ResourceCounter;
 use crate::KEEP_FILES;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
+use parallel_processor::buckets::readers::async_binary_reader::{
+    AsyncBinaryReader, AsyncReaderThread,
+};
 use parallel_processor::buckets::readers::compressed_binary_reader::{
     CompressedBinaryReader, CompressedStreamDecoder,
 };
@@ -26,9 +29,11 @@ use parallel_processor::buckets::readers::generic_binary_reader::{
 use parallel_processor::buckets::readers::lock_free_binary_reader::{
     LockFreeBinaryReader, LockFreeStreamDecoder,
 };
+use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use parking_lot::{Mutex, RwLock};
 use std::cmp::min;
 use std::marker::PhantomData;
@@ -73,10 +78,10 @@ pub trait KmersTransformExecutor<'x, F: KmersTransformExecutorFactory> {
 
     fn maybe_swap_bucket<'y: 'x>(&mut self, global_data: &F::GlobalExtraData<'y>);
 
-    fn process_group<'y: 'x, D: ChunkDecoder>(
+    fn process_group<'y: 'x, R: BucketReader>(
         &mut self,
         global_data: &F::GlobalExtraData<'y>,
-        reader: GenericChunkedBinaryReader<D>,
+        reader: R,
     );
 
     fn finalize<'y: 'x>(self, global_data: &F::GlobalExtraData<'y>);
@@ -96,6 +101,8 @@ pub struct KmersTransform<'a, F: KmersTransformExecutorFactory> {
     reprocess_queue: Arc<SegQueue<PathBuf>>,
 
     resplit_buckets_index: AtomicU32,
+
+    async_readers: ScopedThreadLocal<Arc<AsyncReaderThread>>,
 
     last_info_log: Mutex<Instant>,
     _phantom: PhantomData<F>,
@@ -193,6 +200,9 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             process_queue: Arc::new(process_queue),
             reprocess_queue: Arc::new(SegQueue::new()),
             resplit_buckets_index: AtomicU32::new(0),
+            async_readers: ScopedThreadLocal::new(|| {
+                AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE / 2, 4)
+            }),
             last_info_log: Mutex::new(Instant::now()),
             _phantom: Default::default(),
         }
@@ -360,7 +370,11 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         did_resplit
     }
 
-    fn process_buffers(&self, executor: &mut F::ExecutorType<'a>) {
+    fn process_buffers(
+        &self,
+        executor: &mut F::ExecutorType<'a>,
+        reader_thread: Arc<AsyncReaderThread>,
+    ) {
         while let Some(ProcessQueueItem {
             ref path,
             ref can_resplit,
@@ -379,8 +393,10 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                 || !*can_resplit
                 || (file_size < MINIMUM_RESPLIT_SIZE)
             {
-                let reader = CompressedBinaryReader::new(
+                let reader = AsyncBinaryReader::new(
                     path,
+                    reader_thread.clone(),
+                    true,
                     RemoveFileMode::Remove {
                         remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                     },
@@ -407,6 +423,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                 s.builder()
                     .name("kmers-transform".to_string())
                     .spawn(|_| {
+                        let async_reader = self.async_readers.get();
                         let mut executor = F::new(&self.global_extra_data);
                         // let mut splitter = F::new_resplitter(&self.global_extra_data);
                         // let mut local_buffer = BucketsThreadBuffer::new(
@@ -415,7 +432,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                         // );
 
                         loop {
-                            self.process_buffers(&mut executor);
+                            self.process_buffers(&mut executor, Arc::clone(&*async_reader));
                             if self.process_queue.len() == 0 {
                                 break;
                             }

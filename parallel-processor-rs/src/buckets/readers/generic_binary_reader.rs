@@ -1,4 +1,5 @@
 use crate::buckets::bucket_writer::BucketItem;
+use crate::buckets::readers::BucketReader;
 use crate::buckets::writers::{BucketCheckpoints, BucketHeader};
 use crate::memory_fs::file::reader::FileReader;
 use crate::memory_fs::{MemoryFs, RemoveFileMode};
@@ -180,9 +181,11 @@ impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
         }
         return true;
     }
+}
 
-    pub fn decode_all_bucket_items<E: BucketItem, F: for<'a> FnMut(E::ReadType<'a>)>(
-        &mut self,
+impl<D: ChunkDecoder> BucketReader for GenericChunkedBinaryReader<D> {
+    fn decode_all_bucket_items<E: BucketItem, F: for<'a> FnMut(E::ReadType<'a>)>(
+        mut self,
         mut buffer: E::ReadBuffer,
         mut func: F,
     ) {

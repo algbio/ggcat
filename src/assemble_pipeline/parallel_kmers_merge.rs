@@ -28,6 +28,7 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::generic_binary_reader::{
     ChunkDecoder, GenericChunkedBinaryReader,
 };
+use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
@@ -285,10 +286,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         self.results_buckets_counter -= 1;
     }
 
-    fn process_group<'y: 'x, D: ChunkDecoder>(
+    fn process_group<'y: 'x, R: BucketReader>(
         &mut self,
         global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
-        mut reader: GenericChunkedBinaryReader<D>,
+        mut reader: R,
     ) {
         let k = global_data.k;
 
@@ -324,7 +325,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                         count: 0,
                         color_index: CX::ColorsMergeManagerType::<MH>::new_color_index(),
                     });
-                continue;
 
                 entry.ignored |= ((begin_ignored as u8) << ((!is_forward) as u8))
                     | ((end_ignored as u8) << (is_forward as u8));
@@ -357,8 +357,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 self.rcorrect_reads.update_maximum_usage(len);
             }
         });
-
-        return;
 
         {
             static COUNTER_KMERS_MAX: AtomicCounter<MaxMode> =

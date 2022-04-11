@@ -25,6 +25,7 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::generic_binary_reader::{
     ChunkDecoder, GenericChunkedBinaryReader,
 };
+use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -171,10 +172,10 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     ) {
     }
 
-    fn process_group<'y: 'x, D: ChunkDecoder>(
+    fn process_group<'y: 'x, R: BucketReader>(
         &mut self,
         global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
-        mut reader: GenericChunkedBinaryReader<D>,
+        reader: R,
     ) {
         let k = global_data.k;
 
