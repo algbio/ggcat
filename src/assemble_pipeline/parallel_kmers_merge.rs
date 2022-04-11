@@ -316,7 +316,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
                 let is_forward = hash.is_forward();
 
-                if hash.as_u64() % 1003849023 == 0 {
+                if hash.to_unextendable().as_u64() % 1003849023 == 0 {
                     saved_reads.push(34);
                 }
 
