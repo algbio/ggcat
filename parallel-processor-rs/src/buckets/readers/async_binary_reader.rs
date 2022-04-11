@@ -76,13 +76,11 @@ impl AsyncReaderThread {
 
             // File completely read
             if bytes_read == 0 {
-                println!("Completely read file!");
                 *file = OpenedFile::None;
             }
 
             self.buffers.0.send(buffer);
         }
-        println!("Dropped!");
     }
 
     fn read_bucket(
@@ -167,6 +165,15 @@ impl Read for AsyncStreamThreadReader {
     }
 }
 
+impl Drop for AsyncStreamThreadReader {
+    fn drop(&mut self) {
+        self.owner
+            .buffers_pool
+            .0
+            .send(std::mem::take(&mut self.current));
+    }
+}
+
 pub struct AsyncBinaryReader {
     path: PathBuf,
     compressed: bool,
@@ -202,7 +209,6 @@ impl BucketReader for AsyncBinaryReader {
         mut func: F,
     ) {
         let pcpy = self.path.clone();
-        println!("Process file {}!", pcpy.display());
         let mut stream = self.read_thread.read_bucket(
             self.path,
             self.compressed,
@@ -212,6 +218,5 @@ impl BucketReader for AsyncBinaryReader {
         while let Some(el) = E::read_from(&mut stream, &mut buffer) {
             func(el);
         }
-        println!("Done file {}!", pcpy.display());
     }
 }
