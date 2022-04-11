@@ -76,11 +76,13 @@ impl AsyncReaderThread {
 
             // File completely read
             if bytes_read == 0 {
+                println!("Completely read file!");
                 *file = OpenedFile::None;
             }
 
             self.buffers.0.send(buffer);
         }
+        println!("Dropped!");
     }
 
     fn read_bucket(
@@ -101,7 +103,7 @@ impl AsyncReaderThread {
         } else {
             OpenedFile::Plain(LockFreeBinaryReader::new(path, remove_file, prefetch))
         };
-        self.file_wait_condvar.notify_one();
+        self.file_wait_condvar.notify_all();
         drop(opened_file);
 
         let stream_recv = self.buffers.1.clone();
@@ -199,6 +201,7 @@ impl BucketReader for AsyncBinaryReader {
         mut buffer: E::ReadBuffer,
         mut func: F,
     ) {
+        println!("Process file {}!", self.path.display());
         let mut stream = self.read_thread.read_bucket(
             self.path,
             self.compressed,
@@ -208,5 +211,6 @@ impl BucketReader for AsyncBinaryReader {
         while let Some(el) = E::read_from(&mut stream, &mut buffer) {
             func(el);
         }
+        println!("Done file {}!", self.path.display());
     }
 }
