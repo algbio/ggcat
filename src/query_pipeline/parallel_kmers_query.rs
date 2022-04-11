@@ -22,9 +22,6 @@ use crate::utils::compressed_read::CompressedRead;
 use crate::utils::get_memory_mode;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::generic_binary_reader::{
-    ChunkDecoder, GenericChunkedBinaryReader,
-};
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;

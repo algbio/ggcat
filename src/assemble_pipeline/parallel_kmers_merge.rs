@@ -25,9 +25,6 @@ use core::slice::from_raw_parts;
 use crossbeam::queue::*;
 use hashbrown::HashMap;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::generic_binary_reader::{
-    ChunkDecoder, GenericChunkedBinaryReader,
-};
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
@@ -289,7 +286,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     fn process_group<'y: 'x, R: BucketReader>(
         &mut self,
         global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
-        mut reader: R,
+        reader: R,
     ) {
         let k = global_data.k;
 

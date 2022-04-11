@@ -1,26 +1,21 @@
 use crate::buckets::bucket_writer::BucketItem;
-use crate::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
-use crate::buckets::readers::generic_binary_reader::{ChunkDecoder, GenericChunkedBinaryReader};
 use crate::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use crate::buckets::readers::unbuffered_compressed_binary_reader::UnbufferedCompressedBinaryReader;
 use crate::buckets::readers::BucketReader;
-use crate::memory_fs::file::reader::FileReader;
 use crate::memory_fs::RemoveFileMode;
-use crate::utils::scoped_thread_local::ThreadLocalVariable;
 use crossbeam::channel::*;
 use parking_lot::{Condvar, Mutex};
 use std::cmp::min;
 use std::io::Read;
-use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::{JoinHandle, ThreadId};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 enum OpenedFile {
     None,
     Plain(LockFreeBinaryReader),
-    Compressed(CompressedBinaryReader),
+    Compressed(UnbufferedCompressedBinaryReader),
 }
 
 pub struct AsyncReaderThread {
@@ -36,7 +31,10 @@ impl AsyncReaderThread {
         let buffers_pool = bounded(buffers_count);
 
         for _ in 0..buffers_count {
-            buffers_pool.0.send(Vec::with_capacity(buffers_size));
+            buffers_pool
+                .0
+                .send(Vec::with_capacity(buffers_size))
+                .unwrap();
         }
 
         Arc::new(Self {
@@ -60,7 +58,7 @@ impl AsyncReaderThread {
                 OpenedFile::None => {
                     self.file_wait_condvar
                         .wait_for(&mut file, Duration::from_secs(5));
-                    self.buffers_pool.0.send(buffer);
+                    let _ = self.buffers_pool.0.send(buffer);
                     continue;
                 }
                 OpenedFile::Plain(file) => file.get_single_stream().read(buffer.as_mut_slice()),
@@ -79,7 +77,7 @@ impl AsyncReaderThread {
                 *file = OpenedFile::None;
             }
 
-            self.buffers.0.send(buffer);
+            let _ = self.buffers.0.send(buffer);
         }
     }
 
@@ -97,7 +95,11 @@ impl AsyncReaderThread {
         }
 
         *opened_file = if compressed {
-            OpenedFile::Compressed(CompressedBinaryReader::new(path, remove_file, prefetch))
+            OpenedFile::Compressed(UnbufferedCompressedBinaryReader::new(
+                path,
+                remove_file,
+                prefetch,
+            ))
         } else {
             OpenedFile::Plain(LockFreeBinaryReader::new(path, remove_file, prefetch))
         };
@@ -143,7 +145,8 @@ impl Read for AsyncStreamThreadReader {
                     return Ok(bytes_read);
                 }
                 let next = self.receiver.recv().unwrap();
-                self.owner
+                let _ = self
+                    .owner
                     .buffers_pool
                     .0
                     .send(std::mem::replace(&mut self.current, next));
@@ -167,7 +170,8 @@ impl Read for AsyncStreamThreadReader {
 
 impl Drop for AsyncStreamThreadReader {
     fn drop(&mut self) {
-        self.owner
+        let _ = self
+            .owner
             .buffers_pool
             .0
             .send(std::mem::take(&mut self.current));
@@ -204,11 +208,10 @@ impl AsyncBinaryReader {
 
 impl BucketReader for AsyncBinaryReader {
     fn decode_all_bucket_items<E: BucketItem, F: for<'a> FnMut(E::ReadType<'a>)>(
-        mut self,
+        self,
         mut buffer: E::ReadBuffer,
         mut func: F,
     ) {
-        let pcpy = self.path.clone();
         let mut stream = self.read_thread.read_bucket(
             self.path,
             self.compressed,

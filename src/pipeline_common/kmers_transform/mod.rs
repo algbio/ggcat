@@ -1,10 +1,10 @@
 pub mod structs;
 
 use crate::config::{
-    BucketIndexType, SortingHashType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, MINIMUM_LOG_DELTA_TIME, MINIMUM_RESPLIT_SIZE,
-    OUTLIER_MAX_NUMBER_RATIO, OUTLIER_MAX_SIZE_RATIO, OUTLIER_MIN_DIFFERENCE,
-    RESPLIT_MINIMIZER_MASK, SECOND_BUCKETS_COUNT, SUBBUCKET_OUTLIER_DIVISOR,
+    BucketIndexType, SortingHashType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
+    MINIMUM_LOG_DELTA_TIME, MINIMUM_RESPLIT_SIZE, OUTLIER_MAX_NUMBER_RATIO, OUTLIER_MAX_SIZE_RATIO,
+    OUTLIER_MIN_DIFFERENCE, RESPLIT_MINIMIZER_MASK, SECOND_BUCKETS_COUNT,
+    SUBBUCKET_OUTLIER_DIVISOR,
 };
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -15,20 +15,14 @@ use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutorFacto
 use crate::utils::compressed_read::CompressedRead;
 use crate::utils::resource_counter::ResourceCounter;
 use crate::KEEP_FILES;
-use crossbeam::queue::{ArrayQueue, SegQueue};
+use crossbeam::queue::SegQueue;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::async_binary_reader::{
     AsyncBinaryReader, AsyncReaderThread,
 };
-use parallel_processor::buckets::readers::compressed_binary_reader::{
-    CompressedBinaryReader, CompressedStreamDecoder,
-};
-use parallel_processor::buckets::readers::generic_binary_reader::{
-    ChunkDecoder, GenericChunkedBinaryReader,
-};
-use parallel_processor::buckets::readers::lock_free_binary_reader::{
-    LockFreeBinaryReader, LockFreeStreamDecoder,
-};
+use parallel_processor::buckets::readers::compressed_binary_reader::CompressedStreamDecoder;
+use parallel_processor::buckets::readers::generic_binary_reader::ChunkDecoder;
+use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeStreamDecoder;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::memory_fs::file::reader::FileReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
@@ -201,7 +195,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             reprocess_queue: Arc::new(SegQueue::new()),
             resplit_buckets_index: AtomicU32::new(0),
             async_readers: ScopedThreadLocal::new(|| {
-                AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE / 2, 4)
+                AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE / 2, 3)
             }),
             last_info_log: Mutex::new(Instant::now()),
             _phantom: Default::default(),
