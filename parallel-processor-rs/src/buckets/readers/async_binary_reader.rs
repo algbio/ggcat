@@ -201,7 +201,7 @@ impl BucketReader for AsyncBinaryReader {
         mut buffer: E::ReadBuffer,
         mut func: F,
     ) {
-        let pcpy = self.path.clone()
+        let pcpy = self.path.clone();
         println!("Process file {}!", pcpy.display());
         let mut stream = self.read_thread.read_bucket(
             self.path,
