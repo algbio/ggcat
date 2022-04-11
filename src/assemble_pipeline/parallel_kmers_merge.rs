@@ -316,12 +316,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
                 let is_forward = hash.is_forward();
 
-                if MH::get_u64(hash.to_unextendable()) % 1003849023 == 0 {
-                    saved_reads.push(34);
-                }
-
-                continue;
-
                 let entry = self
                     .rhash_map
                     .entry(hash.to_unextendable())
@@ -330,6 +324,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                         count: 0,
                         color_index: CX::ColorsMergeManagerType::<MH>::new_color_index(),
                     });
+                continue;
 
                 entry.ignored |= ((begin_ignored as u8) << ((!is_forward) as u8))
                     | ((end_ignored as u8) << (is_forward as u8));
