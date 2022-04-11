@@ -1,6 +1,6 @@
 use crate::buckets::bucket_writer::BucketItem;
+use crate::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use crate::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
-use crate::buckets::readers::unbuffered_compressed_binary_reader::UnbufferedCompressedBinaryReader;
 use crate::buckets::readers::BucketReader;
 use crate::memory_fs::RemoveFileMode;
 use crossbeam::channel::*;
@@ -15,7 +15,7 @@ use std::time::Duration;
 enum OpenedFile {
     None,
     Plain(LockFreeBinaryReader),
-    Compressed(UnbufferedCompressedBinaryReader),
+    Compressed(CompressedBinaryReader),
 }
 
 pub struct AsyncReaderThread {
@@ -95,11 +95,7 @@ impl AsyncReaderThread {
         }
 
         *opened_file = if compressed {
-            OpenedFile::Compressed(UnbufferedCompressedBinaryReader::new(
-                path,
-                remove_file,
-                prefetch,
-            ))
+            OpenedFile::Compressed(CompressedBinaryReader::new(path, remove_file, prefetch))
         } else {
             OpenedFile::Plain(LockFreeBinaryReader::new(path, remove_file, prefetch))
         };
