@@ -1,3 +1,4 @@
+use crate::config::DEFAULT_PREFETCH_AMOUNT;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::sequences_reader::SequencesReader;
 use crate::io::varint::{decode_varint, encode_varint};
@@ -95,6 +96,7 @@ impl QueryPipeline {
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
+                DEFAULT_PREFETCH_AMOUNT,
             )
             .decode_all_bucket_items::<CounterEntry, _>((), |h| {
                 counters_vec.push(h);

@@ -89,8 +89,12 @@ impl<D: ChunkDecoder> Read for SequentialReader<D> {
 }
 
 impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
-    pub fn new(name: impl AsRef<Path>, remove_file: RemoveFileMode) -> Self {
-        let mut file = FileReader::open(&name)
+    pub fn new(
+        name: impl AsRef<Path>,
+        remove_file: RemoveFileMode,
+        prefetch_amount: Option<usize>,
+    ) -> Self {
+        let mut file = FileReader::open(&name, prefetch_amount)
             .unwrap_or_else(|| panic!("Cannot open file {}", name.as_ref().display()));
 
         let mut header_buffer = [0; BucketHeader::SIZE];
@@ -120,7 +124,7 @@ impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
                 last_byte_position: header.index_offset,
                 index_position: 0,
             },
-            parallel_reader: FileReader::open(&name).unwrap(),
+            parallel_reader: FileReader::open(&name, prefetch_amount).unwrap(),
             parallel_index: AtomicU64::new(0),
             remove_file,
             file_path: name.as_ref().to_path_buf(),

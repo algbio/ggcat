@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
+use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
 use crate::hashes::HashFunctionFactory;
 use crate::io::structs::hash_entry::{Direction, HashCompare, HashEntry};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
@@ -60,7 +60,7 @@ impl AssemblePipeline {
 
                 LockFreeBinaryReader::new(input, RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed)
-                }).decode_all_bucket_items::<HashEntry<H::HashTypeUnextendable>, _>((), |h| {
+                }, DEFAULT_PREFETCH_AMOUNT).decode_all_bucket_items::<HashEntry<H::HashTypeUnextendable>, _>((), |h| {
                     hashes_vec.push(h);
                 });
 

@@ -1,9 +1,10 @@
 pub mod structs;
 
 use crate::config::{
-    BucketIndexType, SortingHashType, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_LOG_DELTA_TIME,
-    MINIMUM_RESPLIT_SIZE, OUTLIER_MAX_NUMBER_RATIO, OUTLIER_MAX_SIZE_RATIO, OUTLIER_MIN_DIFFERENCE,
-    RESPLIT_MINIMIZER_MASK, SECOND_BUCKETS_COUNT, SUBBUCKET_OUTLIER_DIVISOR,
+    BucketIndexType, SortingHashType, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
+    MINIMUM_LOG_DELTA_TIME, MINIMUM_RESPLIT_SIZE, OUTLIER_MAX_NUMBER_RATIO, OUTLIER_MAX_SIZE_RATIO,
+    OUTLIER_MIN_DIFFERENCE, RESPLIT_MINIMIZER_MASK, SECOND_BUCKETS_COUNT,
+    SUBBUCKET_OUTLIER_DIVISOR,
 };
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -370,7 +371,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
         {
             executor.maybe_swap_bucket(&self.global_extra_data);
 
-            let file_size = FileReader::open(path).unwrap().total_file_size();
+            let file_size = FileReader::open(path, None).unwrap().total_file_size();
             let subbucket_outlier = file_size > main_bucket_size / SUBBUCKET_OUTLIER_DIVISOR;
 
             if !*potential_outlier
@@ -383,6 +384,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     RemoveFileMode::Remove {
                         remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                     },
+                    DEFAULT_PREFETCH_AMOUNT,
                 );
                 executor.process_group(&self.global_extra_data, reader);
             } else {
@@ -406,11 +408,11 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     .name("kmers-transform".to_string())
                     .spawn(|_| {
                         let mut executor = F::new(&self.global_extra_data);
-                        let mut splitter = F::new_resplitter(&self.global_extra_data);
-                        let mut local_buffer = BucketsThreadBuffer::new(
-                            DEFAULT_PER_CPU_BUFFER_SIZE,
-                            SECOND_BUCKETS_COUNT,
-                        );
+                        // let mut splitter = F::new_resplitter(&self.global_extra_data);
+                        // let mut local_buffer = BucketsThreadBuffer::new(
+                        //     DEFAULT_PER_CPU_BUFFER_SIZE,
+                        //     SECOND_BUCKETS_COUNT,
+                        // );
 
                         loop {
                             self.process_buffers(&mut executor);

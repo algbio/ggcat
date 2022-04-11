@@ -20,6 +20,9 @@ pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(2)
 
 pub const DEFAULT_MINIMIZER_MASK: MinimizerType = MinimizerType::MAX;
 
+/// 2MB read file prefetch
+pub const DEFAULT_PREFETCH_AMOUNT: Option<usize> = Some(1024 * 1024 * 2);
+
 pub const FLUSH_QUEUE_FACTOR: usize = 1;
 
 /// For the resplit mask, exclude the second bucket bits, as it will not be used while splitting

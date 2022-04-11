@@ -15,6 +15,7 @@ pub struct FileReader {
     chunks_count: usize,
     current_ptr: *const u8,
     current_len: usize,
+    prefetch_amount: Option<usize>,
 }
 
 unsafe impl Sync for FileReader {}
@@ -33,6 +34,7 @@ impl Clone for FileReader {
             chunks_count: self.chunks_count,
             current_ptr: self.current_ptr,
             current_len: self.current_len,
+            prefetch_amount: self.prefetch_amount,
         }
     }
 }
@@ -44,12 +46,12 @@ impl FileReader {
 
         let underlying_file = self.file.get_underlying_file();
 
-        self.current_ptr = chunk_guard.get_ptr(&underlying_file);
+        self.current_ptr = chunk_guard.get_ptr(&underlying_file, self.prefetch_amount);
         self.current_len = chunk_guard.get_length();
         self.current_chunk_ref = Some(chunk_guard);
     }
 
-    pub fn open(path: impl AsRef<Path>) -> Option<Self> {
+    pub fn open(path: impl AsRef<Path>, prefetch_amount: Option<usize>) -> Option<Self> {
         let file = match MemoryFileInternal::retrieve_reference(&path) {
             None => MemoryFileInternal::create_from_fs(&path)?,
             Some(x) => x,
@@ -67,6 +69,7 @@ impl FileReader {
             chunks_count,
             current_ptr: std::ptr::null(),
             current_len: 0,
+            prefetch_amount,
         };
 
         if reader.chunks_count > 0 {

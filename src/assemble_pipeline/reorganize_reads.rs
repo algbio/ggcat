@@ -1,7 +1,10 @@
 use crate::assemble_pipeline::links_compaction::LinkMapping;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
-use crate::config::{SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE};
+use crate::config::{
+    SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
+    DEFAULT_PREFETCH_AMOUNT,
+};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 
 use crate::assemble_pipeline::build_unitigs::write_fasta_entry;
@@ -109,6 +112,7 @@ impl AssemblePipeline {
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
+                DEFAULT_PREFETCH_AMOUNT,
             )
             .decode_all_bucket_items::<LinkMapping, _>((), |link| {
                 mappings.push(link);
@@ -129,6 +133,7 @@ impl AssemblePipeline {
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
+                DEFAULT_PREFETCH_AMOUNT,
             )
             .decode_all_bucket_items::<CompressedReadsBucketHelper<
                 color_types::PartialUnitigsColorStructure<MH, CX>,

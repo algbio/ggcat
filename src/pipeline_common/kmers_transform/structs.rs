@@ -1,4 +1,6 @@
-use crate::config::{SwapPriority, PARTIAL_VECS_CHECKPOINT_SIZE, SECOND_BUCKETS_COUNT};
+use crate::config::{
+    SwapPriority, DEFAULT_PREFETCH_AMOUNT, PARTIAL_VECS_CHECKPOINT_SIZE, SECOND_BUCKETS_COUNT,
+};
 use crate::utils::get_memory_mode;
 use crate::utils::resource_counter::ResourceCounter;
 use crate::KEEP_FILES;
@@ -58,6 +60,7 @@ impl<FileType: ChunkDecoder> BucketProcessData<FileType> {
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
+                DEFAULT_PREFETCH_AMOUNT,
             ),
             buckets: MultiThreadBuckets::new(
                 SECOND_BUCKETS_COUNT,

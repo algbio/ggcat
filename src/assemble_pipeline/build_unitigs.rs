@@ -2,7 +2,7 @@ use crate::assemble_pipeline::reorganize_reads::ReorganizedReadsExtraData;
 use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
-use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
+use crate::config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -131,6 +131,7 @@ impl AssemblePipeline {
                         RemoveFileMode::Remove {
                             remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                         },
+                        DEFAULT_PREFETCH_AMOUNT,
                     );
 
                     let mut unitigs_map_stream = unitigs_map_reader.get_single_stream();
@@ -206,6 +207,7 @@ impl AssemblePipeline {
                         RemoveFileMode::Remove {
                             remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                         },
+                        DEFAULT_PREFETCH_AMOUNT,
                     )
                     .decode_all_bucket_items::<CompressedReadsBucketHelper<
                         ReorganizedReadsExtraData<
