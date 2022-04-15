@@ -1,7 +1,10 @@
 use crate::assemble_pipeline::links_compaction::LinkMapping;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
-use crate::config::{SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE};
+use crate::config::{
+    SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
+    DEFAULT_PREFETCH_AMOUNT,
+};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 
 use crate::assemble_pipeline::build_unitigs::write_fasta_entry;
@@ -16,6 +19,7 @@ use crate::KEEP_FILES;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
@@ -109,6 +113,7 @@ impl AssemblePipeline {
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
+                DEFAULT_PREFETCH_AMOUNT,
             )
             .decode_all_bucket_items::<LinkMapping, _>((), |link| {
                 mappings.push(link);
@@ -129,6 +134,7 @@ impl AssemblePipeline {
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
+                DEFAULT_PREFETCH_AMOUNT,
             )
             .decode_all_bucket_items::<CompressedReadsBucketHelper<
                 color_types::PartialUnitigsColorStructure<MH, CX>,
@@ -137,7 +143,7 @@ impl AssemblePipeline {
                 if seq.bases_count() > decompress_buffer.len() {
                     decompress_buffer.resize(seq.bases_count(), 0);
                 }
-                seq.write_to_slice(&mut decompress_buffer[..seq.bases_count()]);
+                seq.write_unpacked_to_slice(&mut decompress_buffer[..seq.bases_count()]);
 
                 let seq = &decompress_buffer[..seq.bases_count()];
 

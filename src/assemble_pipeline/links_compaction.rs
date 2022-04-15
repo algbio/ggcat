@@ -2,7 +2,9 @@ use crate::assemble_pipeline::unitig_links_manager::{
     ThreadUnitigsLinkManager, UnitigLinksManager,
 };
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::config::{BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
+use crate::config::{
+    BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
+};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::utils::fast_rand_bool::FastRandBool;
@@ -103,13 +105,14 @@ impl AssemblePipeline {
             let mut results_tmp =
                 BucketsThreadDispatcher::new(&result_map_buckets, &mut result_buffers);
 
-            let mut rand_bool = FastRandBool::new();
+            let mut rand_bool = FastRandBool::<1>::new();
 
             let file_reader = LockFreeBinaryReader::new(
                 input,
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
+                DEFAULT_PREFETCH_AMOUNT,
             );
 
             let mut stream = file_reader.get_read_parallel_stream().unwrap();

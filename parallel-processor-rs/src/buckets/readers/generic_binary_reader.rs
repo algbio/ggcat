@@ -1,4 +1,5 @@
 use crate::buckets::bucket_writer::BucketItem;
+use crate::buckets::readers::BucketReader;
 use crate::buckets::writers::{BucketCheckpoints, BucketHeader};
 use crate::memory_fs::file::reader::FileReader;
 use crate::memory_fs::{MemoryFs, RemoveFileMode};
@@ -64,7 +65,7 @@ impl<D: ChunkDecoder> Read for SequentialReader<D> {
             self.index_position += 1;
 
             if self.index_position >= self.index.index.len() as u64 {
-                return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+                return Ok(0);
             }
 
             replace_with_or_abort(&mut self.reader, |reader| {
@@ -89,8 +90,12 @@ impl<D: ChunkDecoder> Read for SequentialReader<D> {
 }
 
 impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
-    pub fn new(name: impl AsRef<Path>, remove_file: RemoveFileMode) -> Self {
-        let mut file = FileReader::open(&name)
+    pub fn new(
+        name: impl AsRef<Path>,
+        remove_file: RemoveFileMode,
+        prefetch_amount: Option<usize>,
+    ) -> Self {
+        let mut file = FileReader::open(&name, prefetch_amount)
             .unwrap_or_else(|| panic!("Cannot open file {}", name.as_ref().display()));
 
         let mut header_buffer = [0; BucketHeader::SIZE];
@@ -103,7 +108,11 @@ impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
         file.seek(SeekFrom::Start(header.index_offset)).unwrap();
         let index: BucketCheckpoints = bincode::deserialize_from(&mut file).unwrap();
 
-        // println!("Index: {:?} tot: {}", index.index, header.index_offset);
+        // println!(
+        //     "Index: {} for {}",
+        //     index.index.len(),
+        //     name.as_ref().display()
+        // );
 
         file.seek(SeekFrom::Start(index.index[0])).unwrap();
 
@@ -116,7 +125,7 @@ impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
                 last_byte_position: header.index_offset,
                 index_position: 0,
             },
-            parallel_reader: FileReader::open(&name).unwrap(),
+            parallel_reader: FileReader::open(&name, prefetch_amount).unwrap(),
             parallel_index: AtomicU64::new(0),
             remove_file,
             file_path: name.as_ref().to_path_buf(),
@@ -172,9 +181,11 @@ impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
         }
         return true;
     }
+}
 
-    pub fn decode_all_bucket_items<E: BucketItem, F: for<'a> FnMut(E::ReadType<'a>)>(
-        &mut self,
+impl<D: ChunkDecoder> BucketReader for GenericChunkedBinaryReader<D> {
+    fn decode_all_bucket_items<E: BucketItem, F: for<'a> FnMut(E::ReadType<'a>)>(
+        mut self,
         mut buffer: E::ReadBuffer,
         mut func: F,
     ) {
@@ -183,6 +194,10 @@ impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
         while let Some(el) = E::read_from(&mut stream, &mut buffer) {
             func(el);
         }
+    }
+
+    fn get_name(&self) -> PathBuf {
+        self.file_path.clone()
     }
 }
 

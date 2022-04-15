@@ -1,9 +1,6 @@
 //! NtHash impl adapted from https://github.com/luizirber/nthash.git
 
-use crate::config::{
-    BucketIndexType, MinimizerType, SortingHashType, FIRST_BUCKETS_COUNT, FIRST_BUCKET_BITS,
-    SECOND_BUCKETS_COUNT, SORTING_HASH_SHIFT,
-};
+use crate::config::{BucketIndexType, MinimizerType, FIRST_BUCKETS_COUNT};
 use crate::hashes::dummy_hasher::DummyHasherBuilder;
 use crate::hashes::nthash_base::{h, rc};
 use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
@@ -125,19 +122,8 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
     }
 
     #[inline(always)]
-    fn get_second_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType {
-        ((hash >> FIRST_BUCKET_BITS) % (SECOND_BUCKETS_COUNT as u64)) as BucketIndexType
-    }
-
-    fn get_sorting_hash(hash: Self::HashTypeUnextendable) -> SortingHashType {
-        (hash >> SORTING_HASH_SHIFT) as SortingHashType
-    }
-
-    #[inline(always)]
-    fn get_full_minimizer<const MASK: MinimizerType>(
-        hash: Self::HashTypeUnextendable,
-    ) -> MinimizerType {
-        (hash as MinimizerType) & MASK
+    fn get_full_minimizer(hash: Self::HashTypeUnextendable) -> MinimizerType {
+        hash as MinimizerType
     }
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8 {

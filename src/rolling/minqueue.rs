@@ -1,4 +1,3 @@
-use crate::config::MinimizerType;
 use crate::hashes::HashFunctionFactory;
 use std::cmp::min_by_key;
 use std::marker::PhantomData;
@@ -30,7 +29,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
         }
     }
 
-    fn rebuild_minimums<const MINIMIZER_MASK: MinimizerType>(&mut self, size: usize) {
+    fn rebuild_minimums(&mut self, size: usize) {
         let mut i = self.index.wrapping_sub(2) & self.capacity_mask;
 
         self.minimum = (
@@ -44,18 +43,14 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
                 self.queue.get_unchecked_mut(i).1 = min_by_key(
                     self.queue.get_unchecked_mut(i).1,
                     self.queue.get_unchecked_mut((i + 1) & self.capacity_mask).1,
-                    |x| H::get_full_minimizer::<MINIMIZER_MASK>(*x),
+                    |x| H::get_full_minimizer(*x),
                 );
             }
             i = i.wrapping_sub(1) & self.capacity_mask;
         }
     }
 
-    pub fn make_iter<
-        'a,
-        I: Iterator<Item = H::HashTypeUnextendable> + 'a,
-        const MINIMIZER_MASK: MinimizerType,
-    >(
+    pub fn make_iter<'a, I: Iterator<Item = H::HashTypeUnextendable> + 'a>(
         &'a mut self,
         mut iter: I,
     ) -> impl Iterator<Item = H::HashTypeUnextendable> + 'a {
@@ -67,7 +62,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
         }
 
         self.index = self.size - 1;
-        self.rebuild_minimums::<MINIMIZER_MASK>(self.size - 1);
+        self.rebuild_minimums(self.size - 1);
 
         iter.map(move |x| unsafe {
             *self.queue.get_unchecked_mut(self.index) = (x, x);
@@ -75,12 +70,12 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
             self.minimum = min_by_key(
                 self.minimum,
                 (x, (self.index + self.size) & self.capacity_mask),
-                |x| H::get_full_minimizer::<MINIMIZER_MASK>(x.0),
+                |x| H::get_full_minimizer(x.0),
             );
             self.index = (self.index + 1) & self.capacity_mask;
 
             if self.index == self.minimum.1 {
-                self.rebuild_minimums::<MINIMIZER_MASK>(self.size);
+                self.rebuild_minimums(self.size);
             }
 
             min_by_key(
@@ -88,7 +83,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
                 self.queue
                     .get_unchecked_mut((self.index.wrapping_sub(self.size)) & self.capacity_mask)
                     .1,
-                |x| H::get_full_minimizer::<MINIMIZER_MASK>(*x),
+                |x| H::get_full_minimizer(*x),
             )
         })
     }
@@ -96,7 +91,6 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::DEFAULT_MINIMIZER_MASK;
     use crate::hashes::fw_nthash::ForwardNtHashIteratorFactory;
     use crate::rolling::minqueue::RollingMinQueue;
     use rand::{thread_rng, RngCore, SeedableRng};
@@ -120,10 +114,7 @@ mod tests {
             }
         }
 
-        for (index, item) in queue
-            .make_iter::<_, { DEFAULT_MINIMIZER_MASK }>(items.clone().into_iter())
-            .enumerate()
-        {
+        for (index, item) in queue.make_iter(items.clone().into_iter()).enumerate() {
             assert_eq!(item, *items[index..index + MINWINDOW].iter().min().unwrap());
         }
     }

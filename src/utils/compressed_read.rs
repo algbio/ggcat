@@ -33,7 +33,7 @@ pub struct CompressedReadIndipendent {
 impl CompressedReadIndipendent {
     pub fn from_read(read: &CompressedRead, storage: &mut Vec<u8>) -> CompressedReadIndipendent {
         let start = storage.len() * 4;
-        storage.extend_from_slice(read.get_compr_slice());
+        storage.extend_from_slice(read.get_packed_slice());
         CompressedReadIndipendent {
             start,
             size: read.bases_count(),
@@ -134,13 +134,13 @@ impl<'a> CompressedRead<'a> {
     //     wr.write(self.get_compr_slice());
     // }
 
-    pub fn get_compr_slice(&self) -> &[u8] {
+    pub fn get_packed_slice(&self) -> &[u8] {
         unsafe { from_raw_parts(self.data, (self.size + self.start as usize + 3) / 4) }
     }
 
     pub fn copy_to_buffer(&self, buffer: &mut Vec<u8>) {
         if self.start == 0 {
-            buffer.extend_from_slice(self.get_compr_slice());
+            buffer.extend_from_slice(self.get_packed_slice());
         } else {
             let bytes_count = (self.size + 3) / 4;
 
@@ -183,7 +183,7 @@ impl<'a> CompressedRead<'a> {
         (*self.data.add(index / 4) >> ((index % 4) * 2)) & 0x3
     }
 
-    pub fn write_to_slice(&self, slice: &mut [u8]) {
+    pub fn write_unpacked_to_slice(&self, slice: &mut [u8]) {
         for (val, letter) in slice.iter_mut().zip(self.as_bases_iter()) {
             *val = letter;
         }
@@ -210,7 +210,7 @@ impl<'a> CompressedRead<'a> {
 impl<'a> FastaCompatibleRead for CompressedRead<'a> {
     type IntermediateData = Range<usize>;
 
-    fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Self::IntermediateData {
+    fn write_unpacked_to_buffer(&self, buffer: &mut Vec<u8>) -> Self::IntermediateData {
         let start = buffer.len();
         buffer.extend(
             (0..self.size).map(|i| unsafe { Utils::decompress_base(self.get_base_unchecked(i)) }),

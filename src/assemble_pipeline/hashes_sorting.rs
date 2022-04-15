@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
+use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
 use crate::hashes::HashFunctionFactory;
 use crate::io::structs::hash_entry::{Direction, HashCompare, HashEntry};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
@@ -12,6 +12,7 @@ use crate::utils::vec_slice::VecSlice;
 use crate::KEEP_FILES;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
@@ -54,13 +55,13 @@ impl AssemblePipeline {
                     &mut buffers
                 );
 
-                let mut rand_bool = FastRandBool::new();
+                let mut rand_bool = FastRandBool::<1>::new();
 
                 let mut hashes_vec = Vec::new();
 
                 LockFreeBinaryReader::new(input, RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed)
-                }).decode_all_bucket_items::<HashEntry<H::HashTypeUnextendable>, _>((), |h| {
+                }, DEFAULT_PREFETCH_AMOUNT).decode_all_bucket_items::<HashEntry<H::HashTypeUnextendable>, _>((), |h| {
                     hashes_vec.push(h);
                 });
 

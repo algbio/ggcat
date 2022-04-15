@@ -76,12 +76,21 @@ impl FileChunk {
         }
     }
 
-    pub fn get_ptr(&self, file: &UnderlyingFile) -> *const u8 {
+    #[inline(always)]
+    pub fn get_ptr(&self, file: &UnderlyingFile, prefetch: Option<usize>) -> *const u8 {
         unsafe {
             match self {
                 FileChunk::OnDisk { offset, .. } => {
                     if let UnderlyingFile::ReadMode(file) = file {
-                        file.as_ref().unwrap().as_ptr().add(*offset as usize)
+                        let file = file.as_ref().unwrap();
+
+                        if let Some(prefetch) = prefetch {
+                            let remaining_length = file.len() - *offset as usize;
+                            let prefetch_length = min(remaining_length, prefetch);
+                            file.prefetch(*offset as usize, prefetch_length);
+                        }
+
+                        file.as_ptr().add(*offset as usize)
                     } else {
                         panic!("Error, wrong underlying file!");
                     }

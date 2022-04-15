@@ -2,7 +2,7 @@ use crate::assemble_pipeline::reorganize_reads::ReorganizedReadsExtraData;
 use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
-use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
+use crate::config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -16,6 +16,7 @@ use hashbrown::HashMap;
 use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
@@ -33,7 +34,7 @@ struct FinalUnitigInfo {
 
 pub trait FastaCompatibleRead {
     type IntermediateData;
-    fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Self::IntermediateData;
+    fn write_unpacked_to_buffer(&self, buffer: &mut Vec<u8>) -> Self::IntermediateData;
     fn as_slice_from_buffer<'a>(
         &'a self,
         buffer: &'a Vec<u8>,
@@ -46,7 +47,7 @@ impl FastaCompatibleRead for [u8] {
     type IntermediateData = ();
 
     #[inline(always)]
-    fn write_to_buffer(&self, _buffer: &mut Vec<u8>) -> Self::IntermediateData {}
+    fn write_unpacked_to_buffer(&self, _buffer: &mut Vec<u8>) -> Self::IntermediateData {}
 
     #[inline(always)]
     fn as_slice_from_buffer<'a>(&'a self, _: &'a Vec<u8>, _: ()) -> &'a [u8] {
@@ -80,7 +81,7 @@ pub fn write_fasta_entry<
 
     let ident_buffer_size = temp_buffer.len();
 
-    let int_data = read.write_to_buffer(temp_buffer);
+    let int_data = read.write_unpacked_to_buffer(temp_buffer);
     let read_slice = read.as_slice_from_buffer(temp_buffer, int_data);
 
     writer.add_read(FastaSequence {
@@ -131,6 +132,7 @@ impl AssemblePipeline {
                         RemoveFileMode::Remove {
                             remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                         },
+                        DEFAULT_PREFETCH_AMOUNT,
                     );
 
                     let mut unitigs_map_stream = unitigs_map_reader.get_single_stream();
@@ -206,6 +208,7 @@ impl AssemblePipeline {
                         RemoveFileMode::Remove {
                             remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                         },
+                        DEFAULT_PREFETCH_AMOUNT,
                     )
                     .decode_all_bucket_items::<CompressedReadsBucketHelper<
                         ReorganizedReadsExtraData<

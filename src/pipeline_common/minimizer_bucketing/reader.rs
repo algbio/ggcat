@@ -54,5 +54,6 @@ pub fn minb_reader<GlobalData, FileInfo: Clone + Sync + Send + Default>(
         } else {
             manager.deallocate(data);
         }
+        context.processed_files.fetch_add(1, Ordering::Relaxed);
     }
 }

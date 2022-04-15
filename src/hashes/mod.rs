@@ -14,7 +14,7 @@ use std::hash::{BuildHasher, Hash};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::config::{BucketIndexType, MinimizerType, SortingHashType};
+use crate::config::{BucketIndexType, MinimizerType};
 
 pub trait UnextendableHashTraitType = Copy
     + Clone
@@ -53,16 +53,8 @@ pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + Send + Sync + 'stat
     /// Gets the first buckets count, used in MinimizerBucketing phase
     fn get_first_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType;
 
-    /// Gets the second buckets count, used in KmersMerge phase to further split reads
-    fn get_second_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType;
-
-    /// Gets the final sorting hash, that groups all the reads by their full minimizer
-    fn get_sorting_hash(hash: Self::HashTypeUnextendable) -> SortingHashType;
-
     /// Gets the full minimizer, that is split in first and second buckets and the final sorting hash
-    fn get_full_minimizer<const MASK: MinimizerType>(
-        hash: Self::HashTypeUnextendable,
-    ) -> MinimizerType;
+    fn get_full_minimizer(hash: Self::HashTypeUnextendable) -> MinimizerType;
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8;
     fn get_u64(hash: Self::HashTypeUnextendable) -> u64;

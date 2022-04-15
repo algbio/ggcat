@@ -3,9 +3,9 @@ mod reader;
 mod sequences_splitter;
 
 use crate::config::{
-    BucketIndexType, MinimizerType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
-    DEFAULT_MINIMIZER_MASK, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-    READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
+    BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, READ_INTERMEDIATE_CHUNKS_SIZE,
+    READ_INTERMEDIATE_QUEUE_MULTIPLIER,
 };
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -83,7 +83,6 @@ pub trait MinimizerBucketingExecutor<'a, FACTORY: MinimizerBucketingExecutorFact
     fn process_sequence<
         S: MinimizerInputSequence,
         F: FnMut(BucketIndexType, S, u8, FACTORY::ExtraData),
-        const MINIMIZER_MASK: MinimizerType,
     >(
         &mut self,
         preprocess_info: &FACTORY::PreprocessInfo,
@@ -104,6 +103,7 @@ pub struct MinimizerBucketingExecutionContext<GlobalData> {
     pub buckets: MultiThreadBuckets<CompressedBinaryWriter>,
     pub common: MinimizerBucketingCommonData<GlobalData>,
     pub current_file: AtomicUsize,
+    pub processed_files: AtomicUsize,
     pub total_files: usize,
 }
 
@@ -142,7 +142,7 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
             );
 
             sequences_splitter.process_sequences(&x, None, &mut |sequence: &[u8], range| {
-                buckets_processor.process_sequence::<_, _, { DEFAULT_MINIMIZER_MASK }>(
+                buckets_processor.process_sequence(
                     &preprocess_info,
                     sequence,
                     range,
@@ -178,17 +178,19 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
 
         if do_print_log {
             let current_file = context.current_file.load(Ordering::Relaxed);
+            let processed_files = context.processed_files.load(Ordering::Relaxed);
 
             println!(
-                "Elaborated {} sequences! [{} | {:.2}% qb] ({}/{} => {:.2}%) {}",
+                "Elaborated {} sequences! [{} | {:.2}% qb] ({}[{}]/{} => {:.2}%) {}",
                 SEQ_COUNT.load(Ordering::Relaxed),
                 VALID_BASES_COUNT.load(Ordering::Relaxed),
                 (VALID_BASES_COUNT.load(Ordering::Relaxed) as f64)
                     / (max(1, TOT_BASES_COUNT.load(Ordering::Relaxed)) as f64)
                     * 100.0,
+                processed_files,
                 current_file,
                 context.total_files,
-                current_file as f64 / max(1, context.total_files) as f64 * 100.0,
+                processed_files as f64 / max(1, context.total_files) as f64 * 100.0,
                 PHASES_TIMES_MONITOR
                     .read()
                     .get_formatted_counter_without_memory()
@@ -197,6 +199,7 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
 
         manager.return_obj(data);
     }
+
     tmp_reads_buffer.finalize();
 }
 
@@ -230,6 +233,7 @@ impl GenericMinimizerBucketing {
         let mut execution_context = MinimizerBucketingExecutionContext {
             buckets,
             current_file: AtomicUsize::new(0),
+            processed_files: AtomicUsize::new(0),
             total_files: input_files.len(),
             common: MinimizerBucketingCommonData {
                 k,
@@ -244,7 +248,7 @@ impl GenericMinimizerBucketing {
             ThreadPoolDefinition::new(
                 &execution_context,
                 READ_INTERMEDIATE_CHUNKS_SIZE,
-                String::from("assembler-minimizer-bucketing-reader"),
+                String::from("r-assembler-minimizer"),
                 max(1, threads_count / 2),
                 &AtomicUsize::new(threads_count),
                 threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),
@@ -253,7 +257,7 @@ impl GenericMinimizerBucketing {
             ThreadPoolDefinition::new(
                 &execution_context,
                 (),
-                String::from("assembler-minimizer-bucketing-writer"),
+                String::from("w-assembler-minimizer"),
                 threads_count,
                 &AtomicUsize::new(threads_count),
                 threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),

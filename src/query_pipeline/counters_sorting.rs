@@ -1,3 +1,4 @@
+use crate::config::DEFAULT_PREFETCH_AMOUNT;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::sequences_reader::SequencesReader;
 use crate::io::varint::{decode_varint, encode_varint};
@@ -6,6 +7,7 @@ use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
 use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -95,6 +97,7 @@ impl QueryPipeline {
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
+                DEFAULT_PREFETCH_AMOUNT,
             )
             .decode_all_bucket_items::<CounterEntry, _>((), |h| {
                 counters_vec.push(h);

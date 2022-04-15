@@ -1,5 +1,5 @@
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::{BucketIndexType, MinimizerType, DEFAULT_MINIMIZER_MASK};
+use crate::config::BucketIndexType;
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
@@ -129,7 +129,6 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
     fn process_sequence<
         S: MinimizerInputSequence,
         F: FnMut(BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData),
-        const MINIMIZER_MASK: MinimizerType
     >(
         &mut self,
         preprocess_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -141,15 +140,13 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
 
         let mut rolling_iter = self
             .minimizer_queue
-            .make_iter::<_, { DEFAULT_MINIMIZER_MASK }>(hashes.iter().map(|x| x.to_unextendable()));
+            .make_iter(hashes.iter().map(|x| x.to_unextendable()));
 
         let mut last_index = 0;
         let mut last_hash = rolling_iter.next().unwrap();
 
         for (index, min_hash) in rolling_iter.enumerate() {
-            if H::get_full_minimizer::<MINIMIZER_MASK>(min_hash)
-                != H::get_full_minimizer::<MINIMIZER_MASK>(last_hash)
-            {
+            if H::get_full_minimizer(min_hash) != H::get_full_minimizer(last_hash) {
                 let bucket = H::get_first_bucket(last_hash);
 
                 push_sequence(

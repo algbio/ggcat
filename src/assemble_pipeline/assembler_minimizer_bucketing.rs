@@ -1,7 +1,7 @@
 use crate::assemble_pipeline::parallel_kmers_merge::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::{BucketIndexType, MinimizerType};
+use crate::config::BucketIndexType;
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
@@ -99,8 +99,7 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData),
-        const MINIMIZER_MASK: MinimizerType
+        F: FnMut(BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData)
     >(
         &mut self,
         preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -112,7 +111,7 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
 
         let mut rolling_iter = self
             .minimizer_queue
-            .make_iter::<_, MINIMIZER_MASK>(hashes.iter().map(|x| x.to_unextendable()));
+            .make_iter(hashes.iter().map(|x| x.to_unextendable()));
 
         let mut last_index = 0;
         let mut last_hash = rolling_iter.next().unwrap();
@@ -131,8 +130,7 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
         for (index, min_hash) in rolling_iter.enumerate() {
             let index = index + additional_offset;
 
-            if (H::get_full_minimizer::<MINIMIZER_MASK>(min_hash)
-                != H::get_full_minimizer::<MINIMIZER_MASK>(last_hash))
+            if (H::get_full_minimizer(min_hash) != H::get_full_minimizer(last_hash))
                 && (preprocess_info.include_last || end_index != index)
             {
                 let bucket = H::get_first_bucket(last_hash);
