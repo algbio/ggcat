@@ -1,16 +1,19 @@
 use crate::assemble_pipeline::parallel_kmers_merge::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::{BucketIndexType, MinimizerType};
-use crate::hashes::ExtendableHashTraitType;
+use crate::config::{BucketIndexType, MinimizerType, FIRST_BUCKETS_COUNT, HYPER_LOG_LOG_BUCKETS};
+use crate::hashes::fw_nthash::ForwardNtHashIteratorFactory;
+use crate::hashes::fw_rkhash::u64::ForwardRabinKarpHashFactory;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
+use crate::hashes::{ExtendableHashTraitType, HashableSequence};
 use crate::io::sequences_reader::FastaSequence;
 use crate::pipeline_common::minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
 };
 use crate::rolling::minqueue::RollingMinQueue;
+use crate::utils::hyper_loglog_est::HyperLogLogEstimator;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::max;
 use std::marker::PhantomData;
@@ -19,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 pub struct AssemblerMinimizerBucketingExecutor<'a, H: HashFunctionFactory, CX: ColorsManager> {
     minimizer_queue: RollingMinQueue<H>,
+    freq_ests: [HyperLogLogEstimator<{ HYPER_LOG_LOG_BUCKETS }>; FIRST_BUCKETS_COUNT],
     global_data: &'a MinimizerBucketingCommonData<()>,
     _phantom: PhantomData<CX>,
 }
@@ -61,8 +65,41 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutorFactor
     ) -> Self::ExecutorType<'a> {
         Self::ExecutorType::<'a> {
             minimizer_queue: RollingMinQueue::new(global_data.k - global_data.m),
+            freq_ests: [HyperLogLogEstimator::NEW; FIRST_BUCKETS_COUNT],
             global_data,
             _phantom: PhantomData,
+        }
+    }
+}
+
+struct FreqEst<I: Iterator<Item = u64>, const ENABLE: bool> {
+    freq_est: Option<I>,
+}
+
+fn new_freq_est<N: HashableSequence, const ENABLE: bool>(
+    sequence: N,
+    k: usize,
+) -> FreqEst<impl Iterator<Item = u64>, ENABLE> {
+    FreqEst {
+        freq_est: if ENABLE {
+            Some(
+                ForwardNtHashIteratorFactory::new(sequence, k)
+                    .iter()
+                    .map(|x| x.to_unextendable()),
+            )
+        } else {
+            None
+        },
+    }
+}
+
+impl<I: Iterator<Item = u64>, const ENABLE: bool> FreqEst<I, ENABLE> {
+    #[inline(always)]
+    fn get_value(&mut self) -> u64 {
+        if ENABLE {
+            unsafe { self.freq_est.as_mut().unwrap_unchecked().next().unwrap() }
+        } else {
+            0
         }
     }
 }
@@ -100,7 +137,8 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
     fn process_sequence<
         S: MinimizerInputSequence,
         F: FnMut(BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData),
-        const MINIMIZER_MASK: MinimizerType
+        const MINIMIZER_MASK: MinimizerType,
+        const FREQ_ESTIMATE: bool
     >(
         &mut self,
         preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -109,6 +147,7 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
         mut push_sequence: F,
     ){
         let hashes = H::new(sequence, self.global_data.m);
+        let mut freq_estimator = new_freq_est::<_, FREQ_ESTIMATE>(sequence, self.global_data.k);
 
         let mut rolling_iter = self
             .minimizer_queue
@@ -116,6 +155,7 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
 
         let mut last_index = 0;
         let mut last_hash = rolling_iter.next().unwrap();
+        let mut current_bucket = H::get_first_bucket(last_hash);
         let mut include_first = preprocess_info.include_first;
 
         // If we do not include the first base (so the minimizer value is different), it should not be further split
@@ -135,28 +175,35 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
                 != H::get_full_minimizer::<MINIMIZER_MASK>(last_hash))
                 && (preprocess_info.include_last || end_index != index)
             {
-                let bucket = H::get_first_bucket(last_hash);
-
                 push_sequence(
-                    bucket,
+                    current_bucket,
                     sequence.get_subslice((max(1, last_index) - 1)..(index + self.global_data.k)),
                     include_first as u8,
                     preprocess_info.color_info,
                 );
                 last_index = index + 1;
                 last_hash = min_hash;
+                current_bucket = H::get_first_bucket(last_hash);
                 include_first = false;
+            }
+            if FREQ_ESTIMATE {
+                let freq_hash = freq_estimator.get_value();
+                self.freq_ests[current_bucket as usize].add_element(freq_hash);
             }
         }
 
         let start_index = max(1, last_index) - 1;
-        let include_last = preprocess_info.include_last; // Always include the last element of the sequence in the last entry
+        let include_last = preprocess_info.include_last;
         push_sequence(
             H::get_first_bucket(last_hash),
             sequence.get_subslice(start_index..sequence.seq_len()),
             include_first as u8 | ((include_last as u8) << 1),
             preprocess_info.color_info,
         );
+    }
+
+    fn get_buckets_estimators(&self) -> &[HyperLogLogEstimator<{ HYPER_LOG_LOG_BUCKETS }>] {
+        &self.freq_ests
     }
 }
 

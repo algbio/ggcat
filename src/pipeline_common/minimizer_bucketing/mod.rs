@@ -4,8 +4,10 @@ mod sequences_splitter;
 
 use crate::config::{
     BucketIndexType, MinimizerType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
-    DEFAULT_MINIMIZER_MASK, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-    READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
+    DEFAULT_MINIMIZER_MASK, DEFAULT_PER_CPU_BUFFER_SIZE, HYPER_LOG_LOG_BUCKETS,
+    HYPER_LOG_LOG_CORRECTION_FACTOR, HYPER_LOG_LOG_SAMPLE_RC_PROB,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, READ_INTERMEDIATE_CHUNKS_SIZE,
+    READ_INTERMEDIATE_QUEUE_MULTIPLIER,
 };
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -14,7 +16,9 @@ use crate::io::sequences_reader::FastaSequence;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::reader::minb_reader;
 use crate::pipeline_common::minimizer_bucketing::sequences_splitter::SequencesSplitter;
+use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::get_memory_mode;
+use crate::utils::hyper_loglog_est::HyperLogLogEstimator;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
@@ -22,6 +26,7 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::threadpools_chain::{
     ObjectsPoolManager, ThreadPoolDefinition, ThreadPoolsChain,
 };
+use parking_lot::Mutex;
 use std::cmp::max;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -84,6 +89,7 @@ pub trait MinimizerBucketingExecutor<'a, FACTORY: MinimizerBucketingExecutorFact
         S: MinimizerInputSequence,
         F: FnMut(BucketIndexType, S, u8, FACTORY::ExtraData),
         const MINIMIZER_MASK: MinimizerType,
+        const FREQ_ESTIMATE: bool,
     >(
         &mut self,
         preprocess_info: &FACTORY::PreprocessInfo,
@@ -91,6 +97,8 @@ pub trait MinimizerBucketingExecutor<'a, FACTORY: MinimizerBucketingExecutorFact
         range: Range<usize>,
         push_sequence: F,
     );
+
+    fn get_buckets_estimators(&self) -> &[HyperLogLogEstimator<{ HYPER_LOG_LOG_BUCKETS }>];
 }
 
 pub struct MinimizerBucketingCommonData<GlobalData> {
@@ -102,6 +110,7 @@ pub struct MinimizerBucketingCommonData<GlobalData> {
 
 pub struct MinimizerBucketingExecutionContext<GlobalData> {
     pub buckets: MultiThreadBuckets<CompressedBinaryWriter>,
+    pub freq_estimators: Mutex<Vec<Vec<HyperLogLogEstimator<HYPER_LOG_LOG_BUCKETS>>>>,
     pub common: MinimizerBucketingCommonData<GlobalData>,
     pub current_file: AtomicUsize,
     pub total_files: usize,
@@ -124,6 +133,8 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
 
     let mut buckets_processor = E::new(&context.common);
 
+    let mut freq_prob_gen = FastRandBool::<HYPER_LOG_LOG_SAMPLE_RC_PROB>::new();
+
     while let Some(data) = manager.recv_obj() {
         let mut total_bases = 0;
         let mut sequences_splitter = SequencesSplitter::new(context.common.k);
@@ -142,18 +153,33 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
             );
 
             sequences_splitter.process_sequences(&x, None, &mut |sequence: &[u8], range| {
-                buckets_processor.process_sequence::<_, _, { DEFAULT_MINIMIZER_MASK }>(
-                    &preprocess_info,
-                    sequence,
-                    range,
-                    |bucket, seq, flags, extra| {
-                        tmp_reads_buffer.add_element(
-                            bucket,
-                            &extra,
-                            &CompressedReadsBucketHelper::<_, E::FLAGS_COUNT>::new(seq, flags),
-                        );
-                    },
-                );
+                if freq_prob_gen.get_randbool() {
+                    buckets_processor.process_sequence::<_, _, { DEFAULT_MINIMIZER_MASK }, true>(
+                        &preprocess_info,
+                        sequence,
+                        range,
+                        |bucket, seq, flags, extra| {
+                            tmp_reads_buffer.add_element(
+                                bucket,
+                                &extra,
+                                &CompressedReadsBucketHelper::<_, E::FLAGS_COUNT>::new(seq, flags),
+                            );
+                        },
+                    );
+                } else {
+                    buckets_processor.process_sequence::<_, _, { DEFAULT_MINIMIZER_MASK }, false>(
+                        &preprocess_info,
+                        sequence,
+                        range,
+                        |bucket, seq, flags, extra| {
+                            tmp_reads_buffer.add_element(
+                                bucket,
+                                &extra,
+                                &CompressedReadsBucketHelper::<_, E::FLAGS_COUNT>::new(seq, flags),
+                            );
+                        },
+                    )
+                }
             });
 
             sequences_count += 1;
@@ -197,6 +223,10 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
 
         manager.return_obj(data);
     }
+
+    let estimators = Vec::from(buckets_processor.get_buckets_estimators());
+    context.freq_estimators.lock().push(estimators);
+
     tmp_reads_buffer.finalize();
 }
 
@@ -237,6 +267,7 @@ impl GenericMinimizerBucketing {
                 buckets_count,
                 global_data,
             },
+            freq_estimators: Mutex::new(Vec::new()),
         };
 
         ThreadPoolsChain::run_double(
@@ -244,7 +275,7 @@ impl GenericMinimizerBucketing {
             ThreadPoolDefinition::new(
                 &execution_context,
                 READ_INTERMEDIATE_CHUNKS_SIZE,
-                String::from("assembler-minimizer-bucketing-reader"),
+                String::from("r-assembler-minimizer"),
                 max(1, threads_count / 2),
                 &AtomicUsize::new(threads_count),
                 threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),
@@ -253,13 +284,26 @@ impl GenericMinimizerBucketing {
             ThreadPoolDefinition::new(
                 &execution_context,
                 (),
-                String::from("assembler-minimizer-bucketing-writer"),
+                String::from("w-assembler-minimizer"),
                 threads_count,
                 &AtomicUsize::new(threads_count),
                 threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),
                 worker::<E>,
             ),
         );
+
+        let frequencies = HyperLogLogEstimator::estimate_batch_elements(
+            &execution_context.freq_estimators.lock(),
+            HYPER_LOG_LOG_CORRECTION_FACTOR,
+            (0.5f64).powf(HYPER_LOG_LOG_SAMPLE_RC_PROB as f64),
+        );
+
+        for (idx, (f, cnt)) in frequencies.iter().enumerate() {
+            println!(
+                "Size estimation bucket{}: {} unique vs {} total",
+                idx, *f, *cnt
+            );
+        }
 
         execution_context.buckets.finalize()
     }

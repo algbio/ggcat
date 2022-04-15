@@ -3,6 +3,7 @@ pub mod compressed_read;
 pub mod debug_functions;
 pub mod debug_utils;
 pub mod fast_rand_bool;
+pub mod hyper_loglog_est;
 pub mod owned_drop;
 pub mod resource_counter;
 pub mod vec_slice;

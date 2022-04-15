@@ -195,6 +195,10 @@ impl<D: ChunkDecoder> BucketReader for GenericChunkedBinaryReader<D> {
             func(el);
         }
     }
+
+    fn get_name(&self) -> PathBuf {
+        self.file_path.clone()
+    }
 }
 
 impl<D: ChunkDecoder> Drop for GenericChunkedBinaryReader<D> {

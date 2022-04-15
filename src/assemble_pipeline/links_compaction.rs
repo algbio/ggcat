@@ -105,7 +105,7 @@ impl AssemblePipeline {
             let mut results_tmp =
                 BucketsThreadDispatcher::new(&result_map_buckets, &mut result_buffers);
 
-            let mut rand_bool = FastRandBool::new();
+            let mut rand_bool = FastRandBool::<1>::new();
 
             let file_reader = LockFreeBinaryReader::new(
                 input,

@@ -297,6 +297,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         clear_hashmap(&mut self.rhash_map);
         self.rcorrect_reads.clear();
 
+        let input_bucket_index = Utils::get_bucket_index(reader.get_name());
+
         let mut saved_reads = Vec::with_capacity(256);
 
         reader.decode_all_bucket_items::<CompressedReadsBucketHelper<
@@ -354,6 +356,12 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 self.rcorrect_reads.update_maximum_usage(len);
             }
         });
+
+        println!(
+            "Unique kmers for bucket{}: {}",
+            input_bucket_index,
+            self.rcorrect_reads.len()
+        );
 
         {
             static COUNTER_KMERS_MAX: AtomicCounter<MaxMode> =

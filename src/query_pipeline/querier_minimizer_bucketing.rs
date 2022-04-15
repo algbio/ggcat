@@ -1,5 +1,7 @@
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::{BucketIndexType, MinimizerType, DEFAULT_MINIMIZER_MASK};
+use crate::config::{
+    BucketIndexType, MinimizerType, DEFAULT_MINIMIZER_MASK, HYPER_LOG_LOG_BUCKETS,
+};
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
@@ -12,6 +14,7 @@ use crate::pipeline_common::minimizer_bucketing::{
 use crate::query_pipeline::parallel_kmers_query::QueryKmersReferenceData;
 use crate::query_pipeline::QueryPipeline;
 use crate::rolling::minqueue::RollingMinQueue;
+use crate::utils::hyper_loglog_est::HyperLogLogEstimator;
 use crate::FastaSequence;
 use byteorder::ReadBytesExt;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -129,7 +132,8 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
     fn process_sequence<
         S: MinimizerInputSequence,
         F: FnMut(BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData),
-        const MINIMIZER_MASK: MinimizerType
+        const MINIMIZER_MASK: MinimizerType,
+        const FREQ_ESTIMATE: bool
     >(
         &mut self,
         preprocess_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -186,6 +190,10 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
                 ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
             },
         );
+    }
+
+    fn get_buckets_estimators(&self) -> &[HyperLogLogEstimator<{ HYPER_LOG_LOG_BUCKETS }>] {
+        todo!()
     }
 }
 

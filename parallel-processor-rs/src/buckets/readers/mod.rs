@@ -1,4 +1,5 @@
 use crate::buckets::bucket_writer::BucketItem;
+use std::path::PathBuf;
 
 pub mod async_binary_reader;
 pub mod compressed_binary_reader;
@@ -12,4 +13,6 @@ pub trait BucketReader {
         buffer: E::ReadBuffer,
         func: F,
     );
+
+    fn get_name(&self) -> PathBuf;
 }

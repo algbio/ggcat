@@ -218,4 +218,8 @@ impl BucketReader for AsyncBinaryReader {
             func(el);
         }
     }
+
+    fn get_name(&self) -> PathBuf {
+        self.path.clone()
+    }
 }

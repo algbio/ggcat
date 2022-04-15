@@ -68,6 +68,9 @@ pub fn run_assembler<
     );
 
     if last_step <= AssemblerStartingStep::MinimizerBucketing {
+        PHASES_TIMES_MONITOR
+            .write()
+            .print_stats("Completed minimizer bucketing.".to_string());
         return;
     }
 
@@ -98,6 +101,9 @@ pub fn run_assembler<
         }
     };
     if last_step <= AssemblerStartingStep::KmersMerge {
+        PHASES_TIMES_MONITOR
+            .write()
+            .print_stats("Completed kmers merge.".to_string());
         return;
     }
 
@@ -115,6 +121,9 @@ pub fn run_assembler<
         Utils::generate_bucket_names(temp_dir.join("links"), BUCKETS_COUNT, None)
     };
     if last_step <= AssemblerStartingStep::HashesSorting {
+        PHASES_TIMES_MONITOR
+            .write()
+            .print_stats("Hashes sorting.".to_string());
         return;
     }
 
@@ -230,6 +239,9 @@ pub fn run_assembler<
     };
 
     if last_step <= AssemblerStartingStep::LinksCompaction {
+        PHASES_TIMES_MONITOR
+            .write()
+            .print_stats("Links Compaction.".to_string());
         return;
     }
 
@@ -263,6 +275,9 @@ pub fn run_assembler<
     };
 
     if last_step <= AssemblerStartingStep::ReorganizeReads {
+        PHASES_TIMES_MONITOR
+            .write()
+            .print_stats("Reorganize reads.".to_string());
         return;
     }
 

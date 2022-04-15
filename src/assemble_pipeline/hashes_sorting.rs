@@ -55,7 +55,7 @@ impl AssemblePipeline {
                     &mut buffers
                 );
 
-                let mut rand_bool = FastRandBool::new();
+                let mut rand_bool = FastRandBool::<1>::new();
 
                 let mut hashes_vec = Vec::new();
 

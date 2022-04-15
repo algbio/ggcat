@@ -340,7 +340,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     Vec::new(),
                     |(flags, extra, read)| {
                         resplitter.reprocess_sequence(flags, &extra, &mut preproc_info);
-                        resplitter.process_sequence::<_, _, { RESPLIT_MINIMIZER_MASK }>(
+                        resplitter.process_sequence::<_, _, { RESPLIT_MINIMIZER_MASK }, true>(
                             &preproc_info,
                             read,
                             0..read.bases_count(),

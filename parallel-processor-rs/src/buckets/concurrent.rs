@@ -1,7 +1,6 @@
 use crate::buckets::bucket_writer::BucketItem;
 use crate::buckets::{LockFreeBucket, MultiThreadBuckets};
 use crate::memory_data_size::MemoryDataSize;
-use rand::{thread_rng, RngCore};
 
 pub struct BucketsThreadBuffer {
     buffers: Vec<Vec<u8>>,
@@ -10,12 +9,9 @@ pub struct BucketsThreadBuffer {
 impl BucketsThreadBuffer {
     pub fn new(max_buffer_size: MemoryDataSize, buckets_count: usize) -> Self {
         let mut buffers = Vec::with_capacity(buckets_count);
-        let mut random_gen = thread_rng();
-
+        let capacity = max_buffer_size.as_bytes();
         for _ in 0..buckets_count {
-            let fraction = (random_gen.next_u32() as f64 / (u32::MAX as f64)) * 0.40 - 0.20;
-            let capacity = max_buffer_size * (1.0 + fraction);
-            buffers.push(Vec::with_capacity(capacity.as_bytes()));
+            buffers.push(Vec::with_capacity(capacity));
         }
 
         Self { buffers }

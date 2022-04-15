@@ -281,7 +281,7 @@ impl ThreadPoolsChain {
                 let s_pool_arc = s_pool_arc.clone();
 
                 let second = &second;
-                second_threads.push(s.builder().name(first.name.clone()).spawn(move |_| {
+                second_threads.push(s.builder().name(second.name.clone()).spawn(move |_| {
                     while f_receiver_arc.len() > 0 || f_sender_weak.strong_count() > 0 {
                         if second.current_thread_count.load(Ordering::Relaxed) <= thread_index {
                             std::thread::sleep(Duration::from_millis(500));
