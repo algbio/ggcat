@@ -223,6 +223,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     ) {
         let k = global_data.k;
 
+        let reader_bucket_index = Utils::get_bucket_index(reader.get_name());
+
         let mut current_bucket = global_data.output_results_buckets.pop().unwrap();
 
         let bucket_index = current_bucket.get_bucket_index();
@@ -305,6 +307,14 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             COUNTER_READS_MAX.max(len);
             COUNTER_READS_MAX_LAST.max(len);
             COUNTER_READS_AVG.add_value(len);
+
+            println!(
+                "BUCKET{}: creads: {} hlen: {} hcap: {}",
+                reader_bucket_index,
+                len,
+                self.rhash_map.len(),
+                self.rhash_map.capacity()
+            );
         }
 
         if CX::COLORS_ENABLED {
