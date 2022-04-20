@@ -196,60 +196,60 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H, DefaultColorsManager>
         map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
         min_multiplicity: usize,
     ) {
-        let vec_len = data.kmers.len();
-        data.flags.last_mut().iter_mut().for_each(|l| l.1 = vec_len);
-
-        let mut last_partition = (0, 0);
-        let mut last_color = 0;
-
-        for (start, end, color) in &data.flags {
-            for kmer_hash in &data.kmers[*start..*end] {
-                let entry = map.get_mut(kmer_hash).unwrap();
-
-                if entry.count < min_multiplicity {
-                    continue;
-                }
-
-                unsafe {
-                    if entry.color_index.temp_index.1 == 0 {
-                        entry.color_index.temp_index.0 = data.temp_colors.len() as u32;
-                        entry.color_index.temp_index.1 = entry.count as u32;
-                        if data.temp_colors.capacity() < data.temp_colors.len() + entry.count {
-                            data.temp_colors.reserve(entry.count);
-                        }
-                        data.temp_colors
-                            .set_len(data.temp_colors.len() + entry.count);
-                    }
-
-                    data.temp_colors[entry.color_index.temp_index.0 as usize] = color.0;
-                    entry.color_index.temp_index.0 += 1;
-                    entry.color_index.temp_index.1 -= 1;
-
-                    // All colors were added, let's assign the final color
-                    if entry.color_index.temp_index.1 == 0 {
-                        let slice_start = entry.color_index.temp_index.0 as usize - entry.count;
-                        let slice_end = entry.color_index.temp_index.0 as usize;
-
-                        let slice = &mut data.temp_colors[slice_start..slice_end];
-                        slice.sort_unstable();
-                        // Assign the subset color index to the current kmer
-
-                        let unique_colors = slice.partition_dedup().0;
-
-                        // println!("Unique colors: {:?}", unique_colors);
-
-                        let partition = from_raw_parts(unique_colors.as_ptr(), unique_colors.len());
-                        if partition == &data.temp_colors[last_partition.0..last_partition.1] {
-                            entry.color_index.color_index = last_color;
-                        } else {
-                            entry.color_index.color_index = global_colors_table.get_id(partition);
-                            last_color = entry.color_index.color_index;
-                            last_partition = (slice_start, slice_end);
-                        }
-                    }
-                }
-            }
-        }
+        //     let vec_len = data.kmers.len();
+        //     data.flags.last_mut().iter_mut().for_each(|l| l.1 = vec_len);
+        //
+        //     let mut last_partition = (0, 0);
+        //     let mut last_color = 0;
+        //
+        //     for (start, end, color) in &data.flags {
+        //         for kmer_hash in &data.kmers[*start..*end] {
+        //             let entry = map.get_mut(kmer_hash).unwrap();
+        //
+        //             if entry.count < min_multiplicity {
+        //                 continue;
+        //             }
+        //
+        //             unsafe {
+        //                 if entry.color_index.temp_index.1 == 0 {
+        //                     entry.color_index.temp_index.0 = data.temp_colors.len() as u32;
+        //                     entry.color_index.temp_index.1 = entry.count as u32;
+        //                     if data.temp_colors.capacity() < data.temp_colors.len() + entry.count {
+        //                         data.temp_colors.reserve(entry.count);
+        //                     }
+        //                     data.temp_colors
+        //                         .set_len(data.temp_colors.len() + entry.count);
+        //                 }
+        //
+        //                 data.temp_colors[entry.color_index.temp_index.0 as usize] = color.0;
+        //                 entry.color_index.temp_index.0 += 1;
+        //                 entry.color_index.temp_index.1 -= 1;
+        //
+        //                 // All colors were added, let's assign the final color
+        //                 if entry.color_index.temp_index.1 == 0 {
+        //                     let slice_start = entry.color_index.temp_index.0 as usize - entry.count;
+        //                     let slice_end = entry.color_index.temp_index.0 as usize;
+        //
+        //                     let slice = &mut data.temp_colors[slice_start..slice_end];
+        //                     slice.sort_unstable();
+        //                     // Assign the subset color index to the current kmer
+        //
+        //                     let unique_colors = slice.partition_dedup().0;
+        //
+        //                     // println!("Unique colors: {:?}", unique_colors);
+        //
+        //                     let partition = from_raw_parts(unique_colors.as_ptr(), unique_colors.len());
+        //                     if partition == &data.temp_colors[last_partition.0..last_partition.1] {
+        //                         entry.color_index.color_index = last_color;
+        //                     } else {
+        //                         entry.color_index.color_index = global_colors_table.get_id(partition);
+        //                         last_color = entry.color_index.color_index;
+        //                         last_partition = (slice_start, slice_end);
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
     }
 
     type PartialUnitigsColorStructure = UnitigColorDataSerializer;
