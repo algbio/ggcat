@@ -65,7 +65,7 @@ pub mod structs {
     impl<X: SequenceExtraData> ResultsBucket<X> {
         pub fn add_read(&mut self, el: X, read: &[u8]) -> u64 {
             self.temp_buffer.clear();
-            CompressedReadsBucketHelper::<X, typenum::U0>::new(read, 0)
+            CompressedReadsBucketHelper::<X, typenum::U0, false>::new(read, 0, 0)
                 .write_to(&mut self.temp_buffer, &el);
             self.reads_writer.write_data(self.temp_buffer.as_slice());
 
@@ -233,7 +233,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         reader.decode_all_bucket_items::<CompressedReadsBucketHelper<
             _,
             <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
-        >, _>(Vec::new(), |(flags, color, read)| {
+            true,
+        >, _>(Vec::new(), |(flags, _second_bucket, color, read)| {
             let hashes = MH::new(read, k);
 
             let last_hash_pos = read.bases_count() - k;

@@ -130,7 +130,7 @@ impl<'a, H: MinimizerHashFunctionFactory, CX: ColorsManager>
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData),
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData),
     >(
         &mut self,
         preprocess_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -149,10 +149,9 @@ impl<'a, H: MinimizerHashFunctionFactory, CX: ColorsManager>
 
         for (index, min_hash) in rolling_iter.enumerate() {
             if H::get_full_minimizer(min_hash) != H::get_full_minimizer(last_hash) {
-                let bucket = H::get_first_bucket(last_hash) & self.global_data.buckets_count_mask;
-
                 push_sequence(
-                    bucket,
+                    H::get_first_bucket(last_hash) & self.global_data.buckets_count_mask,
+                    H::get_second_bucket(last_hash) & self.global_data.buckets_count_mask,
                     sequence.get_subslice(last_index..(index + self.global_data.k)),
                     0,
                     match preprocess_info {
@@ -173,6 +172,7 @@ impl<'a, H: MinimizerHashFunctionFactory, CX: ColorsManager>
 
         push_sequence(
             H::get_first_bucket(last_hash) & self.global_data.buckets_count_mask,
+            H::get_second_bucket(last_hash) & self.global_data.buckets_count_mask,
             sequence.get_subslice(last_index..sequence.seq_len()),
             0,
             match preprocess_info {

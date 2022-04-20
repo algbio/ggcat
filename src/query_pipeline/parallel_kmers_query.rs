@@ -131,22 +131,26 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         reader.decode_all_bucket_items::<CompressedReadsBucketHelper<
             QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>,
             <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
-        >, _>(Vec::new(), |(_flags, sequence_type, read)| {
-            let hashes = MH::new(read, k);
+            true,
+        >, _>(
+            Vec::new(),
+            |(_flags, _second_bucket, sequence_type, read)| {
+                let hashes = MH::new(read, k);
 
-            match sequence_type {
-                QueryKmersReferenceData::Graph(_col_info) => {
-                    for hash in hashes.iter() {
-                        self.phset.insert(hash.to_unextendable());
+                match sequence_type {
+                    QueryKmersReferenceData::Graph(_col_info) => {
+                        for hash in hashes.iter() {
+                            self.phset.insert(hash.to_unextendable());
+                        }
+                    }
+                    QueryKmersReferenceData::Query(index) => {
+                        for hash in hashes.iter() {
+                            self.query_reads.push((index.get(), hash.to_unextendable()));
+                        }
                     }
                 }
-                QueryKmersReferenceData::Query(index) => {
-                    for hash in hashes.iter() {
-                        self.query_reads.push((index.get(), hash.to_unextendable()));
-                    }
-                }
-            }
-        });
+            },
+        );
 
         for (query_index, kmer_hash) in self.query_reads.drain(..) {
             if self.phset.contains(&kmer_hash) {

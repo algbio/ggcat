@@ -139,7 +139,8 @@ impl AssemblePipeline {
             .decode_all_bucket_items::<CompressedReadsBucketHelper<
                 color_types::PartialUnitigsColorStructure<MH, CX>,
                 typenum::U0,
-            >, _>(Vec::new(), |(_, color, seq)| {
+                false,
+            >, _>(Vec::new(), |(_, _, color, seq)| {
                 if seq.bases_count() > decompress_buffer.len() {
                     decompress_buffer.resize(seq.bases_count(), 0);
                 }
@@ -160,7 +161,8 @@ impl AssemblePipeline {
                                 color_types::PartialUnitigsColorStructure<MH, CX>,
                             >,
                             typenum::U0,
-                        >::new(seq, 0),
+                            false,
+                        >::new(seq, 0, 0),
                     );
                     map_index += 1;
                 } else {

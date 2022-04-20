@@ -2,7 +2,6 @@
 
 use crate::config::BucketIndexType;
 use crate::hashes::HashFunction;
-use crate::hashes::HashFunctionFactory;
 use crate::hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
 use std::sync::atomic::{AtomicU64, Ordering};
 

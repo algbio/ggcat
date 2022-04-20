@@ -82,7 +82,7 @@ pub trait MinimizerBucketingExecutor<'a, FACTORY: MinimizerBucketingExecutorFact
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, S, u8, FACTORY::ExtraData),
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, FACTORY::ExtraData),
     >(
         &mut self,
         preprocess_info: &FACTORY::PreprocessInfo,
@@ -147,11 +147,15 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
                     &preprocess_info,
                     sequence,
                     range,
-                    |bucket, seq, flags, extra| {
+                    |bucket, second_bucket, seq, flags, extra| {
                         tmp_reads_buffer.add_element(
                             bucket,
                             &extra,
-                            &CompressedReadsBucketHelper::<_, E::FLAGS_COUNT>::new(seq, flags),
+                            &CompressedReadsBucketHelper::<_, E::FLAGS_COUNT, true>::new(
+                                seq,
+                                flags,
+                                second_bucket as u8,
+                            ),
                         );
                     },
                 );
