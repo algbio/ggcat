@@ -1,5 +1,5 @@
 use crate::hashes::HashFunctionFactory;
-use std::cmp::min_by_key;
+use std::cmp::{max_by_key, min_by_key};
 use std::marker::PhantomData;
 
 pub struct RollingMinQueue<H: HashFunctionFactory> {
@@ -67,7 +67,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
         iter.map(move |x| unsafe {
             *self.queue.get_unchecked_mut(self.index) = (x, x);
 
-            self.minimum = min_by_key(
+            self.minimum = max_by_key(
                 self.minimum,
                 (x, (self.index + self.size) & self.capacity_mask),
                 |x| H::get_full_minimizer(x.0),
@@ -78,7 +78,7 @@ impl<H: HashFunctionFactory> RollingMinQueue<H> {
                 self.rebuild_minimums(self.size);
             }
 
-            min_by_key(
+            max_by_key(
                 self.minimum.0,
                 self.queue
                     .get_unchecked_mut((self.index.wrapping_sub(self.size)) & self.capacity_mask)
