@@ -4,6 +4,7 @@ use crate::config::{BucketIndexType, MinimizerType, FIRST_BUCKETS_COUNT};
 use crate::hashes::dummy_hasher::DummyHasherBuilder;
 use crate::hashes::nthash_base::{h, rc};
 use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
+use rand::{thread_rng, RngCore};
 use std::cmp::min;
 
 #[derive(Debug, Clone)]
@@ -88,7 +89,8 @@ impl ExtendableHashTraitType for ExtCanonicalNtHash {
     type HashTypeUnextendable = u64;
     #[inline(always)]
     fn to_unextendable(self) -> Self::HashTypeUnextendable {
-        min(self.0, self.1)
+        thread_rng().next_u64()
+        // min(self.0, self.1)
     }
 
     #[inline(always)]
