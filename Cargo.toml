@@ -31,7 +31,7 @@ parking_lot = { version = "0.12.0" }
 pcg_rand = "0.13.0"
 dashmap = { version = "4.0.2" }
 serde_json = "1.0.68"
-ahash = "0.7.4"
+ahash = "0.7.6"
 siphasher = "0.3.7"
 desse = "0.2.1"
 replace_with = "0.1.7"

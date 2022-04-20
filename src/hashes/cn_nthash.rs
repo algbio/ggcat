@@ -4,8 +4,11 @@ use crate::config::{BucketIndexType, MinimizerType, FIRST_BUCKETS_COUNT};
 use crate::hashes::dummy_hasher::DummyHasherBuilder;
 use crate::hashes::nthash_base::{h, rc};
 use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
+use ahash::RandomState;
 use rand::{thread_rng, RngCore};
 use std::cmp::min;
+use std::hash::{BuildHasher, Hasher};
+use std::ptr::hash;
 
 #[derive(Debug, Clone)]
 pub struct CanonicalNtHashIterator<N: HashableSequence> {
@@ -89,8 +92,10 @@ impl ExtendableHashTraitType for ExtCanonicalNtHash {
     type HashTypeUnextendable = u64;
     #[inline(always)]
     fn to_unextendable(self) -> Self::HashTypeUnextendable {
-        thread_rng().next_u64()
-        // min(self.0, self.1)
+        const RSTATE: RandomState = RandomState::with_seeds(2138, 4833, 273643, 918274);
+        let mut hasher = RSTATE.build_hasher();
+        hasher.write(&min(self.0, self.1).to_ne_bytes()[..]);
+        hasher.finish()
     }
 
     #[inline(always)]
