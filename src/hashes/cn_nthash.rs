@@ -1,10 +1,14 @@
 //! NtHash impl adapted from https://github.com/luizirber/nthash.git
 
-use crate::config::{BucketIndexType, MinimizerType, FIRST_BUCKETS_COUNT};
+use crate::config::{BucketIndexType, MinimizerType};
 use crate::hashes::dummy_hasher::DummyHasherBuilder;
 use crate::hashes::nthash_base::{h, rc};
-use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
+use crate::hashes::{
+    ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
+    MinimizerHashFunctionFactory,
+};
 use std::cmp::min;
+use std::mem::size_of;
 
 #[derive(Debug, Clone)]
 pub struct CanonicalNtHashIterator<N: HashableSequence> {
@@ -118,12 +122,7 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
 
     #[inline(always)]
     fn get_first_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType {
-        (hash % (FIRST_BUCKETS_COUNT as u64)) as BucketIndexType
-    }
-
-    #[inline(always)]
-    fn get_full_minimizer(hash: Self::HashTypeUnextendable) -> MinimizerType {
-        hash as MinimizerType
+        hash as BucketIndexType
     }
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8 {
@@ -177,6 +176,22 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
     ) -> Self::HashTypeExtendable {
         let ExtCanonicalNtHash(fw, rc) = cnc_nt_manual_roll_rev(hash, k, out_base, Self::NULL_BASE);
         ExtCanonicalNtHash(fw, rc.rotate_right(1))
+    }
+}
+
+impl MinimizerHashFunctionFactory for CanonicalNtHashIteratorFactory {
+    #[inline(always)]
+    fn get_second_bucket(
+        hash: <Self as HashFunctionFactory>::HashTypeUnextendable,
+    ) -> BucketIndexType {
+        (hash >> size_of::<BucketIndexType>()) as BucketIndexType
+    }
+
+    #[inline(always)]
+    fn get_full_minimizer(
+        hash: <Self as HashFunctionFactory>::HashTypeUnextendable,
+    ) -> MinimizerType {
+        hash as MinimizerType
     }
 }
 

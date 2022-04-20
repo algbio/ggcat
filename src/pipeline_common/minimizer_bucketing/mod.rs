@@ -96,6 +96,7 @@ pub struct MinimizerBucketingCommonData<GlobalData> {
     pub k: usize,
     pub m: usize,
     pub buckets_count: usize,
+    pub buckets_count_mask: BucketIndexType,
     pub global_data: GlobalData,
 }
 
@@ -239,6 +240,7 @@ impl GenericMinimizerBucketing {
                 k,
                 m,
                 buckets_count,
+                buckets_count_mask: (buckets_count - 1) as BucketIndexType, // Buckets count is guaranteed to be a power of 2
                 global_data,
             },
         };

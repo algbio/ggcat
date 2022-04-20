@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use crate::config::BucketIndexType;
-use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
+use crate::hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub static KCOUNTER: AtomicU64 = AtomicU64::new(0);
@@ -42,7 +42,7 @@ pub fn debug_print() {
 //     }
 // }
 
-fn assert_reads<H: HashFunctionFactory>(read: &[u8], bucket: BucketIndexType) {
+fn assert_reads<H: MinimizerHashFunctionFactory>(read: &[u8], bucket: BucketIndexType) {
     // Test ***************************
     const K: usize = 32;
 

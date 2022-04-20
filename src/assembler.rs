@@ -3,7 +3,7 @@ use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsManager;
 use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_LOG_DELTA_TIME};
-use crate::hashes::HashFunctionFactory;
+use crate::hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use crate::io::reads_writer::ReadsWriter;
 use crate::utils::{get_memory_mode, Utils};
 use crate::{AssemblerStartingStep, KEEP_FILES};
@@ -21,10 +21,9 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 pub fn run_assembler<
-    BucketingHash: HashFunctionFactory,
+    BucketingHash: MinimizerHashFunctionFactory,
     MergingHash: HashFunctionFactory,
     AssemblerColorsManager: ColorsManager,
-    const BUCKETS_COUNT: usize,
 >(
     k: usize,
     m: usize,
@@ -35,9 +34,14 @@ pub fn run_assembler<
     temp_dir: PathBuf,
     threads_count: usize,
     min_multiplicity: usize,
+    buckets_count_log: Option<usize>,
     loopit_number: Option<usize>,
 ) {
     PHASES_TIMES_MONITOR.write().init();
+
+    let buckets_count_log =
+        buckets_count_log.unwrap_or_else(|| Utils::compute_buckets_log_from_input_files(&input));
+    let buckets_count = 1 << buckets_count_log;
 
     let color_names: Vec<_> = input
         .iter()
@@ -53,13 +57,13 @@ pub fn run_assembler<
         AssemblePipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
             input,
             temp_dir.as_path(),
-            BUCKETS_COUNT,
+            buckets_count,
             threads_count,
             k,
             m,
         )
     } else {
-        Utils::generate_bucket_names(temp_dir.join("bucket"), BUCKETS_COUNT, None)
+        Utils::generate_bucket_names(temp_dir.join("bucket"), buckets_count, None)
     };
 
     println!(
@@ -83,7 +87,7 @@ pub fn run_assembler<
         >(
             buckets,
             &global_colors_table,
-            BUCKETS_COUNT,
+            buckets_count,
             min_multiplicity,
             temp_dir.as_path(),
             k,
@@ -94,10 +98,10 @@ pub fn run_assembler<
         RetType {
             sequences: Utils::generate_bucket_names(
                 temp_dir.join("result"),
-                BUCKETS_COUNT,
+                buckets_count,
                 Some("tmp"),
             ),
-            hashes: Utils::generate_bucket_names(temp_dir.join("hashes"), BUCKETS_COUNT, None),
+            hashes: Utils::generate_bucket_names(temp_dir.join("hashes"), buckets_count, None),
         }
     };
     if last_step <= AssemblerStartingStep::KmersMerge {
@@ -115,10 +119,10 @@ pub fn run_assembler<
         AssemblePipeline::hashes_sorting::<MergingHash, _>(
             hashes,
             temp_dir.as_path(),
-            BUCKETS_COUNT,
+            buckets_count,
         )
     } else {
-        Utils::generate_bucket_names(temp_dir.join("links"), BUCKETS_COUNT, None)
+        Utils::generate_bucket_names(temp_dir.join("links"), buckets_count, None)
     };
     if last_step <= AssemblerStartingStep::HashesSorting {
         PHASES_TIMES_MONITOR
@@ -129,10 +133,10 @@ pub fn run_assembler<
 
     let mut loop_iteration = loopit_number.unwrap_or(0);
 
-    let unames = Utils::generate_bucket_names(temp_dir.join("unitigs_map"), BUCKETS_COUNT, None);
-    let rnames = Utils::generate_bucket_names(temp_dir.join("results_map"), BUCKETS_COUNT, None);
+    let unames = Utils::generate_bucket_names(temp_dir.join("unitigs_map"), buckets_count, None);
+    let rnames = Utils::generate_bucket_names(temp_dir.join("results_map"), buckets_count, None);
 
-    let mut links_manager = UnitigLinksManager::new(BUCKETS_COUNT);
+    let mut links_manager = UnitigLinksManager::new(buckets_count);
 
     let (unitigs_map, reads_map) = if step <= AssemblerStartingStep::LinksCompaction {
         for file in unames {
@@ -144,7 +148,7 @@ pub fn run_assembler<
         }
 
         let mut result_map_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
-            BUCKETS_COUNT,
+            buckets_count,
             temp_dir.join("results_map"),
             &(
                 get_memory_mode(SwapPriority::FinalMaps as usize),
@@ -153,7 +157,7 @@ pub fn run_assembler<
         );
 
         let mut final_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
-            BUCKETS_COUNT,
+            buckets_count,
             temp_dir.join("unitigs_map"),
             &(
                 get_memory_mode(SwapPriority::FinalMaps as usize),
@@ -164,7 +168,7 @@ pub fn run_assembler<
         if loop_iteration != 0 {
             links = Utils::generate_bucket_names(
                 temp_dir.join(format!("linksi{}", loop_iteration - 1)),
-                BUCKETS_COUNT,
+                buckets_count,
                 None,
             );
         }
@@ -175,11 +179,11 @@ pub fn run_assembler<
 
         let mut log_timer = Instant::now();
 
-        let links_scoped_buffer = ScopedThreadLocal::new(|| {
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, BUCKETS_COUNT)
+        let links_scoped_buffer = ScopedThreadLocal::new(move || {
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
         });
-        let results_map_scoped_buffer = ScopedThreadLocal::new(|| {
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, BUCKETS_COUNT)
+        let results_map_scoped_buffer = ScopedThreadLocal::new(move || {
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
         });
 
         let result = loop {
@@ -197,7 +201,7 @@ pub fn run_assembler<
             let (new_links, remaining) = AssemblePipeline::links_compaction(
                 links,
                 temp_dir.as_path(),
-                BUCKETS_COUNT,
+                buckets_count,
                 loop_iteration,
                 &mut result_map_buckets,
                 &mut final_buckets,
@@ -262,11 +266,11 @@ pub fn run_assembler<
             reads_map,
             temp_dir.as_path(),
             &final_unitigs_file,
-            BUCKETS_COUNT,
+            buckets_count,
         )
     } else {
         (
-            Utils::generate_bucket_names(temp_dir.join("reads_bucket"), BUCKETS_COUNT, Some("tmp")),
+            Utils::generate_bucket_names(temp_dir.join("reads_bucket"), buckets_count, Some("tmp")),
             (Utils::generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
                 .into_iter()
                 .next()

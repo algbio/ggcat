@@ -50,11 +50,10 @@ pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + Send + Sync + 'stat
 
     fn new<N: HashableSequence>(seq: N, k: usize) -> Self::HashIterator<N>;
 
-    /// Gets the first buckets count, used in MinimizerBucketing phase
-    fn get_first_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType;
-
-    /// Gets the full minimizer, that is split in first and second buckets and the final sorting hash
-    fn get_full_minimizer(hash: Self::HashTypeUnextendable) -> MinimizerType;
+    /// Gets the first buckets count, used in MinimizerBucketing phase and to sort hashes
+    fn get_first_bucket(
+        hash: <Self as HashFunctionFactory>::HashTypeUnextendable,
+    ) -> BucketIndexType;
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8;
     fn get_u64(hash: Self::HashTypeUnextendable) -> u64;
@@ -86,6 +85,18 @@ pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + Send + Sync + 'stat
         k: usize,
         out_base: u8,
     ) -> Self::HashTypeExtendable;
+}
+
+pub trait MinimizerHashFunctionFactory: HashFunctionFactory {
+    /// Gets the first buckets count, used in MinimizerBucketing phase
+    fn get_second_bucket(
+        hash: <Self as HashFunctionFactory>::HashTypeUnextendable,
+    ) -> BucketIndexType;
+
+    /// Gets the full minimizer
+    fn get_full_minimizer(
+        hash: <Self as HashFunctionFactory>::HashTypeUnextendable,
+    ) -> MinimizerType;
 }
 
 pub trait HashFunction<HF: HashFunctionFactory> {

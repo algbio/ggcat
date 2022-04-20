@@ -5,6 +5,7 @@
 #![feature(trait_alias)]
 #![feature(test)]
 #![feature(slice_partition_dedup)]
+#![feature(int_log)]
 // #![deny(warnings)]
 #![allow(dead_code)]
 
@@ -142,6 +143,10 @@ struct CommonArgs {
     /// Use all the given memory before writing to disk
     #[structopt(short = "p", long = "prefer-memory")]
     pub prefer_memory: bool,
+
+    /// The log2 of the number of buckets
+    #[structopt(short = "s", long = "buckets-count-log")]
+    pub buckets_count_log: Option<usize>,
 }
 
 #[derive(StructOpt, Debug)]
@@ -292,11 +297,9 @@ fn main() {
         CliArgs::Build(args) => {
             initialize(&args.common_args, &args.output_file);
             if args.colors {
-                dispatch_assembler_hash_type::<DefaultColorsManager, { config::FIRST_BUCKETS_COUNT }>(
-                    args,
-                );
+                dispatch_assembler_hash_type::<DefaultColorsManager>(args);
             } else {
-                dispatch_assembler_hash_type::<(), { config::FIRST_BUCKETS_COUNT }>(args);
+                dispatch_assembler_hash_type::<()>(args);
             }
         }
         CliArgs::Matches(args) => {
@@ -312,11 +315,9 @@ fn main() {
         CliArgs::Query(args) => {
             initialize(&args.common_args, &args.output_file);
             if args.colors {
-                dispatch_querier_hash_type::<DefaultColorsManager, { config::FIRST_BUCKETS_COUNT }>(
-                    args,
-                );
+                dispatch_querier_hash_type::<DefaultColorsManager>(args);
             } else {
-                dispatch_querier_hash_type::<(), { config::FIRST_BUCKETS_COUNT }>(args);
+                dispatch_querier_hash_type::<()>(args);
             }
         }
         CliArgs::Utils(args) => {

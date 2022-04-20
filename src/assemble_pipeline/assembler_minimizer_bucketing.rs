@@ -4,7 +4,7 @@ use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorDat
 use crate::config::BucketIndexType;
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
-use crate::hashes::HashFunctionFactory;
+use crate::hashes::MinimizerHashFunctionFactory;
 use crate::io::sequences_reader::FastaSequence;
 use crate::pipeline_common::minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
@@ -17,7 +17,11 @@ use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-pub struct AssemblerMinimizerBucketingExecutor<'a, H: HashFunctionFactory, CX: ColorsManager> {
+pub struct AssemblerMinimizerBucketingExecutor<
+    'a,
+    H: MinimizerHashFunctionFactory,
+    CX: ColorsManager,
+> {
     minimizer_queue: RollingMinQueue<H>,
     global_data: &'a MinimizerBucketingCommonData<()>,
     _phantom: PhantomData<CX>,
@@ -39,11 +43,12 @@ impl<CX: ColorsManager> Default for AssemblerPreprocessInfo<CX> {
     }
 }
 
-pub struct AssemblerMinimizerBucketingExecutorFactory<H: HashFunctionFactory, CX: ColorsManager>(
-    PhantomData<(H, CX)>,
-);
+pub struct AssemblerMinimizerBucketingExecutorFactory<
+    H: MinimizerHashFunctionFactory,
+    CX: ColorsManager,
+>(PhantomData<(H, CX)>);
 
-impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutorFactory
+impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutorFactory
     for AssemblerMinimizerBucketingExecutorFactory<H, CX>
 {
     type GlobalData = ();
@@ -67,7 +72,7 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutorFactor
     }
 }
 
-impl<'a, H: HashFunctionFactory, CX: ColorsManager>
+impl<'a, H: MinimizerHashFunctionFactory, CX: ColorsManager>
     MinimizerBucketingExecutor<'a, AssemblerMinimizerBucketingExecutorFactory<H, CX>>
     for AssemblerMinimizerBucketingExecutor<'a, H, CX>
 {
@@ -133,7 +138,7 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
             if (H::get_full_minimizer(min_hash) != H::get_full_minimizer(last_hash))
                 && (preprocess_info.include_last || end_index != index)
             {
-                let bucket = H::get_first_bucket(last_hash);
+                let bucket = H::get_first_bucket(last_hash) & self.global_data.buckets_count_mask;
 
                 push_sequence(
                     bucket,
@@ -150,7 +155,7 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
         let start_index = max(1, last_index) - 1;
         let include_last = preprocess_info.include_last; // Always include the last element of the sequence in the last entry
         push_sequence(
-            H::get_first_bucket(last_hash),
+            H::get_first_bucket(last_hash) & self.global_data.buckets_count_mask,
             sequence.get_subslice(start_index..sequence.seq_len()),
             include_first as u8 | ((include_last as u8) << 1),
             preprocess_info.color_info,
@@ -159,7 +164,7 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
 }
 
 impl AssemblePipeline {
-    pub fn minimizer_bucketing<H: HashFunctionFactory, CX: ColorsManager>(
+    pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
         input_files: Vec<PathBuf>,
         output_path: &Path,
         buckets_count: usize,

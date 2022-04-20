@@ -1,4 +1,4 @@
-use crate::config::{BucketIndexType, MinimizerType};
+use crate::config::BucketIndexType;
 use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use std::cmp::min;
 use std::mem::size_of;
@@ -114,10 +114,6 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
 
     fn get_first_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType {
         hash as BucketIndexType
-    }
-
-    fn get_full_minimizer(_hash: Self::HashTypeUnextendable) -> MinimizerType {
-        panic!("Not supported!")
     }
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8 {

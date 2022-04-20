@@ -3,7 +3,6 @@ use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
-    MERGE_RESULTS_BUCKETS_COUNT,
 };
 use crate::hashes::{ExtendableHashTraitType, HashFunction};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
@@ -132,7 +131,6 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         let buffers = unsafe { &mut *(hashes_buffer.deref_mut() as *mut BucketsThreadBuffer) };
 
         Self::ExecutorType::<'a> {
-            results_buckets_counter: MERGE_RESULTS_BUCKETS_COUNT,
             hashes_tmp: BucketsThreadDispatcher::new(&global_data.hashes_buckets, buffers),
             hashes_buffer,
             forward_seq: Vec::with_capacity(global_data.k),
@@ -149,8 +147,6 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 }
 
 struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> {
-    results_buckets_counter: usize,
-
     hashes_tmp: BucketsThreadDispatcher<'x, LockFreeBinaryWriter>,
     // This field has to appear after hashes_tmp so that it's dropped only when not used anymore
     hashes_buffer: Box<BucketsThreadBuffer>,
@@ -185,11 +181,11 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         entry: u64,
         do_merge: bool,
         direction: Direction,
-        buckets_count: usize,
+        buckets_count_mask: BucketIndexType,
     ) {
         if do_merge {
             hashes_tmp.add_element(
-                MH::get_first_bucket(hash) % (buckets_count as BucketIndexType),
+                MH::get_first_bucket(hash) & buckets_count_mask,
                 &(),
                 &HashEntry {
                     hash,
@@ -514,7 +510,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 read_index,
                 fw_merge,
                 Direction::Forward,
-                buckets_count,
+                (buckets_count - 1) as BucketIndexType,
             );
 
             Self::write_hashes(
@@ -524,7 +520,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 read_index,
                 bw_merge,
                 Direction::Backward,
-                buckets_count,
+                (buckets_count - 1) as BucketIndexType,
             );
         }
 

@@ -1,20 +1,19 @@
 use crate::colors::colors_manager::ColorsManager;
 use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
 use crate::hashes::fw_nthash::ForwardNtHashIteratorFactory;
-use crate::hashes::HashFunctionFactory;
+use crate::hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use crate::querier::run_query;
 use crate::utils::compute_best_m;
 use crate::{HashType, QueryArgs};
 
 fn run_querier_from_args<
-    BucketingHash: HashFunctionFactory,
+    BucketingHash: MinimizerHashFunctionFactory,
     MergingHash: HashFunctionFactory,
     ColorsImpl: ColorsManager,
-    const BUCKETS_COUNT: usize,
 >(
     args: QueryArgs,
 ) {
-    run_query::<BucketingHash, MergingHash, ColorsImpl, BUCKETS_COUNT>(
+    run_query::<BucketingHash, MergingHash, ColorsImpl>(
         args.common_args.klen,
         args.common_args
             .mlen
@@ -24,13 +23,12 @@ fn run_querier_from_args<
         args.input_query,
         args.output_file,
         args.common_args.temp_dir,
+        args.common_args.buckets_count_log,
         args.common_args.threads_count,
     );
 }
 
-pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKETS_COUNT: usize>(
-    args: QueryArgs,
-) {
+pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager>(args: QueryArgs) {
     let hash_type = match args.common_args.hash_type {
         HashType::Auto => {
             if args.common_args.klen <= 64 {
@@ -54,14 +52,12 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u16::CanonicalSeqHashFactory,
                         ColorsImpl,
-                        BUCKETS_COUNT,
                     >(args);
                 } else {
                     run_querier_from_args::<
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u16::CanonicalSeqHashFactory,
                         ColorsImpl,
-                        BUCKETS_COUNT,
                     >(args)
                 }
             } else if k <= 16 {
@@ -70,14 +66,12 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                         ForwardNtHashIteratorFactory,
                         fw_seqhash::u32::ForwardSeqHashFactory,
                         ColorsImpl,
-                        BUCKETS_COUNT,
                     >(args);
                 } else {
                     run_querier_from_args::<
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u32::CanonicalSeqHashFactory,
                         ColorsImpl,
-                        BUCKETS_COUNT,
                     >(args)
                 }
             } else if k <= 32 {
@@ -86,14 +80,12 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                         ForwardNtHashIteratorFactory,
                         fw_seqhash::u64::ForwardSeqHashFactory,
                         ColorsImpl,
-                        BUCKETS_COUNT,
                     >(args);
                 } else {
                     run_querier_from_args::<
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u64::CanonicalSeqHashFactory,
                         ColorsImpl,
-                        BUCKETS_COUNT,
                     >(args)
                 }
             } else if k <= 64 {
@@ -102,14 +94,12 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                         ForwardNtHashIteratorFactory,
                         fw_seqhash::u128::ForwardSeqHashFactory,
                         ColorsImpl,
-                        BUCKETS_COUNT,
                     >(args);
                 } else {
                     run_querier_from_args::<
                         CanonicalNtHashIteratorFactory,
                         cn_seqhash::u128::CanonicalSeqHashFactory,
                         ColorsImpl,
-                        BUCKETS_COUNT,
                     >(args)
                 }
             } else {
@@ -122,14 +112,12 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                     ForwardNtHashIteratorFactory,
                     fw_rkhash::u32::ForwardRabinKarpHashFactory,
                     ColorsImpl,
-                    BUCKETS_COUNT,
                 >(args);
             } else {
                 run_querier_from_args::<
                     CanonicalNtHashIteratorFactory,
                     cn_rkhash::u32::CanonicalRabinKarpHashFactory,
                     ColorsImpl,
-                    BUCKETS_COUNT,
                 >(args)
             }
         }
@@ -139,14 +127,12 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                     ForwardNtHashIteratorFactory,
                     fw_rkhash::u64::ForwardRabinKarpHashFactory,
                     ColorsImpl,
-                    BUCKETS_COUNT,
                 >(args);
             } else {
                 run_querier_from_args::<
                     CanonicalNtHashIteratorFactory,
                     cn_rkhash::u64::CanonicalRabinKarpHashFactory,
                     ColorsImpl,
-                    BUCKETS_COUNT,
                 >(args)
             }
         }
@@ -156,14 +142,12 @@ pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager, const BUCKET
                     ForwardNtHashIteratorFactory,
                     fw_rkhash::u128::ForwardRabinKarpHashFactory,
                     ColorsImpl,
-                    BUCKETS_COUNT,
                 >(args);
             } else {
                 run_querier_from_args::<
                     CanonicalNtHashIteratorFactory,
                     cn_rkhash::u128::CanonicalRabinKarpHashFactory,
                     ColorsImpl,
-                    BUCKETS_COUNT,
                 >(args)
             }
         }
