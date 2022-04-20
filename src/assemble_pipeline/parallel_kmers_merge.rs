@@ -161,7 +161,7 @@ struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, C
     unitigs_temp_colors: color_types::TempUnitigColorStructure<MH, CX>,
 
     rcorrect_reads: TrackedVec<(MH::HashTypeExtendable, usize, u8, bool)>,
-    rhash_map: HashMap<u32, MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>,
+    rhash_map: HashMap<u64, MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>,
     #[cfg(feature = "mem-analysis")]
     hmap_meminfo: Arc<MemoryInfo>,
     _phantom: PhantomData<H>,
@@ -253,7 +253,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
                 let entry = self
                     .rhash_map
-                    .entry(MH::get_u64(hash.to_unextendable()) as u32)
+                    .entry(MH::get_u64(hash.to_unextendable()))
                     .or_insert(MapEntry {
                         // ignored: 0,
                         // count: 0,
@@ -308,13 +308,13 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             COUNTER_READS_MAX_LAST.max(len);
             COUNTER_READS_AVG.add_value(len);
 
-            println!(
-                "BUCKET{}: creads: {} hlen: {} hcap: {}",
-                reader_bucket_index,
-                len,
-                self.rhash_map.len(),
-                self.rhash_map.capacity()
-            );
+            // println!(
+            //     "BUCKET{}: creads: {} hlen: {} hcap: {}",
+            //     reader_bucket_index,
+            //     len,
+            //     self.rhash_map.len(),
+            //     self.rhash_map.capacity()
+            // );
         }
 
         return;
