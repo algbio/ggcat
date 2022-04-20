@@ -292,8 +292,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             }
         });
 
-        return;
-
         // {
         //     static COUNTER_KMERS_MAX: AtomicCounter<MaxMode> =
         //         declare_counter_i64!("kmers_cardinality_max", MaxMode, false);
@@ -319,6 +317,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         //     );
         // }
         //
+        return;
+
         // if CX::COLORS_ENABLED {
         //     CX::ColorsMergeManagerType::<MH>::process_colors(
         //         &global_data.colors_global_table,
