@@ -25,7 +25,6 @@ use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinar
 use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
 use parallel_processor::counter_stats::counter::{AtomicCounter, AvgMode, MaxMode};
 use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter_i64};
-use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 #[cfg(feature = "mem-analysis")]
 use parallel_processor::mem_tracker::MemoryInfo;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -45,14 +44,9 @@ pub mod structs {
     use parallel_processor::buckets::bucket_writer::BucketItem;
     use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
     use parallel_processor::buckets::LockFreeBucket;
+    use std::cell::{Cell, RefCell};
     use std::marker::PhantomData;
     use std::path::PathBuf;
-
-    pub struct MapEntry<CHI> {
-        pub count: usize,
-        pub ignored: u8,
-        pub color_index: CHI,
-    }
 
     pub struct ResultsBucket<X: SequenceExtraData> {
         pub read_index: u64,
@@ -89,6 +83,27 @@ pub mod structs {
         pub sequences: Vec<PathBuf>,
         pub hashes: Vec<PathBuf>,
     }
+
+    thread_local! {
+        pub static HMAP_CONFIG: RefCell<HMapConfig> = RefCell::new(HMapConfig {
+            reads_vec: Vec::new(),
+            hashes_cache: vec![u128::MAX; 8192]
+        });
+    }
+
+    const TAKE_LAST_ADDRESS: u32 = u32::MAX;
+    const HASHES_CACHE_SIZE: usize = 8192;
+
+    pub struct HMapConfig {
+        reads_vec: Vec<u8>,
+        hashes_cache: Vec<u128>,
+    }
+
+    pub struct HMapKey {
+        addr: Cell<u32>,
+    }
+
+    impl HMapKey {}
 }
 
 struct GlobalMergeData<'a, MH: HashFunctionFactory, CX: ColorsManager> {
@@ -137,7 +152,6 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             backward_seq: Vec::with_capacity(global_data.k),
             temp_colors: CX::ColorsMergeManagerType::<MH>::allocate_temp_buffer_structure(),
             unitigs_temp_colors: CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure(),
-            rcorrect_reads: TrackedVec::new(),
             rhash_map: HashMap::with_capacity(4096),
             #[cfg(feature = "mem-analysis")]
             hmap_meminfo: info,
@@ -155,19 +169,17 @@ struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, C
     backward_seq: Vec<u8>,
     temp_colors: color_types::ColorsBufferTempStructure<MH, CX>,
     unitigs_temp_colors: color_types::TempUnitigColorStructure<MH, CX>,
-
-    rcorrect_reads: TrackedVec<(MH::HashTypeExtendable, usize, u8, bool)>,
-    rhash_map:
-        HashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>,
+    rhash_map: HashMap<MH::HashTypeUnextendable, color_types::HashMapTempColorIndex<MH, CX>>,
     #[cfg(feature = "mem-analysis")]
     hmap_meminfo: Arc<MemoryInfo>,
     _phantom: PhantomData<H>,
 }
 
-fn get_kmer_multiplicity<CHI>(entry: &MapEntry<CHI>) -> usize {
+fn get_kmer_multiplicity<CHI>(entry: &CHI) -> usize {
     // If the current set has both the partial sequences endings, we should divide the counter by 2,
     // as all the kmers are counted exactly two times
-    entry.count >> ((entry.ignored == (READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END)) as u8)
+    // entry.count >> ((entry.ignored == (READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END)) as u8)
+    todo!()
 }
 
 impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
@@ -226,7 +238,6 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
         CX::ColorsMergeManagerType::<MH>::reinit_temp_buffer_structure(&mut self.temp_colors);
         clear_hashmap(&mut self.rhash_map);
-        self.rcorrect_reads.clear();
 
         let mut saved_reads = Vec::with_capacity(256);
 
@@ -249,11 +260,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 let entry = self
                     .rhash_map
                     .entry(hash.to_unextendable())
-                    .or_insert(MapEntry {
-                        ignored: 0,
-                        count: 0,
-                        color_index: CX::ColorsMergeManagerType::<MH>::new_color_index(),
-                    });
+                    .or_insert(CX::ColorsMergeManagerType::<MH>::new_color_index());
 
                 entry.ignored |= ((begin_ignored as u8) << ((!is_forward) as u8))
                     | ((end_ignored as u8) << (is_forward as u8));
@@ -266,18 +273,18 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                     (idx, hash.to_unextendable()),
                 );
 
-                if entry.count == global_data.min_multiplicity {
-                    if saved_read_offset.is_none() {
-                        saved_read_offset = Some(saved_reads.len());
-                        saved_reads.extend_from_slice(read.get_packed_slice())
-                    }
-                    self.rcorrect_reads.push((
-                        hash,
-                        saved_read_offset.unwrap() + (idx / 4),
-                        (idx % 4) as u8,
-                        is_forward,
-                    ));
-                }
+                // if entry.count == global_data.min_multiplicity {
+                //     if saved_read_offset.is_none() {
+                //         saved_read_offset = Some(saved_reads.len());
+                //         saved_reads.extend_from_slice(read.get_packed_slice())
+                //     }
+                //     // self.rcorrect_reads.push((
+                //     //     hash,
+                //     //     saved_read_offset.unwrap() + (idx / 4),
+                //     //     (idx % 4) as u8,
+                //     //     is_forward,
+                //     // ));
+                // }
             }
 
             #[cfg(feature = "mem-analysis")]
@@ -386,7 +393,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 -> MH::HashTypeExtendable,
                                            colors_function: fn(
                 ts: &mut color_types::TempUnitigColorStructure<MH, CX>,
-                entry: &MapEntry<color_types::HashMapTempColorIndex<MH, CX>>,
+                entry: &color_types::HashMapTempColorIndex<MH, CX>,
             )| {
                 let mut temp_data = (hash, 0);
                 let mut current_hash;

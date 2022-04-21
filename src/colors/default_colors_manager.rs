@@ -1,4 +1,4 @@
-use crate::assemble_pipeline::parallel_kmers_merge::structs::MapEntry;
+use crate::assemble_pipeline::parallel_kmers_merge::structs::HMapKey;
 use crate::colors::colors_manager::{
     ColorsManager, ColorsMergeManager, MinimizerBucketingSeqColorData,
 };
@@ -193,7 +193,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H, DefaultColorsManager>
     fn process_colors(
         global_colors_table: &ColorsMemMap<RoaringColorsSerializer>,
         data: &mut Self::ColorsBufferTempStructure,
-        map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+        map: &mut HashMap<HMapKey, Self::HashMapTempColorIndex>,
         min_multiplicity: usize,
     ) {
         let vec_len = data.kmers.len();
@@ -267,31 +267,31 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H, DefaultColorsManager>
 
     fn extend_forward(
         ts: &mut Self::TempUnitigColorStructure,
-        entry: &MapEntry<Self::HashMapTempColorIndex>,
+        entry: &Self::HashMapTempColorIndex,
     ) {
         unsafe {
             if let Some(back_ts) = ts.colors.back_mut() {
-                if back_ts.0 == entry.color_index.color_index {
+                if back_ts.0 == entry.color_index {
                     back_ts.1 += 1;
                     return;
                 }
             }
-            ts.colors.push_back((entry.color_index.color_index, 1));
+            ts.colors.push_back((entry.color_index, 1));
         }
     }
 
     fn extend_backward(
         ts: &mut Self::TempUnitigColorStructure,
-        entry: &MapEntry<Self::HashMapTempColorIndex>,
+        entry: &Self::HashMapTempColorIndex,
     ) {
         unsafe {
             if let Some(front_ts) = ts.colors.front_mut() {
-                if front_ts.0 == entry.color_index.color_index {
+                if front_ts.0 == entry.color_index {
                     front_ts.1 += 1;
                     return;
                 }
             }
-            ts.colors.push_front((entry.color_index.color_index, 1));
+            ts.colors.push_front((entry.color_index, 1));
         }
     }
 

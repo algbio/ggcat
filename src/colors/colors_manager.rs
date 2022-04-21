@@ -1,4 +1,4 @@
-use crate::assemble_pipeline::parallel_kmers_merge::structs::MapEntry;
+use crate::assemble_pipeline::parallel_kmers_merge::structs::HMapKey;
 use crate::hashes::HashFunctionFactory;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use hashbrown::HashMap;
@@ -52,7 +52,7 @@ pub trait ColorsMergeManager<H: HashFunctionFactory, C: ColorsManager>: Sized {
     fn process_colors(
         global_colors_table: &C::GlobalColorsTable,
         data: &mut Self::ColorsBufferTempStructure,
-        map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+        map: &mut HashMap<HMapKey, Self::HashMapTempColorIndex>,
         min_multiplicity: usize,
     );
 
@@ -61,13 +61,10 @@ pub trait ColorsMergeManager<H: HashFunctionFactory, C: ColorsManager>: Sized {
 
     fn alloc_unitig_color_structure() -> Self::TempUnitigColorStructure;
     fn reset_unitig_color_structure(ts: &mut Self::TempUnitigColorStructure);
-    fn extend_forward(
-        ts: &mut Self::TempUnitigColorStructure,
-        entry: &MapEntry<Self::HashMapTempColorIndex>,
-    );
+    fn extend_forward(ts: &mut Self::TempUnitigColorStructure, entry: &Self::HashMapTempColorIndex);
     fn extend_backward(
         ts: &mut Self::TempUnitigColorStructure,
-        entry: &MapEntry<Self::HashMapTempColorIndex>,
+        entry: &Self::HashMapTempColorIndex,
     );
 
     fn join_structures<const REVERSE: bool>(
@@ -163,10 +160,7 @@ impl<H: HashFunctionFactory, C: ColorsManager> ColorsMergeManager<H, C> for () {
     fn process_colors(
         _global_colors_table: &C::GlobalColorsTable,
         _data: &mut Self::ColorsBufferTempStructure,
-        _map: &mut HashMap<
-            <H as HashFunctionFactory>::HashTypeUnextendable,
-            MapEntry<Self::HashMapTempColorIndex>,
-        >,
+        _map: &mut HashMap<HMapKey, Self::HashMapTempColorIndex>,
         _min_multiplicity: usize,
     ) {
         todo!()
@@ -186,14 +180,14 @@ impl<H: HashFunctionFactory, C: ColorsManager> ColorsMergeManager<H, C> for () {
     #[inline(always)]
     fn extend_forward(
         _ts: &mut Self::TempUnitigColorStructure,
-        _entry: &MapEntry<Self::HashMapTempColorIndex>,
+        _entry: &Self::HashMapTempColorIndex,
     ) {
     }
 
     #[inline(always)]
     fn extend_backward(
         _ts: &mut Self::TempUnitigColorStructure,
-        _entry: &MapEntry<Self::HashMapTempColorIndex>,
+        _entry: &Self::HashMapTempColorIndex,
     ) {
     }
 
