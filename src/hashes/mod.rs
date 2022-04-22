@@ -9,7 +9,7 @@ pub mod dummy_hasher;
 pub mod fw_rkhash;
 
 use std::fmt::{Debug, Display};
-use std::hash::{BuildHasher, Hash};
+use std::hash::{BuildHasher, Hash, Hasher};
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -57,6 +57,10 @@ pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + Send + Sync + 'stat
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8;
     fn get_u64(hash: Self::HashTypeUnextendable) -> u64;
+    fn get_u128(hash: Self::HashTypeUnextendable) -> u64;
+
+    fn write_to_hasher_u128<H: Hasher>(val: u128, state: &mut H);
+    fn write_to_hasher<H: Hasher>(val: Self::HashTypeUnextendable, state: &mut H);
 
     fn debug_eq_to_u128(hash: Self::HashTypeUnextendable, value: u128) -> bool;
 

@@ -52,7 +52,7 @@ pub trait ColorsMergeManager<H: HashFunctionFactory, C: ColorsManager>: Sized {
     fn process_colors(
         global_colors_table: &C::GlobalColorsTable,
         data: &mut Self::ColorsBufferTempStructure,
-        map: &mut HashMap<HMapKey, Self::HashMapTempColorIndex>,
+        map: &mut HashMap<HMapKey<H>, Self::HashMapTempColorIndex>,
         min_multiplicity: usize,
     );
 
@@ -160,7 +160,7 @@ impl<H: HashFunctionFactory, C: ColorsManager> ColorsMergeManager<H, C> for () {
     fn process_colors(
         _global_colors_table: &C::GlobalColorsTable,
         _data: &mut Self::ColorsBufferTempStructure,
-        _map: &mut HashMap<HMapKey, Self::HashMapTempColorIndex>,
+        _map: &mut HashMap<HMapKey<H>, Self::HashMapTempColorIndex>,
         _min_multiplicity: usize,
     ) {
         todo!()

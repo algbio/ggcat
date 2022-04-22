@@ -193,7 +193,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H, DefaultColorsManager>
     fn process_colors(
         global_colors_table: &ColorsMemMap<RoaringColorsSerializer>,
         data: &mut Self::ColorsBufferTempStructure,
-        map: &mut HashMap<HMapKey, Self::HashMapTempColorIndex>,
+        map: &mut HashMap<HMapKey<H>, Self::HashMapTempColorIndex>,
         min_multiplicity: usize,
     ) {
         let vec_len = data.kmers.len();
