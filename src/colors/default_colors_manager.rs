@@ -5,7 +5,7 @@ use crate::colors::colors_manager::{
 use crate::colors::colors_memmap::ColorsMemMap;
 use crate::colors::storage::roaring::RoaringColorsSerializer;
 use crate::colors::ColorIndexType;
-use crate::hashes::HashFunctionFactory;
+use crate::hashes::{HashFunctionFactory, HashableHashFunctionFactory};
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
 use byteorder::ReadBytesExt;
@@ -34,7 +34,7 @@ impl ColorsManager for DefaultColorsManager {
     }
 
     type MinimizerBucketingSeqColorDataType = MinBkSingleColor;
-    type ColorsMergeManagerType<H: HashFunctionFactory> = DefaultColorsMergeManager<H>;
+    type ColorsMergeManagerType<H: HashableHashFunctionFactory> = DefaultColorsMergeManager<H>;
 }
 
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -151,7 +151,7 @@ impl SequenceExtraData for UnitigColorDataSerializer {
     }
 }
 
-impl<H: HashFunctionFactory> ColorsMergeManager<H, DefaultColorsManager>
+impl<H: HashableHashFunctionFactory> ColorsMergeManager<H, DefaultColorsManager>
     for DefaultColorsMergeManager<H>
 {
     type ColorsBufferTempStructure = Self;
@@ -204,50 +204,50 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H, DefaultColorsManager>
 
         for (start, end, color) in &data.flags {
             for kmer_hash in &data.kmers[*start..*end] {
-                let entry = map.get_mut(kmer_hash).unwrap();
+                // let entry = map.get_mut(kmer_hash).unwrap();
 
-                if entry.count < min_multiplicity {
-                    continue;
-                }
+                // if entry.count < min_multiplicity {
+                //     continue;
+                // }
 
-                unsafe {
-                    if entry.color_index.temp_index.1 == 0 {
-                        entry.color_index.temp_index.0 = data.temp_colors.len() as u32;
-                        entry.color_index.temp_index.1 = entry.count as u32;
-                        if data.temp_colors.capacity() < data.temp_colors.len() + entry.count {
-                            data.temp_colors.reserve(entry.count);
-                        }
-                        data.temp_colors
-                            .set_len(data.temp_colors.len() + entry.count);
-                    }
-
-                    data.temp_colors[entry.color_index.temp_index.0 as usize] = color.0;
-                    entry.color_index.temp_index.0 += 1;
-                    entry.color_index.temp_index.1 -= 1;
-
-                    // All colors were added, let's assign the final color
-                    if entry.color_index.temp_index.1 == 0 {
-                        let slice_start = entry.color_index.temp_index.0 as usize - entry.count;
-                        let slice_end = entry.color_index.temp_index.0 as usize;
-
-                        let slice = &mut data.temp_colors[slice_start..slice_end];
-                        slice.sort_unstable();
-                        // Assign the subset color index to the current kmer
-
-                        let unique_colors = slice.partition_dedup().0;
-
-                        // println!("Unique colors: {:?}", unique_colors);
-
-                        let partition = from_raw_parts(unique_colors.as_ptr(), unique_colors.len());
-                        if partition == &data.temp_colors[last_partition.0..last_partition.1] {
-                            entry.color_index.color_index = last_color;
-                        } else {
-                            entry.color_index.color_index = global_colors_table.get_id(partition);
-                            last_color = entry.color_index.color_index;
-                            last_partition = (slice_start, slice_end);
-                        }
-                    }
-                }
+                // unsafe {
+                //     if entry.color_index.temp_index.1 == 0 {
+                //         entry.color_index.temp_index.0 = data.temp_colors.len() as u32;
+                //         entry.color_index.temp_index.1 = entry.count as u32;
+                //         if data.temp_colors.capacity() < data.temp_colors.len() + entry.count {
+                //             data.temp_colors.reserve(entry.count);
+                //         }
+                //         data.temp_colors
+                //             .set_len(data.temp_colors.len() + entry.count);
+                //     }
+                //
+                //     data.temp_colors[entry.color_index.temp_index.0 as usize] = color.0;
+                //     entry.color_index.temp_index.0 += 1;
+                //     entry.color_index.temp_index.1 -= 1;
+                //
+                //     // All colors were added, let's assign the final color
+                //     if entry.color_index.temp_index.1 == 0 {
+                //         let slice_start = entry.color_index.temp_index.0 as usize - entry.count;
+                //         let slice_end = entry.color_index.temp_index.0 as usize;
+                //
+                //         let slice = &mut data.temp_colors[slice_start..slice_end];
+                //         slice.sort_unstable();
+                //         // Assign the subset color index to the current kmer
+                //
+                //         let unique_colors = slice.partition_dedup().0;
+                //
+                //         // println!("Unique colors: {:?}", unique_colors);
+                //
+                //         let partition = from_raw_parts(unique_colors.as_ptr(), unique_colors.len());
+                //         if partition == &data.temp_colors[last_partition.0..last_partition.1] {
+                //             entry.color_index.color_index = last_color;
+                //         } else {
+                //             entry.color_index.color_index = global_colors_table.get_id(partition);
+                //             last_color = entry.color_index.color_index;
+                //             last_partition = (slice_start, slice_end);
+                //         }
+                //     }
+                // }
             }
         }
     }

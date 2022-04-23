@@ -2,7 +2,7 @@ use crate::assembler::run_assembler;
 use crate::colors::colors_manager::ColorsManager;
 use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
 use crate::hashes::fw_nthash::ForwardNtHashIteratorFactory;
-use crate::hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use crate::hashes::{HashableHashFunctionFactory, MinimizerHashFunctionFactory};
 use crate::utils::compute_best_m;
 use crate::{AssemblerArgs, HashType};
 use std::fs::File;
@@ -12,7 +12,7 @@ use std::process::exit;
 
 fn run_assembler_from_args<
     BucketingHash: MinimizerHashFunctionFactory,
-    MergingHash: HashFunctionFactory,
+    MergingHash: HashableHashFunctionFactory,
     ColorsImpl: ColorsManager,
 >(
     args: AssemblerArgs,

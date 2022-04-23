@@ -1,9 +1,10 @@
 use crate::config::BucketIndexType;
-use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
+use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence, HashableHashFunctionFactory};
 use nightly_quirks::branch_pred::unlikely;
 use nightly_quirks::utils::NightlyUtils;
 use parking_lot::Mutex;
 use std::cmp::min;
+use std::hash::Hasher;
 
 const FWD_LOOKUP: [HashIntegerType; 256] = {
     let mut lookup = [1; 256];
@@ -183,12 +184,6 @@ impl HashFunctionFactory for CanonicalRabinKarpHashFactory {
     type HashTypeUnextendable = HashIntegerType;
     type HashTypeExtendable = ExtCanonicalRabinKarpHash;
     type HashIterator<N: HashableSequence> = CanonicalRabinKarpHashIterator<N>;
-    type PreferredRandomState = DummyHasherBuilder;
-
-    #[inline(always)]
-    fn get_random_state() -> Self::PreferredRandomState {
-        DummyHasherBuilder
-    }
 
     const NULL_BASE: u8 = 0;
 
@@ -202,11 +197,6 @@ impl HashFunctionFactory for CanonicalRabinKarpHashFactory {
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8 {
         (hash >> shift) as u8
-    }
-
-    #[inline(always)]
-    fn get_u64(hash: Self::HashTypeUnextendable) -> u64 {
-        hash as u64
     }
 
     fn debug_eq_to_u128(hash: Self::HashTypeUnextendable, value: u128) -> bool {
@@ -286,6 +276,27 @@ impl HashFunctionFactory for CanonicalRabinKarpHashFactory {
             hash.0.wrapping_sub(fwd_l(out_base)).wrapping_mul(MULT_INV),
             hash.1.wrapping_sub(rmmult.wrapping_mul(bkw_l(out_base))),
         )
+    }
+}
+
+impl HashableHashFunctionFactory for CanonicalRabinKarpHashFactory {
+    type PreferredRandomState = ahash::RandomState;
+
+    #[inline(always)]
+    fn get_random_state() -> Self::PreferredRandomState {
+        ahash::RandomState::new()
+    }
+
+    fn get_u128(hash: Self::HashTypeUnextendable) -> u128 {
+        hash as u128
+    }
+
+    fn write_to_hasher_u128<H: Hasher>(val: u128, state: &mut H) {
+        state.write((val as Self::HashTypeUnextendable).to_ne_bytes().as_slice());
+    }
+
+    fn write_to_hasher<H: Hasher>(val: Self::HashTypeUnextendable, state: &mut H) {
+        state.write(val.to_ne_bytes().as_slice());
     }
 }
 

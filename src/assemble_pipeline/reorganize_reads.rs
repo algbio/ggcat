@@ -5,7 +5,7 @@ use crate::config::{
     SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
     DEFAULT_PREFETCH_AMOUNT,
 };
-use crate::hashes::{HashFunctionFactory, HashableSequence};
+use crate::hashes::{HashableHashFunctionFactory, HashableSequence};
 
 use crate::assemble_pipeline::build_unitigs::write_fasta_entry;
 use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
@@ -61,7 +61,7 @@ impl<CX: SequenceExtraData> SequenceExtraData for ReorganizedReadsExtraData<CX> 
 }
 
 impl AssemblePipeline {
-    pub fn reorganize_reads<MH: HashFunctionFactory, CX: ColorsManager>(
+    pub fn reorganize_reads<MH: HashableHashFunctionFactory, CX: ColorsManager>(
         mut reads: Vec<PathBuf>,
         mut mapping_files: Vec<PathBuf>,
         temp_path: &Path,

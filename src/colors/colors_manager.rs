@@ -1,5 +1,5 @@
 use crate::assemble_pipeline::parallel_kmers_merge::structs::HMapKey;
-use crate::hashes::HashFunctionFactory;
+use crate::hashes::{HashFunctionFactory, HashableHashFunctionFactory};
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use hashbrown::HashMap;
 use std::io::Write;
@@ -33,7 +33,7 @@ pub mod color_types {
 }
 
 /// Helper trait to manage colors labeling on KmersMerge step
-pub trait ColorsMergeManager<H: HashFunctionFactory, C: ColorsManager>: Sized {
+pub trait ColorsMergeManager<H: HashableHashFunctionFactory, C: ColorsManager>: Sized {
     /// Temporary buffer that holds color values for each kmer while merging them
     type ColorsBufferTempStructure;
     fn allocate_temp_buffer_structure() -> Self::ColorsBufferTempStructure;
@@ -100,7 +100,7 @@ pub trait ColorsManager: 'static + Sync + Send + Sized {
 
     type MinimizerBucketingSeqColorDataType: MinimizerBucketingSeqColorData;
 
-    type ColorsMergeManagerType<H: HashFunctionFactory>: ColorsMergeManager<H, Self>;
+    type ColorsMergeManagerType<H: HashableHashFunctionFactory>: ColorsMergeManager<H, Self>;
 
     // fn join_unitigs();
 }
@@ -120,7 +120,7 @@ impl ColorsManager for () {
     fn print_color_stats(_global_colors_table: &Self::GlobalColorsTable) {}
 
     type MinimizerBucketingSeqColorDataType = ();
-    type ColorsMergeManagerType<H: HashFunctionFactory> = ();
+    type ColorsMergeManagerType<H: HashableHashFunctionFactory> = ();
 }
 
 impl MinimizerBucketingSeqColorData for () {
@@ -130,7 +130,7 @@ impl MinimizerBucketingSeqColorData for () {
     }
 }
 
-impl<H: HashFunctionFactory, C: ColorsManager> ColorsMergeManager<H, C> for () {
+impl<H: HashableHashFunctionFactory, C: ColorsManager> ColorsMergeManager<H, C> for () {
     type ColorsBufferTempStructure = ();
 
     #[inline(always)]

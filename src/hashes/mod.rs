@@ -43,9 +43,6 @@ pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + Send + Sync + 'stat
     >;
     type HashIterator<N: HashableSequence>: HashFunction<Self>;
 
-    type PreferredRandomState: BuildHasher;
-    fn get_random_state() -> Self::PreferredRandomState;
-
     const NULL_BASE: u8;
 
     fn new<N: HashableSequence>(seq: N, k: usize) -> Self::HashIterator<N>;
@@ -56,11 +53,6 @@ pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + Send + Sync + 'stat
     ) -> BucketIndexType;
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8;
-    fn get_u64(hash: Self::HashTypeUnextendable) -> u64;
-    fn get_u128(hash: Self::HashTypeUnextendable) -> u64;
-
-    fn write_to_hasher_u128<H: Hasher>(val: u128, state: &mut H);
-    fn write_to_hasher<H: Hasher>(val: Self::HashTypeUnextendable, state: &mut H);
 
     fn debug_eq_to_u128(hash: Self::HashTypeUnextendable, value: u128) -> bool;
 
@@ -91,7 +83,24 @@ pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + Send + Sync + 'stat
     ) -> Self::HashTypeExtendable;
 }
 
+pub trait HashableHashFunctionFactory: HashFunctionFactory {
+    type PreferredRandomState: BuildHasher;
+
+    /// Gets a random state to be used to hash values produced by this factory
+    fn get_random_state() -> Self::PreferredRandomState;
+
+    /// Gets the hash value extended to u128
+    fn get_u128(hash: Self::HashTypeUnextendable) -> u128;
+
+    /// Puts the u128 hash value into the hasher state
+    fn write_to_hasher_u128<H: Hasher>(val: u128, state: &mut H);
+
+    /// Puts the hash value into the hasher state
+    fn write_to_hasher<H: Hasher>(val: Self::HashTypeUnextendable, state: &mut H);
+}
+
 pub trait MinimizerHashFunctionFactory: HashFunctionFactory {
+
     /// Gets the first buckets count, used in MinimizerBucketing phase
     fn get_second_bucket(
         hash: <Self as HashFunctionFactory>::HashTypeUnextendable,

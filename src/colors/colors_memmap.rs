@@ -2,12 +2,12 @@
 use crate::colors::storage::serializer::ColorsSerializer;
 use crate::colors::storage::ColorsSerializerImpl;
 use crate::colors::ColorIndexType;
-use crate::hashes::dummy_hasher::DummyHasherBuilder;
 use dashmap::DashMap;
 use rand::{thread_rng, RngCore};
 use siphasher::sip128::{Hasher128, SipHasher13};
 use std::hash::Hash;
 use std::path::Path;
+use crate::hashes::dummy_hasher::DummyHasherBuilder;
 
 pub struct ColorsMemMap<C: ColorsSerializerImpl> {
     colors: DashMap<u128, ColorIndexType, DummyHasherBuilder>,

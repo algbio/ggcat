@@ -1,5 +1,4 @@
 pub mod u32 {
-    use crate::hashes::dummy_hasher::DummyHasherBuilder;
 
     type HashIntegerType = u32;
     const MULTIPLIER: HashIntegerType = 0xdc7d07b1;
@@ -14,7 +13,6 @@ pub mod u32 {
 }
 
 pub mod u64 {
-    use crate::hashes::dummy_hasher::DummyHasherBuilder;
 
     type HashIntegerType = u64;
     const MULTIPLIER: HashIntegerType = 0x660b123642ca9149;
@@ -29,7 +27,6 @@ pub mod u64 {
 }
 
 pub mod u128 {
-    use crate::hashes::dummy_hasher::DummyHasherBuilder;
 
     type HashIntegerType = u128;
     const MULTIPLIER: HashIntegerType = 0x3eb9402f3e733993add64d3ca00e1b6b;

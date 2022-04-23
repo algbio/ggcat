@@ -3,7 +3,7 @@ use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
 use crate::config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
-use crate::hashes::{HashFunctionFactory, HashableSequence};
+use crate::hashes::{HashableHashFunctionFactory, HashableSequence};
 use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::reads_writer::ReadsWriter;
@@ -61,7 +61,7 @@ impl FastaCompatibleRead for [u8] {
 
 #[allow(unused_variables)]
 pub fn write_fasta_entry<
-    MH: HashFunctionFactory,
+    MH: HashableHashFunctionFactory,
     CX: ColorsManager,
     R: FastaCompatibleRead + ?Sized,
     // I: Iterator<Item = (bool, bool, usize)>,
@@ -92,7 +92,7 @@ pub fn write_fasta_entry<
 }
 
 impl AssemblePipeline {
-    pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
+    pub fn build_unitigs<MH: HashableHashFunctionFactory, CX: ColorsManager>(
         mut read_buckets_files: Vec<PathBuf>,
         mut unitig_map_files: Vec<PathBuf>,
         _temp_path: &Path,

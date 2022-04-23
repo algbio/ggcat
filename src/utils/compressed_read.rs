@@ -138,6 +138,10 @@ impl<'a> CompressedRead<'a> {
         unsafe { from_raw_parts(self.data, (self.size + self.start as usize + 3) / 4) }
     }
 
+    pub fn get_offset(&self) -> usize {
+        self.start as usize
+    }
+
     pub fn copy_to_buffer(&self, buffer: &mut Vec<u8>) {
         if self.start == 0 {
             buffer.extend_from_slice(self.get_packed_slice());

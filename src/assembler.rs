@@ -3,7 +3,7 @@ use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsManager;
 use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_LOG_DELTA_TIME};
-use crate::hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use crate::hashes::{HashableHashFunctionFactory, MinimizerHashFunctionFactory};
 use crate::io::reads_writer::ReadsWriter;
 use crate::utils::{get_memory_mode, Utils};
 use crate::{AssemblerStartingStep, KEEP_FILES};
@@ -22,7 +22,7 @@ use std::time::Instant;
 
 pub fn run_assembler<
     BucketingHash: MinimizerHashFunctionFactory,
-    MergingHash: HashFunctionFactory,
+    MergingHash: HashableHashFunctionFactory,
     AssemblerColorsManager: ColorsManager,
 >(
     k: usize,
@@ -79,12 +79,7 @@ pub fn run_assembler<
     }
 
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
-        AssemblePipeline::parallel_kmers_merge::<
-            BucketingHash,
-            MergingHash,
-            AssemblerColorsManager,
-            _,
-        >(
+        AssemblePipeline::parallel_kmers_merge::<MergingHash, AssemblerColorsManager, _>(
             buckets,
             &global_colors_table,
             buckets_count,

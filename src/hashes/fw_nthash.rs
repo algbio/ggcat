@@ -1,7 +1,6 @@
 //! NtHash impl adapted from https://github.com/luizirber/nthash.git
 
 use crate::config::{BucketIndexType, MinimizerType};
-use crate::hashes::dummy_hasher::DummyHasherBuilder;
 use crate::hashes::nthash_base::h;
 use crate::hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
@@ -92,13 +91,6 @@ impl HashFunctionFactory for ForwardNtHashIteratorFactory {
     type HashTypeExtendable = ExtForwardNtHash;
     type HashIterator<N: HashableSequence> = ForwardNtHashIterator<N>;
 
-    type PreferredRandomState = DummyHasherBuilder;
-
-    #[inline(always)]
-    fn get_random_state() -> Self::PreferredRandomState {
-        DummyHasherBuilder {}
-    }
-
     // Corresponds to 'N' hash (zero)
     const NULL_BASE: u8 = 4;
 
@@ -114,11 +106,6 @@ impl HashFunctionFactory for ForwardNtHashIteratorFactory {
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8 {
         (hash >> shift) as u8
-    }
-
-    #[inline(always)]
-    fn get_u64(hash: Self::HashTypeUnextendable) -> u64 {
-        hash as u64
     }
 
     fn debug_eq_to_u128(hash: Self::HashTypeUnextendable, value: u128) -> bool {

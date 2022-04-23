@@ -1,5 +1,6 @@
+use std::hash::Hasher;
 use crate::config::BucketIndexType;
-use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
+use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence, HashableHashFunctionFactory};
 use nightly_quirks::branch_pred::unlikely;
 use parking_lot::lock_api::RawMutex as _;
 use parking_lot::Mutex;
@@ -148,12 +149,6 @@ impl HashFunctionFactory for ForwardRabinKarpHashFactory {
     type HashTypeUnextendable = HashIntegerType;
     type HashTypeExtendable = ExtForwardRabinKarpHash;
     type HashIterator<N: HashableSequence> = ForwardRabinKarpHashIterator<N>;
-    type PreferredRandomState = DummyHasherBuilder;
-
-    #[inline(always)]
-    fn get_random_state() -> Self::PreferredRandomState {
-        DummyHasherBuilder {}
-    }
 
     const NULL_BASE: u8 = 0;
 
@@ -167,11 +162,6 @@ impl HashFunctionFactory for ForwardRabinKarpHashFactory {
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8 {
         (hash >> shift) as u8
-    }
-
-    #[inline(always)]
-    fn get_u64(hash: Self::HashTypeUnextendable) -> u64 {
-        hash as u64
     }
 
     fn debug_eq_to_u128(hash: Self::HashTypeUnextendable, value: u128) -> bool {
@@ -237,6 +227,27 @@ impl HashFunctionFactory for ForwardRabinKarpHashFactory {
         // 00AABB => roll rev
         // 0000AA
         ExtForwardRabinKarpHash(hash.0.wrapping_sub(fwd_l(out_base)).wrapping_mul(MULT_INV))
+    }
+}
+
+impl HashableHashFunctionFactory for ForwardRabinKarpHashFactory {
+    type PreferredRandomState = ahash::RandomState;
+
+    #[inline(always)]
+    fn get_random_state() -> Self::PreferredRandomState {
+        ahash::RandomState::new()
+    }
+
+    fn get_u128(hash: Self::HashTypeUnextendable) -> u128 {
+        hash as u128
+    }
+
+    fn write_to_hasher_u128<H: Hasher>(val: u128, state: &mut H) {
+        state.write((val as Self::HashTypeUnextendable).to_ne_bytes().as_slice());
+    }
+
+    fn write_to_hasher<H: Hasher>(val: Self::HashTypeUnextendable, state: &mut H) {
+        state.write(val.to_ne_bytes().as_slice());
     }
 }
 

@@ -1,6 +1,7 @@
 use crate::config::BucketIndexType;
-use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
+use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence, HashableHashFunctionFactory};
 use std::cmp::min;
+use std::hash::Hasher;
 use std::mem::size_of;
 
 pub struct CanonicalSeqHashIterator<N: HashableSequence> {
@@ -99,12 +100,6 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
     type HashTypeUnextendable = HashIntegerType;
     type HashTypeExtendable = ExtCanonicalSeqHash;
     type HashIterator<N: HashableSequence> = CanonicalSeqHashIterator<N>;
-    type PreferredRandomState = ahash::RandomState;
-
-    #[inline(always)]
-    fn get_random_state() -> Self::PreferredRandomState {
-        ahash::RandomState::new()
-    }
 
     const NULL_BASE: u8 = 0;
 
@@ -118,11 +113,6 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8 {
         (hash >> shift) as u8
-    }
-
-    #[inline(always)]
-    fn get_u64(hash: Self::HashTypeUnextendable) -> u64 {
-        hash as u64
     }
 
     fn debug_eq_to_u128(hash: Self::HashTypeUnextendable, value: u128) -> bool {
@@ -187,6 +177,27 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
         // 0000AA
         let mask = get_mask(k - 1);
         ExtCanonicalSeqHash(hash.0 >> 2, hash.1 & mask)
+    }
+}
+
+impl HashableHashFunctionFactory for CanonicalSeqHashFactory {
+    type PreferredRandomState = ahash::RandomState;
+
+    #[inline(always)]
+    fn get_random_state() -> Self::PreferredRandomState {
+        ahash::RandomState::new()
+    }
+
+    fn get_u128(hash: Self::HashTypeUnextendable) -> u128 {
+        hash as u128
+    }
+
+    fn write_to_hasher_u128<H: Hasher>(val: u128, state: &mut H) {
+        state.write((val as Self::HashTypeUnextendable).to_ne_bytes().as_slice());
+    }
+
+    fn write_to_hasher<H: Hasher>(val: Self::HashTypeUnextendable, state: &mut H) {
+        state.write(val.to_ne_bytes().as_slice());
     }
 }
 
