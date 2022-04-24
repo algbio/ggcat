@@ -105,7 +105,7 @@ pub mod structs {
     pub struct HMapConfig {
         pub reads_vec: Vec<u8>,
         hashes_cache: Vec<(u64, u128)>,
-        pending_hash: u128,
+        pub pending_hash: u128,
         pub k_value: usize,
     }
 
@@ -128,11 +128,14 @@ pub mod structs {
         }
     }
 
+    pub static mut VALUE: u128 = 0;
+
     impl<MH: HashableHashFunctionFactory> HMapKey<MH> {
         pub fn build_temporary(hash: MH::HashTypeUnextendable) -> Self {
-            HMAP_CONFIG.with(|cfg| {
-                cfg.borrow_mut().pending_hash = MH::get_u128(hash);
-            });
+            // HMAP_CONFIG.with(|cfg| {
+            //     cf
+            // println!("AAAg.;borrow_mut().pending_hash = MH::get_u128(hash);
+            // // });
             Self {
                 addr: Cell::new(TAKE_LAST_ADDRESS as u32),
                 _phantom: Default::default(),
@@ -150,6 +153,8 @@ pub mod structs {
         }
 
         fn get_hash_u128(&self) -> u128 {
+            return self.addr.get() as u128;
+
             HMAP_CONFIG.with(|cfg| {
                 let mut cfg_borrow = cfg.borrow_mut();
                 let addr = self.addr.get() as usize;
@@ -232,7 +237,7 @@ impl<MH: HashableHashFunctionFactory, CX: ColorsManager> KmersTransformExecutorF
             backward_seq: Vec::with_capacity(global_data.k),
             temp_colors: CX::ColorsMergeManagerType::<MH>::allocate_temp_buffer_structure(),
             unitigs_temp_colors: CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure(),
-            rhash_map: HashMap::with_capacity(4096 * 128),
+            rhash_map: HashMap::with_capacity(4096),
             #[cfg(feature = "mem-analysis")]
             hmap_meminfo: info,
         }
@@ -288,13 +293,12 @@ impl<'x, MH: HashableHashFunctionFactory, CX: ColorsManager> ParallelKmersMerge<
 
 #[inline]
 fn clear_hashmap<K, V>(hashmap: &mut HashMap<K, V>) {
-    // if hashmap.capacity() < 8192 * 32 {
-    //     hashmap.clear();
-    // } else {
-    //     // Reset the hashmap if it gets too big
-    //     *hashmap = HashMap::with_capacity(4096);
-    // }
-    hashmap.clear();
+    if hashmap.capacity() < 8192 {
+        hashmap.clear();
+    } else {
+        // Reset the hashmap if it gets too big
+        *hashmap = HashMap::with_capacity(4096);
+    }
 }
 
 impl<'x, MH: HashableHashFunctionFactory, CX: ColorsManager>
@@ -332,7 +336,7 @@ impl<'x, MH: HashableHashFunctionFactory, CX: ColorsManager>
 
             let last_hash_pos = read.bases_count() - k;
 
-            let mut saved_reads_offset = None;
+            // let mut saved_reads_offset = None;
             let reads_buffer_start_position = HMAP_CONFIG.with(|x| x.borrow().reads_vec.len()) * 4;
             let mut copy_start = 0;
 
@@ -346,56 +350,61 @@ impl<'x, MH: HashableHashFunctionFactory, CX: ColorsManager>
                     .rhash_map
                     .entry(HMapKey::build_temporary(hash.to_unextendable()));
 
-                let entry = match entry {
-                    Vacant(_) => {
-                        let occupied_entry =
-                            entry.insert(CX::ColorsMergeManagerType::<MH>::new_color_index());
-                        match &mut saved_reads_offset {
-                            None => {
-                                assert_eq!(read.get_offset(), 0);
+                // if MH::get_u128(hash.to_unextendable()) == 821398047 {
+                //     println!("AAA");
+                //     // entry.insert(CX::ColorsMergeManagerType::<MH>::new_color_index());
+                // }
 
-                                let k_bytes_count = (k + 3 + (idx % 4)) / 4;
-                                let copy_start_byte = idx / 4;
-                                HMAP_CONFIG.with(|x| {
-                                    x.borrow_mut().reads_vec.extend_from_slice(
-                                        &read.get_packed_slice()
-                                            [copy_start_byte..copy_start_byte + k_bytes_count],
-                                    )
-                                });
-                                saved_reads_offset = Some(copy_start_byte + k_bytes_count);
-                                copy_start = copy_start_byte * 4;
-                            }
-                            Some(position) => {
-                                let mut difference = (*position as isize) * 4 - (idx + k) as isize;
-                                if difference == -1 {
-                                    HMAP_CONFIG.with(|x| {
-                                        x.borrow_mut()
-                                            .reads_vec
-                                            .push(read.get_packed_slice()[*position])
-                                    });
-                                    *position += 1;
-                                } else if difference < 0 {
-                                    // TODO: Optimize for big gaps
-                                    let remaining = ((-difference as usize) + 3) / 4;
-                                    HMAP_CONFIG.with(|x| {
-                                        x.borrow_mut().reads_vec.extend_from_slice(
-                                            &read.get_packed_slice()
-                                                [*position..(*position + remaining)],
-                                        )
-                                    });
-                                    *position += remaining;
-                                }
-                            }
-                        }
-
-                        occupied_entry
-                            .key()
-                            .settle_temporaru(reads_buffer_start_position + idx - copy_start);
-
-                        occupied_entry
-                    }
-                    Occupied(entry) => entry,
-                };
+                // let entry = match entry {
+                //     Vacant(_) => {
+                //         // let occupied_entry =
+                //         //     entry.insert(CX::ColorsMergeManagerType::<MH>::new_color_index());
+                //         match &mut saved_reads_offset {
+                //             None => {
+                //                 assert_eq!(read.get_offset(), 0);
+                //
+                //                 let k_bytes_count = (k + 3 + (idx % 4)) / 4;
+                //                 let copy_start_byte = idx / 4;
+                //                 HMAP_CONFIG.with(|x| {
+                //                     x.borrow_mut().reads_vec.extend_from_slice(
+                //                         &read.get_packed_slice()
+                //                             [copy_start_byte..copy_start_byte + k_bytes_count],
+                //                     )
+                //                 });
+                //                 saved_reads_offset = Some(copy_start_byte + k_bytes_count);
+                //                 copy_start = copy_start_byte * 4;
+                //             }
+                //             Some(position) => {
+                //                 let mut difference = (*position as isize) * 4 - (idx + k) as isize;
+                //                 if difference == -1 {
+                //                     HMAP_CONFIG.with(|x| {
+                //                         x.borrow_mut()
+                //                             .reads_vec
+                //                             .push(read.get_packed_slice()[*position])
+                //                     });
+                //                     *position += 1;
+                //                 } else if difference < 0 {
+                //                     // TODO: Optimize for big gaps
+                //                     let remaining = ((-difference as usize) + 3) / 4;
+                //                     HMAP_CONFIG.with(|x| {
+                //                         x.borrow_mut().reads_vec.extend_from_slice(
+                //                             &read.get_packed_slice()
+                //                                 [*position..(*position + remaining)],
+                //                         )
+                //                     });
+                //                     *position += remaining;
+                //                 }
+                //             }
+                //         }
+                //
+                //         // occupied_entry
+                //         //     .key()
+                //         //     .settle_temporaru(reads_buffer_start_position + idx - copy_start);
+                //         //
+                //         // occupied_entry
+                //     }
+                //     Occupied(entry) => {} //entry,
+                // };
 
                 // entry.ignored |= ((begin_ignored as u8) << ((!is_forward) as u8))
                 //     | ((end_ignored as u8) << (is_forward as u8));
@@ -445,7 +454,10 @@ impl<'x, MH: HashableHashFunctionFactory, CX: ColorsManager>
             // COUNTER_READS_MAX_LAST.max(len);
             // COUNTER_READS_AVG.add_value(len);
         }
-
+        // if self.rhash_map.len() == 83284 {
+        //     //unsafe { structs::VALUE } == 123084822 {
+        //     println!("AAAA");
+        // }
         if CX::COLORS_ENABLED {
             CX::ColorsMergeManagerType::<MH>::process_colors(
                 &global_data.colors_global_table,
