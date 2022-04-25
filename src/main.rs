@@ -145,7 +145,7 @@ struct CommonArgs {
     pub prefer_memory: bool,
 
     /// The log2 of the number of buckets
-    #[structopt(short = "s", long = "buckets-count-log")]
+    #[structopt(short = "b", long = "buckets-count-log")]
     pub buckets_count_log: Option<usize>,
 }
 

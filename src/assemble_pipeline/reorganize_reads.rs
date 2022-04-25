@@ -140,6 +140,7 @@ impl AssemblePipeline {
                 color_types::PartialUnitigsColorStructure<MH, CX>,
                 typenum::U0,
                 false,
+                true,
             >, _>(Vec::new(), |(_, _, color, seq)| {
                 if seq.bases_count() > decompress_buffer.len() {
                     decompress_buffer.resize(seq.bases_count(), 0);
@@ -162,6 +163,7 @@ impl AssemblePipeline {
                             >,
                             typenum::U0,
                             false,
+                            true,
                         >::new(seq, 0, 0),
                     );
                     map_index += 1;

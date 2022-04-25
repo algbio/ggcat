@@ -30,8 +30,10 @@ pub const DEFAULT_LZ4_COMPRESSION_LEVEL: u32 = 0;
 
 // 192MB of reads for each bucket
 pub const MAX_BUCKET_SIZE: u64 = 192 * 1024 * 1024;
-pub const MIN_BUCKETS_COUNT_LOG: usize = 6;
+pub const MIN_BUCKETS_COUNT_LOG: usize = 9;
 pub const MAX_BUCKETS_COUNT_LOG: usize = 13;
+
+pub const USE_SECOND_BUCKET: bool = false;
 
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]

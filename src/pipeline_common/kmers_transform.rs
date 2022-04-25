@@ -1,5 +1,10 @@
-use crate::config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, MINIMUM_LOG_DELTA_TIME};
+use crate::config::{
+    BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, MINIMUM_LOG_DELTA_TIME,
+    USE_SECOND_BUCKET,
+};
+use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::KEEP_FILES;
 use crossbeam::queue::ArrayQueue;
 use parallel_processor::buckets::readers::async_binary_reader::{
@@ -21,19 +26,34 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
     type GlobalExtraData<'a>: Send + Sync + 'a;
     type AssociatedExtraData: SequenceExtraData;
     type ExecutorType<'a>: KmersTransformExecutor<'a, Self>;
+    type PreprocessorType<'a>: KmersTransformPreprocessor<'a, Self>;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT: typenum::uint::Unsigned;
 
-    fn new<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a>;
+    fn new_preprocessor<'a>(
+        global_data: &Self::GlobalExtraData<'a>,
+        buckets_count_log: usize,
+    ) -> Self::PreprocessorType<'a>;
+    fn new_executor<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a>;
+}
+
+pub trait KmersTransformPreprocessor<'x, F: KmersTransformExecutorFactory> {
+    fn get_sequence_bucket<'y: 'x, 'a, C>(
+        &self,
+        seq_data: &(u8, u8, C, &F::GlobalExtraData<'y>),
+    ) -> BucketIndexType;
 }
 
 pub trait KmersTransformExecutor<'x, F: KmersTransformExecutorFactory> {
-    fn process_group<'y: 'x, R: BucketReader>(
+    fn process_group_start<'y: 'x>(&mut self, global_data: &F::GlobalExtraData<'y>);
+    fn process_group_batch_sequences<'y: 'x>(
         &mut self,
         global_data: &F::GlobalExtraData<'y>,
-        reader: R,
+        batch: &Vec<(u8, F::AssociatedExtraData, CompressedReadIndipendent)>,
+        ref_sequences: &Vec<u8>,
     );
+    fn process_group_finalize<'y: 'x>(&mut self, global_data: &F::GlobalExtraData<'y>);
 
     fn finalize<'y: 'x>(self, global_data: &F::GlobalExtraData<'y>);
 }
@@ -149,7 +169,11 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     .name("kmers-transform".to_string())
                     .spawn(|_| {
                         let async_reader = self.async_readers.get();
-                        let mut executor = F::new(&self.global_extra_data);
+                        let mut executor = F::new_executor(&self.global_extra_data);
+
+                        let mut reads_buffer = Vec::new();
+                        let mut reads_list = Vec::with_capacity(1024 * 32);
+
                         while let Some(path) = self.files_queue.pop() {
                             let reader = AsyncBinaryReader::new(
                                 &path,
@@ -160,7 +184,47 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                 },
                                 DEFAULT_PREFETCH_AMOUNT,
                             );
-                            executor.process_group(&self.global_extra_data, reader);
+
+                            executor.process_group_start(&self.global_extra_data);
+
+                            reader.decode_all_bucket_items::<CompressedReadsBucketHelper<
+                                F::AssociatedExtraData,
+                                F::FLAGS_COUNT,
+                                { USE_SECOND_BUCKET },
+                                false,
+                            >, _>(
+                                Vec::new(),
+                                |(flags, _second_bucket, sequence_type, read)| {
+                                    let ind_read = CompressedReadIndipendent::from_read(
+                                        &read,
+                                        &mut reads_buffer,
+                                    );
+                                    reads_list.push((flags, sequence_type, ind_read));
+                                    if reads_list.len() == reads_list.capacity() {
+                                        executor.process_group_batch_sequences(
+                                            &self.global_extra_data,
+                                            &reads_list,
+                                            &reads_buffer,
+                                        );
+                                        reads_list.clear();
+                                        reads_buffer.clear();
+                                    }
+                                },
+                            );
+
+                            if reads_list.len() > 0 {
+                                executor.process_group_batch_sequences(
+                                    &self.global_extra_data,
+                                    &reads_list,
+                                    &reads_buffer,
+                                );
+                                reads_list.clear();
+                                reads_buffer.clear();
+                            }
+
+                            executor.process_group_finalize(&self.global_extra_data);
+
+                            // executor.process_group(&self.global_extra_data, reader);
                             self.log_completed_bucket();
                         }
                         executor.finalize(&self.global_extra_data);

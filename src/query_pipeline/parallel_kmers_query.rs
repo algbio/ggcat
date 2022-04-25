@@ -3,18 +3,18 @@ use crate::config::{BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
-use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::pipeline_common::kmers_transform::{
     KmersTransform, KmersTransformExecutor, KmersTransformExecutorFactory,
+    KmersTransformPreprocessor,
 };
 use crate::query_pipeline::counters_sorting::CounterEntry;
 use crate::query_pipeline::QueryPipeline;
+use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::utils::get_memory_mode;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -80,11 +80,19 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     type GlobalExtraData<'a> = GlobalQueryMergeData<'a>;
     type AssociatedExtraData = QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>;
     type ExecutorType<'a> = ParallelKmersQuery<'a, H, MH, CX>;
+    type PreprocessorType<'a> = ParallelKmersQueryPreprocessor<'a, H, MH, CX>;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U0;
 
-    fn new<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a> {
+    fn new_preprocessor<'a>(
+        _global_data: &Self::GlobalExtraData<'a>,
+        _buckets_count_log: usize,
+    ) -> Self::PreprocessorType<'a> {
+        todo!()
+    }
+
+    fn new_executor<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a> {
         let mut counters_buffers = Box::new(BucketsThreadBuffer::new(
             DEFAULT_PER_CPU_BUFFER_SIZE,
             global_data.counters_buckets.count(),
@@ -103,6 +111,32 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     }
 }
 
+struct ParallelKmersQueryPreprocessor<
+    'x,
+    H: HashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+> {
+    _phantom: PhantomData<&'x (H, MH, CX)>,
+}
+
+impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+    KmersTransformPreprocessor<'x, ParallelKmersQueryFactory<H, MH, CX>>
+    for ParallelKmersQueryPreprocessor<'x, H, MH, CX>
+{
+    fn get_sequence_bucket<'y: 'x, 'a, C>(
+        &self,
+        _seq_data: &(
+            u8,
+            u8,
+            C,
+            &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
+        ),
+    ) -> BucketIndexType {
+        todo!()
+    }
+}
+
 struct ParallelKmersQuery<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> {
     counters_tmp: BucketsThreadDispatcher<'x, LockFreeBinaryWriter>,
     // This field has to appear after hashes_tmp so that it's dropped only when not used anymore
@@ -117,41 +151,49 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutor<'x, ParallelKmersQueryFactory<H, MH, CX>>
     for ParallelKmersQuery<'x, H, MH, CX>
 {
-    fn process_group<'y: 'x, R: BucketReader>(
+    fn process_group_start<'y: 'x>(
         &mut self,
-        global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
-        reader: R,
+        _global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
     ) {
-        let k = global_data.k;
-
         self.phset.clear();
         self.query_reads.clear();
         self.query_map.clear();
+    }
 
-        reader.decode_all_bucket_items::<CompressedReadsBucketHelper<
+    fn process_group_batch_sequences<'y: 'x>(
+        &mut self,
+        global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
+        batch: &Vec<(
+            u8,
             QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>,
-            <ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
-            true,
-        >, _>(
-            Vec::new(),
-            |(_flags, _second_bucket, sequence_type, read)| {
-                let hashes = MH::new(read, k);
+            CompressedReadIndipendent,
+        )>,
+        ref_sequences: &Vec<u8>,
+    ) {
+        let k = global_data.k;
 
-                match sequence_type {
-                    QueryKmersReferenceData::Graph(_col_info) => {
-                        for hash in hashes.iter() {
-                            self.phset.insert(hash.to_unextendable());
-                        }
-                    }
-                    QueryKmersReferenceData::Query(index) => {
-                        for hash in hashes.iter() {
-                            self.query_reads.push((index.get(), hash.to_unextendable()));
-                        }
+        for (_, sequence_type, read) in batch.iter() {
+            let hashes = MH::new(read.as_reference(ref_sequences), k);
+
+            match sequence_type {
+                QueryKmersReferenceData::Graph(_col_info) => {
+                    for hash in hashes.iter() {
+                        self.phset.insert(hash.to_unextendable());
                     }
                 }
-            },
-        );
+                QueryKmersReferenceData::Query(index) => {
+                    for hash in hashes.iter() {
+                        self.query_reads.push((index.get(), hash.to_unextendable()));
+                    }
+                }
+            }
+        }
+    }
 
+    fn process_group_finalize<'y: 'x>(
+        &mut self,
+        _global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
+    ) {
         for (query_index, kmer_hash) in self.query_reads.drain(..) {
             if self.phset.contains(&kmer_hash) {
                 *self.query_map.entry(query_index).or_insert(0) += 1;

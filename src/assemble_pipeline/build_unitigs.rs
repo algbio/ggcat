@@ -216,6 +216,7 @@ impl AssemblePipeline {
                         >,
                         typenum::U0,
                         false,
+                        true,
                     >, _>(
                         Vec::new(),
                         |(_, _, index, seq)| {

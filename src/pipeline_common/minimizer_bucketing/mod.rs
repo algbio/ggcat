@@ -2,6 +2,7 @@ mod queue_data;
 mod reader;
 mod sequences_splitter;
 
+use crate::config::USE_SECOND_BUCKET;
 use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE, READ_INTERMEDIATE_CHUNKS_SIZE,
@@ -151,11 +152,12 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
                         tmp_reads_buffer.add_element(
                             bucket,
                             &extra,
-                            &CompressedReadsBucketHelper::<_, E::FLAGS_COUNT, true>::new(
-                                seq,
-                                flags,
-                                second_bucket as u8,
-                            ),
+                            &CompressedReadsBucketHelper::<
+                                _,
+                                E::FLAGS_COUNT,
+                                { USE_SECOND_BUCKET },
+                                true,
+                            >::new(seq, flags, second_bucket as u8),
                         );
                     },
                 );
