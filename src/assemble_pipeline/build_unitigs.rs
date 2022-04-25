@@ -215,14 +215,20 @@ impl AssemblePipeline {
                             color_types::PartialUnitigsColorStructure<MH, CX>,
                         >,
                         typenum::U0,
-                    >, _>(Vec::new(), |(_, index, seq)| {
-                        let &(findex, unitig_info) = unitigs_hashmap.get(&index.unitig).unwrap();
-                        final_sequences[findex] = Some((
-                            CompressedReadIndipendent::from_read(&seq, &mut temp_storage),
-                            unitig_info,
-                            index.color,
-                        ));
-                    });
+                        false,
+                        true,
+                    >, _>(
+                        Vec::new(),
+                        |(_, _, index, seq)| {
+                            let &(findex, unitig_info) =
+                                unitigs_hashmap.get(&index.unitig).unwrap();
+                            final_sequences[findex] = Some((
+                                CompressedReadIndipendent::from_read(&seq, &mut temp_storage),
+                                unitig_info,
+                                index.color,
+                            ));
+                        },
+                    );
 
                     let mut temp_sequence = Vec::new();
                     let mut ident_buffer = Vec::new();

@@ -2,7 +2,7 @@ use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorDat
 use crate::config::BucketIndexType;
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
-use crate::hashes::HashFunctionFactory;
+use crate::hashes::MinimizerHashFunctionFactory;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::pipeline_common::minimizer_bucketing::{
@@ -65,17 +65,19 @@ impl SequenceExtraData for KmersQueryData {
     }
 }
 
-pub struct QuerierMinimizerBucketingExecutor<'a, H: HashFunctionFactory, CX: ColorsManager> {
+pub struct QuerierMinimizerBucketingExecutor<'a, H: MinimizerHashFunctionFactory, CX: ColorsManager>
+{
     minimizer_queue: RollingMinQueue<H>,
     global_data: &'a MinimizerBucketingCommonData<()>,
     _phantom: PhantomData<CX>,
 }
 
-pub struct QuerierMinimizerBucketingExecutorFactory<H: HashFunctionFactory, CX: ColorsManager>(
-    PhantomData<(H, CX)>,
-);
+pub struct QuerierMinimizerBucketingExecutorFactory<
+    H: MinimizerHashFunctionFactory,
+    CX: ColorsManager,
+>(PhantomData<(H, CX)>);
 
-impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutorFactory
+impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutorFactory
     for QuerierMinimizerBucketingExecutorFactory<H, CX>
 {
     type GlobalData = ();
@@ -99,7 +101,7 @@ impl<H: HashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutorFactor
     }
 }
 
-impl<'a, H: HashFunctionFactory, CX: ColorsManager>
+impl<'a, H: MinimizerHashFunctionFactory, CX: ColorsManager>
     MinimizerBucketingExecutor<'a, QuerierMinimizerBucketingExecutorFactory<H, CX>>
     for QuerierMinimizerBucketingExecutor<'a, H, CX>
 {
@@ -128,7 +130,7 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData),
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData),
     >(
         &mut self,
         preprocess_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -147,10 +149,9 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
 
         for (index, min_hash) in rolling_iter.enumerate() {
             if H::get_full_minimizer(min_hash) != H::get_full_minimizer(last_hash) {
-                let bucket = H::get_first_bucket(last_hash);
-
                 push_sequence(
-                    bucket,
+                    H::get_first_bucket(last_hash) & self.global_data.buckets_count_mask,
+                    H::get_second_bucket(last_hash) & self.global_data.buckets_count_mask,
                     sequence.get_subslice(last_index..(index + self.global_data.k)),
                     0,
                     match preprocess_info {
@@ -170,7 +171,8 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
         }
 
         push_sequence(
-            H::get_first_bucket(last_hash),
+            H::get_first_bucket(last_hash) & self.global_data.buckets_count_mask,
+            H::get_second_bucket(last_hash) & self.global_data.buckets_count_mask,
             sequence.get_subslice(last_index..sequence.seq_len()),
             0,
             match preprocess_info {
@@ -187,7 +189,7 @@ impl<'a, H: HashFunctionFactory, CX: ColorsManager>
 }
 
 impl QueryPipeline {
-    pub fn minimizer_bucketing<H: HashFunctionFactory, CX: ColorsManager>(
+    pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
         graph_file: PathBuf,
         query_file: PathBuf,
         output_path: &Path,

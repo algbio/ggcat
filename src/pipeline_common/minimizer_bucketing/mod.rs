@@ -2,6 +2,7 @@ mod queue_data;
 mod reader;
 mod sequences_splitter;
 
+use crate::config::USE_SECOND_BUCKET;
 use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE, READ_INTERMEDIATE_CHUNKS_SIZE,
@@ -82,7 +83,7 @@ pub trait MinimizerBucketingExecutor<'a, FACTORY: MinimizerBucketingExecutorFact
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, S, u8, FACTORY::ExtraData),
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, FACTORY::ExtraData),
     >(
         &mut self,
         preprocess_info: &FACTORY::PreprocessInfo,
@@ -96,6 +97,7 @@ pub struct MinimizerBucketingCommonData<GlobalData> {
     pub k: usize,
     pub m: usize,
     pub buckets_count: usize,
+    pub buckets_count_mask: BucketIndexType,
     pub global_data: GlobalData,
 }
 
@@ -146,11 +148,16 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
                     &preprocess_info,
                     sequence,
                     range,
-                    |bucket, seq, flags, extra| {
+                    |bucket, second_bucket, seq, flags, extra| {
                         tmp_reads_buffer.add_element(
                             bucket,
                             &extra,
-                            &CompressedReadsBucketHelper::<_, E::FLAGS_COUNT>::new(seq, flags),
+                            &CompressedReadsBucketHelper::<
+                                _,
+                                E::FLAGS_COUNT,
+                                { USE_SECOND_BUCKET },
+                                true,
+                            >::new(seq, flags, second_bucket as u8),
                         );
                     },
                 );
@@ -239,6 +246,7 @@ impl GenericMinimizerBucketing {
                 k,
                 m,
                 buckets_count,
+                buckets_count_mask: (buckets_count - 1) as BucketIndexType, // Buckets count is guaranteed to be a power of 2
                 global_data,
             },
         };

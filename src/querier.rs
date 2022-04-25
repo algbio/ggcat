@@ -1,5 +1,5 @@
 use crate::colors::colors_manager::ColorsManager;
-use crate::hashes::HashFunctionFactory;
+use crate::hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use crate::query_pipeline::QueryPipeline;
 use crate::utils::Utils;
 use crate::QuerierStartingStep;
@@ -7,10 +7,9 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::path::PathBuf;
 
 pub fn run_query<
-    BucketingHash: HashFunctionFactory,
+    BucketingHash: MinimizerHashFunctionFactory,
     MergingHash: HashFunctionFactory,
     AssemblerColorsManager: ColorsManager,
-    const BUCKETS_COUNT: usize,
 >(
     k: usize,
     m: usize,
@@ -19,6 +18,7 @@ pub fn run_query<
     query_input: PathBuf,
     output_file: PathBuf,
     temp_dir: PathBuf,
+    buckets_count_log: Option<usize>,
     threads_count: usize,
 ) {
     PHASES_TIMES_MONITOR.write().init();
@@ -27,19 +27,23 @@ pub fn run_query<
     //     output_file.with_extension("colors.dat"),
     //     color_names,
     // );
+    let buckets_count_log = buckets_count_log.unwrap_or_else(|| {
+        Utils::compute_buckets_log_from_input_files(&[graph_input.clone(), query_input.clone()])
+    });
+    let buckets_count = 1 << buckets_count_log;
 
     let buckets = if step <= QuerierStartingStep::MinimizerBucketing {
         QueryPipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
             graph_input,
             query_input.clone(),
             temp_dir.as_path(),
-            BUCKETS_COUNT,
+            buckets_count,
             threads_count,
             k,
             m,
         )
     } else {
-        Utils::generate_bucket_names(temp_dir.join("bucket"), BUCKETS_COUNT, Some("tmp"))
+        Utils::generate_bucket_names(temp_dir.join("bucket"), buckets_count, Some("tmp"))
     };
 
     let counters_buckets = if step <= QuerierStartingStep::KmersCounting {
@@ -50,14 +54,14 @@ pub fn run_query<
             _,
         >(
             buckets,
-            BUCKETS_COUNT,
+            buckets_count,
             temp_dir.as_path(),
             k,
             m,
             threads_count,
         )
     } else {
-        Utils::generate_bucket_names(temp_dir.join("counters"), BUCKETS_COUNT, Some("tmp"))
+        Utils::generate_bucket_names(temp_dir.join("counters"), buckets_count, Some("tmp"))
     };
 
     QueryPipeline::counters_sorting(k, query_input, counters_buckets, output_file.clone());

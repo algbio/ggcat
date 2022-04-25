@@ -1,4 +1,4 @@
-use crate::config::{BucketIndexType, MinimizerType};
+use crate::config::BucketIndexType;
 use crate::hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use nightly_quirks::branch_pred::unlikely;
 use parking_lot::lock_api::RawMutex as _;
@@ -163,10 +163,6 @@ impl HashFunctionFactory for ForwardRabinKarpHashFactory {
 
     fn get_first_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType {
         hash as BucketIndexType
-    }
-
-    fn get_full_minimizer(_hash: Self::HashTypeUnextendable) -> MinimizerType {
-        panic!("Not supported!")
     }
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8 {

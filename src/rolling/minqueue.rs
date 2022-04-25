@@ -1,8 +1,8 @@
-use crate::hashes::HashFunctionFactory;
+use crate::hashes::MinimizerHashFunctionFactory;
 use std::cmp::min_by_key;
 use std::marker::PhantomData;
 
-pub struct RollingMinQueue<H: HashFunctionFactory> {
+pub struct RollingMinQueue<H: MinimizerHashFunctionFactory> {
     queue: Vec<(H::HashTypeUnextendable, H::HashTypeUnextendable)>,
     index: usize,
     capacity_mask: usize,
@@ -11,7 +11,7 @@ pub struct RollingMinQueue<H: HashFunctionFactory> {
     _marker: PhantomData<H>,
 }
 
-impl<H: HashFunctionFactory> RollingMinQueue<H> {
+impl<H: MinimizerHashFunctionFactory> RollingMinQueue<H> {
     pub fn new(size: usize) -> RollingMinQueue<H> {
         let capacity = size.next_power_of_two();
         let mut queue = Vec::with_capacity(capacity);

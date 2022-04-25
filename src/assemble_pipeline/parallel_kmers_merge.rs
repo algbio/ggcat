@@ -3,16 +3,16 @@ use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
-    MERGE_RESULTS_BUCKETS_COUNT,
 };
 use crate::hashes::{ExtendableHashTraitType, HashFunction};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
-use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::hash_entry::HashEntry;
 use crate::pipeline_common::kmers_transform::{
     KmersTransform, KmersTransformExecutor, KmersTransformExecutorFactory,
+    KmersTransformPreprocessor,
 };
+use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::utils::owned_drop::OwnedDrop;
 use crate::utils::{get_memory_mode, Utils};
 use crate::CompressedRead;
@@ -20,7 +20,6 @@ use core::slice::from_raw_parts;
 use crossbeam::queue::*;
 use hashbrown::HashMap;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
@@ -66,7 +65,7 @@ pub mod structs {
     impl<X: SequenceExtraData> ResultsBucket<X> {
         pub fn add_read(&mut self, el: X, read: &[u8]) -> u64 {
             self.temp_buffer.clear();
-            CompressedReadsBucketHelper::<X, typenum::U0>::new(read, 0)
+            CompressedReadsBucketHelper::<X, typenum::U0, false, true>::new(read, 0, 0)
                 .write_to(&mut self.temp_buffer, &el);
             self.reads_writer.write_data(self.temp_buffer.as_slice());
 
@@ -112,12 +111,20 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 {
     type GlobalExtraData<'a> = GlobalMergeData<'a, MH, CX>;
     type AssociatedExtraData = CX::MinimizerBucketingSeqColorDataType;
-    type ExecutorType<'a> = ParallelKmersMerge<'a, H, MH, CX>;
+    type ExecutorType<'a> = ParallelKmersMergeExecutor<'a, H, MH, CX>;
+    type PreprocessorType<'a> = ParallelKmersMergePreprocessor<'a, H, MH, CX>;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U2;
 
-    fn new<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a> {
+    fn new_preprocessor<'a>(
+        _global_data: &Self::GlobalExtraData<'a>,
+        _buckets_count_log: usize,
+    ) -> Self::PreprocessorType<'a> {
+        todo!()
+    }
+
+    fn new_executor<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a> {
         #[cfg(feature = "mem-analysis")]
         let info = parallel_processor::mem_tracker::create_hashmap_entry(
             std::panic::Location::caller(),
@@ -132,13 +139,14 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         let buffers = unsafe { &mut *(hashes_buffer.deref_mut() as *mut BucketsThreadBuffer) };
 
         Self::ExecutorType::<'a> {
-            results_buckets_counter: MERGE_RESULTS_BUCKETS_COUNT,
             hashes_tmp: BucketsThreadDispatcher::new(&global_data.hashes_buckets, buffers),
             hashes_buffer,
             forward_seq: Vec::with_capacity(global_data.k),
             backward_seq: Vec::with_capacity(global_data.k),
             temp_colors: CX::ColorsMergeManagerType::<MH>::allocate_temp_buffer_structure(),
             unitigs_temp_colors: CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure(),
+            saved_reads: Vec::with_capacity(256),
+            current_bucket: None,
             rcorrect_reads: TrackedVec::new(),
             rhash_map: HashMap::with_capacity(4096),
             #[cfg(feature = "mem-analysis")]
@@ -148,9 +156,38 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     }
 }
 
-struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> {
-    results_buckets_counter: usize,
+struct ParallelKmersMergePreprocessor<
+    'x,
+    H: HashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+> {
+    _phantom: PhantomData<&'x (H, MH, CX)>,
+}
 
+impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+    KmersTransformPreprocessor<'x, ParallelKmersMergeFactory<H, MH, CX>>
+    for ParallelKmersMergePreprocessor<'x, H, MH, CX>
+{
+    fn get_sequence_bucket<'y: 'x, 'a, C>(
+        &self,
+        _seq_data: &(
+            u8,
+            u8,
+            C,
+            &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
+        ),
+    ) -> BucketIndexType {
+        todo!()
+    }
+}
+
+struct ParallelKmersMergeExecutor<
+    'x,
+    H: HashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+> {
     hashes_tmp: BucketsThreadDispatcher<'x, LockFreeBinaryWriter>,
     // This field has to appear after hashes_tmp so that it's dropped only when not used anymore
     hashes_buffer: Box<BucketsThreadBuffer>,
@@ -159,7 +196,8 @@ struct ParallelKmersMerge<'x, H: HashFunctionFactory, MH: HashFunctionFactory, C
     backward_seq: Vec<u8>,
     temp_colors: color_types::ColorsBufferTempStructure<MH, CX>,
     unitigs_temp_colors: color_types::TempUnitigColorStructure<MH, CX>,
-
+    saved_reads: Vec<u8>,
+    current_bucket: Option<ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>>,
     rcorrect_reads: TrackedVec<(MH::HashTypeExtendable, usize, u8, bool)>,
     rhash_map:
         HashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>,
@@ -175,7 +213,7 @@ fn get_kmer_multiplicity<CHI>(entry: &MapEntry<CHI>) -> usize {
 }
 
 impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    ParallelKmersMerge<'x, H, MH, CX>
+    ParallelKmersMergeExecutor<'x, H, MH, CX>
 {
     #[inline(always)]
     fn write_hashes(
@@ -185,11 +223,11 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         entry: u64,
         do_merge: bool,
         direction: Direction,
-        buckets_count: usize,
+        buckets_count_mask: BucketIndexType,
     ) {
         if do_merge {
             hashes_tmp.add_element(
-                MH::get_first_bucket(hash) % (buckets_count as BucketIndexType),
+                MH::get_first_bucket(hash) & buckets_count_mask,
                 &(),
                 &HashEntry {
                     hash,
@@ -214,30 +252,34 @@ fn clear_hashmap<K, V>(hashmap: &mut HashMap<K, V>) {
 
 impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutor<'x, ParallelKmersMergeFactory<H, MH, CX>>
-    for ParallelKmersMerge<'x, H, MH, CX>
+    for ParallelKmersMergeExecutor<'x, H, MH, CX>
 {
-    fn process_group<'y: 'x, R: BucketReader>(
+    fn process_group_start<'y: 'x>(
         &mut self,
         global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
-        reader: R,
     ) {
-        let k = global_data.k;
-
-        let mut current_bucket = global_data.output_results_buckets.pop().unwrap();
-
-        let bucket_index = current_bucket.get_bucket_index();
-        let buckets_count = global_data.buckets_count;
-
+        self.saved_reads.clear();
         CX::ColorsMergeManagerType::<MH>::reinit_temp_buffer_structure(&mut self.temp_colors);
         clear_hashmap(&mut self.rhash_map);
         self.rcorrect_reads.clear();
+        self.current_bucket = Some(global_data.output_results_buckets.pop().unwrap());
+    }
 
-        let mut saved_reads = Vec::with_capacity(256);
+    fn process_group_batch_sequences<'y: 'x>(
+        &mut self,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
+        batch: &Vec<(
+            u8,
+            CX::MinimizerBucketingSeqColorDataType,
+            CompressedReadIndipendent,
+        )>,
+        ref_sequences: &Vec<u8>,
+    ) {
+        let k = global_data.k;
 
-        reader.decode_all_bucket_items::<CompressedReadsBucketHelper<
-            _,
-            <ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::FLAGS_COUNT,
-        >, _>(Vec::new(), |(flags, color, read)| {
+        for (flags, color, read) in batch.iter() {
+            let read = read.as_reference(ref_sequences);
+
             let hashes = MH::new(read, k);
 
             let last_hash_pos = read.bases_count() - k;
@@ -271,8 +313,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
                 if entry.count == global_data.min_multiplicity {
                     if saved_read_offset.is_none() {
-                        saved_read_offset = Some(saved_reads.len());
-                        saved_reads.extend_from_slice(read.get_packed_slice())
+                        saved_read_offset = Some(self.saved_reads.len());
+                        self.saved_reads.extend_from_slice(read.get_packed_slice())
                     }
                     self.rcorrect_reads.push((
                         hash,
@@ -288,24 +330,32 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 let len = self.rcorrect_reads.len();
                 self.rcorrect_reads.update_maximum_usage(len);
             }
-        });
-
-        {
-            static COUNTER_KMERS_MAX: AtomicCounter<MaxMode> =
-                declare_counter_i64!("kmers_cardinality_max", MaxMode, false);
-            static COUNTER_READS_MAX: AtomicCounter<MaxMode> =
-                declare_counter_i64!("correct_reads_max", MaxMode, false);
-            static COUNTER_READS_MAX_LAST: AtomicCounter<MaxMode> =
-                declare_counter_i64!("correct_reads_max_last", MaxMode, true);
-            static COUNTER_READS_AVG: AtomicCounter<AvgMode> =
-                declare_avg_counter_i64!("correct_reads_avg", false);
-
-            let len = self.rcorrect_reads.len() as i64;
-            COUNTER_KMERS_MAX.max(self.rhash_map.len() as i64);
-            COUNTER_READS_MAX.max(len);
-            COUNTER_READS_MAX_LAST.max(len);
-            COUNTER_READS_AVG.add_value(len);
         }
+    }
+
+    fn process_group_finalize<'y: 'x>(
+        &mut self,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
+    ) {
+        let k = global_data.k;
+        let buckets_count = global_data.buckets_count;
+        let current_bucket = self.current_bucket.as_mut().unwrap();
+        let bucket_index = current_bucket.get_bucket_index();
+
+        static COUNTER_KMERS_MAX: AtomicCounter<MaxMode> =
+            declare_counter_i64!("kmers_cardinality_max", MaxMode, false);
+        static COUNTER_READS_MAX: AtomicCounter<MaxMode> =
+            declare_counter_i64!("correct_reads_max", MaxMode, false);
+        static COUNTER_READS_MAX_LAST: AtomicCounter<MaxMode> =
+            declare_counter_i64!("correct_reads_max_last", MaxMode, true);
+        static COUNTER_READS_AVG: AtomicCounter<AvgMode> =
+            declare_avg_counter_i64!("correct_reads_avg", false);
+
+        let len = self.rcorrect_reads.len() as i64;
+        COUNTER_KMERS_MAX.max(self.rhash_map.len() as i64);
+        COUNTER_READS_MAX.max(len);
+        COUNTER_READS_MAX_LAST.max(len);
+        COUNTER_READS_AVG.add_value(len);
 
         if CX::COLORS_ENABLED {
             CX::ColorsMergeManagerType::<MH>::process_colors(
@@ -319,7 +369,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
         for (hash, read_bases_start, reads_offset, is_forward) in self.rcorrect_reads.drain(..) {
             let reads_slice = unsafe {
                 from_raw_parts(
-                    saved_reads.as_ptr().add(read_bases_start),
+                    self.saved_reads.as_ptr().add(read_bases_start),
                     (k + reads_offset as usize + 3) / 4,
                 )
             };
@@ -514,7 +564,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 read_index,
                 fw_merge,
                 Direction::Forward,
-                buckets_count,
+                (buckets_count - 1) as BucketIndexType,
             );
 
             Self::write_hashes(
@@ -524,7 +574,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                 read_index,
                 bw_merge,
                 Direction::Backward,
-                buckets_count,
+                (buckets_count - 1) as BucketIndexType,
             );
         }
 
@@ -535,7 +585,9 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
                     + std::mem::size_of::<MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>()
                     + 8),
             Ordering::Relaxed,
-        )
+        );
+
+        self.current_bucket.take();
     }
 
     fn finalize<'y: 'x>(
