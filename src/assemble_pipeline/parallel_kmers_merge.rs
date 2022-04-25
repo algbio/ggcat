@@ -4,7 +4,7 @@ use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
 };
-use crate::hashes::{ExtendableHashTraitType, HashFunction};
+use crate::hashes::{ExtendableHashTraitType, HashFunction, MinimizerHashFunctionFactory};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::hash_entry::HashEntry;
@@ -102,11 +102,13 @@ struct GlobalMergeData<'a, MH: HashFunctionFactory, CX: ColorsManager> {
     hashes_buckets: &'a MultiThreadBuckets<LockFreeBinaryWriter>,
 }
 
-struct ParallelKmersMergeFactory<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>(
-    PhantomData<(H, MH, CX)>,
-);
+struct ParallelKmersMergeFactory<
+    H: MinimizerHashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+>(PhantomData<(H, MH, CX)>);
 
-impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutorFactory for ParallelKmersMergeFactory<H, MH, CX>
 {
     type GlobalExtraData<'a> = GlobalMergeData<'a, MH, CX>;
@@ -119,9 +121,10 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
     fn new_preprocessor<'a>(
         _global_data: &Self::GlobalExtraData<'a>,
-        _buckets_count_log: usize,
     ) -> Self::PreprocessorType<'a> {
-        todo!()
+        ParallelKmersMergePreprocessor {
+            _phantom: Default::default(),
+        }
     }
 
     fn new_executor<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a> {
@@ -158,33 +161,44 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
 struct ParallelKmersMergePreprocessor<
     'x,
-    H: HashFunctionFactory,
+    H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
 > {
     _phantom: PhantomData<&'x (H, MH, CX)>,
 }
 
-impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformPreprocessor<'x, ParallelKmersMergeFactory<H, MH, CX>>
     for ParallelKmersMergePreprocessor<'x, H, MH, CX>
 {
     fn get_sequence_bucket<'y: 'x, 'a, C>(
         &self,
-        _seq_data: &(
-            u8,
-            u8,
-            C,
-            &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
-        ),
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        seq_data: &(u8, u8, C, CompressedRead),
     ) -> BucketIndexType {
-        todo!()
+        let read = &seq_data.3;
+        let flags = seq_data.0;
+        let decr_val =
+            ((read.bases_count() == global_data.k) && (flags & READ_FLAG_INCL_END) == 0) as usize;
+
+        let hashes = H::new(
+            read.sub_slice((1 - decr_val)..(global_data.k - decr_val)),
+            global_data.m,
+        );
+
+        let minimizer = hashes
+            .iter()
+            .min_by_key(|k| H::get_full_minimizer(k.to_unextendable()))
+            .unwrap();
+
+        H::get_second_bucket(minimizer.to_unextendable())
     }
 }
 
 struct ParallelKmersMergeExecutor<
     'x,
-    H: HashFunctionFactory,
+    H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
 > {
@@ -212,7 +226,7 @@ fn get_kmer_multiplicity<CHI>(entry: &MapEntry<CHI>) -> usize {
     entry.count >> ((entry.ignored == (READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END)) as u8)
 }
 
-impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     ParallelKmersMergeExecutor<'x, H, MH, CX>
 {
     #[inline(always)]
@@ -250,7 +264,7 @@ fn clear_hashmap<K, V>(hashmap: &mut HashMap<K, V>) {
     }
 }
 
-impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutor<'x, ParallelKmersMergeFactory<H, MH, CX>>
     for ParallelKmersMergeExecutor<'x, H, MH, CX>
 {
@@ -587,7 +601,9 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
             Ordering::Relaxed,
         );
 
-        self.current_bucket.take();
+        global_data
+            .output_results_buckets
+            .push(self.current_bucket.take().unwrap());
     }
 
     fn finalize<'y: 'x>(
@@ -600,7 +616,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
 impl AssemblePipeline {
     pub fn parallel_kmers_merge<
-        H: HashFunctionFactory,
+        H: MinimizerHashFunctionFactory,
         MH: HashFunctionFactory,
         CX: ColorsManager,
         P: AsRef<Path> + std::marker::Sync,

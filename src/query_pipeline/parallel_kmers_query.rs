@@ -13,6 +13,7 @@ use crate::query_pipeline::counters_sorting::CounterEntry;
 use crate::query_pipeline::QueryPipeline;
 use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::utils::get_memory_mode;
+use crate::CompressedRead;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
@@ -87,7 +88,6 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
     fn new_preprocessor<'a>(
         _global_data: &Self::GlobalExtraData<'a>,
-        _buckets_count_log: usize,
     ) -> Self::PreprocessorType<'a> {
         todo!()
     }
@@ -126,12 +126,8 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 {
     fn get_sequence_bucket<'y: 'x, 'a, C>(
         &self,
-        _seq_data: &(
-            u8,
-            u8,
-            C,
-            &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
-        ),
+        _global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        _seq_data: &(u8, u8, C, CompressedRead),
     ) -> BucketIndexType {
         todo!()
     }

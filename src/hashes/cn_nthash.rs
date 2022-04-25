@@ -184,7 +184,7 @@ impl MinimizerHashFunctionFactory for CanonicalNtHashIteratorFactory {
     fn get_second_bucket(
         hash: <Self as HashFunctionFactory>::HashTypeUnextendable,
     ) -> BucketIndexType {
-        (hash >> size_of::<BucketIndexType>()) as BucketIndexType
+        (hash >> (size_of::<BucketIndexType>() * 8)) as BucketIndexType
     }
 
     #[inline(always)]

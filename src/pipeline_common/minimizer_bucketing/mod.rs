@@ -98,6 +98,9 @@ pub struct MinimizerBucketingCommonData<GlobalData> {
     pub m: usize,
     pub buckets_count: usize,
     pub buckets_count_mask: BucketIndexType,
+    pub second_buckets_count: usize,
+    pub second_buckets_count_mask: BucketIndexType,
+    pub global_counters: Vec<Vec<AtomicUsize>>,
     pub global_data: GlobalData,
 }
 
@@ -126,6 +129,10 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
 
     let mut buckets_processor = E::new(&context.common);
 
+    let mut counters =
+        vec![0u8; context.common.second_buckets_count * context.common.buckets_count];
+    let counters_log = context.common.second_buckets_count.log2();
+
     while let Some(data) = manager.recv_obj() {
         let mut total_bases = 0;
         let mut sequences_splitter = SequencesSplitter::new(context.common.k);
@@ -149,6 +156,17 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
                     sequence,
                     range,
                     |bucket, second_bucket, seq, flags, extra| {
+                        let counter = &mut counters[((bucket as usize) << counters_log)
+                            + (second_bucket & context.common.second_buckets_count_mask) as usize];
+
+                        *counter = counter.wrapping_add(1);
+                        if *counter == 0 {
+                            context.common.global_counters[bucket as usize][(second_bucket
+                                & context.common.second_buckets_count_mask)
+                                as usize]
+                                .fetch_add(256, Ordering::Relaxed);
+                        }
+
                         tmp_reads_buffer.add_element(
                             bucket,
                             &extra,
@@ -237,6 +255,10 @@ impl GenericMinimizerBucketing {
         });
         input_files.reverse();
 
+        let second_buckets_count = threads_count;
+
+        const ATOMIC_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
         let mut execution_context = MinimizerBucketingExecutionContext {
             buckets,
             current_file: AtomicUsize::new(0),
@@ -247,6 +269,17 @@ impl GenericMinimizerBucketing {
                 m,
                 buckets_count,
                 buckets_count_mask: (buckets_count - 1) as BucketIndexType, // Buckets count is guaranteed to be a power of 2
+                second_buckets_count,
+                second_buckets_count_mask: (second_buckets_count - 1) as BucketIndexType, // Buckets count is guaranteed to be a power of 2
+                global_counters: (0..buckets_count)
+                    .into_iter()
+                    .map(|_| {
+                        (0..second_buckets_count)
+                            .into_iter()
+                            .map(|_| AtomicUsize::new(0))
+                            .collect()
+                    })
+                    .collect(),
                 global_data,
             },
         };
@@ -272,6 +305,17 @@ impl GenericMinimizerBucketing {
                 worker::<E>,
             ),
         );
+
+        for i in 0..1024 {
+            let mut buffer = String::new();
+            for j in 0..second_buckets_count {
+                buffer.push_str(&format!(
+                    "{} ",
+                    execution_context.common.global_counters[i][j].load(Ordering::Relaxed)
+                ));
+            }
+            println!("{} SIZES: {}", i, buffer);
+        }
 
         execution_context.buckets.finalize()
     }

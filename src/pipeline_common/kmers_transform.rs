@@ -4,8 +4,10 @@ use crate::config::{
 };
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use crate::pipeline_common::kmers_transform::reads_buffer::{ReadsBuffer, ReadsMode};
 use crate::utils::compressed_read::CompressedReadIndipendent;
-use crate::KEEP_FILES;
+use crate::{CompressedRead, KEEP_FILES};
+use crossbeam::channel::{bounded, unbounded};
 use crossbeam::queue::ArrayQueue;
 use parallel_processor::buckets::readers::async_binary_reader::{
     AsyncBinaryReader, AsyncReaderThread,
@@ -15,7 +17,6 @@ use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use parking_lot::Mutex;
-use std::cmp::min;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -31,17 +32,15 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT: typenum::uint::Unsigned;
 
-    fn new_preprocessor<'a>(
-        global_data: &Self::GlobalExtraData<'a>,
-        buckets_count_log: usize,
-    ) -> Self::PreprocessorType<'a>;
+    fn new_preprocessor<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::PreprocessorType<'a>;
     fn new_executor<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a>;
 }
 
 pub trait KmersTransformPreprocessor<'x, F: KmersTransformExecutorFactory> {
     fn get_sequence_bucket<'y: 'x, 'a, C>(
         &self,
-        seq_data: &(u8, u8, C, &F::GlobalExtraData<'y>),
+        global_data: &F::GlobalExtraData<'y>,
+        seq_data: &(u8, u8, C, CompressedRead),
     ) -> BucketIndexType;
 }
 
@@ -56,6 +55,33 @@ pub trait KmersTransformExecutor<'x, F: KmersTransformExecutorFactory> {
     fn process_group_finalize<'y: 'x>(&mut self, global_data: &F::GlobalExtraData<'y>);
 
     fn finalize<'y: 'x>(self, global_data: &F::GlobalExtraData<'y>);
+}
+
+mod reads_buffer {
+    use crate::utils::compressed_read::CompressedReadIndipendent;
+
+    pub struct ReadsBuffer<E> {
+        pub reads: Vec<(u8, E, CompressedReadIndipendent)>,
+        pub reads_buffer: Vec<u8>,
+    }
+
+    pub enum ReadsMode<E> {
+        Start(),
+        AddBatch(ReadsBuffer<E>),
+        Finalize(),
+    }
+
+    impl<E> ReadsBuffer<E> {
+        pub fn new() -> Self {
+            Self {
+                reads: Vec::with_capacity(32 * 1024),
+                reads_buffer: vec![],
+            }
+        }
+        pub fn is_full(&self) -> bool {
+            self.reads.len() == self.reads.capacity()
+        }
+    }
 }
 
 pub struct KmersTransform<'a, F: KmersTransformExecutorFactory> {
@@ -164,15 +190,64 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
 
     pub fn parallel_kmers_transform(&self, threads_count: usize) {
         crossbeam::thread::scope(|s| {
-            for _ in 0..min(self.buckets_count, threads_count) {
+            const THREADS_COUNT: usize = 8;
+
+            for _ in 0..THREADS_COUNT {
+                // min(self.buckets_count, threads_count) {
                 s.builder()
                     .name("kmers-transform".to_string())
-                    .spawn(|_| {
-                        let async_reader = self.async_readers.get();
-                        let mut executor = F::new_executor(&self.global_extra_data);
+                    .spawn(|ns| {
+                        const EXECUTORS_COUNT: usize = 16 / THREADS_COUNT;
+                        const BUFFERS_POOL_SIZE: usize = EXECUTORS_COUNT * 2;
 
-                        let mut reads_buffer = Vec::new();
-                        let mut reads_list = Vec::with_capacity(1024 * 32);
+                        let buffers_pool = bounded(BUFFERS_POOL_SIZE);
+
+                        for _ in 0..BUFFERS_POOL_SIZE {
+                            buffers_pool.0.send(ReadsBuffer::new()).unwrap();
+                        }
+
+                        let mut reads_mt_buffers: Vec<_> = (0..EXECUTORS_COUNT)
+                            .into_iter()
+                            .map(|_| buffers_pool.1.recv().unwrap())
+                            .collect();
+
+                        let mut queues: Vec<_> = (0..EXECUTORS_COUNT)
+                            .into_iter()
+                            .map(|_| unbounded())
+                            .collect();
+
+                        for i in 0..EXECUTORS_COUNT {
+                            let pool_returner = buffers_pool.0.clone();
+                            let receiver = queues[i].1.clone();
+                            ns.spawn(move |_| {
+                                let mut executor = F::new_executor(&self.global_extra_data);
+                                while let Ok(data) = receiver.recv() {
+                                    match data {
+                                        ReadsMode::Start() => {
+                                            executor.process_group_start(&self.global_extra_data);
+                                        }
+                                        ReadsMode::AddBatch(mut batch) => {
+                                            executor.process_group_batch_sequences(
+                                                &self.global_extra_data,
+                                                &batch.reads,
+                                                &batch.reads_buffer,
+                                            );
+                                            batch.reads.clear();
+                                            batch.reads_buffer.clear();
+                                            pool_returner.send(batch);
+                                        }
+                                        ReadsMode::Finalize() => {
+                                            executor
+                                                .process_group_finalize(&self.global_extra_data);
+                                        }
+                                    }
+                                }
+                                executor.finalize(&self.global_extra_data);
+                            });
+                        }
+
+                        let async_reader = self.async_readers.get();
+                        let preprocessor = F::new_preprocessor(&self.global_extra_data);
 
                         while let Some(path) = self.files_queue.pop() {
                             let reader = AsyncBinaryReader::new(
@@ -185,47 +260,62 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                 DEFAULT_PREFETCH_AMOUNT,
                             );
 
-                            executor.process_group_start(&self.global_extra_data);
+                            for queue in &queues {
+                                queue.0.send(ReadsMode::Start()).unwrap();
+                            }
 
                             reader.decode_all_bucket_items::<CompressedReadsBucketHelper<
                                 F::AssociatedExtraData,
                                 F::FLAGS_COUNT,
                                 { USE_SECOND_BUCKET },
                                 false,
-                            >, _>(
-                                Vec::new(),
-                                |(flags, _second_bucket, sequence_type, read)| {
-                                    let ind_read = CompressedReadIndipendent::from_read(
-                                        &read,
-                                        &mut reads_buffer,
-                                    );
-                                    reads_list.push((flags, sequence_type, ind_read));
-                                    if reads_list.len() == reads_list.capacity() {
-                                        executor.process_group_batch_sequences(
-                                            &self.global_extra_data,
-                                            &reads_list,
-                                            &reads_buffer,
-                                        );
-                                        reads_list.clear();
-                                        reads_buffer.clear();
-                                    }
-                                },
-                            );
+                            >, _>(Vec::new(), |read_info| {
+                                let bucket = preprocessor
+                                    .get_sequence_bucket(&self.global_extra_data, &read_info)
+                                    as usize
+                                    % EXECUTORS_COUNT;
 
-                            if reads_list.len() > 0 {
-                                executor.process_group_batch_sequences(
-                                    &self.global_extra_data,
-                                    &reads_list,
-                                    &reads_buffer,
+                                let (flags, _second_bucket, extra_data, read) = read_info;
+
+                                let ind_read = CompressedReadIndipendent::from_read(
+                                    &read,
+                                    &mut reads_mt_buffers[bucket].reads_buffer,
                                 );
-                                reads_list.clear();
-                                reads_buffer.clear();
+                                reads_mt_buffers[bucket]
+                                    .reads
+                                    .push((flags, extra_data, ind_read));
+                                if reads_mt_buffers[bucket].reads.len()
+                                    == reads_mt_buffers[bucket].reads.capacity()
+                                {
+                                    queues[bucket]
+                                        .0
+                                        .send(ReadsMode::AddBatch(std::mem::replace(
+                                            &mut reads_mt_buffers[bucket],
+                                            buffers_pool.1.recv().unwrap(),
+                                        )))
+                                        .unwrap();
+                                    reads_mt_buffers[bucket].reads.clear();
+                                    reads_mt_buffers[bucket].reads_buffer.clear();
+                                }
+                            });
+
+                            for e in 0..EXECUTORS_COUNT {
+                                if reads_mt_buffers[e].reads.len() > 0 {
+                                    queues[e]
+                                        .0
+                                        .send(ReadsMode::AddBatch(std::mem::replace(
+                                            &mut reads_mt_buffers[e],
+                                            buffers_pool.1.recv().unwrap(),
+                                        )))
+                                        .unwrap();
+                                    reads_mt_buffers[e].reads.clear();
+                                    reads_mt_buffers[e].reads_buffer.clear();
+                                }
+                                queues[e].0.send(ReadsMode::Finalize()).unwrap();
                             }
 
-                            executor.process_group_finalize(&self.global_extra_data);
                             self.log_completed_bucket();
                         }
-                        executor.finalize(&self.global_extra_data);
                     })
                     .unwrap();
             }
