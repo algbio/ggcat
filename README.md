@@ -1,43 +1,24 @@
-# BiLoki
+# GGCAT
 
-BiLoki is a tool for building compacted De Brujin graphs from raw sequencing data or for merging multiple existing cDBG in a single graph. It has a speedup from x8 to x32 wrt. other publicly available tools for cDBG construction.
+GGCAT is a tool for building compacted De Brujin graphs from raw sequencing data or for merging multiple existing cDBG in a single graph. It has a speedup from x8 to x32 wrt. other publicly available tools for cDBG construction.
 
 ## Tool usage
 
-After building and installing the tool following the below instructions, launch it with ```--help``` to display the command line options:
+### Build a new graph
+To build a new graph with a specified k of some input files, run:
 ```
-BiLoki 0.1.0
-
-USAGE:
-    BiLoki [FLAGS] [OPTIONS] <input>...
-
-FLAGS:
-    -d                       
-    -h, --help               Prints help information
-        --keep-temp-files    Keep intermediate temporary files for debugging purposes
-    -V, --version            Prints version information
-
-OPTIONS:
-    -k <klen>                                      Specifies the k-mers length [default: 32]
-    -s, --min-multiplicity <min-multiplicity>      Minimum multiplicity required to keep a kmer [default: 2]
-    -m <mlen>
-            Specifies the m-mers (minimizers) length, defaults to min(12, ceil(K / 2))
-
-    -n, --number <number>                           [default: 0]
-    -o, --output-file <output-file>                 [default: output.fasta.lz4]
-    -q, --quality-threshold <quality-threshold>
-            Minimum correctness probability for each kmer (using fastq quality checks)
-
-    -x, --step <step>                               [default: MinimizerBucketing]
-    -t, --temp-dir <temp-dir>
-            Directory for temporary files (default .temp_files) [default: .temp_files]
-
-    -j, --threads-count <threads-count>             [default: 16]
-
-ARGS:
-    <input>...    The input files
-
+ggcat build -k <k_value> -j <threads_count> <input_files> -o <output_file>
 ```
+Or if you have a file with a list of input files:
+```
+ggcat build -k <k_value> -j <threads_count> -l <input_files_list> -o <output_file>
+```
+To see all the available options for graph building run:
+```
+ggcat build --help
+```
+
+
 
 ## Installation
 At the moment building from source is the only option to install the tool.
@@ -61,8 +42,8 @@ The building process was not tested on windows, but it should work with minor tw
 
 Then the tool can be installed with the commands:
 ```
-git clone https://github.com/Guilucand/biloki --recursive
-cd biloki/
+git clone https://github.com/Guilucand/ggcat --recursive
+cd ggcat/
 cargo install --path .
 ```
 the binary is automatically copied to ```$HOME/.cargo/bin```

@@ -115,50 +115,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fe8f5a8a398345e52358e18ff07cc17a568fbca5c6f73873d3a62056309603"
 
 [[package]]
-name = "biloki"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "backtrace",
- "bincode",
- "bstr",
- "byteorder",
- "clap",
- "crossbeam",
- "csv",
- "ctrlc",
- "dashmap 4.0.2",
- "desse",
- "fdlimit",
- "filebuffer",
- "flate2",
- "fs_extra",
- "hashbrown",
- "itertools",
- "lazy_static",
- "libc",
- "libdeflate-rs",
- "lz4",
- "make-cmd",
- "nightly-quirks",
- "nix 0.15.0",
- "parallel-processor",
- "parking_lot",
- "pcg_rand",
- "postcard",
- "rand 0.8.5",
- "rayon",
- "replace_with",
- "roaring",
- "serde",
- "serde_json",
- "siphasher",
- "stopwatch",
- "structopt",
- "typenum",
-]
-
-[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -554,6 +510,50 @@ dependencies = [
  "cfg-if 1.0.0",
  "libc",
  "wasi",
+]
+
+[[package]]
+name = "ggcat"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "backtrace",
+ "bincode",
+ "bstr",
+ "byteorder",
+ "clap",
+ "crossbeam",
+ "csv",
+ "ctrlc",
+ "dashmap 4.0.2",
+ "desse",
+ "fdlimit",
+ "filebuffer",
+ "flate2",
+ "fs_extra",
+ "hashbrown",
+ "itertools",
+ "lazy_static",
+ "libc",
+ "libdeflate-rs",
+ "lz4",
+ "make-cmd",
+ "nightly-quirks",
+ "nix 0.15.0",
+ "parallel-processor",
+ "parking_lot",
+ "pcg_rand",
+ "postcard",
+ "rand 0.8.5",
+ "rayon",
+ "replace_with",
+ "roaring",
+ "serde",
+ "serde_json",
+ "siphasher",
+ "stopwatch",
+ "structopt",
+ "typenum",
 ]
 
 [[package]]
