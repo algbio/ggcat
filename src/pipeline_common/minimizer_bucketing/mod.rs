@@ -104,6 +104,35 @@ pub struct MinimizerBucketingCommonData<GlobalData> {
     pub global_data: GlobalData,
 }
 
+impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
+    pub fn new(
+        k: usize,
+        m: usize,
+        buckets_count: usize,
+        second_buckets_count: usize,
+        global_data: GlobalData,
+    ) -> Self {
+        Self {
+            k,
+            m,
+            buckets_count,
+            buckets_count_mask: (buckets_count - 1) as BucketIndexType,
+            second_buckets_count,
+            second_buckets_count_mask: (second_buckets_count - 1) as BucketIndexType,
+            global_counters: (0..buckets_count)
+                .into_iter()
+                .map(|_| {
+                    (0..second_buckets_count)
+                        .into_iter()
+                        .map(|_| AtomicUsize::new(0))
+                        .collect()
+                })
+                .collect(),
+            global_data,
+        }
+    }
+}
+
 pub struct MinimizerBucketingExecutionContext<GlobalData> {
     pub buckets: MultiThreadBuckets<CompressedBinaryWriter>,
     pub common: MinimizerBucketingCommonData<GlobalData>,
@@ -264,24 +293,13 @@ impl GenericMinimizerBucketing {
             current_file: AtomicUsize::new(0),
             processed_files: AtomicUsize::new(0),
             total_files: input_files.len(),
-            common: MinimizerBucketingCommonData {
+            common: MinimizerBucketingCommonData::new(
                 k,
                 m,
                 buckets_count,
-                buckets_count_mask: (buckets_count - 1) as BucketIndexType, // Buckets count is guaranteed to be a power of 2
                 second_buckets_count,
-                second_buckets_count_mask: (second_buckets_count - 1) as BucketIndexType, // Buckets count is guaranteed to be a power of 2
-                global_counters: (0..buckets_count)
-                    .into_iter()
-                    .map(|_| {
-                        (0..second_buckets_count)
-                            .into_iter()
-                            .map(|_| AtomicUsize::new(0))
-                            .collect()
-                    })
-                    .collect(),
                 global_data,
-            },
+            ),
         };
 
         ThreadPoolsChain::run_double(
@@ -306,7 +324,7 @@ impl GenericMinimizerBucketing {
             ),
         );
 
-        for i in 0..1024 {
+        for i in 0..buckets_count {
             let mut buffer = String::new();
             for j in 0..second_buckets_count {
                 buffer.push_str(&format!(

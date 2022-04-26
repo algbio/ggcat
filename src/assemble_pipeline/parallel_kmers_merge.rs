@@ -1,8 +1,10 @@
+use crate::assemble_pipeline::assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
+    RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use crate::hashes::{ExtendableHashTraitType, HashFunction, MinimizerHashFunctionFactory};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
@@ -11,6 +13,9 @@ use crate::io::structs::hash_entry::HashEntry;
 use crate::pipeline_common::kmers_transform::{
     KmersTransform, KmersTransformExecutor, KmersTransformExecutorFactory,
     KmersTransformPreprocessor,
+};
+use crate::pipeline_common::minimizer_bucketing::{
+    MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory,
 };
 use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::utils::owned_drop::OwnedDrop;
@@ -29,6 +34,7 @@ use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 #[cfg(feature = "mem-analysis")]
 use parallel_processor::mem_tracker::MemoryInfo;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use std::cmp::min;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
@@ -100,6 +106,7 @@ struct GlobalMergeData<'a, MH: HashFunctionFactory, CX: ColorsManager> {
     output_results_buckets:
         ArrayQueue<ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>>,
     hashes_buckets: &'a MultiThreadBuckets<LockFreeBinaryWriter>,
+    global_resplit_data: MinimizerBucketingCommonData<()>,
 }
 
 struct ParallelKmersMergeFactory<
@@ -111,6 +118,7 @@ struct ParallelKmersMergeFactory<
 impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutorFactory for ParallelKmersMergeFactory<H, MH, CX>
 {
+    type SequencesResplitterFactory = AssemblerMinimizerBucketingExecutorFactory<H, CX>;
     type GlobalExtraData<'a> = GlobalMergeData<'a, MH, CX>;
     type AssociatedExtraData = CX::MinimizerBucketingSeqColorDataType;
     type ExecutorType<'a> = ParallelKmersMergeExecutor<'a, H, MH, CX>;
@@ -118,6 +126,13 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U2;
+
+    fn new_resplitter<'a, 'b: 'a>(
+        global_data: &'a Self::GlobalExtraData<'b>,
+    ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType<'a>
+    {
+        AssemblerMinimizerBucketingExecutorFactory::new(&global_data.global_resplit_data)
+    }
 
     fn new_preprocessor<'a>(
         _global_data: &Self::GlobalExtraData<'a>,
@@ -677,6 +692,17 @@ impl AssemblePipeline {
             colors_global_table,
             output_results_buckets,
             hashes_buckets: &hashes_buckets,
+            global_resplit_data: MinimizerBucketingCommonData::new(
+                k,
+                if k > RESPLITTING_MAX_K_M_DIFFERENCE + 1 {
+                    k - RESPLITTING_MAX_K_M_DIFFERENCE
+                } else {
+                    min(m, 2)
+                }, // m
+                buckets_count,
+                1,
+                (),
+            ),
         };
 
         KmersTransform::<ParallelKmersMergeFactory<H, MH, CX>>::new(

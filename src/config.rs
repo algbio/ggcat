@@ -35,6 +35,8 @@ pub const MAX_BUCKETS_COUNT_LOG: usize = 13;
 
 pub const USE_SECOND_BUCKET: bool = false;
 
+pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 5;
+
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]
 impl SwapPriority {

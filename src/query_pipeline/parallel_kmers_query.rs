@@ -1,15 +1,21 @@
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::{BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE};
-use crate::hashes::ExtendableHashTraitType;
+use crate::config::{
+    BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, RESPLITTING_MAX_K_M_DIFFERENCE,
+};
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
+use crate::hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::pipeline_common::kmers_transform::{
     KmersTransform, KmersTransformExecutor, KmersTransformExecutorFactory,
     KmersTransformPreprocessor,
 };
+use crate::pipeline_common::minimizer_bucketing::{
+    MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory,
+};
 use crate::query_pipeline::counters_sorting::CounterEntry;
+use crate::query_pipeline::querier_minimizer_bucketing::QuerierMinimizerBucketingExecutorFactory;
 use crate::query_pipeline::QueryPipeline;
 use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::utils::get_memory_mode;
@@ -19,6 +25,7 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use std::cmp::min;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
@@ -69,15 +76,19 @@ struct GlobalQueryMergeData<'a> {
     k: usize,
     m: usize,
     counters_buckets: &'a MultiThreadBuckets<LockFreeBinaryWriter>,
+    global_resplit_data: MinimizerBucketingCommonData<()>,
 }
 
-struct ParallelKmersQueryFactory<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>(
-    PhantomData<(H, MH, CX)>,
-);
+struct ParallelKmersQueryFactory<
+    H: MinimizerHashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+>(PhantomData<(H, MH, CX)>);
 
-impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutorFactory for ParallelKmersQueryFactory<H, MH, CX>
 {
+    type SequencesResplitterFactory = QuerierMinimizerBucketingExecutorFactory<H, CX>;
     type GlobalExtraData<'a> = GlobalQueryMergeData<'a>;
     type AssociatedExtraData = QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>;
     type ExecutorType<'a> = ParallelKmersQuery<'a, H, MH, CX>;
@@ -85,6 +96,13 @@ impl<H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U0;
+
+    fn new_resplitter<'a, 'b: 'a>(
+        global_data: &'a Self::GlobalExtraData<'b>,
+    ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType<'a>
+    {
+        QuerierMinimizerBucketingExecutorFactory::new(&global_data.global_resplit_data)
+    }
 
     fn new_preprocessor<'a>(
         _global_data: &Self::GlobalExtraData<'a>,
@@ -120,7 +138,7 @@ struct ParallelKmersQueryPreprocessor<
     _phantom: PhantomData<&'x (H, MH, CX)>,
 }
 
-impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformPreprocessor<'x, ParallelKmersQueryFactory<H, MH, CX>>
     for ParallelKmersQueryPreprocessor<'x, H, MH, CX>
 {
@@ -133,7 +151,12 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     }
 }
 
-struct ParallelKmersQuery<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> {
+struct ParallelKmersQuery<
+    'x,
+    H: MinimizerHashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+> {
     counters_tmp: BucketsThreadDispatcher<'x, LockFreeBinaryWriter>,
     // This field has to appear after hashes_tmp so that it's dropped only when not used anymore
     counters_buffers: Box<BucketsThreadBuffer>,
@@ -143,7 +166,7 @@ struct ParallelKmersQuery<'x, H: HashFunctionFactory, MH: HashFunctionFactory, C
     _phantom: PhantomData<(H, CX)>,
 }
 
-impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformExecutor<'x, ParallelKmersQueryFactory<H, MH, CX>>
     for ParallelKmersQuery<'x, H, MH, CX>
 {
@@ -218,7 +241,7 @@ impl<'x, H: HashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
 
 impl QueryPipeline {
     pub fn parallel_kmers_counting<
-        H: HashFunctionFactory,
+        H: MinimizerHashFunctionFactory,
         MH: HashFunctionFactory,
         CX: ColorsManager,
         P: AsRef<Path> + std::marker::Sync,
@@ -247,6 +270,17 @@ impl QueryPipeline {
             k,
             m,
             counters_buckets: &counters_buckets,
+            global_resplit_data: MinimizerBucketingCommonData::new(
+                k,
+                if k > RESPLITTING_MAX_K_M_DIFFERENCE + 1 {
+                    k - RESPLITTING_MAX_K_M_DIFFERENCE
+                } else {
+                    min(m, 2)
+                }, // m
+                buckets_count,
+                1,
+                (),
+            ),
         };
 
         KmersTransform::<ParallelKmersQueryFactory<H, MH, CX>>::new(
