@@ -7,12 +7,11 @@ use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::pipeline_common::kmers_transform::reads_buffer::{ReadsBuffer, ReadsMode};
 use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::{CompressedRead, KEEP_FILES};
-use crossbeam::channel::{bounded, unbounded};
+use crossbeam::channel::{bounded, unbounded, Receiver};
 use crossbeam::queue::ArrayQueue;
 use parallel_processor::buckets::readers::async_binary_reader::{
     AsyncBinaryReader, AsyncReaderThread,
 };
-use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
@@ -190,7 +189,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
 
     pub fn parallel_kmers_transform(&self, threads_count: usize) {
         crossbeam::thread::scope(|s| {
-            const THREADS_COUNT: usize = 8;
+            const THREADS_COUNT: usize = 2;
 
             for _ in 0..THREADS_COUNT {
                 // min(self.buckets_count, threads_count) {
@@ -198,7 +197,8 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                     .name("kmers-transform".to_string())
                     .spawn(|ns| {
                         const EXECUTORS_COUNT: usize = 16 / THREADS_COUNT;
-                        const BUFFERS_POOL_SIZE: usize = EXECUTORS_COUNT * 2;
+                        const READER_THREADS: usize = 4;
+                        const BUFFERS_POOL_SIZE: usize = (EXECUTORS_COUNT + READER_THREADS) * 8;
 
                         let buffers_pool = bounded(BUFFERS_POOL_SIZE);
 
@@ -206,15 +206,93 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                             buffers_pool.0.send(ReadsBuffer::new()).unwrap();
                         }
 
-                        let mut reads_mt_buffers: Vec<_> = (0..EXECUTORS_COUNT)
+                        let read_input_queues: Vec<_> = (0..READER_THREADS)
                             .into_iter()
-                            .map(|_| buffers_pool.1.recv().unwrap())
+                            .map(|_| bounded(1))
                             .collect();
 
-                        let mut queues: Vec<_> = (0..EXECUTORS_COUNT)
+                        let read_output_queue = unbounded();
+
+                        let queues: Vec<_> = (0..EXECUTORS_COUNT)
                             .into_iter()
                             .map(|_| unbounded())
                             .collect();
+
+                        for i in 0..READER_THREADS {
+                            let input_queue: Receiver<AsyncBinaryReader> =
+                                read_input_queues[i].1.clone();
+                            let output_queue = read_output_queue.0.clone();
+                            let buffers_pool = buffers_pool.clone();
+                            let queues = queues.clone();
+                            ns.spawn(move |_| {
+                                let mut reads_mt_buffers: Vec<_> = (0..EXECUTORS_COUNT)
+                                    .into_iter()
+                                    .map(|_| buffers_pool.1.recv().unwrap())
+                                    .collect();
+
+                                let async_reader = self.async_readers.get();
+                                let preprocessor = F::new_preprocessor(&self.global_extra_data);
+
+                                while let Ok(reader) = input_queue.recv() {
+                                    reader.decode_all_bucket_items::<CompressedReadsBucketHelper<
+                                        F::AssociatedExtraData,
+                                        F::FLAGS_COUNT,
+                                        { USE_SECOND_BUCKET },
+                                        false,
+                                    >, _>(
+                                        async_reader.clone(),
+                                        Vec::new(),
+                                        |read_info| {
+                                            let bucket = preprocessor.get_sequence_bucket(
+                                                &self.global_extra_data,
+                                                &read_info,
+                                            )
+                                                as usize
+                                                % EXECUTORS_COUNT;
+
+                                            let (flags, _second_bucket, extra_data, read) =
+                                                read_info;
+
+                                            let ind_read = CompressedReadIndipendent::from_read(
+                                                &read,
+                                                &mut reads_mt_buffers[bucket].reads_buffer,
+                                            );
+                                            reads_mt_buffers[bucket]
+                                                .reads
+                                                .push((flags, extra_data, ind_read));
+                                            if reads_mt_buffers[bucket].reads.len()
+                                                == reads_mt_buffers[bucket].reads.capacity()
+                                            {
+                                                queues[bucket]
+                                                    .0
+                                                    .send(ReadsMode::AddBatch(std::mem::replace(
+                                                        &mut reads_mt_buffers[bucket],
+                                                        buffers_pool.1.recv().unwrap(),
+                                                    )))
+                                                    .unwrap();
+                                                reads_mt_buffers[bucket].reads.clear();
+                                                reads_mt_buffers[bucket].reads_buffer.clear();
+                                            }
+                                        },
+                                    );
+
+                                    for e in 0..EXECUTORS_COUNT {
+                                        if reads_mt_buffers[e].reads.len() > 0 {
+                                            queues[e]
+                                                .0
+                                                .send(ReadsMode::AddBatch(std::mem::replace(
+                                                    &mut reads_mt_buffers[e],
+                                                    buffers_pool.1.recv().unwrap(),
+                                                )))
+                                                .unwrap();
+                                            reads_mt_buffers[e].reads.clear();
+                                            reads_mt_buffers[e].reads_buffer.clear();
+                                        }
+                                    }
+                                    output_queue.send(());
+                                }
+                            });
+                        }
 
                         for i in 0..EXECUTORS_COUNT {
                             let pool_returner = buffers_pool.0.clone();
@@ -246,13 +324,9 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                             });
                         }
 
-                        let async_reader = self.async_readers.get();
-                        let preprocessor = F::new_preprocessor(&self.global_extra_data);
-
                         while let Some(path) = self.files_queue.pop() {
                             let reader = AsyncBinaryReader::new(
                                 &path,
-                                async_reader.clone(),
                                 true,
                                 RemoveFileMode::Remove {
                                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
@@ -264,53 +338,16 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                 queue.0.send(ReadsMode::Start()).unwrap();
                             }
 
-                            reader.decode_all_bucket_items::<CompressedReadsBucketHelper<
-                                F::AssociatedExtraData,
-                                F::FLAGS_COUNT,
-                                { USE_SECOND_BUCKET },
-                                false,
-                            >, _>(Vec::new(), |read_info| {
-                                let bucket = preprocessor
-                                    .get_sequence_bucket(&self.global_extra_data, &read_info)
-                                    as usize
-                                    % EXECUTORS_COUNT;
+                            for i in 0..READER_THREADS {
+                                read_input_queues[i].0.send(reader.clone());
+                            }
 
-                                let (flags, _second_bucket, extra_data, read) = read_info;
-
-                                let ind_read = CompressedReadIndipendent::from_read(
-                                    &read,
-                                    &mut reads_mt_buffers[bucket].reads_buffer,
-                                );
-                                reads_mt_buffers[bucket]
-                                    .reads
-                                    .push((flags, extra_data, ind_read));
-                                if reads_mt_buffers[bucket].reads.len()
-                                    == reads_mt_buffers[bucket].reads.capacity()
-                                {
-                                    queues[bucket]
-                                        .0
-                                        .send(ReadsMode::AddBatch(std::mem::replace(
-                                            &mut reads_mt_buffers[bucket],
-                                            buffers_pool.1.recv().unwrap(),
-                                        )))
-                                        .unwrap();
-                                    reads_mt_buffers[bucket].reads.clear();
-                                    reads_mt_buffers[bucket].reads_buffer.clear();
-                                }
-                            });
+                            // Wait for all reader threads to complete
+                            for _ in 0..READER_THREADS {
+                                read_output_queue.1.recv();
+                            }
 
                             for e in 0..EXECUTORS_COUNT {
-                                if reads_mt_buffers[e].reads.len() > 0 {
-                                    queues[e]
-                                        .0
-                                        .send(ReadsMode::AddBatch(std::mem::replace(
-                                            &mut reads_mt_buffers[e],
-                                            buffers_pool.1.recv().unwrap(),
-                                        )))
-                                        .unwrap();
-                                    reads_mt_buffers[e].reads.clear();
-                                    reads_mt_buffers[e].reads_buffer.clear();
-                                }
                                 queues[e].0.send(ReadsMode::Finalize()).unwrap();
                             }
 

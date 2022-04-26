@@ -12,10 +12,11 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+#[derive(Clone)]
 enum OpenedFile {
     None,
-    Plain(LockFreeBinaryReader),
-    Compressed(CompressedBinaryReader),
+    Plain(Arc<LockFreeBinaryReader>),
+    Compressed(Arc<CompressedBinaryReader>),
 }
 
 pub struct AsyncReaderThread {
@@ -47,6 +48,9 @@ impl AsyncReaderThread {
     }
 
     fn read_thread(self: Arc<Self>) {
+        let mut current_stream_compr = None;
+        let mut current_stream_uncompr = None;
+
         while Arc::strong_count(&self) > 1 {
             let mut file = self.opened_file.lock();
             let mut buffer = self.buffers_pool.1.recv().unwrap();
@@ -54,19 +58,52 @@ impl AsyncReaderThread {
                 buffer.set_len(buffer.capacity());
             }
 
-            let bytes_read = (match &mut *file {
+            let bytes_read = match &mut *file {
                 OpenedFile::None => {
                     self.file_wait_condvar
                         .wait_for(&mut file, Duration::from_secs(5));
                     let _ = self.buffers_pool.0.send(buffer);
                     continue;
                 }
-                OpenedFile::Plain(file) => file.get_single_stream().read(buffer.as_mut_slice()),
-                OpenedFile::Compressed(file) => {
-                    file.get_single_stream().read(buffer.as_mut_slice())
+                OpenedFile::Plain(file) => {
+                    let mut last_read = usize::MAX;
+                    let mut total_read_bytes = 0;
+                    while total_read_bytes < buffer.len() {
+                        if current_stream_uncompr.is_none() || last_read == 0 {
+                            current_stream_uncompr = file.get_read_parallel_stream();
+                            if current_stream_uncompr.is_none() {
+                                break;
+                            }
+                        }
+                        last_read = current_stream_uncompr
+                            .as_mut()
+                            .unwrap()
+                            .read(&mut buffer[total_read_bytes..])
+                            .unwrap();
+                        total_read_bytes += last_read;
+                    }
+                    total_read_bytes
                 }
-            })
-            .unwrap();
+                OpenedFile::Compressed(file) => {
+                    let mut last_read = usize::MAX;
+                    let mut total_read_bytes = 0;
+                    while total_read_bytes < buffer.len() {
+                        if current_stream_compr.is_none() || last_read == 0 {
+                            current_stream_compr = file.get_read_parallel_stream();
+                            if current_stream_compr.is_none() {
+                                break;
+                            }
+                        }
+                        last_read = current_stream_compr
+                            .as_mut()
+                            .unwrap()
+                            .read(&mut buffer[total_read_bytes..])
+                            .unwrap();
+                        total_read_bytes += last_read;
+                    }
+                    total_read_bytes
+                }
+            };
 
             unsafe {
                 buffer.set_len(bytes_read);
@@ -81,24 +118,15 @@ impl AsyncReaderThread {
         }
     }
 
-    fn read_bucket(
-        self: Arc<Self>,
-        path: PathBuf,
-        compressed: bool,
-        remove_file: RemoveFileMode,
-        prefetch: Option<usize>,
-    ) -> AsyncStreamThreadReader {
+    fn read_bucket(self: Arc<Self>, new_opened_file: OpenedFile) -> AsyncStreamThreadReader {
         let mut opened_file = self.opened_file.lock();
         match &*opened_file {
             OpenedFile::None => {}
             _ => panic!("File already opened!"),
         }
 
-        *opened_file = if compressed {
-            OpenedFile::Compressed(CompressedBinaryReader::new(path, remove_file, prefetch))
-        } else {
-            OpenedFile::Plain(LockFreeBinaryReader::new(path, remove_file, prefetch))
-        };
+        *opened_file = new_opened_file;
+
         self.file_wait_condvar.notify_all();
         drop(opened_file);
 
@@ -174,12 +202,10 @@ impl Drop for AsyncStreamThreadReader {
     }
 }
 
+#[derive(Clone)]
 pub struct AsyncBinaryReader {
     path: PathBuf,
-    compressed: bool,
-    read_thread: Arc<AsyncReaderThread>,
-    remove_file: RemoveFileMode,
-    prefetch: Option<usize>,
+    opened_file: OpenedFile,
 }
 
 // static ASYNC_READERS: ThreadLocalVariable<AsyncDecoderInternal> = ThreadLocalVariable::
@@ -187,33 +213,39 @@ pub struct AsyncBinaryReader {
 impl AsyncBinaryReader {
     pub fn new(
         path: &PathBuf,
-        read_thread: Arc<AsyncReaderThread>,
         compressed: bool,
         remove_file: RemoveFileMode,
         prefetch: Option<usize>,
     ) -> Self {
+        let opened_file = if compressed {
+            OpenedFile::Compressed(Arc::new(CompressedBinaryReader::new(
+                path,
+                remove_file,
+                prefetch,
+            )))
+        } else {
+            OpenedFile::Plain(Arc::new(LockFreeBinaryReader::new(
+                path,
+                remove_file,
+                prefetch,
+            )))
+        };
+
         Self {
             path: path.clone(),
-            compressed,
-            read_thread,
-            remove_file,
-            prefetch,
+            opened_file,
         }
     }
 }
 
-impl BucketReader for AsyncBinaryReader {
-    fn decode_all_bucket_items<E: BucketItem, F: for<'a> FnMut(E::ReadType<'a>)>(
-        self,
+impl AsyncBinaryReader {
+    pub fn decode_all_bucket_items<E: BucketItem, F: for<'a> FnMut(E::ReadType<'a>)>(
+        &self,
+        read_thread: Arc<AsyncReaderThread>,
         mut buffer: E::ReadBuffer,
         mut func: F,
     ) {
-        let mut stream = self.read_thread.read_bucket(
-            self.path,
-            self.compressed,
-            self.remove_file,
-            self.prefetch,
-        );
+        let mut stream = read_thread.read_bucket(self.opened_file.clone());
         while let Some(el) = E::read_from(&mut stream, &mut buffer) {
             func(el);
         }
