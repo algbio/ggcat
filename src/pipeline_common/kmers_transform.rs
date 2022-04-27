@@ -197,14 +197,14 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
 
     pub fn parallel_kmers_transform(&self, threads_count: usize) {
         crossbeam::thread::scope(|s| {
-            const THREADS_COUNT: usize = 2;
+            const THREADS_COUNT: usize = 1;
 
             for _ in 0..THREADS_COUNT {
                 // min(self.buckets_count, threads_count) {
                 s.builder()
                     .name("kmers-transform".to_string())
                     .spawn(|ns| {
-                        const EXECUTORS_COUNT: usize = 16 / THREADS_COUNT;
+                        const EXECUTORS_COUNT: usize = 12 / THREADS_COUNT;
                         const READER_THREADS: usize = 4;
                         const BUFFERS_POOL_SIZE: usize = (EXECUTORS_COUNT + READER_THREADS) * 8;
 

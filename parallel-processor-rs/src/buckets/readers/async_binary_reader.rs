@@ -1,7 +1,6 @@
 use crate::buckets::bucket_writer::BucketItem;
 use crate::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use crate::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
-use crate::buckets::readers::BucketReader;
 use crate::memory_fs::RemoveFileMode;
 use crossbeam::channel::*;
 use parking_lot::{Condvar, Mutex};
@@ -207,8 +206,6 @@ pub struct AsyncBinaryReader {
     path: PathBuf,
     opened_file: OpenedFile,
 }
-
-// static ASYNC_READERS: ThreadLocalVariable<AsyncDecoderInternal> = ThreadLocalVariable::
 
 impl AsyncBinaryReader {
     pub fn new(

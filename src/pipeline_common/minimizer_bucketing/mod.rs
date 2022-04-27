@@ -1,3 +1,4 @@
+mod counters_analyzer;
 mod queue_data;
 mod reader;
 mod sequences_splitter;
@@ -12,6 +13,7 @@ use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::sequences_reader::FastaSequence;
+use crate::pipeline_common::minimizer_bucketing::counters_analyzer::CountersAnalyzer;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::reader::minb_reader;
 use crate::pipeline_common::minimizer_bucketing::sequences_splitter::SequencesSplitter;
@@ -100,7 +102,7 @@ pub struct MinimizerBucketingCommonData<GlobalData> {
     pub buckets_count_mask: BucketIndexType,
     pub second_buckets_count: usize,
     pub second_buckets_count_mask: BucketIndexType,
-    pub global_counters: Vec<Vec<AtomicUsize>>,
+    pub global_counters: Vec<Vec<AtomicU64>>,
     pub global_data: GlobalData,
 }
 
@@ -124,7 +126,7 @@ impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
                 .map(|_| {
                     (0..second_buckets_count)
                         .into_iter()
-                        .map(|_| AtomicUsize::new(0))
+                        .map(|_| AtomicU64::new(0))
                         .collect()
                 })
                 .collect(),
@@ -284,7 +286,7 @@ impl GenericMinimizerBucketing {
         });
         input_files.reverse();
 
-        let second_buckets_count = threads_count;
+        let second_buckets_count = max(16, threads_count.next_power_of_two());
 
         const ATOMIC_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -324,16 +326,8 @@ impl GenericMinimizerBucketing {
             ),
         );
 
-        for i in 0..buckets_count {
-            let mut buffer = String::new();
-            for j in 0..second_buckets_count {
-                buffer.push_str(&format!(
-                    "{} ",
-                    execution_context.common.global_counters[i][j].load(Ordering::Relaxed)
-                ));
-            }
-            println!("{} SIZES: {}", i, buffer);
-        }
+        let counters_analyzer = CountersAnalyzer::new(execution_context.common.global_counters);
+        counters_analyzer.print_debug();
 
         execution_context.buckets.finalize()
     }
