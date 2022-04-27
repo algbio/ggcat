@@ -204,29 +204,29 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                 s.builder()
                     .name("kmers-transform".to_string())
                     .spawn(|ns| {
-                        const EXECUTORS_COUNT: usize = 12 / THREADS_COUNT;
-                        const READER_THREADS: usize = 4;
-                        const BUFFERS_POOL_SIZE: usize = (EXECUTORS_COUNT + READER_THREADS) * 8;
+                        let executors_count: usize = threads_count / THREADS_COUNT;
+                        let reader_threads: usize = 4;
+                        let buffers_pool_size: usize = (executors_count + reader_threads) * 8;
 
-                        let buffers_pool = bounded(BUFFERS_POOL_SIZE);
+                        let buffers_pool = bounded(buffers_pool_size);
 
-                        for _ in 0..BUFFERS_POOL_SIZE {
+                        for _ in 0..buffers_pool_size {
                             buffers_pool.0.send(ReadsBuffer::new()).unwrap();
                         }
 
-                        let read_input_queues: Vec<_> = (0..READER_THREADS)
+                        let read_input_queues: Vec<_> = (0..reader_threads)
                             .into_iter()
                             .map(|_| bounded(1))
                             .collect();
 
                         let read_output_queue = unbounded();
 
-                        let queues: Vec<_> = (0..EXECUTORS_COUNT)
+                        let queues: Vec<_> = (0..executors_count)
                             .into_iter()
                             .map(|_| unbounded())
                             .collect();
 
-                        for i in 0..READER_THREADS {
+                        for i in 0..reader_threads {
                             let input_queue: Receiver<AsyncBinaryReader> =
                                 read_input_queues[i].1.clone();
                             let output_queue = read_output_queue.0.clone();
@@ -235,7 +235,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                             ns.builder()
                                 .name("r-kmers-transform".to_string())
                                 .spawn(move |_| {
-                                    let mut reads_mt_buffers: Vec<_> = (0..EXECUTORS_COUNT)
+                                    let mut reads_mt_buffers: Vec<_> = (0..executors_count)
                                         .into_iter()
                                         .map(|_| buffers_pool.1.recv().unwrap())
                                         .collect();
@@ -259,7 +259,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                                         &read_info,
                                                     )
                                                         as usize
-                                                        % EXECUTORS_COUNT;
+                                                        % executors_count;
 
                                                     let (flags, _second_bucket, extra_data, read) =
                                                         read_info;
@@ -293,7 +293,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                                 },
                                             );
 
-                                        for e in 0..EXECUTORS_COUNT {
+                                        for e in 0..executors_count {
                                             if reads_mt_buffers[e].reads.len() > 0 {
                                                 queues[e]
                                                     .0
@@ -311,7 +311,7 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                 });
                         }
 
-                        for i in 0..EXECUTORS_COUNT {
+                        for i in 0..executors_count {
                             let pool_returner = buffers_pool.0.clone();
                             let receiver = queues[i].1.clone();
                             ns.builder()
@@ -361,16 +361,16 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                 queue.0.send(ReadsMode::Start()).unwrap();
                             }
 
-                            for i in 0..READER_THREADS {
+                            for i in 0..reader_threads {
                                 read_input_queues[i].0.send(reader.clone());
                             }
 
                             // Wait for all reader threads to complete
-                            for _ in 0..READER_THREADS {
+                            for _ in 0..reader_threads {
                                 read_output_queue.1.recv();
                             }
 
-                            for e in 0..EXECUTORS_COUNT {
+                            for e in 0..executors_count {
                                 queues[e].0.send(ReadsMode::Finalize()).unwrap();
                             }
 
