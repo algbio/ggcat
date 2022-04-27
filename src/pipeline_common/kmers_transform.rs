@@ -7,6 +7,7 @@ use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::pipeline_common::kmers_transform::reads_buffer::{ReadsBuffer, ReadsMode};
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use crate::utils::compressed_read::CompressedReadIndipendent;
+use crate::utils::Utils;
 use crate::{CompressedRead, KEEP_FILES};
 use crossbeam::channel::{bounded, unbounded, Receiver};
 use crossbeam::queue::ArrayQueue;
@@ -276,6 +277,14 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                                     if reads_mt_buffers[bucket].reads.len()
                                                         == reads_mt_buffers[bucket].reads.capacity()
                                                     {
+                                                        println!(
+                                                            "Send{} => {} sz: {}",
+                                                            Utils::get_bucket_index(
+                                                                reader.get_name()
+                                                            ),
+                                                            bucket,
+                                                            reads_mt_buffers[bucket].reads.len()
+                                                        );
                                                         queues[bucket]
                                                             .0
                                                             .send(ReadsMode::AddBatch(
@@ -295,6 +304,12 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
 
                                         for e in 0..executors_count {
                                             if reads_mt_buffers[e].reads.len() > 0 {
+                                                println!(
+                                                    "Final send{} => {} sz: {}",
+                                                    Utils::get_bucket_index(reader.get_name()),
+                                                    e,
+                                                    reads_mt_buffers[e].reads.len()
+                                                );
                                                 queues[e]
                                                     .0
                                                     .send(ReadsMode::AddBatch(std::mem::replace(

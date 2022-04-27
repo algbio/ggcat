@@ -248,7 +248,7 @@ impl AsyncBinaryReader {
         }
     }
 
-    fn get_name(&self) -> PathBuf {
+    pub fn get_name(&self) -> PathBuf {
         self.path.clone()
     }
 }
