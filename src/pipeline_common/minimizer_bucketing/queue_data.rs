@@ -1,4 +1,5 @@
 use crate::io::sequences_reader::FastaSequence;
+use parallel_processor::execution_manager::executor::OutputPacketTrait;
 use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 use parallel_processor::threadpools_chain::ThreadChainObject;
 
@@ -61,6 +62,19 @@ impl<F: Clone + Sync + Send + Default> MinimizerBucketingQueueData<F> {
 
                 FastaSequence { ident, seq, qual }
             })
+    }
+}
+
+impl<F: Clone + Sync + Send + Default> OutputPacketTrait for MinimizerBucketingQueueData<F> {
+    type InitData = usize;
+
+    fn allocate_new(init_data: &Self::InitData) -> Self {
+        Self::new(*init_data, F::default())
+    }
+
+    fn reset(&mut self) {
+        self.data.clear();
+        self.sequences.clear();
     }
 }
 

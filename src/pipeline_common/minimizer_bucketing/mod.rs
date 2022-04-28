@@ -15,12 +15,22 @@ use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::sequences_reader::FastaSequence;
 use crate::pipeline_common::minimizer_bucketing::counters_analyzer::CountersAnalyzer;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
-use crate::pipeline_common::minimizer_bucketing::reader::minb_reader;
+use crate::pipeline_common::minimizer_bucketing::reader::{
+    minb_reader, MinimizerBucketingFilesReader,
+};
 use crate::pipeline_common::minimizer_bucketing::sequences_splitter::SequencesSplitter;
 use crate::utils::get_memory_mode;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::execution_manager::executor::ExecutorAddress;
+use parallel_processor::execution_manager::executors_list::{
+    ExecOutputMode, ExecutorAllocMode, ExecutorsList,
+};
+use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
+use parallel_processor::execution_manager::units_io::{
+    ExecOutput, ExecutorInput, ExecutorInputAddressMode,
+};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::threadpools_chain::{
     ObjectsPoolManager, ThreadPoolDefinition, ThreadPoolsChain,
@@ -139,6 +149,7 @@ pub struct MinimizerBucketingExecutionContext<GlobalData> {
     pub buckets: MultiThreadBuckets<CompressedBinaryWriter>,
     pub common: MinimizerBucketingCommonData<GlobalData>,
     pub current_file: AtomicUsize,
+    pub executor_group_address: ExecutorAddress,
     pub processed_files: AtomicUsize,
     pub total_files: usize,
 }
@@ -293,6 +304,7 @@ impl GenericMinimizerBucketing {
         let mut execution_context = MinimizerBucketingExecutionContext {
             buckets,
             current_file: AtomicUsize::new(0),
+            executor_group_address: todo!(),
             processed_files: AtomicUsize::new(0),
             total_files: input_files.len(),
             common: MinimizerBucketingCommonData::new(
@@ -304,27 +316,46 @@ impl GenericMinimizerBucketing {
             ),
         };
 
-        ThreadPoolsChain::run_double(
-            input_files,
-            ThreadPoolDefinition::new(
-                &execution_context,
-                READ_INTERMEDIATE_CHUNKS_SIZE,
-                String::from("r-assembler-minimizer"),
-                max(1, threads_count / 2),
-                &AtomicUsize::new(threads_count),
-                threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),
-                minb_reader,
-            ),
-            ThreadPoolDefinition::new(
-                &execution_context,
-                (),
-                String::from("w-assembler-minimizer"),
-                threads_count,
-                &AtomicUsize::new(threads_count),
-                threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),
-                worker::<E>,
-            ),
+        let disk_thread_pool = ExecThreadPool::new(4);
+        // let compute_thread_pool = ExecThreadPool::new(16);
+
+        let mut input_files =
+            ExecutorInput::from_iter(input_files.into_iter(), ExecutorInputAddressMode::Single);
+
+        let file_readers = ExecutorsList::<MinimizerBucketingFilesReader<_, _>>::new(
+            ExecutorAllocMode::Fixed(4),
+            &execution_context,
+            &disk_thread_pool,
         );
+        input_files.set_output_executors(&file_readers, ExecOutputMode::FIFO);
+
+        // let bucket_writers =
+        //     ExecutorsList::<MBucketWriter>::new(ExecutorAllocMode::Fixed(16), &compute_thread_pool);
+        // file_readers.set_output(&bucket_writers, ExecOutputMode::FIFO);
+
+        // disk_thread_pool.start();
+        // compute_thread_pool.start();
+        // ThreadPoolsChain::run_double(
+        //     input_files,
+        //     ThreadPoolDefinition::new(
+        //         &execution_context,
+        //         READ_INTERMEDIATE_CHUNKS_SIZE,
+        //         String::from("r-assembler-minimizer"),
+        //         max(1, threads_count / 2),
+        //         &AtomicUsize::new(threads_count),
+        //         threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),
+        //         minb_reader,
+        //     ),
+        //     ThreadPoolDefinition::new(
+        //         &execution_context,
+        //         (),
+        //         String::from("w-assembler-minimizer"),
+        //         threads_count,
+        //         &AtomicUsize::new(threads_count),
+        //         threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),
+        //         worker::<E>,
+        //     ),
+        // );
 
         let counters_analyzer = CountersAnalyzer::new(execution_context.common.global_counters);
         counters_analyzer.print_debug();
