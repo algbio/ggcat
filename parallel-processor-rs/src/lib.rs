@@ -16,6 +16,7 @@ pub mod memory_data_size;
 pub mod phase_times_monitor;
 pub mod threadpools_chain;
 pub mod utils;
+pub mod execution_manager;
 
 pub struct Utils {}
 
