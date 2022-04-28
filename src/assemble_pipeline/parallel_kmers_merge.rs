@@ -52,12 +52,56 @@ pub mod structs {
     use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
     use parallel_processor::buckets::LockFreeBucket;
     use std::marker::PhantomData;
+    use std::mem::size_of;
     use std::path::PathBuf;
 
+    const USED_MARKER: usize = usize::MAX;
+    const FLAGS_COUNT: usize = 2;
+    const FLAGS_SHIFT: usize = size_of::<usize>() * 8 - FLAGS_COUNT;
+    const COUNTER_MASK: usize = (1 << FLAGS_SHIFT) - 1;
+
     pub struct MapEntry<CHI> {
-        pub count: usize,
-        pub ignored: u8,
+        count_flags: usize,
         pub color_index: CHI,
+    }
+
+    impl<CHI> MapEntry<CHI> {
+        pub fn new(color_index: CHI) -> Self {
+            Self {
+                count_flags: 0,
+                color_index,
+            }
+        }
+
+        #[inline(always)]
+        pub fn incr(&mut self) {
+            self.count_flags += 1;
+        }
+
+        #[inline(always)]
+        pub fn set_used(&mut self) {
+            self.count_flags = USED_MARKER;
+        }
+
+        #[inline(always)]
+        pub fn is_used(&self) -> bool {
+            self.count_flags == USED_MARKER
+        }
+
+        #[inline(always)]
+        pub fn get_counter(&self) -> usize {
+            self.count_flags & COUNTER_MASK
+        }
+
+        #[inline(always)]
+        pub fn update_flags(&mut self, flags: u8) {
+            self.count_flags |= (flags as usize) << FLAGS_SHIFT;
+        }
+
+        #[inline(always)]
+        pub fn get_flags(&self) -> u8 {
+            (self.count_flags >> FLAGS_SHIFT) as u8
+        }
     }
 
     pub struct ResultsBucket<X: SequenceExtraData> {
@@ -238,7 +282,8 @@ struct ParallelKmersMergeExecutor<
 fn get_kmer_multiplicity<CHI>(entry: &MapEntry<CHI>) -> usize {
     // If the current set has both the partial sequences endings, we should divide the counter by 2,
     // as all the kmers are counted exactly two times
-    entry.count >> ((entry.ignored == (READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END)) as u8)
+    entry.get_counter()
+        >> ((entry.get_flags() == (READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END)) as u8)
 }
 
 impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
@@ -323,16 +368,16 @@ impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsMan
                 let entry = self
                     .rhash_map
                     .entry(hash.to_unextendable())
-                    .or_insert(MapEntry {
-                        ignored: 0,
-                        count: 0,
-                        color_index: CX::ColorsMergeManagerType::<MH>::new_color_index(),
-                    });
+                    .or_insert(MapEntry::new(
+                        CX::ColorsMergeManagerType::<MH>::new_color_index(),
+                    ));
 
-                entry.ignored |= ((begin_ignored as u8) << ((!is_forward) as u8))
-                    | ((end_ignored as u8) << (is_forward as u8));
+                entry.update_flags(
+                    ((begin_ignored as u8) << ((!is_forward) as u8))
+                        | ((end_ignored as u8) << (is_forward as u8)),
+                );
 
-                entry.count += 1;
+                entry.incr();
 
                 CX::ColorsMergeManagerType::<MH>::add_temp_buffer_structure_el(
                     &mut self.temp_colors,
@@ -340,7 +385,7 @@ impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsMan
                     (idx, hash.to_unextendable()),
                 );
 
-                if entry.count == global_data.min_multiplicity {
+                if entry.get_counter() == global_data.min_multiplicity {
                     if saved_read_offset.is_none() {
                         saved_read_offset = Some(self.saved_reads.len());
                         self.saved_reads.extend_from_slice(read.get_packed_slice())
@@ -416,20 +461,21 @@ impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsMan
                 continue;
             }
 
-            if rhentry.count == usize::MAX {
+            if rhentry.is_used() {
                 continue;
             }
-            rhentry.count = usize::MAX;
+            rhentry.set_used();
+            let ignored_status = rhentry.get_flags();
 
             let (begin_ignored, end_ignored) = if is_forward {
                 (
-                    rhentry.ignored == READ_FLAG_INCL_BEGIN,
-                    rhentry.ignored == READ_FLAG_INCL_END,
+                    ignored_status == READ_FLAG_INCL_BEGIN,
+                    ignored_status == READ_FLAG_INCL_END,
                 )
             } else {
                 (
-                    rhentry.ignored == READ_FLAG_INCL_END,
-                    rhentry.ignored == READ_FLAG_INCL_BEGIN,
+                    ignored_status == READ_FLAG_INCL_END,
+                    ignored_status == READ_FLAG_INCL_BEGIN,
                 )
             };
 
@@ -517,7 +563,7 @@ impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsMan
                             .get_mut(&temp_data.0.to_unextendable())
                             .unwrap();
 
-                        let already_used = entryref.count == usize::MAX;
+                        let already_used = entryref.is_used();
 
                         // Found a cycle unitig
                         if already_used {
@@ -525,7 +571,7 @@ impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsMan
                         }
 
                         // Flag the entry as already used
-                        entryref.count = usize::MAX;
+                        entryref.set_used();
 
                         if CX::COLORS_ENABLED {
                             colors_function(&mut self.unitigs_temp_colors, entryref);
@@ -534,8 +580,8 @@ impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsMan
                         output.push(Utils::decompress_base(temp_data.1));
 
                         // Found a continuation into another bucket
-                        let contig_break = (entryref.ignored == READ_FLAG_INCL_BEGIN)
-                            || (entryref.ignored == READ_FLAG_INCL_END);
+                        let contig_break = (entryref.get_flags() == READ_FLAG_INCL_BEGIN)
+                            || (entryref.get_flags() == READ_FLAG_INCL_END);
                         if contig_break {
                             break (temp_data.0, true);
                         }
@@ -637,6 +683,7 @@ impl AssemblePipeline {
         P: AsRef<Path> + std::marker::Sync,
     >(
         file_inputs: Vec<PathBuf>,
+        buckets_counters_path: PathBuf,
         colors_global_table: &CX::GlobalColorsTable,
         buckets_count: usize,
         min_multiplicity: usize,
@@ -707,6 +754,7 @@ impl AssemblePipeline {
 
         KmersTransform::<ParallelKmersMergeFactory<H, MH, CX>>::new(
             file_inputs,
+            buckets_counters_path,
             buckets_count,
             global_data,
         )

@@ -197,7 +197,7 @@ impl QueryPipeline {
         threads_count: usize,
         k: usize,
         m: usize,
-    ) -> Vec<PathBuf> {
+    ) -> (Vec<PathBuf>, PathBuf) {
         PHASES_TIMES_MONITOR
             .write()
             .start_phase("phase: graph + query bucketing".to_string());

@@ -53,7 +53,7 @@ pub fn run_assembler<
         color_names,
     );
 
-    let buckets = if step <= AssemblerStartingStep::MinimizerBucketing {
+    let (buckets, counters) = if step <= AssemblerStartingStep::MinimizerBucketing {
         AssemblePipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
             input,
             temp_dir.as_path(),
@@ -63,7 +63,10 @@ pub fn run_assembler<
             m,
         )
     } else {
-        Utils::generate_bucket_names(temp_dir.join("bucket"), buckets_count, None)
+        (
+            Utils::generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
+            temp_dir.join("buckets-counters.dat"),
+        )
     };
 
     println!(
@@ -86,6 +89,7 @@ pub fn run_assembler<
             _,
         >(
             buckets,
+            counters,
             &global_colors_table,
             buckets_count,
             min_multiplicity,

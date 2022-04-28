@@ -1,4 +1,4 @@
-mod counters_analyzer;
+pub mod counters_analyzer;
 mod queue_data;
 mod reader;
 mod sequences_splitter;
@@ -268,7 +268,7 @@ impl GenericMinimizerBucketing {
         k: usize,
         m: usize,
         global_data: E::GlobalData,
-    ) -> Vec<PathBuf> {
+    ) -> (Vec<PathBuf>, PathBuf) {
         let buckets = MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
             output_path.join("bucket"),
@@ -329,6 +329,10 @@ impl GenericMinimizerBucketing {
         let counters_analyzer = CountersAnalyzer::new(execution_context.common.global_counters);
         counters_analyzer.print_debug();
 
-        execution_context.buckets.finalize()
+        let counters_file = output_path.join("buckets-counters.dat");
+
+        counters_analyzer.serialize_to_file(&counters_file);
+
+        (execution_context.buckets.finalize(), counters_file)
     }
 }

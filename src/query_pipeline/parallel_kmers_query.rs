@@ -247,6 +247,7 @@ impl QueryPipeline {
         P: AsRef<Path> + std::marker::Sync,
     >(
         file_inputs: Vec<PathBuf>,
+        buckets_counters_path: PathBuf,
         buckets_count: usize,
         out_directory: P,
         k: usize,
@@ -285,6 +286,7 @@ impl QueryPipeline {
 
         KmersTransform::<ParallelKmersQueryFactory<H, MH, CX>>::new(
             file_inputs,
+            buckets_counters_path,
             buckets_count,
             global_data,
         )

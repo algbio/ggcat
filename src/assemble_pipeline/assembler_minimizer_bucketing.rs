@@ -171,7 +171,7 @@ impl AssemblePipeline {
         threads_count: usize,
         k: usize,
         m: usize,
-    ) -> Vec<PathBuf> {
+    ) -> (Vec<PathBuf>, PathBuf) {
         PHASES_TIMES_MONITOR
             .write()
             .start_phase("phase: reads bucketing".to_string());

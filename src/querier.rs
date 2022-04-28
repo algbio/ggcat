@@ -32,7 +32,7 @@ pub fn run_query<
     });
     let buckets_count = 1 << buckets_count_log;
 
-    let buckets = if step <= QuerierStartingStep::MinimizerBucketing {
+    let (buckets, counters) = if step <= QuerierStartingStep::MinimizerBucketing {
         QueryPipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
             graph_input,
             query_input.clone(),
@@ -43,7 +43,10 @@ pub fn run_query<
             m,
         )
     } else {
-        Utils::generate_bucket_names(temp_dir.join("bucket"), buckets_count, Some("tmp"))
+        (
+            Utils::generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
+            temp_dir.join("buckets-counters.dat"),
+        )
     };
 
     let counters_buckets = if step <= QuerierStartingStep::KmersCounting {
@@ -54,6 +57,7 @@ pub fn run_query<
             _,
         >(
             buckets,
+            counters,
             buckets_count,
             temp_dir.as_path(),
             k,

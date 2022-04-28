@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
+use std::path::Path;
 use std::sync::atomic::AtomicU64;
 
 #[derive(Serialize, Deserialize)]
@@ -67,5 +70,27 @@ impl CountersAnalyzer {
             println!("{} SIZES: {}", i, buffer);
         }
         println!("Sub-bucket median: {}", self.median);
+        println!(
+            "Sub-bucket maximum: {}",
+            self.counters
+                .iter()
+                .map(|x| x.iter().map(|c| c.count).max().unwrap_or(0))
+                .max()
+                .unwrap_or(0)
+        );
+    }
+
+    pub fn load_from_file(path: impl AsRef<Path>, remove: bool) -> Self {
+        let file = BufReader::new(File::open(&path).unwrap());
+        let rval = bincode::deserialize_from(file).unwrap();
+        if remove {
+            std::fs::remove_file(path);
+        }
+        rval
+    }
+
+    pub fn serialize_to_file(&self, path: impl AsRef<Path>) {
+        let file = BufWriter::new(File::create(path).unwrap());
+        bincode::serialize_into(file, self).unwrap();
     }
 }

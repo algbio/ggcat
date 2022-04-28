@@ -205,20 +205,21 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H, DefaultColorsManager>
         for (start, end, color) in &data.flags {
             for kmer_hash in &data.kmers[*start..*end] {
                 let entry = map.get_mut(kmer_hash).unwrap();
+                let entry_count = entry.get_counter();
 
-                if entry.count < min_multiplicity {
+                if entry_count < min_multiplicity {
                     continue;
                 }
 
                 unsafe {
                     if entry.color_index.temp_index.1 == 0 {
                         entry.color_index.temp_index.0 = data.temp_colors.len() as u32;
-                        entry.color_index.temp_index.1 = entry.count as u32;
-                        if data.temp_colors.capacity() < data.temp_colors.len() + entry.count {
-                            data.temp_colors.reserve(entry.count);
+                        entry.color_index.temp_index.1 = entry_count as u32;
+                        if data.temp_colors.capacity() < data.temp_colors.len() + entry_count {
+                            data.temp_colors.reserve(entry_count);
                         }
                         data.temp_colors
-                            .set_len(data.temp_colors.len() + entry.count);
+                            .set_len(data.temp_colors.len() + entry_count);
                     }
 
                     data.temp_colors[entry.color_index.temp_index.0 as usize] = color.0;
@@ -227,7 +228,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H, DefaultColorsManager>
 
                     // All colors were added, let's assign the final color
                     if entry.color_index.temp_index.1 == 0 {
-                        let slice_start = entry.color_index.temp_index.0 as usize - entry.count;
+                        let slice_start = entry.color_index.temp_index.0 as usize - entry_count;
                         let slice_end = entry.color_index.temp_index.0 as usize;
 
                         let slice = &mut data.temp_colors[slice_start..slice_end];

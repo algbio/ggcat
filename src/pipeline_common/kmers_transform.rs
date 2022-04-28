@@ -5,6 +5,7 @@ use crate::config::{
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::pipeline_common::kmers_transform::reads_buffer::{ReadsBuffer, ReadsMode};
+use crate::pipeline_common::minimizer_bucketing::counters_analyzer::CountersAnalyzer;
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::utils::Utils;
@@ -74,7 +75,7 @@ mod reads_buffer {
     }
 
     pub enum ReadsMode<E> {
-        Start(),
+        Start { is_outlier: bool },
         AddBatch(ReadsBuffer<E>),
         Finalize(),
     }
@@ -99,6 +100,7 @@ pub struct KmersTransform<'a, F: KmersTransformExecutorFactory> {
     global_extra_data: F::GlobalExtraData<'a>,
     files_queue: Arc<ArrayQueue<PathBuf>>,
     async_readers: ScopedThreadLocal<Arc<AsyncReaderThread>>,
+    counters: CountersAnalyzer,
 
     last_info_log: Mutex<Instant>,
     _phantom: PhantomData<F>,
@@ -107,6 +109,7 @@ pub struct KmersTransform<'a, F: KmersTransformExecutorFactory> {
 impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
     pub fn new(
         file_inputs: Vec<PathBuf>,
+        buckets_counters_path: PathBuf,
         buckets_count: usize,
         global_extra_data: F::GlobalExtraData<'a>,
     ) -> Self {
@@ -156,6 +159,10 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             async_readers: ScopedThreadLocal::new(|| {
                 AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE / 2, 4)
             }),
+            counters: CountersAnalyzer::load_from_file(
+                buckets_counters_path,
+                !KEEP_FILES.load(Ordering::Relaxed),
+            ),
             last_info_log: Mutex::new(Instant::now()),
             _phantom: Default::default(),
         }
@@ -169,6 +176,9 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
             Some(x) => x,
         };
         if last_info_log.elapsed() > MINIMUM_LOG_DELTA_TIME {
+            *last_info_log = Instant::now();
+            drop(last_info_log);
+
             let monitor = PHASES_TIMES_MONITOR.read();
 
             let processed_count = self.processed_buckets.load(Ordering::Relaxed);
@@ -192,7 +202,6 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                 eta,
                 est_tot
             );
-            *last_info_log = Instant::now();
         }
     }
 
@@ -277,14 +286,6 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                                     if reads_mt_buffers[bucket].reads.len()
                                                         == reads_mt_buffers[bucket].reads.capacity()
                                                     {
-                                                        println!(
-                                                            "Send{} => {} sz: {}",
-                                                            Utils::get_bucket_index(
-                                                                reader.get_name()
-                                                            ),
-                                                            bucket,
-                                                            reads_mt_buffers[bucket].reads.len()
-                                                        );
                                                         queues[bucket]
                                                             .0
                                                             .send(ReadsMode::AddBatch(
@@ -304,12 +305,6 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
 
                                         for e in 0..executors_count {
                                             if reads_mt_buffers[e].reads.len() > 0 {
-                                                println!(
-                                                    "Final send{} => {} sz: {}",
-                                                    Utils::get_bucket_index(reader.get_name()),
-                                                    e,
-                                                    reads_mt_buffers[e].reads.len()
-                                                );
                                                 queues[e]
                                                     .0
                                                     .send(ReadsMode::AddBatch(std::mem::replace(
@@ -335,18 +330,27 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                                     let mut executor = F::new_executor(&self.global_extra_data);
                                     let mut resplitter = F::new_resplitter(&self.global_extra_data);
 
+                                    let mut outlier = false;
+
                                     while let Ok(data) = receiver.recv() {
                                         match data {
-                                            ReadsMode::Start() => {
-                                                executor
-                                                    .process_group_start(&self.global_extra_data);
+                                            ReadsMode::Start { is_outlier } => {
+                                                outlier = is_outlier;
+                                                if !is_outlier {
+                                                    executor.process_group_start(
+                                                        &self.global_extra_data,
+                                                    );
+                                                }
                                             }
                                             ReadsMode::AddBatch(mut batch) => {
-                                                executor.process_group_batch_sequences(
-                                                    &self.global_extra_data,
-                                                    &batch.reads,
-                                                    &batch.reads_buffer,
-                                                );
+                                                if outlier {
+                                                } else {
+                                                    executor.process_group_batch_sequences(
+                                                        &self.global_extra_data,
+                                                        &batch.reads,
+                                                        &batch.reads_buffer,
+                                                    );
+                                                }
                                                 batch.reads.clear();
                                                 batch.reads_buffer.clear();
                                                 pool_returner.send(batch);
@@ -373,7 +377,10 @@ impl<'a, F: KmersTransformExecutorFactory> KmersTransform<'a, F> {
                             );
 
                             for queue in &queues {
-                                queue.0.send(ReadsMode::Start()).unwrap();
+                                queue
+                                    .0
+                                    .send(ReadsMode::Start { is_outlier: false })
+                                    .unwrap();
                             }
 
                             for i in 0..reader_threads {
