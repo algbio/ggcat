@@ -1,3 +1,4 @@
+use crate::execution_manager::executor_address::ExecutorAddress;
 use crate::execution_manager::manager::{ExecutionManager, ExecutionManagerTrait};
 use crate::execution_manager::packet::Packet;
 use parking_lot::RwLock;
@@ -10,18 +11,11 @@ pub enum ExecutorType {
     MultipleUnits,
 }
 
-pub trait OutputPacketTrait {
+pub trait OutputPacketTrait: 'static {
     type InitData;
 
     fn allocate_new(init_data: &Self::InitData) -> Self;
     fn reset(&mut self);
-}
-
-#[derive(Clone)]
-pub struct ExecutorAddress {
-    pub(crate) executor_keeper: Arc<RwLock<Option<Arc<dyn Any>>>>,
-    executor_type_id: u64,
-    executor_internal_id: u64,
 }
 
 static EXECUTOR_GLOBAL_ID: AtomicU64 = AtomicU64::new(0);

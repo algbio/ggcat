@@ -1,4 +1,4 @@
-use crate::execution_manager::executor::{Executor, ExecutorAddress, OutputPacketTrait};
+use crate::execution_manager::executor::{Executor, OutputPacketTrait};
 use crossbeam::channel::*;
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU64, Ordering};

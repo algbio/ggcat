@@ -3,14 +3,14 @@ use parallel_processor::execution_manager::executor::OutputPacketTrait;
 use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 use parallel_processor::threadpools_chain::ThreadChainObject;
 
-pub struct MinimizerBucketingQueueData<F: Clone + Sync + Send + Default> {
+pub struct MinimizerBucketingQueueData<F: Clone + Sync + Send + Default + 'static> {
     data: TrackedVec<u8>,
     pub sequences: TrackedVec<(usize, usize, usize, usize)>,
     pub file_info: F,
     pub start_read_index: u64,
 }
 
-impl<F: Clone + Sync + Send + Default> MinimizerBucketingQueueData<F> {
+impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> {
     pub fn new(capacity: usize, file_info: F) -> Self {
         Self {
             data: TrackedVec::with_capacity(capacity),
@@ -65,7 +65,9 @@ impl<F: Clone + Sync + Send + Default> MinimizerBucketingQueueData<F> {
     }
 }
 
-impl<F: Clone + Sync + Send + Default> OutputPacketTrait for MinimizerBucketingQueueData<F> {
+impl<F: Clone + Sync + Send + Default + 'static> OutputPacketTrait
+    for MinimizerBucketingQueueData<F>
+{
     type InitData = usize;
 
     fn allocate_new(init_data: &Self::InitData) -> Self {
@@ -78,7 +80,9 @@ impl<F: Clone + Sync + Send + Default> OutputPacketTrait for MinimizerBucketingQ
     }
 }
 
-impl<F: Clone + Sync + Send + Default> ThreadChainObject for MinimizerBucketingQueueData<F> {
+impl<F: Clone + Sync + Send + Default + 'static> ThreadChainObject
+    for MinimizerBucketingQueueData<F>
+{
     type InitData = usize;
 
     fn initialize(params: &Self::InitData) -> Self {

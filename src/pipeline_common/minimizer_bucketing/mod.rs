@@ -23,7 +23,7 @@ use crate::utils::get_memory_mode;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
-use parallel_processor::execution_manager::executor::ExecutorAddress;
+use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::executors_list::{
     ExecOutputMode, ExecutorAllocMode, ExecutorsList,
 };
@@ -39,6 +39,7 @@ use std::cmp::max;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 pub trait MinimizerInputSequence: HashableSequence + Copy {
     fn get_subslice(&self, range: Range<usize>) -> Self;
@@ -65,7 +66,7 @@ pub trait MinimizerBucketingExecutorFactory: Sized {
     type GlobalData: Sync + Send;
     type ExtraData: SequenceExtraData;
     type PreprocessInfo: Default;
-    type FileInfo: Clone + Sync + Send + Default;
+    type FileInfo: Clone + Sync + Send + Default + 'static;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT: typenum::uint::Unsigned;
@@ -301,7 +302,7 @@ impl GenericMinimizerBucketing {
 
         const ATOMIC_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-        let mut execution_context = MinimizerBucketingExecutionContext {
+        let mut execution_context = Arc::new(MinimizerBucketingExecutionContext {
             buckets,
             current_file: AtomicUsize::new(0),
             executor_group_address: todo!(),
@@ -314,7 +315,7 @@ impl GenericMinimizerBucketing {
                 second_buckets_count,
                 global_data,
             ),
-        };
+        });
 
         let disk_thread_pool = ExecThreadPool::new(4);
         // let compute_thread_pool = ExecThreadPool::new(16);

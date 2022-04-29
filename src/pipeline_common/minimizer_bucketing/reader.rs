@@ -2,7 +2,8 @@ use crate::io::sequences_reader::SequencesReader;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutionContext;
 use nightly_quirks::branch_pred::unlikely;
-use parallel_processor::execution_manager::executor::{Executor, ExecutorAddress, ExecutorType};
+use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
+use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::packet::Packet;
 use parallel_processor::threadpools_chain::ObjectsPoolManager;
 use std::marker::PhantomData;
@@ -11,12 +12,15 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-pub struct MinimizerBucketingFilesReader<GlobalData, FileInfo: Clone + Sync + Send + Default> {
+pub struct MinimizerBucketingFilesReader<
+    GlobalData,
+    FileInfo: Clone + Sync + Send + Default + 'static,
+> {
     context: Option<Arc<MinimizerBucketingExecutionContext<GlobalData>>>,
     _phantom: PhantomData<FileInfo>,
 }
 
-impl<GlobalData, FileInfo: Clone + Sync + Send + Default> Executor
+impl<GlobalData, FileInfo: Clone + Sync + Send + Default + 'static> Executor
     for MinimizerBucketingFilesReader<GlobalData, FileInfo>
 {
     const EXECUTOR_TYPE: ExecutorType = ExecutorType::SingleUnit;
@@ -127,7 +131,7 @@ impl<GlobalData, FileInfo: Clone + Sync + Send + Default> Executor
     }
 }
 
-pub fn minb_reader<GlobalData, FileInfo: Clone + Sync + Send + Default>(
+pub fn minb_reader<GlobalData, FileInfo: Clone + Sync + Send + Default + 'static>(
     context: &MinimizerBucketingExecutionContext<GlobalData>,
     manager: ObjectsPoolManager<MinimizerBucketingQueueData<FileInfo>, (PathBuf, FileInfo)>,
 ) {

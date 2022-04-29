@@ -1,7 +1,11 @@
-use crate::execution_manager::executor::{Executor, ExecutorAddress};
+use crate::execution_manager::executor::Executor;
+use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
 use crate::execution_manager::packet::{Packet, PacketsPool};
 use parking_lot::Mutex;
 use std::sync::Arc;
+
+pub type GenericExecutor<I, O> =
+    Arc<Mutex<dyn ExecutionManagerTrait<InputPacket = I, OutputPacket = O>>>;
 
 pub trait ExecutionManagerTrait {
     type InputPacket;
@@ -16,6 +20,7 @@ pub trait ExecutionManagerTrait {
 
 pub struct ExecutionManager<E: Executor> {
     executor: Mutex<E>,
+    weak_address: WeakExecutorAddress,
     pool: Arc<PacketsPool<E::OutputPacket>>,
 }
 
@@ -31,9 +36,11 @@ impl<E: Executor + 'static> ExecutionManager<E> {
 
         let self_ = Arc::new(Self {
             executor: Mutex::new(executor),
+            weak_address: address.to_weak(),
             pool,
         });
         *address.executor_keeper.write() = Some(self_.clone());
+
         self_
     }
 }
