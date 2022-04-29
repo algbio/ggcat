@@ -1,5 +1,6 @@
 use crate::io::sequences_reader::FastaSequence;
-use parallel_processor::execution_manager::executor::OutputPacketTrait;
+use parallel_processor::execution_manager::executor::PacketTrait;
+use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 use parallel_processor::threadpools_chain::ThreadChainObject;
 
@@ -65,7 +66,7 @@ impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> 
     }
 }
 
-impl<F: Clone + Sync + Send + Default + 'static> OutputPacketTrait
+impl<F: Clone + Sync + Send + Default + 'static> PoolObjectTrait
     for MinimizerBucketingQueueData<F>
 {
     type InitData = usize;
@@ -79,6 +80,7 @@ impl<F: Clone + Sync + Send + Default + 'static> OutputPacketTrait
         self.sequences.clear();
     }
 }
+impl<F: Clone + Sync + Send + Default + 'static> PacketTrait for MinimizerBucketingQueueData<F> {}
 
 impl<F: Clone + Sync + Send + Default + 'static> ThreadChainObject
     for MinimizerBucketingQueueData<F>

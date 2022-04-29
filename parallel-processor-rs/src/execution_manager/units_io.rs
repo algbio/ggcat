@@ -1,6 +1,6 @@
-use crate::execution_manager::executor::{Executor, OutputPacketTrait};
+use crate::execution_manager::executor::{Executor, Packet};
 use crate::execution_manager::executors_list::{ExecOutputMode, ExecutorsList};
-use crate::execution_manager::packet::Packet;
+use crate::execution_manager::thread_pool::ExecThreadPoolDataAddTrait;
 use std::marker::PhantomData;
 
 pub trait ExecOutput {
@@ -31,7 +31,7 @@ impl<T, I: Iterator<Item = T>> ExecutorInput<T, I> {
     }
 }
 
-impl<T, I: Iterator<Item = T>> ExecOutput for ExecutorInput<T, I> {
+impl<T: Send + Sync + 'static, I: Iterator<Item = T>> ExecOutput for ExecutorInput<T, I> {
     type OutputPacket = T;
 
     fn set_output_executors<W: Executor<InputPacket = Self::OutputPacket>>(
@@ -41,7 +41,9 @@ impl<T, I: Iterator<Item = T>> ExecOutput for ExecutorInput<T, I> {
     ) {
         let mut address = W::generate_new_address();
         for value in &mut self.iterator {
-            // exec_list.thread_pool.send_packet(address.clone(), Packet::new_simple(value))
+            exec_list
+                .thread_pool
+                .add_data(address.clone(), Packet::new_simple(value));
             if let ExecutorInputAddressMode::Multiple = &self.addr_mode {
                 address = W::generate_new_address();
             }

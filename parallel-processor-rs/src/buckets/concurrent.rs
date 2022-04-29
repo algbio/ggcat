@@ -1,6 +1,7 @@
 use crate::buckets::bucket_writer::BucketItem;
 use crate::buckets::{LockFreeBucket, MultiThreadBuckets};
 use crate::memory_data_size::MemoryDataSize;
+use std::ops::DerefMut;
 
 pub struct BucketsThreadBuffer {
     buffers: Vec<Vec<u8>>,
@@ -21,6 +22,7 @@ impl BucketsThreadBuffer {
 pub struct BucketsThreadDispatcher<'a, B: LockFreeBucket> {
     mtb: &'a MultiThreadBuckets<B>,
     thread_data: &'a mut BucketsThreadBuffer,
+    owned_buffer: Option<Box<BucketsThreadBuffer>>,
 }
 
 impl<'a, B: LockFreeBucket> BucketsThreadDispatcher<'a, B> {
@@ -29,7 +31,25 @@ impl<'a, B: LockFreeBucket> BucketsThreadDispatcher<'a, B> {
         thread_data: &'a mut BucketsThreadBuffer,
     ) -> BucketsThreadDispatcher<'a, B> {
         assert_eq!(mtb.buckets.len(), thread_data.buffers.len());
-        Self { mtb, thread_data }
+        Self {
+            mtb,
+            thread_data,
+            owned_buffer: None,
+        }
+    }
+
+    pub fn new_owned(
+        mtb: &'a MultiThreadBuckets<B>,
+        thread_data: BucketsThreadBuffer,
+    ) -> BucketsThreadDispatcher<'a, B> {
+        assert_eq!(mtb.buckets.len(), thread_data.buffers.len());
+        let mut owned_buffer = Box::new(thread_data);
+
+        Self {
+            mtb,
+            thread_data: unsafe { &mut *(owned_buffer.deref_mut() as *mut BucketsThreadBuffer) },
+            owned_buffer: Some(owned_buffer),
+        }
     }
 
     #[inline]

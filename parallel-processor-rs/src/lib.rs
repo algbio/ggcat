@@ -1,4 +1,4 @@
-#![feature(is_sorted, generic_associated_types, int_log)]
+#![feature(is_sorted, generic_associated_types, int_log, trait_alias)]
 // #![deny(warnings)]
 
 #[macro_use]
@@ -10,13 +10,13 @@ pub use counter_stats::logging::enable_counters_logging;
 pub mod memory_fs;
 pub mod buckets;
 pub mod debug_allocator;
+pub mod execution_manager;
 pub mod fast_smart_bucket_sort;
 pub mod mem_tracker;
 pub mod memory_data_size;
 pub mod phase_times_monitor;
 pub mod threadpools_chain;
 pub mod utils;
-pub mod execution_manager;
 
 pub struct Utils {}
 

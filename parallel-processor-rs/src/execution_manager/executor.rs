@@ -1,34 +1,43 @@
 use crate::execution_manager::executor_address::ExecutorAddress;
 use crate::execution_manager::manager::{ExecutionManager, ExecutionManagerTrait};
-use crate::execution_manager::packet::Packet;
+use crate::execution_manager::objects_pool::{ObjectsPool, PoolObject, PoolObjectTrait};
 use parking_lot::RwLock;
 use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+pub trait PacketTrait: PoolObjectTrait {}
+pub type Packet<T> = PoolObject<T>;
+pub type PacketsPool<T> = ObjectsPool<T>;
+
+impl PoolObjectTrait for () {
+    type InitData = ();
+    fn allocate_new(init_data: &Self::InitData) -> Self {
+        panic!("Cannot create () type as object!");
+    }
+
+    fn reset(&mut self) {
+        panic!("Cannot reset () type as object!");
+    }
+}
+impl PacketTrait for () {}
 
 pub enum ExecutorType {
     SingleUnit,
     MultipleUnits,
 }
 
-pub trait OutputPacketTrait: 'static {
-    type InitData;
-
-    fn allocate_new(init_data: &Self::InitData) -> Self;
-    fn reset(&mut self);
-}
-
 static EXECUTOR_GLOBAL_ID: AtomicU64 = AtomicU64::new(0);
 
-pub trait Executor {
+pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
     const EXECUTOR_TYPE: ExecutorType;
     const EXECUTOR_TYPE_INDEX: u64;
 
-    type InputPacket;
-    type OutputPacket: OutputPacketTrait;
-    type GlobalParams;
-    type MemoryParams;
-    type BuildParams;
+    type InputPacket: Send + Sync;
+    type OutputPacket: Send + Sync + PacketTrait;
+    type GlobalParams: Send + Sync;
+    type MemoryParams: Send + Sync;
+    type BuildParams: Send + Sync;
 
     fn generate_new_address() -> ExecutorAddress {
         ExecutorAddress {
@@ -38,13 +47,12 @@ pub trait Executor {
         }
     }
 
-    fn allocate_new(
+    fn allocate_new_group(
         global_params: Arc<Self::GlobalParams>,
         memory_params: Option<Self::MemoryParams>,
     ) -> Self::BuildParams;
     fn get_maximum_concurrency(&self) -> usize;
 
-    fn new() -> Self;
     fn reinitialize<P: FnMut() -> Packet<Self::OutputPacket>>(
         &mut self,
         reinit_params: &Self::BuildParams,
