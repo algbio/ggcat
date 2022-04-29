@@ -15,9 +15,7 @@ use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::sequences_reader::FastaSequence;
 use crate::pipeline_common::minimizer_bucketing::counters_analyzer::CountersAnalyzer;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
-use crate::pipeline_common::minimizer_bucketing::reader::{
-    minb_reader, MinimizerBucketingFilesReader,
-};
+use crate::pipeline_common::minimizer_bucketing::reader::MinimizerBucketingFilesReader;
 use crate::pipeline_common::minimizer_bucketing::sequences_splitter::SequencesSplitter;
 use crate::utils::get_memory_mode;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
@@ -43,6 +41,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub trait MinimizerInputSequence: HashableSequence + Copy {
     fn get_subslice(&self, range: Range<usize>) -> Self;
@@ -156,6 +155,7 @@ pub struct MinimizerBucketingExecutionContext<GlobalData> {
     pub executor_group_address: ExecutorAddress,
     pub processed_files: AtomicUsize,
     pub total_files: usize,
+    pub read_threads_count: usize,
     pub threads_count: usize,
 }
 
@@ -227,53 +227,28 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
         packet_alloc: P,
         packet_send: S,
     ) {
-        println!(
-            "Processing {} sequences!",
-            input_packet.get_value().sequences.len()
-        );
-    }
+        let context = self.context.as_ref().unwrap();
 
-    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, packet_send: S) {
-        self.tmp_reads_buffer.take().unwrap().finalize();
-        self.context.take();
-    }
-
-    fn get_total_memory(&self) -> u64 {
-        0
-    }
-
-    fn get_current_memory_params(&self) -> Self::MemoryParams {
-        ()
-    }
-}
-
-fn worker<E: MinimizerBucketingExecutorFactory>(
-    context: &MinimizerBucketingExecutionContext<E::GlobalData>,
-    manager: ObjectsPoolManager<(), MinimizerBucketingQueueData<E::FileInfo>>,
-) {
-    let mut buffer = BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, context.buckets.count());
-
-    let mut tmp_reads_buffer = BucketsThreadDispatcher::new(&context.buckets, &mut buffer);
-
-    let mut buckets_processor = E::new(&context.common);
-
-    let mut counters =
-        vec![0u8; context.common.second_buckets_count * context.common.buckets_count];
-    let counters_log = context.common.second_buckets_count.log2();
-
-    while let Some(data) = manager.recv_obj() {
         let mut total_bases = 0;
         let mut sequences_splitter = SequencesSplitter::new(context.common.k);
+        let mut buckets_processor = E::new(&context.common);
 
         let mut preprocess_info = E::PreprocessInfo::default();
 
         let mut sequences_count = 0;
 
-        for (index, x) in data.iter_sequences().enumerate() {
+        let input_packet = input_packet.get_value();
+        let tmp_reads_buffer = self.tmp_reads_buffer.as_mut().unwrap();
+
+        // let mut counters =
+        //     vec![0u8; context.common.second_buckets_count * context.common.buckets_count];
+        // let counters_log = context.common.second_buckets_count.log2();
+
+        for (index, x) in input_packet.iter_sequences().enumerate() {
             total_bases += x.seq.len() as u64;
             buckets_processor.preprocess_fasta(
-                &data.file_info,
-                data.start_read_index + index as u64,
+                &input_packet.file_info,
+                input_packet.start_read_index + index as u64,
                 &mut preprocess_info,
                 &x,
             );
@@ -284,16 +259,16 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
                     sequence,
                     range,
                     |bucket, second_bucket, seq, flags, extra| {
-                        let counter = &mut counters[((bucket as usize) << counters_log)
-                            + (second_bucket & context.common.second_buckets_count_mask) as usize];
-
-                        *counter = counter.wrapping_add(1);
-                        if *counter == 0 {
-                            context.common.global_counters[bucket as usize][(second_bucket
-                                & context.common.second_buckets_count_mask)
-                                as usize]
-                                .fetch_add(256, Ordering::Relaxed);
-                        }
+                        // let counter = &mut counters[((bucket as usize) << counters_log)
+                        //     + (second_bucket & context.common.second_buckets_count_mask) as usize];
+                        //
+                        // *counter = counter.wrapping_add(1);
+                        // if *counter == 0 {
+                        //     context.common.global_counters[bucket as usize][(second_bucket
+                        //         & context.common.second_buckets_count_mask)
+                        //         as usize]
+                        //         .fetch_add(256, Ordering::Relaxed);
+                        // }
 
                         tmp_reads_buffer.add_element(
                             bucket,
@@ -349,11 +324,20 @@ fn worker<E: MinimizerBucketingExecutorFactory>(
                     .get_formatted_counter_without_memory()
             );
         }
-
-        manager.return_obj(data);
     }
 
-    tmp_reads_buffer.finalize();
+    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, packet_send: S) {
+        self.tmp_reads_buffer.take().unwrap().finalize();
+        self.context.take();
+    }
+
+    fn get_total_memory(&self) -> u64 {
+        0
+    }
+
+    fn get_current_memory_params(&self) -> Self::MemoryParams {
+        ()
+    }
 }
 
 impl GenericMinimizerBucketing {
@@ -401,6 +385,7 @@ impl GenericMinimizerBucketing {
                 global_data,
             ),
             threads_count,
+            read_threads_count: threads_count / 2,
         });
 
         {
@@ -409,15 +394,17 @@ impl GenericMinimizerBucketing {
             let max_read_buffers_count =
                 threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed);
 
-            let disk_thread_pool =
-                ExecThreadPool::new(max(1, threads_count / 2), input_files_count);
+            let disk_thread_pool = ExecThreadPool::new(
+                max(1, execution_context.read_threads_count),
+                input_files_count,
+            );
             let compute_thread_pool = ExecThreadPool::new(threads_count, max_read_buffers_count);
 
             let mut input_files =
                 ExecutorInput::from_iter(input_files.into_iter(), ExecutorInputAddressMode::Single);
 
             let mut file_readers = ExecutorsList::<MinimizerBucketingFilesReader<_, _>>::new(
-                ExecutorAllocMode::Fixed(4),
+                ExecutorAllocMode::Fixed(execution_context.read_threads_count),
                 PoolAllocMode::Instance {
                     capacity: max_read_buffers_count,
                 },
@@ -436,30 +423,6 @@ impl GenericMinimizerBucketing {
             );
             file_readers.set_output_executors(&bucket_writers, ExecOutputMode::FIFO);
 
-            // disk_thread_pool.start();
-            // compute_thread_pool.start();
-            // ThreadPoolsChain::run_double(
-            //     input_files,
-            //     ThreadPoolDefinition::new(
-            //         &execution_context,
-            //         READ_INTERMEDIATE_CHUNKS_SIZE,
-            //         String::from("r-assembler-minimizer"),
-            //         max(1, threads_count / 2),
-            //         &AtomicUsize::new(threads_count),
-            //         threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),
-            //         minb_reader,
-            //     ),
-            //     ThreadPoolDefinition::new(
-            //         &execution_context,
-            //         (),
-            //         String::from("w-assembler-minimizer"),
-            //         threads_count,
-            //         &AtomicUsize::new(threads_count),
-            //         threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed),
-            //         worker::<E>,
-            //     ),
-            // );
-
             disk_thread_pool.start();
             compute_thread_pool.start();
 
@@ -467,6 +430,13 @@ impl GenericMinimizerBucketing {
             compute_thread_pool.join();
         }
 
+        while Arc::strong_count(&execution_context) > 1 {
+            println!(
+                "References count: {}",
+                Arc::strong_count(&execution_context)
+            );
+            std::thread::sleep(Duration::from_millis(500));
+        }
         let mut execution_context = Arc::try_unwrap(execution_context)
             .unwrap_or_else(|_| panic!("Cannot get execution context!"));
 

@@ -55,7 +55,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
     }
 
     fn get_maximum_concurrency(&self) -> usize {
-        1
+        self.context.as_ref().unwrap().read_threads_count
     }
 
     fn reinitialize<P: FnMut() -> Packet<Self::OutputPacket>>(
@@ -87,7 +87,6 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         let mut read_index = 0;
 
         context.current_file.fetch_add(1, Ordering::Relaxed);
-        println!("Reading file {}", input_packet.get_value().0.display());
 
         SequencesReader::process_file_extended(
             &input_packet.get_value().0,
@@ -104,9 +103,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
                             <= read_index as usize
                     );
 
-                    println!("Allocating!");
                     let mut tmp_data = packet_alloc();
-                    println!("Allocated!");
                     swap(&mut data_packet, &mut tmp_data);
                     data = data_packet.get_value_mut();
                     data.file_info = file_info.clone();
@@ -128,7 +125,6 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         }
 
         context.processed_files.fetch_add(1, Ordering::Relaxed);
-        println!("Completed file {}", input_packet.get_value().0.display());
     }
 
     fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, _packet_send: S) {
@@ -141,11 +137,4 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
     fn get_current_memory_params(&self) -> Self::MemoryParams {
         ()
     }
-}
-
-pub fn minb_reader<GlobalData, FileInfo: Clone + Sync + Send + Default + 'static>(
-    context: &MinimizerBucketingExecutionContext<GlobalData>,
-    manager: ObjectsPoolManager<MinimizerBucketingQueueData<FileInfo>, (PathBuf, FileInfo)>,
-) {
-    while let Some((input, file_info)) = manager.recv_obj() {}
 }

@@ -99,6 +99,8 @@ impl<T> Drop for PoolObject<T> {
     fn drop(&mut self) {
         if let Some(pool_channel) = &mut self.ref_pool {
             let _ = pool_channel.send(unsafe { self.value.assume_init_read() });
+        } else {
+            unsafe { self.value.assume_init_drop() }
         }
     }
 }

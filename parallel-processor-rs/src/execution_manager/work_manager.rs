@@ -3,13 +3,16 @@ use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAd
 use crate::execution_manager::executors_list::{ExecutorAllocMode, ExecutorsList, PoolAllocMode};
 use crate::execution_manager::manager::{ExecutionManager, ExecutionManagerTrait, GenericExecutor};
 use crate::execution_manager::objects_pool::{ObjectsPool, PoolObject, PoolObjectTrait};
+use crate::execution_manager::thread_pool::ExecThreadPoolDataAddTrait;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use dashmap::mapref::one::Ref;
 use dashmap::DashMap;
-use parking_lot::{Condvar, Mutex};
+use parking_lot::{Condvar, Mutex, RwLock};
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 enum PoolMode<E: Executor> {
     None,
@@ -36,6 +39,11 @@ pub struct WorkManager<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrai
     duplicable_executors: SegQueue<WeakExecutorAddress>,
 
     waiting_addresses: SegQueue<ExecutorAddress>,
+
+    pending_packets_count: AtomicU64,
+
+    output_pool:
+        Arc<RwLock<Option<Arc<dyn ExecThreadPoolDataAddTrait<InputPacket = O> + 'static>>>>,
 
     changes_notifier_mutex: Mutex<()>,
     changes_notifier_condvar: Condvar,
@@ -64,6 +72,8 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
             available_executors: Default::default(),
             duplicable_executors: Default::default(),
             waiting_addresses: Default::default(),
+            pending_packets_count: AtomicU64::new(0),
+            output_pool: Arc::new(RwLock::new(None)),
             changes_notifier_mutex: Default::default(),
             changes_notifier_condvar: Default::default(),
             queues_allocator: ObjectsPool::new(
@@ -72,6 +82,13 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
                 executor_buffer_capacity,
             ),
         }
+    }
+
+    pub fn set_output<P: ExecThreadPoolDataAddTrait<InputPacket = O> + 'static>(
+        &mut self,
+        output_target: Arc<P>,
+    ) {
+        *self.output_pool.write() = Some(output_target);
     }
 
     pub fn add_executors<E: Executor<InputPacket = I, OutputPacket = O>>(
@@ -94,14 +111,16 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
                 )),
                 PoolAllocMode::Instance { capacity } => PoolMode::Distinct {
                     pools_allocator: ObjectsPool::new(
-                        capacity,
+                        executors_max_count,
                         false,
-                        (executors_max_count, true, pool_init_data),
+                        (capacity, true, pool_init_data),
                     ),
                 },
             },
             executors_allocator: ObjectsPool::new(executors_max_count, false, ()),
         });
+
+        let output_pool = self.output_pool.clone();
 
         let allocate_execution_unit = move |addr: &ExecutorAddress| {
             let executor = executors_manager.executors_allocator.alloc_object();
@@ -109,7 +128,6 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
             addr.executor_keeper.try_read().unwrap();
 
             if let Some(main_executor) = addr.executor_keeper.read().as_ref() {
-                println!("Cloning!");
                 return main_executor
                     .downcast_ref::<ExecutionManager<E>>()
                     .unwrap()
@@ -118,6 +136,7 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
 
             // TODO: Memory params
             let build_info = E::allocate_new_group(global_params.clone(), None);
+            let output_pool = output_pool.clone();
             Some(ExecutionManager::new(
                 executor,
                 build_info,
@@ -129,6 +148,9 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
                     }
                 },
                 addr.clone(),
+                move |addr, packet| {
+                    output_pool.read().as_ref().unwrap().add_data(addr, packet);
+                },
             ))
         };
 
@@ -140,12 +162,12 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
     }
 
     pub fn add_input_packet(&self, address: ExecutorAddress, mut packet: Packet<I>) {
+        self.pending_packets_count.fetch_add(1, Ordering::SeqCst);
         loop {
             match self
                 .packets_map
                 .entry(address.clone())
                 .or_insert_with(|| {
-                    println!("Add waiting address!");
                     self.waiting_addresses.push(address.clone());
                     self.queues_allocator.alloc_object()
                 })
@@ -186,28 +208,41 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
         &self,
         mut last_executor: Option<GenericExecutor<I, O>>,
     ) -> Option<(Packet<I>, GenericExecutor<I, O>)> {
-        println!("Finding work...");
-        loop {
+        // if self.pending_packets_count.load(Ordering::SeqCst) == 0 {
+        //     let mut wait_lock = self.changes_notifier_mutex.lock();
+        //     self.changes_notifier_condvar
+        //         .wait_for(&mut wait_lock, Duration::from_millis(100));
+        // }
+
+        while self.pending_packets_count.load(Ordering::SeqCst) > 0 {
             if let Some(executor) = last_executor {
-                println!("More work...");
                 let strong_addr = executor.get_address();
                 if let Some(packet) = self.get_packet_from_addr(&strong_addr) {
-                    println!("Found work...");
+                    self.pending_packets_count.fetch_sub(1, Ordering::Relaxed);
+                    self.changes_notifier_condvar.notify_all();
                     return Some((packet, executor));
                 } else {
-                    println!("No packets found for current!");
                     last_executor = Some(executor);
                 }
             }
 
             while let Some(weak_addr) = self.duplicable_executors.pop() {
-                println!("Duplicate work...");
+                // println!(
+                //     "Duplicate work... {} / {:?}",
+                //     std::any::type_name::<I>(),
+                //     std::thread::current().id()
+                // );
                 if let Some(addr) = weak_addr.get_strong() {
                     if let Some(executor) = self.alloc_executor(&addr) {
                         if let Some(packet) = self.get_packet_from_addr(&addr) {
                             self.duplicable_executors.push(weak_addr);
+                            self.pending_packets_count.fetch_sub(1, Ordering::Relaxed);
                             self.changes_notifier_condvar.notify_all();
-                            println!("Found work...");
+                            // println!(
+                            //     "Found work... {} / {:?}",
+                            //     std::any::type_name::<I>(),
+                            //     std::thread::current().id()
+                            // );
                             return Some((packet, executor));
                         }
                     }
@@ -215,9 +250,17 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
             }
 
             if let Some(addr) = self.waiting_addresses.pop() {
-                println!("Waiting work...");
+                // println!(
+                //     "Waiting work... {} / {:?}",
+                //     std::any::type_name::<I>(),
+                //     std::thread::current().id()
+                // );
                 let executor = self.alloc_executor(&addr).unwrap();
-                println!("Allocated executor!");
+                // println!(
+                //     "Allocated executor! {} / {:?}",
+                //     std::any::type_name::<I>(),
+                //     std::thread::current().id()
+                // );
 
                 if executor.can_split() {
                     self.duplicable_executors.push(addr.to_weak());
@@ -225,15 +268,20 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
                 }
 
                 if let Some(packet) = self.get_packet_from_addr(&addr) {
-                    println!("Found work...");
+                    // println!(
+                    //     "Found work... {} / {:?}",
+                    //     std::any::type_name::<I>(),
+                    //     std::thread::current().id()
+                    // );
+                    self.pending_packets_count.fetch_sub(1, Ordering::Relaxed);
+                    self.changes_notifier_condvar.notify_all();
                     return Some((packet, executor));
                 }
             }
 
-            println!("Waiting for news...");
             let mut wait_lock = self.changes_notifier_mutex.lock();
-            self.changes_notifier_condvar.wait(&mut wait_lock);
-            println!("News!");
+            self.changes_notifier_condvar
+                .wait_for(&mut wait_lock, Duration::from_millis(100));
         }
 
         // Strategy idea:
@@ -247,7 +295,7 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
         // Needed functions:
         // 1) AllocateExecutor(address)
         // 2)
-        println!("Returned None!");
+        // println!("Returned None!");
         None
     }
 }
