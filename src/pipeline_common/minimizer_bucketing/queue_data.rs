@@ -1,8 +1,7 @@
 use crate::io::sequences_reader::FastaSequence;
-use parallel_processor::execution_manager::executor::PacketTrait;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
+use parallel_processor::execution_manager::packet::PacketTrait;
 use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
-use parallel_processor::threadpools_chain::ThreadChainObject;
 
 pub struct MinimizerBucketingQueueData<F: Clone + Sync + Send + Default + 'static> {
     data: TrackedVec<u8>,
@@ -81,18 +80,3 @@ impl<F: Clone + Sync + Send + Default + 'static> PoolObjectTrait
     }
 }
 impl<F: Clone + Sync + Send + Default + 'static> PacketTrait for MinimizerBucketingQueueData<F> {}
-
-impl<F: Clone + Sync + Send + Default + 'static> ThreadChainObject
-    for MinimizerBucketingQueueData<F>
-{
-    type InitData = usize;
-
-    fn initialize(params: &Self::InitData) -> Self {
-        Self::new(*params, F::default())
-    }
-
-    fn reset(&mut self) {
-        self.data.clear();
-        self.sequences.clear();
-    }
-}

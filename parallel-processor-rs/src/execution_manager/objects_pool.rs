@@ -11,8 +11,19 @@ pub trait PoolObjectTrait: 'static {
     fn reset(&mut self);
 }
 
+impl<T: PoolObjectTrait> PoolObjectTrait for Box<T> {
+    type InitData = T::InitData;
+
+    fn allocate_new(init_data: &Self::InitData) -> Self {
+        Box::new(T::allocate_new(init_data))
+    }
+    fn reset(&mut self) {
+        T::reset(self);
+    }
+}
+
 pub struct ObjectsPool<T> {
-    channel: (Sender<T>, Receiver<T>),
+    pub(crate) channel: (Sender<T>, Receiver<T>),
     allocate_fn: Box<dyn (Fn() -> T) + Sync + Send>,
     allocated_count: AtomicU64,
     max_count: u64,
@@ -53,20 +64,19 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
     }
 }
 
-// Recursively implement the object trait for the pool, so it can be used recursively
-impl<T: PoolObjectTrait> PoolObjectTrait for ObjectsPool<T> {
-    type InitData = (usize, bool, T::InitData);
+pub struct PoolSender<T> {
+    sender: Sender<T>,
+}
 
-    fn allocate_new((cap, strict_cap, init_data): &Self::InitData) -> Self {
-        ObjectsPool::new(*cap, *strict_cap, init_data.clone())
+impl<T> PoolSender<T> {
+    pub fn send_data(&self, data: T) {
+        self.sender.send(data);
     }
-
-    fn reset(&mut self) {}
 }
 
 pub struct PoolObject<T> {
-    value: MaybeUninit<T>,
-    ref_pool: Option<Sender<T>>,
+    pub(crate) value: MaybeUninit<T>,
+    pub(crate) ref_pool: Option<Sender<T>>,
 }
 
 impl<T> PoolObject<T> {

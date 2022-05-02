@@ -1,5 +1,6 @@
-use crate::execution_manager::executor::{Executor, Packet};
+use crate::execution_manager::executor::Executor;
 use crate::execution_manager::executors_list::{ExecOutputMode, ExecutorsList};
+use crate::execution_manager::packet::Packet;
 use crate::execution_manager::thread_pool::ExecThreadPoolDataAddTrait;
 use std::marker::PhantomData;
 
@@ -43,7 +44,7 @@ impl<T: Send + Sync + 'static, I: Iterator<Item = T>> ExecOutput for ExecutorInp
         for value in &mut self.iterator {
             exec_list
                 .thread_pool
-                .add_data(address.clone(), Packet::new_simple(value));
+                .add_data(address.clone(), Packet::new_simple(value).upcast());
             if let ExecutorInputAddressMode::Multiple = &self.addr_mode {
                 address = W::generate_new_address();
             }

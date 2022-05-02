@@ -1,26 +1,13 @@
 use crate::execution_manager::executor_address::ExecutorAddress;
 use crate::execution_manager::manager::{ExecutionManager, ExecutionManagerTrait};
 use crate::execution_manager::objects_pool::{ObjectsPool, PoolObject, PoolObjectTrait};
+use crate::execution_manager::packet::Packet;
+use crate::execution_manager::packet::PacketTrait;
 use parking_lot::RwLock;
 use std::any::Any;
+use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-
-pub trait PacketTrait: PoolObjectTrait {}
-pub type Packet<T> = PoolObject<T>;
-pub type PacketsPool<T> = ObjectsPool<T>;
-
-impl PoolObjectTrait for () {
-    type InitData = ();
-    fn allocate_new(init_data: &Self::InitData) -> Self {
-        panic!("Cannot create () type as object!");
-    }
-
-    fn reset(&mut self) {
-        panic!("Cannot reset () type as object!");
-    }
-}
-impl PacketTrait for () {}
 
 pub enum ExecutorType {
     SingleUnit,

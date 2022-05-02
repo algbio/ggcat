@@ -27,7 +27,8 @@ pub enum ExecOutputMode {
 }
 
 pub struct ExecutorsList<E: Executor> {
-    pub(crate) thread_pool: Arc<ExecThreadPool<E::InputPacket, E::OutputPacket>>,
+    pub(crate) thread_pool: Arc<ExecThreadPool>,
+    _phantom: PhantomData<E>,
 }
 
 impl<E: Executor> ExecutorsList<E> {
@@ -36,7 +37,7 @@ impl<E: Executor> ExecutorsList<E> {
         pool_alloc_mode: PoolAllocMode,
         pool_init_data: <E::OutputPacket as PoolObjectTrait>::InitData,
         global_params: &Arc<E::GlobalParams>,
-        thread_pool: &Arc<ExecThreadPool<E::InputPacket, E::OutputPacket>>,
+        thread_pool: &Arc<ExecThreadPool>,
     ) -> Self {
         thread_pool.work_manager.write().add_executors::<E>(
             alloc_mode,
@@ -46,6 +47,7 @@ impl<E: Executor> ExecutorsList<E> {
         );
         Self {
             thread_pool: thread_pool.clone(),
+            _phantom: PhantomData,
         }
     }
 }

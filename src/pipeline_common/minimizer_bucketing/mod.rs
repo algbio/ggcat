@@ -21,20 +21,18 @@ use crate::utils::get_memory_mode;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
-use parallel_processor::execution_manager::executor::{Executor, ExecutorType, Packet};
+use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::executors_list::{
     ExecOutputMode, ExecutorAllocMode, ExecutorsList, PoolAllocMode,
 };
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
+use parallel_processor::execution_manager::packet::Packet;
 use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
 use parallel_processor::execution_manager::units_io::{
     ExecOutput, ExecutorInput, ExecutorInputAddressMode,
 };
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parallel_processor::threadpools_chain::{
-    ObjectsPoolManager, ThreadPoolDefinition, ThreadPoolsChain,
-};
 use parking_lot::RwLock;
 use std::cmp::max;
 use std::marker::PhantomData;
@@ -352,7 +350,7 @@ impl GenericMinimizerBucketing {
         global_data: E::GlobalData,
     ) -> (Vec<PathBuf>, PathBuf) {
         let read_threads_count = max(1, threads_count / 2);
-        let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count));
+        let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count / 2));
 
         let buckets = MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,

@@ -1,8 +1,9 @@
-use crate::execution_manager::executor::{Executor, Packet, PacketTrait, PacketsPool};
+use crate::execution_manager::executor::Executor;
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
 use crate::execution_manager::executors_list::{ExecutorAllocMode, ExecutorsList, PoolAllocMode};
 use crate::execution_manager::manager::{ExecutionManager, ExecutionManagerTrait, GenericExecutor};
 use crate::execution_manager::objects_pool::{ObjectsPool, PoolObject, PoolObjectTrait};
+use crate::execution_manager::packet::{PacketAny, PacketsPool};
 use crate::execution_manager::thread_pool::ExecThreadPoolDataAddTrait;
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use dashmap::mapref::one::Ref;
@@ -27,28 +28,25 @@ struct ExecutorsListManager<E: Executor> {
     executors_allocator: ObjectsPool<E>,
 }
 
-pub struct WorkManager<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> {
-    allocator_functions: HashMap<
-        u64,
-        Box<dyn (Fn(&ExecutorAddress) -> Option<GenericExecutor<I, O>>) + Sync + Send>,
-    >,
-    packets_map: DashMap<ExecutorAddress, PoolObject<ArrayQueue<Packet<I>>>>,
+pub struct WorkManager {
+    allocator_functions:
+        HashMap<u64, Box<dyn (Fn(&ExecutorAddress) -> Option<GenericExecutor>) + Sync + Send>>,
+    packets_map: DashMap<ExecutorAddress, PoolObject<ArrayQueue<PacketAny>>>,
 
-    full_executors: SegQueue<GenericExecutor<I, O>>,
-    available_executors: SegQueue<GenericExecutor<I, O>>,
+    full_executors: SegQueue<GenericExecutor>,
+    available_executors: SegQueue<GenericExecutor>,
     duplicable_executors: SegQueue<WeakExecutorAddress>,
 
     waiting_addresses: SegQueue<ExecutorAddress>,
 
     pending_packets_count: AtomicU64,
 
-    output_pool:
-        Arc<RwLock<Option<Arc<dyn ExecThreadPoolDataAddTrait<InputPacket = O> + 'static>>>>,
+    output_pool: Arc<RwLock<Option<Arc<dyn ExecThreadPoolDataAddTrait + 'static>>>>,
 
     changes_notifier_mutex: Mutex<()>,
     changes_notifier_condvar: Condvar,
 
-    queues_allocator: ObjectsPool<ArrayQueue<Packet<I>>>,
+    queues_allocator: ObjectsPool<ArrayQueue<PacketAny>>,
 }
 
 impl<T: 'static> PoolObjectTrait for ArrayQueue<T> {
@@ -63,7 +61,7 @@ impl<T: 'static> PoolObjectTrait for ArrayQueue<T> {
     }
 }
 
-impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, O> {
+impl WorkManager {
     pub fn new(queue_buffers_pool_size: usize, executor_buffer_capacity: usize) -> Self {
         Self {
             allocator_functions: HashMap::new(),
@@ -84,14 +82,11 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
         }
     }
 
-    pub fn set_output<P: ExecThreadPoolDataAddTrait<InputPacket = O> + 'static>(
-        &mut self,
-        output_target: Arc<P>,
-    ) {
+    pub fn set_output<P: ExecThreadPoolDataAddTrait + 'static>(&mut self, output_target: Arc<P>) {
         *self.output_pool.write() = Some(output_target);
     }
 
-    pub fn add_executors<E: Executor<InputPacket = I, OutputPacket = O>>(
+    pub fn add_executors<E: Executor>(
         &mut self,
         alloc_mode: ExecutorAllocMode,
         pool_alloc_mode: PoolAllocMode,
@@ -149,7 +144,11 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
                 },
                 addr.clone(),
                 move |addr, packet| {
-                    output_pool.read().as_ref().unwrap().add_data(addr, packet);
+                    output_pool
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .add_data(addr, packet.upcast());
                 },
             ))
         };
@@ -161,7 +160,7 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
         assert!(not_present);
     }
 
-    pub fn add_input_packet(&self, address: ExecutorAddress, mut packet: Packet<I>) {
+    pub fn add_input_packet(&self, address: ExecutorAddress, mut packet: PacketAny) {
         self.pending_packets_count.fetch_add(1, Ordering::SeqCst);
         loop {
             match self
@@ -184,14 +183,14 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
         }
     }
 
-    fn alloc_executor(&self, address: &ExecutorAddress) -> Option<GenericExecutor<I, O>> {
+    fn alloc_executor(&self, address: &ExecutorAddress) -> Option<GenericExecutor> {
         (self
             .allocator_functions
             .get(&address.executor_type_id)
             .unwrap())(address)
     }
 
-    fn get_packet_from_addr(&self, addr: &ExecutorAddress) -> Option<Packet<I>> {
+    fn get_packet_from_addr(&self, addr: &ExecutorAddress) -> Option<PacketAny> {
         match self.packets_map.get(&addr) {
             None => None,
             Some(packets) => {
@@ -204,10 +203,7 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
         }
     }
 
-    pub fn find_work(
-        &self,
-        last_executor: &mut Option<GenericExecutor<I, O>>,
-    ) -> Option<Packet<I>> {
+    pub fn find_work(&self, last_executor: &mut Option<GenericExecutor>) -> Option<PacketAny> {
         // if self.pending_packets_count.load(Ordering::SeqCst) == 0 {
         //     let mut wait_lock = self.changes_notifier_mutex.lock();
         //     self.changes_notifier_condvar

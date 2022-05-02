@@ -1,17 +1,17 @@
-use crate::execution_manager::executor::{Executor, Packet, PacketsPool};
+use crate::execution_manager::executor::Executor;
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
+use crate::execution_manager::objects_pool::ObjectsPool;
 use crate::execution_manager::objects_pool::PoolObject;
+use crate::execution_manager::packet::{Packet, PacketAny, PacketsPool};
 use parking_lot::{Mutex, RwLock};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-pub type GenericExecutor<I, O> = Arc<dyn ExecutionManagerTrait<InputPacket = I, OutputPacket = O>>;
+pub type GenericExecutor = Arc<dyn ExecutionManagerTrait>;
 
 pub trait ExecutionManagerTrait: Send + Sync {
-    type InputPacket: Send + Sync;
-    type OutputPacket: Send + Sync;
-    fn process_packet(&self, packet: Packet<Self::InputPacket>);
+    fn process_packet(&self, packet: PacketAny);
 
     fn get_address(&self) -> ExecutorAddress;
 
@@ -35,9 +35,9 @@ impl<E: Executor + 'static> ExecutionManager<E> {
         pool: Option<Arc<PoolObject<PacketsPool<E::OutputPacket>>>>,
         address: ExecutorAddress,
         output_fn: impl Fn(ExecutorAddress, Packet<E::OutputPacket>) + Sync + Send + 'static,
-    ) -> GenericExecutor<E::InputPacket, E::OutputPacket> {
+    ) -> GenericExecutor {
         executor.get_value_mut().reinitialize(&build_info, || {
-            pool.as_ref().unwrap().get_value().alloc_object()
+            pool.as_ref().unwrap().get_value().alloc_packet()
         });
 
         let maximum_instances = executor.get_value().get_maximum_concurrency();
@@ -56,10 +56,7 @@ impl<E: Executor + 'static> ExecutionManager<E> {
         self_
     }
 
-    pub fn clone_executor(
-        &self,
-        mut new_core: PoolObject<E>,
-    ) -> Option<GenericExecutor<E::InputPacket, E::OutputPacket>> {
+    pub fn clone_executor(&self, mut new_core: PoolObject<E>) -> Option<GenericExecutor> {
         let (build_info, current_count, max_count) = self.build_info.as_ref().unwrap();
 
         if current_count.fetch_add(1, Ordering::Relaxed) >= *max_count {
@@ -68,7 +65,7 @@ impl<E: Executor + 'static> ExecutionManager<E> {
         EXECUTORS_COUNT.fetch_add(1, Ordering::Relaxed);
 
         new_core.get_value_mut().reinitialize(build_info, || {
-            self.pool.as_ref().unwrap().get_value().alloc_object()
+            self.pool.as_ref().unwrap().get_value().alloc_packet()
         });
 
         Some(Arc::new(Self {
@@ -82,14 +79,11 @@ impl<E: Executor + 'static> ExecutionManager<E> {
 }
 
 impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
-    type InputPacket = E::InputPacket;
-    type OutputPacket = E::OutputPacket;
-
-    fn process_packet(&self, packet: Packet<Self::InputPacket>) {
+    fn process_packet(&self, packet: PacketAny) {
         let mut executor = self.executor.lock();
         executor.get_value_mut().execute(
-            packet,
-            || self.pool.as_ref().unwrap().get_value().alloc_object(),
+            packet.downcast(),
+            || self.pool.as_ref().unwrap().get_value().alloc_packet(),
             self.output_fn.deref(),
         );
     }
