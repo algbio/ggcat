@@ -40,8 +40,6 @@ impl ExecThreadPool {
         let work_manager = self.work_manager.read();
         let mut executor = None;
 
-        let mut self_ref = &mut (self,);
-
         while !self.is_joining.load(Ordering::Relaxed) {
             while let Some(packet) = work_manager.find_work(&mut executor) {
                 executor.as_ref().unwrap().process_packet(packet);

@@ -16,14 +16,11 @@ use std::cmp::max;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-pub struct AssemblerMinimizerBucketingExecutor<
-    'a,
-    H: MinimizerHashFunctionFactory,
-    CX: ColorsManager,
-> {
+pub struct AssemblerMinimizerBucketingExecutor<H: MinimizerHashFunctionFactory, CX: ColorsManager> {
     minimizer_queue: RollingMinQueue<H>,
-    global_data: &'a MinimizerBucketingCommonData<()>,
+    global_data: Arc<MinimizerBucketingCommonData<()>>,
     _phantom: PhantomData<CX>,
 }
 
@@ -59,22 +56,22 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecu
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U2;
 
-    type ExecutorType<'a> = AssemblerMinimizerBucketingExecutor<'a, H, CX>;
+    type ExecutorType = AssemblerMinimizerBucketingExecutor<H, CX>;
 
-    fn new<'a>(
-        global_data: &'a MinimizerBucketingCommonData<Self::GlobalData>,
-    ) -> Self::ExecutorType<'a> {
-        Self::ExecutorType::<'a> {
+    fn new(
+        global_data: &Arc<MinimizerBucketingCommonData<Self::GlobalData>>,
+    ) -> Self::ExecutorType {
+        Self::ExecutorType {
             minimizer_queue: RollingMinQueue::new(global_data.k - global_data.m),
-            global_data,
+            global_data: global_data.clone(),
             _phantom: PhantomData,
         }
     }
 }
 
-impl<'a, H: MinimizerHashFunctionFactory, CX: ColorsManager>
-    MinimizerBucketingExecutor<'a, AssemblerMinimizerBucketingExecutorFactory<H, CX>>
-    for AssemblerMinimizerBucketingExecutor<'a, H, CX>
+impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
+    MinimizerBucketingExecutor<AssemblerMinimizerBucketingExecutorFactory<H, CX>>
+    for AssemblerMinimizerBucketingExecutor<H, CX>
 {
     fn preprocess_fasta(
         &mut self,

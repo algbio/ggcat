@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
@@ -32,14 +33,14 @@ impl AssemblePipeline {
             .write()
             .start_phase("phase: hashes sorting".to_string());
 
-        let mut links_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        let mut links_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             output_dir.as_ref().join("links"),
             &(
                 get_memory_mode(SwapPriority::LinksBuckets as usize),
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
-        );
+        ));
 
         let buckets_thread_buffers = ScopedThreadLocal::new(move || {
             BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
@@ -52,7 +53,7 @@ impl AssemblePipeline {
                 let mut buffers = buckets_thread_buffers.get();
                 let mut links_tmp = BucketsThreadDispatcher::new(
                     &links_buckets,
-                    &mut buffers
+                    buffers.take()
                 );
 
                 let mut rand_bool = FastRandBool::<1>::new();
@@ -121,7 +122,7 @@ impl AssemblePipeline {
                         }
                     }
                 }
-                links_tmp.finalize();
+                buffers.put_back(links_tmp.finalize());
             });
         links_buckets.finalize()
     }

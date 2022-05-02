@@ -20,6 +20,7 @@ use std::marker::PhantomData;
 use std::num::NonZeroU64;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct KmersQueryData(pub u64);
@@ -65,10 +66,9 @@ impl SequenceExtraData for KmersQueryData {
     }
 }
 
-pub struct QuerierMinimizerBucketingExecutor<'a, H: MinimizerHashFunctionFactory, CX: ColorsManager>
-{
+pub struct QuerierMinimizerBucketingExecutor<H: MinimizerHashFunctionFactory, CX: ColorsManager> {
     minimizer_queue: RollingMinQueue<H>,
-    global_data: &'a MinimizerBucketingCommonData<()>,
+    global_data: Arc<MinimizerBucketingCommonData<()>>,
     _phantom: PhantomData<CX>,
 }
 
@@ -88,22 +88,22 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecu
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U0;
 
-    type ExecutorType<'a> = QuerierMinimizerBucketingExecutor<'a, H, CX>;
+    type ExecutorType = QuerierMinimizerBucketingExecutor<H, CX>;
 
-    fn new<'a>(
-        global_data: &'a MinimizerBucketingCommonData<Self::GlobalData>,
-    ) -> Self::ExecutorType<'a> {
-        Self::ExecutorType::<'a> {
+    fn new(
+        global_data: &Arc<MinimizerBucketingCommonData<Self::GlobalData>>,
+    ) -> Self::ExecutorType {
+        Self::ExecutorType {
             minimizer_queue: RollingMinQueue::new(global_data.k - global_data.m),
-            global_data,
+            global_data: global_data.clone(),
             _phantom: PhantomData,
         }
     }
 }
 
-impl<'a, H: MinimizerHashFunctionFactory, CX: ColorsManager>
-    MinimizerBucketingExecutor<'a, QuerierMinimizerBucketingExecutorFactory<H, CX>>
-    for QuerierMinimizerBucketingExecutor<'a, H, CX>
+impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
+    MinimizerBucketingExecutor<QuerierMinimizerBucketingExecutorFactory<H, CX>>
+    for QuerierMinimizerBucketingExecutor<H, CX>
 {
     fn preprocess_fasta(
         &mut self,

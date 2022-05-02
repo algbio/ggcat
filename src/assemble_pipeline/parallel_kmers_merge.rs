@@ -38,6 +38,7 @@ use std::cmp::min;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use structs::*;
 
 pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;
@@ -141,16 +142,16 @@ pub mod structs {
     }
 }
 
-struct GlobalMergeData<'a, MH: HashFunctionFactory, CX: ColorsManager> {
+struct GlobalMergeData<MH: HashFunctionFactory, CX: ColorsManager> {
     k: usize,
     m: usize,
     buckets_count: usize,
     min_multiplicity: usize,
-    colors_global_table: &'a CX::GlobalColorsTable,
+    colors_global_table: Arc<CX::GlobalColorsTable>,
     output_results_buckets:
         ArrayQueue<ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>>,
-    hashes_buckets: &'a MultiThreadBuckets<LockFreeBinaryWriter>,
-    global_resplit_data: MinimizerBucketingCommonData<()>,
+    hashes_buckets: Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
+    global_resplit_data: Arc<MinimizerBucketingCommonData<()>>,
 }
 
 struct ParallelKmersMergeFactory<
@@ -163,46 +164,38 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     KmersTransformExecutorFactory for ParallelKmersMergeFactory<H, MH, CX>
 {
     type SequencesResplitterFactory = AssemblerMinimizerBucketingExecutorFactory<H, CX>;
-    type GlobalExtraData<'a> = GlobalMergeData<'a, MH, CX>;
+    type GlobalExtraData = GlobalMergeData<MH, CX>;
     type AssociatedExtraData = CX::MinimizerBucketingSeqColorDataType;
-    type ExecutorType<'a> = ParallelKmersMergeExecutor<'a, H, MH, CX>;
-    type PreprocessorType<'a> = ParallelKmersMergePreprocessor<'a, H, MH, CX>;
+    type ExecutorType = ParallelKmersMergeExecutor<H, MH, CX>;
+    type PreprocessorType = ParallelKmersMergePreprocessor<H, MH, CX>;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U2;
 
-    fn new_resplitter<'a, 'b: 'a>(
-        global_data: &'a Self::GlobalExtraData<'b>,
-    ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType<'a>
-    {
+    fn new_resplitter(
+        global_data: &Arc<Self::GlobalExtraData>,
+    ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType {
         AssemblerMinimizerBucketingExecutorFactory::new(&global_data.global_resplit_data)
     }
 
-    fn new_preprocessor<'a>(
-        _global_data: &Self::GlobalExtraData<'a>,
-    ) -> Self::PreprocessorType<'a> {
+    fn new_preprocessor(_global_data: &Arc<Self::GlobalExtraData>) -> Self::PreprocessorType {
         ParallelKmersMergePreprocessor {
             _phantom: Default::default(),
         }
     }
 
-    fn new_executor<'a>(global_data: &Self::GlobalExtraData<'a>) -> Self::ExecutorType<'a> {
+    fn new_executor(global_data: &Arc<Self::GlobalExtraData>) -> Self::ExecutorType {
         #[cfg(feature = "mem-analysis")]
         let info = parallel_processor::mem_tracker::create_hashmap_entry(
             std::panic::Location::caller(),
             "HashMap",
         );
 
-        let mut hashes_buffer = Box::new(BucketsThreadBuffer::new(
-            DEFAULT_PER_CPU_BUFFER_SIZE,
-            global_data.buckets_count,
-        ));
+        let hashes_buffer =
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, global_data.buckets_count);
 
-        let buffers = unsafe { &mut *(hashes_buffer.deref_mut() as *mut BucketsThreadBuffer) };
-
-        Self::ExecutorType::<'a> {
-            hashes_tmp: BucketsThreadDispatcher::new(&global_data.hashes_buckets, buffers),
-            hashes_buffer,
+        Self::ExecutorType {
+            hashes_tmp: BucketsThreadDispatcher::new(&global_data.hashes_buckets, hashes_buffer),
             forward_seq: Vec::with_capacity(global_data.k),
             backward_seq: Vec::with_capacity(global_data.k),
             temp_colors: CX::ColorsMergeManagerType::<MH>::allocate_temp_buffer_structure(),
@@ -219,21 +212,20 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 }
 
 struct ParallelKmersMergePreprocessor<
-    'x,
     H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
 > {
-    _phantom: PhantomData<&'x (H, MH, CX)>,
+    _phantom: PhantomData<(H, MH, CX)>,
 }
 
-impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    KmersTransformPreprocessor<'x, ParallelKmersMergeFactory<H, MH, CX>>
-    for ParallelKmersMergePreprocessor<'x, H, MH, CX>
+impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+    KmersTransformPreprocessor<ParallelKmersMergeFactory<H, MH, CX>>
+    for ParallelKmersMergePreprocessor<H, MH, CX>
 {
-    fn get_sequence_bucket<'y: 'x, 'a, C>(
+    fn get_sequence_bucket<C>(
         &self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'x>,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
         seq_data: &(u8, u8, C, CompressedRead),
     ) -> BucketIndexType {
         let read = &seq_data.3;
@@ -256,14 +248,11 @@ impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsMan
 }
 
 struct ParallelKmersMergeExecutor<
-    'x,
     H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
 > {
-    hashes_tmp: BucketsThreadDispatcher<'x, LockFreeBinaryWriter>,
-    // This field has to appear after hashes_tmp so that it's dropped only when not used anymore
-    hashes_buffer: Box<BucketsThreadBuffer>,
+    hashes_tmp: BucketsThreadDispatcher<LockFreeBinaryWriter>,
 
     forward_seq: Vec<u8>,
     backward_seq: Vec<u8>,
@@ -286,8 +275,8 @@ fn get_kmer_multiplicity<CHI>(entry: &MapEntry<CHI>) -> usize {
         >> ((entry.get_flags() == (READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END)) as u8)
 }
 
-impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    ParallelKmersMergeExecutor<'x, H, MH, CX>
+impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+    ParallelKmersMergeExecutor<H, MH, CX>
 {
     #[inline(always)]
     fn write_hashes(
@@ -324,13 +313,13 @@ fn clear_hashmap<K, V>(hashmap: &mut HashMap<K, V>) {
     }
 }
 
-impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    KmersTransformExecutor<'x, ParallelKmersMergeFactory<H, MH, CX>>
-    for ParallelKmersMergeExecutor<'x, H, MH, CX>
+impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
+    KmersTransformExecutor<ParallelKmersMergeFactory<H, MH, CX>>
+    for ParallelKmersMergeExecutor<H, MH, CX>
 {
-    fn process_group_start<'y: 'x>(
+    fn process_group_start(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) {
         self.saved_reads.clear();
         CX::ColorsMergeManagerType::<MH>::reinit_temp_buffer_structure(&mut self.temp_colors);
@@ -339,9 +328,9 @@ impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsMan
         self.current_bucket = Some(global_data.output_results_buckets.pop().unwrap());
     }
 
-    fn process_group_batch_sequences<'y: 'x>(
+    fn process_group_batch_sequences(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
         batch: &Vec<(
             u8,
             CX::MinimizerBucketingSeqColorDataType,
@@ -407,9 +396,9 @@ impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsMan
         }
     }
 
-    fn process_group_finalize<'y: 'x>(
+    fn process_group_finalize(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) {
         let k = global_data.k;
         let buckets_count = global_data.buckets_count;
@@ -667,9 +656,9 @@ impl<'x, H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsMan
             .push(self.current_bucket.take().unwrap());
     }
 
-    fn finalize<'y: 'x>(
+    fn finalize(
         self,
-        _global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData<'y>,
+        _global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) {
         self.hashes_tmp.finalize();
     }
@@ -684,7 +673,7 @@ impl AssemblePipeline {
     >(
         file_inputs: Vec<PathBuf>,
         buckets_counters_path: PathBuf,
-        colors_global_table: &CX::GlobalColorsTable,
+        colors_global_table: Arc<CX::GlobalColorsTable>,
         buckets_count: usize,
         min_multiplicity: usize,
         out_directory: P,
@@ -696,14 +685,14 @@ impl AssemblePipeline {
             .write()
             .start_phase("phase: kmers merge".to_string());
 
-        let mut hashes_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        let mut hashes_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             out_directory.as_ref().join("hashes"),
             &(
                 get_memory_mode(SwapPriority::HashBuckets),
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
-        );
+        ));
 
         let mut sequences = Vec::new();
 
@@ -731,15 +720,15 @@ impl AssemblePipeline {
             assert!(res);
         }
 
-        let global_data = GlobalMergeData::<MH, CX> {
+        let global_data = Arc::new(GlobalMergeData::<MH, CX> {
             k,
             m,
             buckets_count,
             min_multiplicity,
             colors_global_table,
             output_results_buckets,
-            hashes_buckets: &hashes_buckets,
-            global_resplit_data: MinimizerBucketingCommonData::new(
+            hashes_buckets: hashes_buckets.clone(),
+            global_resplit_data: Arc::new(MinimizerBucketingCommonData::new(
                 k,
                 if k > RESPLITTING_MAX_K_M_DIFFERENCE + 1 {
                     k - RESPLITTING_MAX_K_M_DIFFERENCE
@@ -749,8 +738,8 @@ impl AssemblePipeline {
                 buckets_count,
                 1,
                 (),
-            ),
-        };
+            )),
+        });
 
         KmersTransform::<ParallelKmersMergeFactory<H, MH, CX>>::new(
             file_inputs,

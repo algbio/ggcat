@@ -25,7 +25,7 @@ impl Read for PointerDecoder {
     }
 }
 
-pub trait SequenceExtraData: Sized + Send + Debug {
+pub trait SequenceExtraData: Sized + Sync + Send + Debug {
     fn decode_from_slice(slice: &[u8]) -> Option<Self> {
         let mut cursor = Cursor::new(slice);
         Self::decode(&mut cursor)

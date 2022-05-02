@@ -1,7 +1,9 @@
 use crate::buckets::bucket_writer::BucketItem;
 use crate::buckets::{LockFreeBucket, MultiThreadBuckets};
 use crate::memory_data_size::MemoryDataSize;
+use crate::utils::panic_on_drop::PanicOnDrop;
 use std::ops::DerefMut;
+use std::sync::Arc;
 
 pub struct BucketsThreadBuffer {
     buffers: Vec<Vec<u8>>,
@@ -19,36 +21,22 @@ impl BucketsThreadBuffer {
     }
 }
 
-pub struct BucketsThreadDispatcher<'a, B: LockFreeBucket> {
-    mtb: &'a MultiThreadBuckets<B>,
-    thread_data: &'a mut BucketsThreadBuffer,
-    owned_buffer: Option<Box<BucketsThreadBuffer>>,
+pub struct BucketsThreadDispatcher<B: LockFreeBucket> {
+    mtb: Arc<MultiThreadBuckets<B>>,
+    thread_data: BucketsThreadBuffer,
+    drop_panic: PanicOnDrop,
 }
 
-impl<'a, B: LockFreeBucket> BucketsThreadDispatcher<'a, B> {
+impl<B: LockFreeBucket> BucketsThreadDispatcher<B> {
     pub fn new(
-        mtb: &'a MultiThreadBuckets<B>,
-        thread_data: &'a mut BucketsThreadBuffer,
-    ) -> BucketsThreadDispatcher<'a, B> {
-        assert_eq!(mtb.buckets.len(), thread_data.buffers.len());
-        Self {
-            mtb,
-            thread_data,
-            owned_buffer: None,
-        }
-    }
-
-    pub fn new_owned(
-        mtb: &'a MultiThreadBuckets<B>,
+        mtb: &Arc<MultiThreadBuckets<B>>,
         thread_data: BucketsThreadBuffer,
-    ) -> BucketsThreadDispatcher<'a, B> {
+    ) -> BucketsThreadDispatcher<B> {
         assert_eq!(mtb.buckets.len(), thread_data.buffers.len());
-        let mut owned_buffer = Box::new(thread_data);
-
         Self {
-            mtb,
-            thread_data: unsafe { &mut *(owned_buffer.deref_mut() as *mut BucketsThreadBuffer) },
-            owned_buffer: Some(owned_buffer),
+            mtb: mtb.clone(),
+            thread_data,
+            drop_panic: PanicOnDrop::new("buckets thread dispatcher not finalized"),
         }
     }
 
@@ -69,11 +57,7 @@ impl<'a, B: LockFreeBucket> BucketsThreadDispatcher<'a, B> {
         element.write_to(bucket_buf, extra_data);
     }
 
-    pub fn finalize(self) {}
-}
-
-impl<'a, B: LockFreeBucket> Drop for BucketsThreadDispatcher<'a, B> {
-    fn drop(&mut self) {
+    pub fn finalize(mut self) -> BucketsThreadBuffer {
         for (index, vec) in self.thread_data.buffers.iter_mut().enumerate() {
             if vec.len() == 0 {
                 continue;
@@ -81,5 +65,7 @@ impl<'a, B: LockFreeBucket> Drop for BucketsThreadDispatcher<'a, B> {
             self.mtb.add_data(index as u16, vec.as_slice());
             vec.clear();
         }
+        self.drop_panic.manually_drop();
+        self.thread_data
     }
 }

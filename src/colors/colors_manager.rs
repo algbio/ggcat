@@ -93,7 +93,7 @@ pub trait ColorsMergeManager<H: HashFunctionFactory, C: ColorsManager>: Sized {
 pub trait ColorsManager: 'static + Sync + Send + Sized {
     const COLORS_ENABLED: bool;
 
-    type GlobalColorsTable: Sync + 'static;
+    type GlobalColorsTable: Sync + Send + 'static;
     fn create_colors_table(
         path: impl AsRef<Path>,
         color_names: Vec<String>,

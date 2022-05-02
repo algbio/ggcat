@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub mod bucket_writer;
 pub mod concurrent;
@@ -46,8 +47,12 @@ impl<B: LockFreeBucket> MultiThreadBuckets<B> {
         self.buckets.len()
     }
 
-    pub fn finalize(&mut self) -> Vec<PathBuf> {
-        self.buckets
+    pub fn finalize(self: Arc<Self>) -> Vec<PathBuf> {
+        let mut self_ = Arc::try_unwrap(self)
+            .unwrap_or_else(|_| panic!("Cannot take full ownership of multi thread buckets!"));
+
+        self_
+            .buckets
             .drain(..)
             .map(|bucket| {
                 let path = bucket.get_path();

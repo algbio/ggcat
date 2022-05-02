@@ -1,12 +1,12 @@
 use parking_lot::RwLock;
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Weak};
 
 #[derive(Clone)]
 pub struct ExecutorAddress {
     pub(crate) executor_keeper: Arc<RwLock<Option<Arc<dyn Any>>>>,
-    pub(crate) executor_type_id: u64,
+    pub(crate) executor_type_id: TypeId,
     pub(crate) executor_internal_id: u64,
 }
 unsafe impl Send for ExecutorAddress {}
@@ -32,7 +32,7 @@ impl ExecutorAddress {
 
 impl Hash for ExecutorAddress {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u64(self.executor_type_id);
+        self.executor_type_id.hash(state);
         state.write_u64(self.executor_internal_id);
     }
 }
@@ -48,7 +48,7 @@ impl Eq for ExecutorAddress {}
 #[derive(Clone)]
 pub struct WeakExecutorAddress {
     executor_keeper: Option<Weak<dyn Any>>,
-    executor_type_id: u64,
+    executor_type_id: TypeId,
     executor_internal_id: u64,
 }
 unsafe impl Send for WeakExecutorAddress {}
@@ -58,7 +58,7 @@ impl WeakExecutorAddress {
     pub(crate) fn empty() -> Self {
         Self {
             executor_keeper: None,
-            executor_type_id: 0,
+            executor_type_id: TypeId::of::<()>(),
             executor_internal_id: 0,
         }
     }
@@ -75,7 +75,7 @@ impl WeakExecutorAddress {
 
 impl Hash for WeakExecutorAddress {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u64(self.executor_type_id);
+        self.executor_type_id.hash(state);
         state.write_u64(self.executor_internal_id);
     }
 }

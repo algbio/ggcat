@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 pub enum ExecutorType {
     SingleUnit,
+    MultipleCommonPacketUnits,
     MultipleUnits,
 }
 
@@ -18,7 +19,6 @@ static EXECUTOR_GLOBAL_ID: AtomicU64 = AtomicU64::new(0);
 
 pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
     const EXECUTOR_TYPE: ExecutorType;
-    const EXECUTOR_TYPE_INDEX: u64;
 
     type InputPacket: Send + Sync;
     type OutputPacket: Send + Sync + PacketTrait;
@@ -29,7 +29,7 @@ pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
     fn generate_new_address() -> ExecutorAddress {
         ExecutorAddress {
             executor_keeper: Arc::new(RwLock::new(None)),
-            executor_type_id: Self::EXECUTOR_TYPE_INDEX,
+            executor_type_id: std::any::TypeId::of::<Self>(),
             executor_internal_id: EXECUTOR_GLOBAL_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -37,7 +37,9 @@ pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
     fn allocate_new_group(
         global_params: Arc<Self::GlobalParams>,
         memory_params: Option<Self::MemoryParams>,
+        common_packet: Option<Packet<Self::InputPacket>>,
     ) -> Self::BuildParams;
+
     fn get_maximum_concurrency(&self) -> usize;
 
     fn reinitialize<P: FnMut() -> Packet<Self::OutputPacket>>(

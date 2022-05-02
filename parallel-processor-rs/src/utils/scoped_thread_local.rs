@@ -8,8 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::ThreadId;
 
 struct ThreadVarRef {
-    taken: AtomicBool,
-    val: UnsafeCell<Box<dyn Any>>,
+    val: UnsafeCell<Option<Box<dyn Any>>>,
 }
 unsafe impl Sync for ThreadVarRef {}
 unsafe impl Send for ThreadVarRef {}
@@ -19,37 +18,54 @@ lazy_static! {
 }
 static THREAD_LOCAL_VAR_INDEX: AtomicU64 = AtomicU64::new(0);
 
-pub struct ThreadLocalVariable<'a, T> {
-    var: &'a mut T,
+pub struct ThreadLocalVariable<T: 'static> {
+    var: Option<T>,
     index: u64,
     _not_send_sync: PhantomData<*mut ()>,
 }
 
-impl<'a, T> Deref for ThreadLocalVariable<'a, T> {
+impl<T> Deref for ThreadLocalVariable<T> {
     type Target = T;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        &self.var
+        self.var.as_ref().unwrap()
     }
 }
 
-impl<'a, T> DerefMut for ThreadLocalVariable<'a, T> {
+impl<T> DerefMut for ThreadLocalVariable<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.var
+        self.var.as_mut().unwrap()
     }
 }
 
-impl<'a, T> Drop for ThreadLocalVariable<'a, T> {
+impl<T> ThreadLocalVariable<T> {
+    pub fn take(&mut self) -> T {
+        self.var.take().unwrap()
+    }
+
+    pub fn put_back(&mut self, value: T) {
+        assert!(self.var.is_none());
+        self.var = Some(value);
+    }
+}
+
+impl<T: 'static> Drop for ThreadLocalVariable<T> {
     #[inline(always)]
     fn drop(&mut self) {
         let obj_entry = THREADS_MAP.get(&self.index).unwrap();
-        obj_entry
-            .get(&std::thread::current().id())
-            .unwrap()
-            .taken
-            .store(false, Ordering::Relaxed);
+        unsafe {
+            *obj_entry
+                .get(&std::thread::current().id())
+                .unwrap()
+                .val
+                .get() = Some(Box::new(
+                self.var
+                    .take()
+                    .expect("Thread local variable not managed correctly"),
+            ));
+        }
     }
 }
 
@@ -80,18 +96,17 @@ impl<T: 'static> ScopedThreadLocal<T> {
         let entry = obj_entry
             .entry(std::thread::current().id())
             .or_insert_with(|| ThreadVarRef {
-                taken: AtomicBool::new(false),
-                val: UnsafeCell::new(Box::new((self.alloc)())),
+                val: UnsafeCell::new(Some(Box::new((self.alloc)()))),
             });
 
-        if entry.taken.swap(true, Ordering::Relaxed) {
+        if let Some(value) = unsafe { (*entry.val.get()).take() } {
+            ThreadLocalVariable {
+                var: Some(*value.downcast().unwrap()),
+                index: self.index,
+                _not_send_sync: PhantomData,
+            }
+        } else {
             panic!("Thread local variable taken multiple times, aborting!");
-        }
-
-        ThreadLocalVariable {
-            var: unsafe { (*entry.val.get()).downcast_mut::<T>().unwrap() },
-            index: self.index,
-            _not_send_sync: PhantomData,
         }
     }
 }

@@ -38,8 +38,8 @@ impl<GlobalData: 'static, FileInfo: Clone + Sync + Send + Default + 'static> Poo
 impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default + 'static> Executor
     for MinimizerBucketingFilesReader<GlobalData, FileInfo>
 {
-    const EXECUTOR_TYPE: ExecutorType = ExecutorType::SingleUnit;
-    const EXECUTOR_TYPE_INDEX: u64 = 0;
+    const EXECUTOR_TYPE: ExecutorType = ExecutorType::MultipleUnits;
+
     type InputPacket = (PathBuf, FileInfo);
     type OutputPacket = MinimizerBucketingQueueData<FileInfo>;
     type GlobalParams = MinimizerBucketingExecutionContext<GlobalData>;
@@ -50,6 +50,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
     fn allocate_new_group(
         global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
+        _common_packet: Option<Packet<Self::InputPacket>>,
     ) -> Self::BuildParams {
         global_params
     }

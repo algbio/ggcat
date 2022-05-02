@@ -32,6 +32,7 @@ use rayon::iter::ParallelIterator;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct ReorganizedReadsExtraData<CX: SequenceExtraData> {
@@ -72,7 +73,7 @@ impl AssemblePipeline {
             .write()
             .start_phase("phase: reads reorganization".to_string());
 
-        let mut buckets = MultiThreadBuckets::<CompressedBinaryWriter>::new(
+        let mut buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
             temp_path.join("reads_bucket"),
             &(
@@ -80,7 +81,7 @@ impl AssemblePipeline {
                 CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
                 DEFAULT_LZ4_COMPRESSION_LEVEL,
             ),
-        );
+        ));
 
         reads.sort();
         mapping_files.sort();
@@ -94,7 +95,7 @@ impl AssemblePipeline {
         inputs.par_iter().for_each(|(read_file, mapping_file)| {
             let mut buffers = reads_thread_buffers.get();
 
-            let mut tmp_reads_buffer = BucketsThreadDispatcher::new(&buckets, &mut buffers);
+            let mut tmp_reads_buffer = BucketsThreadDispatcher::new(&buckets, buffers.take());
 
             let mut tmp_lonely_unitigs_buffer =
                 FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE);
@@ -183,6 +184,7 @@ impl AssemblePipeline {
                 index += 1;
             });
 
+            buffers.put_back(tmp_reads_buffer.finalize());
             tmp_lonely_unitigs_buffer.finalize();
 
             assert_eq!(map_index, mappings.len())

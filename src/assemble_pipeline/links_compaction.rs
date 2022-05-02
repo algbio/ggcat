@@ -26,6 +26,7 @@ use rayon::iter::ParallelIterator;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct LinkMapping {
@@ -68,15 +69,15 @@ impl AssemblePipeline {
         output_dir: impl AsRef<Path>,
         buckets_count: usize,
         elab_index: usize,
-        result_map_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
-        final_buckets: &mut MultiThreadBuckets<LockFreeBinaryWriter>,
+        result_map_buckets: &Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
+        final_buckets: &Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
         links_manager: &UnitigLinksManager,
         link_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
         result_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
     ) -> (Vec<PathBuf>, u64) {
         let totsum = AtomicU64::new(0);
 
-        let mut links_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        let mut links_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             output_dir
                 .as_ref()
@@ -86,13 +87,13 @@ impl AssemblePipeline {
                 get_memory_mode(SwapPriority::LinksBuckets as usize),
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
-        );
+        ));
 
         links_inputs.par_iter().for_each(|input| {
             let bucket_index = Utils::get_bucket_index(input);
 
             let mut link_buffers = link_thread_buffers.get();
-            let mut links_tmp = BucketsThreadDispatcher::new(&links_buckets, &mut link_buffers);
+            let mut links_tmp = BucketsThreadDispatcher::new(&links_buckets, link_buffers.take());
             let mut final_links_tmp = SingleBucketThreadDispatcher::new(
                 DEFAULT_PER_CPU_BUFFER_SIZE,
                 bucket_index,
@@ -103,7 +104,7 @@ impl AssemblePipeline {
 
             let mut result_buffers = result_thread_buffers.get();
             let mut results_tmp =
-                BucketsThreadDispatcher::new(&result_map_buckets, &mut result_buffers);
+                BucketsThreadDispatcher::new(&result_map_buckets, result_buffers.take());
 
             let mut rand_bool = FastRandBool::<1>::new();
 
@@ -381,9 +382,9 @@ impl AssemblePipeline {
             }
 
             totsum.fetch_add(rem_links, Ordering::Relaxed);
-            links_tmp.finalize();
+            link_buffers.put_back(links_tmp.finalize());
             final_links_tmp.finalize();
-            results_tmp.finalize();
+            result_buffers.put_back(results_tmp.finalize());
         });
 
         (links_buckets.finalize(), totsum.load(Ordering::Relaxed))

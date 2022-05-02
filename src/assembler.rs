@@ -18,6 +18,7 @@ use parking_lot::Mutex;
 use std::fs::remove_file;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Instant;
 
 pub fn run_assembler<
@@ -48,10 +49,10 @@ pub fn run_assembler<
         .map(|f| f.file_name().unwrap().to_string_lossy().to_string())
         .collect();
 
-    let global_colors_table = AssemblerColorsManager::create_colors_table(
+    let global_colors_table = Arc::new(AssemblerColorsManager::create_colors_table(
         output_file.with_extension("colors.dat"),
         color_names,
-    );
+    ));
 
     let (buckets, counters) = if step <= AssemblerStartingStep::MinimizerBucketing {
         AssemblePipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
@@ -90,7 +91,7 @@ pub fn run_assembler<
         >(
             buckets,
             counters,
-            &global_colors_table,
+            global_colors_table.clone(),
             buckets_count,
             min_multiplicity,
             temp_dir.as_path(),
@@ -151,23 +152,23 @@ pub fn run_assembler<
             let _ = remove_file(file);
         }
 
-        let mut result_map_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        let mut result_map_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             temp_dir.join("results_map"),
             &(
                 get_memory_mode(SwapPriority::FinalMaps as usize),
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
-        );
+        ));
 
-        let mut final_buckets = MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        let mut final_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             temp_dir.join("unitigs_map"),
             &(
                 get_memory_mode(SwapPriority::FinalMaps as usize),
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
-        );
+        ));
 
         if loop_iteration != 0 {
             links = Utils::generate_bucket_names(
@@ -207,8 +208,8 @@ pub fn run_assembler<
                 temp_dir.as_path(),
                 buckets_count,
                 loop_iteration,
-                &mut result_map_buckets,
-                &mut final_buckets,
+                &result_map_buckets,
+                &final_buckets,
                 &links_manager,
                 &links_scoped_buffer,
                 &results_map_scoped_buffer,
