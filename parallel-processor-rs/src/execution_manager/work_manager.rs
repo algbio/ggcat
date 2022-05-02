@@ -206,8 +206,8 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
 
     pub fn find_work(
         &self,
-        mut last_executor: Option<GenericExecutor<I, O>>,
-    ) -> Option<(Packet<I>, GenericExecutor<I, O>)> {
+        last_executor: &mut Option<GenericExecutor<I, O>>,
+    ) -> Option<Packet<I>> {
         // if self.pending_packets_count.load(Ordering::SeqCst) == 0 {
         //     let mut wait_lock = self.changes_notifier_mutex.lock();
         //     self.changes_notifier_condvar
@@ -220,9 +220,7 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
                 if let Some(packet) = self.get_packet_from_addr(&strong_addr) {
                     self.pending_packets_count.fetch_sub(1, Ordering::Relaxed);
                     self.changes_notifier_condvar.notify_all();
-                    return Some((packet, executor));
-                } else {
-                    last_executor = Some(executor);
+                    return Some(packet);
                 }
             }
 
@@ -233,9 +231,21 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
                 //     std::thread::current().id()
                 // );
                 if let Some(addr) = weak_addr.get_strong() {
+                    if let Some(executor) = &last_executor {
+                        if addr == executor.get_address() {
+                            self.duplicable_executors.push(weak_addr);
+                            if self.duplicable_executors.len() == 1 {
+                                break;
+                            } else {
+                                continue;
+                            }
+                        }
+                    }
+
                     if let Some(executor) = self.alloc_executor(&addr) {
                         if let Some(packet) = self.get_packet_from_addr(&addr) {
                             self.duplicable_executors.push(weak_addr);
+
                             self.pending_packets_count.fetch_sub(1, Ordering::Relaxed);
                             self.changes_notifier_condvar.notify_all();
                             // println!(
@@ -243,7 +253,8 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
                             //     std::any::type_name::<I>(),
                             //     std::thread::current().id()
                             // );
-                            return Some((packet, executor));
+                            *last_executor = Some(executor);
+                            return Some(packet);
                         }
                     }
                 }
@@ -275,11 +286,13 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> WorkManager<I, 
                     // );
                     self.pending_packets_count.fetch_sub(1, Ordering::Relaxed);
                     self.changes_notifier_condvar.notify_all();
-                    return Some((packet, executor));
+                    *last_executor = Some(executor);
+                    return Some(packet);
                 }
             }
 
             let mut wait_lock = self.changes_notifier_mutex.lock();
+
             self.changes_notifier_condvar
                 .wait_for(&mut wait_lock, Duration::from_millis(100));
         }

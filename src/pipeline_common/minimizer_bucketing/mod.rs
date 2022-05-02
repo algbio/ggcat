@@ -35,6 +35,7 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::threadpools_chain::{
     ObjectsPoolManager, ThreadPoolDefinition, ThreadPoolsChain,
 };
+use parking_lot::RwLock;
 use std::cmp::max;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -152,7 +153,7 @@ pub struct MinimizerBucketingExecutionContext<GlobalData> {
     pub buckets: MultiThreadBuckets<CompressedBinaryWriter>,
     pub common: MinimizerBucketingCommonData<GlobalData>,
     pub current_file: AtomicUsize,
-    pub executor_group_address: ExecutorAddress,
+    pub executor_group_address: RwLock<Option<ExecutorAddress>>,
     pub processed_files: AtomicUsize,
     pub total_files: usize,
     pub read_threads_count: usize,
@@ -350,6 +351,9 @@ impl GenericMinimizerBucketing {
         m: usize,
         global_data: E::GlobalData,
     ) -> (Vec<PathBuf>, PathBuf) {
+        let read_threads_count = max(1, threads_count / 2);
+        let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count));
+
         let buckets = MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
             output_path.join("bucket"),
@@ -374,7 +378,9 @@ impl GenericMinimizerBucketing {
         let mut execution_context = Arc::new(MinimizerBucketingExecutionContext {
             buckets,
             current_file: AtomicUsize::new(0),
-            executor_group_address: MinimizerBucketingExecWriter::<E>::generate_new_address(),
+            executor_group_address: RwLock::new(Some(
+                MinimizerBucketingExecWriter::<E>::generate_new_address(),
+            )),
             processed_files: AtomicUsize::new(0),
             total_files: input_files.len(),
             common: MinimizerBucketingCommonData::new(
@@ -384,21 +390,20 @@ impl GenericMinimizerBucketing {
                 second_buckets_count,
                 global_data,
             ),
-            threads_count,
-            read_threads_count: threads_count / 2,
+            threads_count: compute_threads_count,
+            read_threads_count,
         });
 
         {
             let input_files_count = input_files.len();
 
             let max_read_buffers_count =
-                threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed);
+                compute_threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed);
 
-            let disk_thread_pool = ExecThreadPool::new(
-                max(1, execution_context.read_threads_count),
-                input_files_count,
-            );
-            let compute_thread_pool = ExecThreadPool::new(threads_count, max_read_buffers_count);
+            let disk_thread_pool =
+                ExecThreadPool::new(execution_context.read_threads_count, input_files_count);
+            let compute_thread_pool =
+                ExecThreadPool::new(compute_threads_count, max_read_buffers_count);
 
             let mut input_files =
                 ExecutorInput::from_iter(input_files.into_iter(), ExecutorInputAddressMode::Single);
@@ -415,7 +420,7 @@ impl GenericMinimizerBucketing {
             input_files.set_output_executors(&file_readers, ExecOutputMode::FIFO);
 
             let bucket_writers = ExecutorsList::<MinimizerBucketingExecWriter<E>>::new(
-                ExecutorAllocMode::Fixed(threads_count),
+                ExecutorAllocMode::Fixed(compute_threads_count),
                 PoolAllocMode::None,
                 (),
                 &execution_context,
@@ -428,15 +433,9 @@ impl GenericMinimizerBucketing {
 
             disk_thread_pool.join();
             compute_thread_pool.join();
+            execution_context.executor_group_address.write().take();
         }
 
-        while Arc::strong_count(&execution_context) > 1 {
-            println!(
-                "References count: {}",
-                Arc::strong_count(&execution_context)
-            );
-            std::thread::sleep(Duration::from_millis(500));
-        }
         let mut execution_context = Arc::try_unwrap(execution_context)
             .unwrap_or_else(|_| panic!("Cannot get execution context!"));
 

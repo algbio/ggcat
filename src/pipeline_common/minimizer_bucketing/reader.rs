@@ -109,7 +109,15 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
                     data.file_info = file_info.clone();
                     data.start_read_index = read_index;
 
-                    packet_send(context.executor_group_address.clone(), tmp_data);
+                    packet_send(
+                        context
+                            .executor_group_address
+                            .read()
+                            .as_ref()
+                            .unwrap()
+                            .clone(),
+                        tmp_data,
+                    );
 
                     if !data.push_sequences(x) {
                         panic!("Out of memory!");
@@ -121,7 +129,15 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         );
 
         if data_packet.get_value().sequences.len() > 0 {
-            packet_send(context.executor_group_address.clone(), data_packet);
+            packet_send(
+                context
+                    .executor_group_address
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .clone(),
+                data_packet,
+            );
         }
 
         context.processed_files.fetch_add(1, Ordering::Relaxed);

@@ -44,11 +44,9 @@ impl<I: Send + Sync + 'static, O: Send + Sync + PoolObjectTrait> ExecThreadPool<
         let mut self_ref = &mut (self,);
 
         while !self.is_joining.load(Ordering::Relaxed) {
-            while let Some((packet, new_exec)) = work_manager.find_work(executor) {
-                new_exec.process_packet(packet);
-                executor = Some(new_exec);
+            while let Some(packet) = work_manager.find_work(&mut executor) {
+                executor.as_ref().unwrap().process_packet(packet);
             }
-            executor = None;
         }
     }
 

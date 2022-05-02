@@ -109,11 +109,6 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
 impl<E: Executor> Drop for ExecutionManager<E> {
     fn drop(&mut self) {
         let index = EXECUTORS_COUNT.fetch_sub(1, Ordering::Relaxed);
-        println!(
-            "Finalizing executor: {} / {}",
-            std::any::type_name::<E>(),
-            index
-        );
 
         self.executor
             .lock()
