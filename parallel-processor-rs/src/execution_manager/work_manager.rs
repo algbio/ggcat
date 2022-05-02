@@ -128,6 +128,8 @@ impl WorkManager {
             move |addr: &ExecutorAddress, packet: &mut Option<PacketAny>| {
                 let executor = executors_manager.executors_allocator.alloc_object();
 
+                println!("Executor allocated!");
+
                 addr.executor_keeper.try_read().unwrap();
 
                 if let Some(main_executor) = addr.executor_keeper.read().as_ref() {
@@ -144,6 +146,16 @@ impl WorkManager {
                     packet.take().map(|p| p.downcast()),
                 );
                 let output_pool = output_pool.clone();
+
+                println!(
+                    "Execution manager {}!",
+                    match &executors_manager.packet_pools {
+                        PoolMode::None => "None",
+                        PoolMode::Shared(_) => "Shared",
+                        PoolMode::Distinct { .. } => "Distinct",
+                    }
+                );
+
                 Some(ExecutionManager::new(
                     executor,
                     build_info,
@@ -188,7 +200,6 @@ impl WorkManager {
                     self.waiting_addresses.push(address.clone());
                     self.queues_allocator.alloc_object()
                 })
-                .get_value()
                 .push(packet)
             {
                 Ok(_) => {
@@ -224,7 +235,9 @@ impl WorkManager {
         match self.packets_map.get(&addr) {
             None => None,
             Some(packets) => {
-                if let Some(packet) = packets.value().get_value().pop() {
+                println!("Packet is some!");
+                if let Some(packet) = packets.value().pop() {
+                    println!("Packet popped!");
                     Some(packet)
                 } else {
                     None
@@ -234,12 +247,6 @@ impl WorkManager {
     }
 
     pub fn find_work(&self, last_executor: &mut Option<GenericExecutor>) -> Option<PacketAny> {
-        println!(
-            "Starting work finding... {} / {:?}",
-            self as *const _ as usize,
-            std::thread::current().id()
-        );
-
         if self.pending_packets_count.load(Ordering::SeqCst) == 0 {
             let mut wait_lock = self.changes_notifier_mutex.lock();
             self.changes_notifier_condvar
@@ -247,8 +254,13 @@ impl WorkManager {
         }
 
         while self.pending_packets_count.load(Ordering::SeqCst) > 0 {
+            // println!(
+            //     "Find work: {}",
+            //     self.pending_packets_count.load(Ordering::SeqCst)
+            // );
             if let Some(executor) = last_executor {
                 let strong_addr = executor.get_address();
+
                 if let Some(packet) = self.get_packet_from_addr(&strong_addr) {
                     self.pending_packets_count.fetch_sub(1, Ordering::Relaxed);
                     self.changes_notifier_condvar.notify_all();
@@ -288,6 +300,11 @@ impl WorkManager {
             }
 
             if let Some(addr) = self.waiting_addresses.pop() {
+                // println!(
+                //     "Waiting address popped: {}",
+                //     self.pending_packets_count.load(Ordering::SeqCst)
+                // );
+
                 let executor = self.alloc_executor(&addr).unwrap();
 
                 if executor.can_split() {

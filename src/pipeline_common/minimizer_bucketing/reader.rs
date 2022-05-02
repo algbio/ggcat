@@ -8,6 +8,7 @@ use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
 use std::marker::PhantomData;
 use std::mem::swap;
+use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -67,6 +68,16 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         self.context = Some(context.clone());
     }
 
+    fn pre_execute<
+        P: FnMut() -> Packet<Self::OutputPacket>,
+        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
+    >(
+        &mut self,
+        _packet_alloc: P,
+        _packet_send: S,
+    ) {
+    }
+
     fn execute<
         P: FnMut() -> Packet<Self::OutputPacket>,
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
@@ -77,11 +88,11 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         mut packet_send: S,
     ) {
         let mut data_packet = packet_alloc();
-        let file_info = input_packet.get_value().1.clone();
+        let file_info = input_packet.1.clone();
 
         let context = self.context.as_mut().unwrap();
 
-        let data = data_packet.get_value_mut();
+        let data = data_packet.deref_mut();
         data.file_info = file_info.clone();
         data.start_read_index = 0;
 
@@ -90,9 +101,9 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         context.current_file.fetch_add(1, Ordering::Relaxed);
 
         SequencesReader::process_file_extended(
-            &input_packet.get_value().0,
+            &input_packet.0,
             |x| {
-                let mut data = data_packet.get_value_mut();
+                let mut data = data_packet.deref_mut();
 
                 if x.seq.len() < context.common.k {
                     return;
@@ -106,7 +117,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
 
                     let mut tmp_data = packet_alloc();
                     swap(&mut data_packet, &mut tmp_data);
-                    data = data_packet.get_value_mut();
+                    data = data_packet.deref_mut();
                     data.file_info = file_info.clone();
                     data.start_read_index = read_index;
 
@@ -129,7 +140,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
             false,
         );
 
-        if data_packet.get_value().sequences.len() > 0 {
+        if data_packet.sequences.len() > 0 {
             packet_send(
                 context
                     .executor_group_address

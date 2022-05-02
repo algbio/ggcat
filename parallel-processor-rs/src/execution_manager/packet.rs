@@ -2,6 +2,7 @@ use crate::execution_manager::objects_pool::{ObjectsPool, PoolObjectTrait};
 use crossbeam::channel::Sender;
 use std::any::Any;
 use std::mem::MaybeUninit;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 pub trait PacketTrait: PoolObjectTrait + Sync + Send {}
@@ -71,14 +72,6 @@ impl<T: Any + Send + Sync> Packet<T> {
         }
     }
 
-    pub fn get_value(&self) -> &T {
-        unsafe { self.object.assume_init_ref() }
-    }
-
-    pub fn get_value_mut(&mut self) -> &mut T {
-        unsafe { self.object.assume_init_mut() }
-    }
-
     pub fn upcast(mut self) -> PacketAny {
         let packet = PacketAny {
             object: MaybeUninit::new(unsafe { self.object.assume_init_read() }),
@@ -91,6 +84,21 @@ impl<T: Any + Send + Sync> Packet<T> {
         }
 
         packet
+    }
+}
+
+impl<T: Any + Send + Sync> Deref for Packet<T> {
+    type Target = T;
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.object.assume_init_ref() }
+    }
+}
+
+impl<T: Any + Send + Sync> DerefMut for Packet<T> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.object.assume_init_mut() }
     }
 }
 

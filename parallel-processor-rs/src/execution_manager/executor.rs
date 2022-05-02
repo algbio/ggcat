@@ -48,6 +48,15 @@ pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
         packet_alloc: P,
     );
 
+    fn pre_execute<
+        P: FnMut() -> Packet<Self::OutputPacket>,
+        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
+    >(
+        &mut self,
+        packet_alloc: P,
+        packet_send: S,
+    );
+
     fn execute<
         P: FnMut() -> Packet<Self::OutputPacket>,
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),

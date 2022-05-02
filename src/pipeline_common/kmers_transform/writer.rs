@@ -1,11 +1,10 @@
 use crate::config::{DEFAULT_PREFETCH_AMOUNT, USE_SECOND_BUCKET};
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
-use crate::pipeline_common::kmers_transform::reader::InputBucketDesc;
 use crate::pipeline_common::kmers_transform::reads_buffer::ReadsBuffer;
 use crate::pipeline_common::kmers_transform::{
-    KmersTransformContext, KmersTransformExecutorFactory,
+    KmersTransformContext, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
+    KmersTransformMapProcessor,
 };
-use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::KEEP_FILES;
 use parallel_processor::buckets::readers::async_binary_reader::AsyncBinaryReader;
@@ -19,33 +18,32 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-pub struct KmersTransformResplitter<F: KmersTransformExecutorFactory> {
+pub struct KmersTransformWriter<F: KmersTransformExecutorFactory> {
     context: Option<Arc<KmersTransformContext<F>>>,
-    resplitter:
-        Option<<F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType>,
+    final_executor: Option<F::FinalExecutorType>,
 }
 
-impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformResplitter<F> {
+impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformWriter<F> {
     type InitData = ();
 
     fn allocate_new(_init_data: &Self::InitData) -> Self {
         Self {
             context: None,
-            resplitter: None,
+            final_executor: None,
         }
     }
 
     fn reset(&mut self) {
+        self.final_executor.take();
         self.context.take();
-        self.resplitter.take();
     }
 }
 
-impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> {
-    const EXECUTOR_TYPE: ExecutorType = ExecutorType::MultipleCommonPacketUnits;
+impl<F: KmersTransformExecutorFactory> Executor for KmersTransformWriter<F> {
+    const EXECUTOR_TYPE: ExecutorType = ExecutorType::MultipleUnits;
 
-    type InputPacket = ReadsBuffer<F::AssociatedExtraData>;
-    type OutputPacket = InputBucketDesc;
+    type InputPacket = <F::MapProcessorType as KmersTransformMapProcessor<F>>::MapStruct;
+    type OutputPacket = ();
     type GlobalParams = KmersTransformContext<F>;
     type MemoryParams = ();
     type BuildParams = Arc<KmersTransformContext<F>>;
@@ -86,12 +84,23 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
     >(
         &mut self,
         input_packet: Packet<Self::InputPacket>,
-        packet_alloc: P,
-        packet_send: S,
+        _packet_alloc: P,
+        _packet_send: S,
     ) {
+        let context = self.context.as_ref().unwrap();
+        self.final_executor
+            .as_mut()
+            .unwrap()
+            .process_map(&context.global_extra_data, input_packet);
     }
 
-    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, packet_send: S) {}
+    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, _packet_send: S) {
+        let context = self.context.as_ref().unwrap();
+        self.final_executor
+            .take()
+            .unwrap()
+            .finalize(&context.global_extra_data);
+    }
 
     fn get_total_memory(&self) -> u64 {
         0

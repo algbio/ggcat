@@ -10,6 +10,7 @@
 #![allow(dead_code)]
 
 extern crate alloc;
+extern crate core;
 extern crate test;
 
 mod assemble_pipeline;

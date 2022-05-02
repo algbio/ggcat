@@ -36,6 +36,7 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::RwLock;
 use std::cmp::max;
 use std::marker::PhantomData;
+use std::ops::Deref;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -78,7 +79,9 @@ pub trait MinimizerBucketingExecutorFactory: Sized {
         -> Self::ExecutorType;
 }
 
-pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory> {
+pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>:
+    'static + Sync + Send
+{
     fn preprocess_fasta(
         &mut self,
         file_info: &Factory::FileInfo,
@@ -227,6 +230,16 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
         ));
     }
 
+    fn pre_execute<
+        P: FnMut() -> Packet<Self::OutputPacket>,
+        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
+    >(
+        &mut self,
+        _packet_alloc: P,
+        _packet_send: S,
+    ) {
+    }
+
     fn execute<
         P: FnMut() -> Packet<Self::OutputPacket>,
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
@@ -249,7 +262,7 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
 
         let mut sequences_count = 0;
 
-        let input_packet = input_packet.get_value();
+        let input_packet = input_packet.deref();
         let tmp_reads_buffer = self.tmp_reads_buffer.as_mut().unwrap();
 
         for (index, x) in input_packet.iter_sequences().enumerate() {
@@ -378,8 +391,6 @@ impl GenericMinimizerBucketing {
         input_files.reverse();
 
         let second_buckets_count = max(16, threads_count.next_power_of_two());
-
-        const ATOMIC_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
         let mut execution_context = Arc::new(MinimizerBucketingExecutionContext {
             buckets,

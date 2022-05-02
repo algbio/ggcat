@@ -1,6 +1,7 @@
 use crate::execution_manager::executor::Executor;
 use crossbeam::channel::*;
 use std::mem::MaybeUninit;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
@@ -93,14 +94,19 @@ impl<T> PoolObject<T> {
             ref_pool: None,
         }
     }
+}
 
+impl<T> Deref for PoolObject<T> {
+    type Target = T;
     #[inline(always)]
-    pub fn get_value(&self) -> &T {
+    fn deref(&self) -> &Self::Target {
         unsafe { self.value.assume_init_ref() }
     }
+}
 
+impl<T> DerefMut for PoolObject<T> {
     #[inline(always)]
-    pub fn get_value_mut(&mut self) -> &mut T {
+    fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.value.assume_init_mut() }
     }
 }

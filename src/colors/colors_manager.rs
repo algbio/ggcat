@@ -35,7 +35,7 @@ pub mod color_types {
 /// Helper trait to manage colors labeling on KmersMerge step
 pub trait ColorsMergeManager<H: HashFunctionFactory, C: ColorsManager>: Sized {
     /// Temporary buffer that holds color values for each kmer while merging them
-    type ColorsBufferTempStructure;
+    type ColorsBufferTempStructure: 'static + Send + Sync;
     fn allocate_temp_buffer_structure() -> Self::ColorsBufferTempStructure;
     fn reinit_temp_buffer_structure(data: &mut Self::ColorsBufferTempStructure);
     fn add_temp_buffer_structure_el(
@@ -45,7 +45,7 @@ pub trait ColorsMergeManager<H: HashFunctionFactory, C: ColorsManager>: Sized {
     );
 
     /// Temporary storage for colors associated with a single kmer in the hashmap (holds the color subset index)
-    type HashMapTempColorIndex;
+    type HashMapTempColorIndex: 'static + Send + Sync;
     fn new_color_index() -> Self::HashMapTempColorIndex;
 
     /// This step finds the color subset indexes for each map entry
@@ -57,7 +57,7 @@ pub trait ColorsMergeManager<H: HashFunctionFactory, C: ColorsManager>: Sized {
     );
 
     type PartialUnitigsColorStructure: SequenceExtraData + Clone + 'static;
-    type TempUnitigColorStructure;
+    type TempUnitigColorStructure: 'static + Send + Sync;
 
     fn alloc_unitig_color_structure() -> Self::TempUnitigColorStructure;
     fn reset_unitig_color_structure(ts: &mut Self::TempUnitigColorStructure);

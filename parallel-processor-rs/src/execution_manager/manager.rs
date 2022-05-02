@@ -36,11 +36,13 @@ impl<E: Executor + 'static> ExecutionManager<E> {
         address: ExecutorAddress,
         output_fn: impl Fn(ExecutorAddress, Packet<E::OutputPacket>) + Sync + Send + 'static,
     ) -> GenericExecutor {
-        executor.get_value_mut().reinitialize(&build_info, || {
-            pool.as_ref().unwrap().get_value().alloc_packet()
-        });
+        executor.reinitialize(&build_info, || pool.as_ref().unwrap().alloc_packet());
+        executor.pre_execute(
+            || pool.as_ref().unwrap().alloc_packet(),
+            |addr, packet| output_fn(addr, packet),
+        );
 
-        let maximum_instances = executor.get_value().get_maximum_concurrency();
+        let maximum_instances = executor.get_maximum_concurrency();
         EXECUTORS_COUNT.fetch_add(1, Ordering::Relaxed);
 
         let mut self_ = Arc::new(Self {
@@ -64,9 +66,11 @@ impl<E: Executor + 'static> ExecutionManager<E> {
         }
         EXECUTORS_COUNT.fetch_add(1, Ordering::Relaxed);
 
-        new_core.get_value_mut().reinitialize(build_info, || {
-            self.pool.as_ref().unwrap().get_value().alloc_packet()
-        });
+        new_core.reinitialize(build_info, || self.pool.as_ref().unwrap().alloc_packet());
+        new_core.pre_execute(
+            || self.pool.as_ref().unwrap().alloc_packet(),
+            |addr, packet| (self.output_fn)(addr, packet),
+        );
 
         Some(Arc::new(Self {
             executor: Mutex::new(new_core),
@@ -81,9 +85,9 @@ impl<E: Executor + 'static> ExecutionManager<E> {
 impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
     fn process_packet(&self, packet: PacketAny) {
         let mut executor = self.executor.lock();
-        executor.get_value_mut().execute(
+        executor.execute(
             packet.downcast(),
-            || self.pool.as_ref().unwrap().get_value().alloc_packet(),
+            || self.pool.as_ref().unwrap().alloc_packet(),
             self.output_fn.deref(),
         );
     }
@@ -104,9 +108,6 @@ impl<E: Executor> Drop for ExecutionManager<E> {
     fn drop(&mut self) {
         let index = EXECUTORS_COUNT.fetch_sub(1, Ordering::Relaxed);
 
-        self.executor
-            .lock()
-            .get_value_mut()
-            .finalize(self.output_fn.deref())
+        self.executor.lock().finalize(self.output_fn.deref())
     }
 }
