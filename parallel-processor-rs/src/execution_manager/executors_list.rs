@@ -3,6 +3,7 @@ use crate::execution_manager::objects_pool::PoolObjectTrait;
 use crate::execution_manager::thread_pool::{ExecThreadPool, ExecThreadPoolDataAddTrait};
 use crate::execution_manager::units_io::ExecOutput;
 use crate::memory_data_size::MemoryDataSize;
+use std::any::TypeId;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -60,6 +61,7 @@ impl<E: Executor> ExecOutput for ExecutorsList<E> {
         exec_list: &ExecutorsList<W>,
         output_mode: ExecOutputMode,
     ) {
-        self.thread_pool.set_output(&exec_list.thread_pool)
+        self.thread_pool
+            .set_output(TypeId::of::<E>(), TypeId::of::<W>(), &exec_list.thread_pool)
     }
 }

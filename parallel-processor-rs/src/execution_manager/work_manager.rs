@@ -30,30 +30,34 @@ struct ExecutorsListManager<E: Executor> {
 }
 
 struct ExecutionManagerInfo {
-    executior_type: ExecutorType,
-    allocator: Box<
-        dyn (Fn(&ExecutorAddress, &mut Option<PacketAny>) -> Option<GenericExecutor>) + Sync + Send,
+    executor_type: ExecutorType,
+    output_type_id: TypeId,
+    output_pool: Option<Arc<dyn ExecThreadPoolDataAddTrait>>,
+    allocator: Option<
+        Box<
+            dyn (Fn(&ExecutorAddress, &mut Option<PacketAny>) -> Option<GenericExecutor>)
+                + Sync
+                + Send,
+        >,
     >,
 }
 
 pub struct WorkManager {
-    execution_managers_info: HashMap<TypeId, ExecutionManagerInfo>,
-    packets_map: DashMap<ExecutorAddress, PoolObject<ArrayQueue<PacketAny>>>,
+    execution_managers_info: HashMap<TypeId, Arc<RwLock<ExecutionManagerInfo>>>,
+    packets_map: DashMap<WeakExecutorAddress, PoolObject<ArrayQueue<(ExecutorAddress, PacketAny)>>>,
 
     full_executors: SegQueue<GenericExecutor>,
     available_executors: SegQueue<GenericExecutor>,
     duplicable_executors: SegQueue<WeakExecutorAddress>,
 
-    waiting_addresses: SegQueue<ExecutorAddress>,
+    waiting_addresses: HashMap<TypeId, SegQueue<ExecutorAddress>>,
 
     pending_packets_count: AtomicU64,
-
-    output_pool: Arc<RwLock<Option<Arc<dyn ExecThreadPoolDataAddTrait + 'static>>>>,
 
     changes_notifier_mutex: Mutex<()>,
     changes_notifier_condvar: Condvar,
 
-    queues_allocator: ObjectsPool<ArrayQueue<PacketAny>>,
+    queues_allocator: ObjectsPool<ArrayQueue<(ExecutorAddress, PacketAny)>>,
 }
 
 impl<T: 'static> PoolObjectTrait for ArrayQueue<T> {
@@ -78,7 +82,6 @@ impl WorkManager {
             duplicable_executors: Default::default(),
             waiting_addresses: Default::default(),
             pending_packets_count: AtomicU64::new(0),
-            output_pool: Arc::new(RwLock::new(None)),
             changes_notifier_mutex: Default::default(),
             changes_notifier_condvar: Default::default(),
             queues_allocator: ObjectsPool::new(
@@ -89,8 +92,19 @@ impl WorkManager {
         }
     }
 
-    pub fn set_output<P: ExecThreadPoolDataAddTrait + 'static>(&mut self, output_target: Arc<P>) {
-        *self.output_pool.write() = Some(output_target);
+    pub fn set_output<P: ExecThreadPoolDataAddTrait + 'static>(
+        &mut self,
+        target_id: TypeId,
+        output_id: TypeId,
+        output_target: Arc<P>,
+    ) {
+        let mut exec_info = self
+            .execution_managers_info
+            .get(&target_id)
+            .unwrap()
+            .write();
+        exec_info.output_type_id = output_id;
+        exec_info.output_pool = Some(output_target);
     }
 
     pub fn add_executors<E: Executor>(
@@ -122,13 +136,18 @@ impl WorkManager {
             executors_allocator: ObjectsPool::new(executors_max_count, false, ()),
         });
 
-        let output_pool = self.output_pool.clone();
+        let executor_info = Arc::new(RwLock::new(ExecutionManagerInfo {
+            executor_type: E::EXECUTOR_TYPE,
+            output_type_id: TypeId::of::<()>(),
+            output_pool: None,
+            allocator: None,
+        }));
+
+        let executor_info_aeu = Arc::downgrade(&executor_info);
 
         let allocate_execution_unit =
             move |addr: &ExecutorAddress, packet: &mut Option<PacketAny>| {
                 let executor = executors_manager.executors_allocator.alloc_object();
-
-                println!("Executor allocated!");
 
                 addr.executor_keeper.try_read().unwrap();
 
@@ -145,16 +164,12 @@ impl WorkManager {
                     None,
                     packet.take().map(|p| p.downcast()),
                 );
-                let output_pool = output_pool.clone();
-
-                println!(
-                    "Execution manager {}!",
-                    match &executors_manager.packet_pools {
-                        PoolMode::None => "None",
-                        PoolMode::Shared(_) => "Shared",
-                        PoolMode::Distinct { .. } => "Distinct",
-                    }
-                );
+                let output_pool = executor_info_aeu
+                    .upgrade()
+                    .unwrap()
+                    .read()
+                    .output_pool
+                    .clone();
 
                 Some(ExecutionManager::new(
                     executor,
@@ -169,7 +184,6 @@ impl WorkManager {
                     addr.clone(),
                     move |addr, packet| {
                         output_pool
-                            .read()
                             .as_ref()
                             .unwrap()
                             .add_data(addr, packet.upcast());
@@ -177,36 +191,42 @@ impl WorkManager {
                 ))
             };
 
+        executor_info.write().allocator = Some(Box::new(allocate_execution_unit));
+
         let not_present = self
             .execution_managers_info
-            .insert(
-                TypeId::of::<E>(),
-                ExecutionManagerInfo {
-                    executior_type: E::EXECUTOR_TYPE,
-                    allocator: Box::new(allocate_execution_unit),
-                },
-            )
+            .insert(TypeId::of::<E>(), executor_info)
             .is_none();
+
+        self.waiting_addresses
+            .insert(TypeId::of::<E>(), SegQueue::new());
+
         assert!(not_present);
     }
 
-    pub fn add_input_packet(&self, address: ExecutorAddress, mut packet: PacketAny) {
+    pub fn add_input_packet(&self, mut address: ExecutorAddress, mut packet: PacketAny) {
         self.pending_packets_count.fetch_add(1, Ordering::SeqCst);
         loop {
             match self
                 .packets_map
-                .entry(address.clone())
+                .entry(address.to_weak())
                 .or_insert_with(|| {
-                    self.waiting_addresses.push(address.clone());
+                    self.waiting_addresses
+                        .get(&address.executor_type_id)
+                        .unwrap()
+                        .push(address.clone());
                     self.queues_allocator.alloc_object()
                 })
-                .push(packet)
+                .push((address, packet))
             {
                 Ok(_) => {
                     self.changes_notifier_condvar.notify_all();
                     break;
                 }
-                Err(val) => packet = val,
+                Err(val) => {
+                    address = val.0;
+                    packet = val.1;
+                }
             }
             println!("Failed packet insertion!");
         }
@@ -216,14 +236,15 @@ impl WorkManager {
         let executor_info = self
             .execution_managers_info
             .get(&address.executor_type_id)
-            .unwrap();
+            .unwrap()
+            .read();
 
-        let mut packet = match executor_info.executior_type {
+        let mut packet = match executor_info.executor_type {
             ExecutorType::SingleUnit | ExecutorType::MultipleUnits => None,
             ExecutorType::MultipleCommonPacketUnits => Some(self.get_packet_from_addr(address)?),
         };
 
-        let executor = (executor_info.allocator)(address, &mut packet);
+        let executor = (executor_info.allocator.as_ref().unwrap())(address, &mut packet);
 
         if let Some(packet) = packet {
             self.add_input_packet(address.clone(), packet);
@@ -232,13 +253,11 @@ impl WorkManager {
     }
 
     fn get_packet_from_addr(&self, addr: &ExecutorAddress) -> Option<PacketAny> {
-        match self.packets_map.get(&addr) {
+        match self.packets_map.get(&addr.to_weak()) {
             None => None,
             Some(packets) => {
-                println!("Packet is some!");
                 if let Some(packet) = packets.value().pop() {
-                    println!("Packet popped!");
-                    Some(packet)
+                    Some(packet.1)
                 } else {
                     None
                 }
@@ -253,7 +272,7 @@ impl WorkManager {
                 .wait_for(&mut wait_lock, Duration::from_millis(100));
         }
 
-        while self.pending_packets_count.load(Ordering::SeqCst) > 0 {
+        'main_scheduling_loop: while self.pending_packets_count.load(Ordering::SeqCst) > 0 {
             // println!(
             //     "Find work: {}",
             //     self.pending_packets_count.load(Ordering::SeqCst)
@@ -299,21 +318,30 @@ impl WorkManager {
                 continue;
             }
 
-            if let Some(addr) = self.waiting_addresses.pop() {
+            for (_, addr_queue) in self.waiting_addresses.iter() {
                 // println!(
                 //     "Waiting address popped: {}",
                 //     self.pending_packets_count.load(Ordering::SeqCst)
                 // );
+                if let Some(addr) = addr_queue.pop() {
+                    let executor = self.alloc_executor(&addr).unwrap();
 
-                let executor = self.alloc_executor(&addr).unwrap();
+                    if executor.can_split() {
+                        self.duplicable_executors.push(addr.to_weak());
+                        self.changes_notifier_condvar.notify_all();
+                    }
 
-                if executor.can_split() {
-                    self.duplicable_executors.push(addr.to_weak());
-                    self.changes_notifier_condvar.notify_all();
+                    println!(
+                        "Allocating executor, last: {:?}",
+                        last_executor.as_ref().map(|x| (
+                            Arc::strong_count(x),
+                            self.get_packet_from_addr(&x.get_address()).is_some()
+                        ))
+                    );
+
+                    *last_executor = Some(executor);
+                    continue 'main_scheduling_loop;
                 }
-
-                *last_executor = Some(executor);
-                continue;
             }
 
             let mut wait_lock = self.changes_notifier_mutex.lock();

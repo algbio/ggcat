@@ -117,7 +117,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     }
 
     fn new_final_executor(global_data: &Arc<Self::GlobalExtraData>) -> Self::FinalExecutorType {
-        let mut counters_buffers = BucketsThreadBuffer::new(
+        let counters_buffers = BucketsThreadBuffer::new(
             DEFAULT_PER_CPU_BUFFER_SIZE,
             global_data.counters_buckets.count(),
         );
@@ -306,7 +306,7 @@ impl QueryPipeline {
             .write()
             .start_phase("phase: kmers counting".to_string());
 
-        let mut counters_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        let counters_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             out_directory.as_ref().join("counters"),
             &(
@@ -340,7 +340,7 @@ impl QueryPipeline {
         )
         .parallel_kmers_transform(threads_count);
 
-        let mut global_data =
+        let global_data =
             Arc::try_unwrap(global_data).unwrap_or_else(|_| panic!("Cannot unwrap global data!"));
         global_data.counters_buckets.finalize()
     }

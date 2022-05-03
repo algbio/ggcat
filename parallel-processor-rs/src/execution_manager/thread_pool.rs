@@ -3,6 +3,7 @@ use crate::execution_manager::objects_pool::PoolObjectTrait;
 use crate::execution_manager::packet::PacketAny;
 use crate::execution_manager::work_manager::WorkManager;
 use parking_lot::{Mutex, RwLock};
+use std::any::TypeId;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -32,8 +33,10 @@ impl ExecThreadPool {
         })
     }
 
-    pub fn set_output(&self, target: &Arc<ExecThreadPool>) {
-        self.work_manager.write().set_output(target.clone());
+    pub fn set_output(&self, target_id: TypeId, output_id: TypeId, target: &Arc<ExecThreadPool>) {
+        self.work_manager
+            .write()
+            .set_output(target_id, output_id, target.clone());
     }
 
     fn thread(&self) {

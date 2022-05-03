@@ -66,6 +66,9 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformWriter<F> {
         _packet_alloc: P,
     ) {
         self.context = Some(reinit_params.clone());
+        if self.final_executor.is_none() {
+            self.final_executor = Some(F::new_final_executor(&reinit_params.global_extra_data));
+        }
     }
 
     fn pre_execute<

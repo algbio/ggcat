@@ -287,7 +287,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 max_count: threads_count * 4,
                 max_memory: MemoryDataSize::from_gibioctets(4), // TODO: Make dynamic
             },
-            PoolAllocMode::None,
+            PoolAllocMode::Shared {
+                capacity: threads_count * 4,
+            },
             (),
             &self.execution_context,
             &compute_thread_pool,
@@ -314,8 +316,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         );
 
         bucket_sequences_processors.set_output_executors(&bucket_writers, ExecOutputMode::FIFO);
-
-        println!("Starting thread pools!");
 
         disk_thread_pool.start();
         compute_thread_pool.start();

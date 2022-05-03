@@ -40,7 +40,7 @@ impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformProcess
 }
 
 impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
-    const EXECUTOR_TYPE: ExecutorType = ExecutorType::MultipleCommonPacketUnits;
+    const EXECUTOR_TYPE: ExecutorType = ExecutorType::SingleUnit;
 
     type InputPacket = ReadsBuffer<F::AssociatedExtraData>;
     type OutputPacket = <F::MapProcessorType as KmersTransformMapProcessor<F>>::MapStruct;
@@ -51,13 +51,14 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
     fn allocate_new_group(
         global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
-        common_packet: Option<Packet<Self::InputPacket>>,
+        _common_packet: Option<Packet<Self::InputPacket>>,
     ) -> Self::BuildParams {
+        println!("Allocated new group proc!");
         global_params
     }
 
     fn get_maximum_concurrency(&self) -> usize {
-        16 // TODO: Parametrize
+        1
     }
 
     fn reinitialize<P: FnMut() -> Packet<Self::OutputPacket>>(
@@ -79,10 +80,12 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         mut packet_alloc: P,
         _packet_send: S,
     ) {
+        println!("Pre execute!");
         self.map_processor.as_mut().unwrap().process_group_start(
             packet_alloc(),
             &self.context.as_ref().unwrap().global_extra_data,
         );
+        println!("End pre execute!");
     }
 
     fn execute<
@@ -94,6 +97,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         _packet_alloc: P,
         _packet_send: S,
     ) {
+        println!("Execute processor!");
         self.map_processor
             .as_mut()
             .unwrap()
@@ -108,6 +112,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         &mut self,
         mut packet_send: S,
     ) {
+        println!("Finalize processor!");
         let context = self.context.as_ref().unwrap();
 
         let packet = self

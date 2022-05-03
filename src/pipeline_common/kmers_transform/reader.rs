@@ -115,8 +115,8 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
     ) {
         self.context = Some(reinit_params.0.clone());
 
-        let second_buckets_count_log = reinit_params.2;
-        let second_buckets_count = (1 << second_buckets_count_log);
+        self.second_buckets_count_log = reinit_params.2;
+        let second_buckets_count = (1 << self.second_buckets_count_log);
 
         self.buffers
             .extend((0..second_buckets_count).map(|_| packet_alloc()));
@@ -168,7 +168,6 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
                     .reads
                     .push((flags, extra_data, ind_read));
                 if self.buffers[bucket].reads.len() == self.buffers[bucket].reads.capacity() {
-                    println!("Sending packet {}!", bucket);
                     packet_send(
                         self.addresses[bucket].clone(),
                         std::mem::replace(&mut self.buffers[bucket], packet_alloc()),

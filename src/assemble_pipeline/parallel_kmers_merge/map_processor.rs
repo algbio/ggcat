@@ -43,8 +43,13 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
 {
     type InitData = ();
 
-    fn allocate_new(init_data: &Self::InitData) -> Self {
-        todo!()
+    fn allocate_new(_init_data: &Self::InitData) -> Self {
+        Self {
+            rhash_map: HashMap::with_capacity(4096),
+            saved_reads: vec![],
+            rcorrect_reads: TrackedVec::new(),
+            temp_colors: <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::allocate_temp_buffer_structure()
+        }
     }
 
     fn reset(&mut self) {
@@ -89,7 +94,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     fn process_group_start(
         &mut self,
         map_struct: Packet<Self::MapStruct>,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+        _global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) {
         self.map_packet = Some(map_struct);
     }
@@ -170,6 +175,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         &mut self,
         _global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) -> Packet<Self::MapStruct> {
+        println!("Finalize map packet!");
+
         static COUNTER_KMERS_MAX: AtomicCounter<MaxMode> =
             declare_counter_i64!("kmers_cardinality_max", MaxMode, false);
         static COUNTER_READS_MAX: AtomicCounter<MaxMode> =
