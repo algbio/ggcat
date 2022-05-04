@@ -19,7 +19,7 @@ pub enum ExecutorAllocMode {
 pub enum PoolAllocMode {
     None,
     Shared { capacity: usize },
-    Instance { capacity: usize },
+    Distinct { capacity: usize },
 }
 
 pub enum ExecOutputMode {

@@ -48,10 +48,11 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
 
     type BuildParams = Arc<MinimizerBucketingExecutionContext<GlobalData>>;
 
-    fn allocate_new_group(
+    fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
         global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
         _common_packet: Option<Packet<Self::InputPacket>>,
+        _executors_initializer: D,
     ) -> Self::BuildParams {
         global_params
     }
@@ -156,6 +157,10 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
     }
 
     fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, _packet_send: S) {
+    }
+
+    fn is_finished(&self) -> bool {
+        false
     }
 
     fn get_total_memory(&self) -> u64 {

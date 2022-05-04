@@ -13,7 +13,7 @@ trait PacketPoolReturnerTrait: Send + Sync {
 
 impl<T: Send + Sync + 'static> PacketPoolReturnerTrait for Sender<Box<T>> {
     fn send_any(&self, packet: Box<dyn Any>) {
-        self.send(packet.downcast().unwrap());
+        let _ = self.try_send(packet.downcast().unwrap());
     }
 }
 

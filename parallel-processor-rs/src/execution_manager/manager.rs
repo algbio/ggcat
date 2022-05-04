@@ -4,6 +4,7 @@ use crate::execution_manager::objects_pool::ObjectsPool;
 use crate::execution_manager::objects_pool::PoolObject;
 use crate::execution_manager::packet::{Packet, PacketAny, PacketsPool};
 use parking_lot::{Mutex, RwLock};
+use std::any::{Any, TypeId};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -11,11 +12,24 @@ use std::sync::Arc;
 pub type GenericExecutor = Arc<dyn ExecutionManagerTrait>;
 
 pub trait ExecutionManagerTrait: Send + Sync {
+    fn pre_execute(&self);
+
     fn process_packet(&self, packet: PacketAny);
 
     fn get_address(&self) -> ExecutorAddress;
 
+    fn is_finished(&self) -> bool;
+
     fn can_split(&self) -> bool;
+
+    fn exec_type_id(&self) -> TypeId;
+}
+
+impl dyn ExecutionManagerTrait {
+    pub fn downcast<E: Executor>(&self) -> &ExecutionManager<E> {
+        assert_eq!(self.exec_type_id(), TypeId::of::<E>());
+        unsafe { &*(self as *const dyn ExecutionManagerTrait as *const ExecutionManager<E>) }
+    }
 }
 
 pub struct ExecutionManager<E: Executor> {
@@ -37,10 +51,6 @@ impl<E: Executor + 'static> ExecutionManager<E> {
         output_fn: impl Fn(ExecutorAddress, Packet<E::OutputPacket>) + Sync + Send + 'static,
     ) -> GenericExecutor {
         executor.reinitialize(&build_info, || pool.as_ref().unwrap().alloc_packet());
-        executor.pre_execute(
-            || pool.as_ref().unwrap().alloc_packet(),
-            |addr, packet| output_fn(addr, packet),
-        );
 
         let maximum_instances = executor.get_maximum_concurrency();
         EXECUTORS_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -67,10 +77,6 @@ impl<E: Executor + 'static> ExecutionManager<E> {
         EXECUTORS_COUNT.fetch_add(1, Ordering::Relaxed);
 
         new_core.reinitialize(build_info, || self.pool.as_ref().unwrap().alloc_packet());
-        new_core.pre_execute(
-            || self.pool.as_ref().unwrap().alloc_packet(),
-            |addr, packet| (self.output_fn)(addr, packet),
-        );
 
         Some(Arc::new(Self {
             executor: Mutex::new(new_core),
@@ -83,6 +89,13 @@ impl<E: Executor + 'static> ExecutionManager<E> {
 }
 
 impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
+    fn pre_execute(&self) {
+        self.executor.lock().pre_execute(
+            || self.pool.as_ref().unwrap().alloc_packet(),
+            self.output_fn.deref(),
+        );
+    }
+
     fn process_packet(&self, packet: PacketAny) {
         let mut executor = self.executor.lock();
         executor.execute(
@@ -96,18 +109,26 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
         self.weak_address.read().get_strong().unwrap()
     }
 
+    fn is_finished(&self) -> bool {
+        self.executor.lock().is_finished() || self.weak_address.read().get_strong_count() <= 1
+    }
+
     fn can_split(&self) -> bool {
         self.build_info
             .as_ref()
             .map(|bi| bi.1.load(Ordering::Relaxed) < bi.2)
             .unwrap_or(false)
     }
+
+    fn exec_type_id(&self) -> TypeId {
+        TypeId::of::<E>()
+    }
 }
 
 impl<E: Executor> Drop for ExecutionManager<E> {
     fn drop(&mut self) {
         let index = EXECUTORS_COUNT.fetch_sub(1, Ordering::Relaxed);
-
+        println!("Finalizing executor!");
         self.executor.lock().finalize(self.output_fn.deref())
     }
 }

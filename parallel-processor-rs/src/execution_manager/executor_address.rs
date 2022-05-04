@@ -1,11 +1,13 @@
+use crate::execution_manager::manager::{ExecutionManagerTrait, GenericExecutor};
 use parking_lot::RwLock;
 use std::any::{Any, TypeId};
+use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Weak};
 
 #[derive(Clone)]
 pub struct ExecutorAddress {
-    pub(crate) executor_keeper: Arc<RwLock<Option<Arc<dyn Any>>>>,
+    pub(crate) executor_keeper: Arc<RwLock<Option<GenericExecutor>>>,
     pub(crate) executor_type_id: TypeId,
     pub(crate) executor_internal_id: u64,
 }
@@ -47,10 +49,27 @@ impl Eq for ExecutorAddress {}
 
 #[derive(Clone)]
 pub struct WeakExecutorAddress {
-    executor_keeper: Option<Weak<dyn Any>>,
+    pub executor_keeper: Option<Weak<dyn ExecutionManagerTrait>>,
     executor_type_id: TypeId,
     executor_internal_id: u64,
 }
+
+impl Debug for WeakExecutorAddress {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "({:?},I{}/{})",
+            self.executor_type_id,
+            self.executor_internal_id,
+            match &self.executor_keeper {
+                None => "NA".to_string(),
+                Some(ek) => {
+                    format!("CN[{}]", ek.strong_count())
+                }
+            }
+        ))
+    }
+}
+
 unsafe impl Send for WeakExecutorAddress {}
 unsafe impl Sync for WeakExecutorAddress {}
 
@@ -60,6 +79,21 @@ impl WeakExecutorAddress {
             executor_keeper: None,
             executor_type_id: TypeId::of::<()>(),
             executor_internal_id: 0,
+        }
+    }
+
+    pub(crate) fn get_strong_count(&self) -> usize {
+        self.executor_keeper
+            .as_ref()
+            .map(|e| e.strong_count())
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn is_deallocated(&self) -> bool {
+        if let Some(e) = &self.executor_keeper {
+            e.strong_count() > 0
+        } else {
+            false
         }
     }
 

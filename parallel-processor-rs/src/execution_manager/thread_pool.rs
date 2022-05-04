@@ -11,6 +11,7 @@ use std::thread::JoinHandle;
 
 pub trait ExecThreadPoolDataAddTrait: Send + Sync {
     fn add_data(&self, addr: ExecutorAddress, packet: PacketAny);
+    fn add_executors_batch(&self, executors: Vec<ExecutorAddress>);
 }
 
 pub struct ExecThreadPool {
@@ -73,6 +74,10 @@ impl ExecThreadPool {
 impl ExecThreadPoolDataAddTrait for ExecThreadPool {
     fn add_data(&self, addr: ExecutorAddress, packet: PacketAny) {
         self.work_manager.read().add_input_packet(addr, packet);
+    }
+
+    fn add_executors_batch(&self, executors: Vec<ExecutorAddress>) {
+        self.work_manager.read().register_executors_batch(executors);
     }
 }
 

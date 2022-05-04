@@ -41,13 +41,22 @@ impl<T: Send + Sync + 'static, I: Iterator<Item = T>> ExecOutput for ExecutorInp
         output_mode: ExecOutputMode,
     ) {
         let mut address = W::generate_new_address();
+        let mut addresses = vec![address.clone()];
+
+        let mut data = vec![];
+
         for value in &mut self.iterator {
-            exec_list
-                .thread_pool
-                .add_data(address.clone(), Packet::new_simple(value).upcast());
+            data.push((address.clone(), Packet::new_simple(value).upcast()));
             if let ExecutorInputAddressMode::Multiple = &self.addr_mode {
                 address = W::generate_new_address();
+                addresses.push(address.clone());
             }
+        }
+        addresses.pop();
+        exec_list.thread_pool.add_executors_batch(addresses);
+
+        for (addr, packet) in data {
+            exec_list.thread_pool.add_data(addr, packet);
         }
     }
 }

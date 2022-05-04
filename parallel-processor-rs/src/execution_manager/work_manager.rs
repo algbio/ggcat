@@ -9,9 +9,10 @@ use crossbeam::queue::{ArrayQueue, SegQueue};
 use dashmap::mapref::one::Ref;
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock};
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -50,7 +51,8 @@ pub struct WorkManager {
     available_executors: SegQueue<GenericExecutor>,
     duplicable_executors: SegQueue<WeakExecutorAddress>,
 
-    waiting_addresses: HashMap<TypeId, SegQueue<ExecutorAddress>>,
+    holding_allocated: HashMap<TypeId, SegQueue<Weak<dyn ExecutionManagerTrait>>>,
+    waiting_addresses: HashMap<TypeId, RwLock<SegQueue<ExecutorAddress>>>,
 
     pending_packets_count: AtomicU64,
 
@@ -80,6 +82,7 @@ impl WorkManager {
             full_executors: Default::default(),
             available_executors: Default::default(),
             duplicable_executors: Default::default(),
+            holding_allocated: Default::default(),
             waiting_addresses: Default::default(),
             pending_packets_count: AtomicU64::new(0),
             changes_notifier_mutex: Default::default(),
@@ -125,7 +128,7 @@ impl WorkManager {
                 PoolAllocMode::Shared { capacity } => PoolMode::Shared(Arc::new(
                     PoolObject::new_simple(PacketsPool::new(capacity, true, pool_init_data)),
                 )),
-                PoolAllocMode::Instance { capacity } => PoolMode::Distinct {
+                PoolAllocMode::Distinct { capacity } => PoolMode::Distinct {
                     pools_allocator: ObjectsPool::new(
                         executors_max_count,
                         false,
@@ -152,24 +155,27 @@ impl WorkManager {
                 addr.executor_keeper.try_read().unwrap();
 
                 if let Some(main_executor) = addr.executor_keeper.read().as_ref() {
-                    return main_executor
-                        .downcast_ref::<ExecutionManager<E>>()
-                        .unwrap()
-                        .clone_executor(executor);
+                    return main_executor.downcast::<E>().clone_executor(executor);
                 }
 
-                // TODO: Memory params
-                let build_info = E::allocate_new_group(
-                    global_params.clone(),
-                    None,
-                    packet.take().map(|p| p.downcast()),
-                );
                 let output_pool = executor_info_aeu
                     .upgrade()
                     .unwrap()
                     .read()
                     .output_pool
                     .clone();
+
+                // TODO: Memory params
+                let build_info = E::allocate_new_group(
+                    global_params.clone(),
+                    None,
+                    packet.take().map(|p| p.downcast()),
+                    |v| {
+                        if v.len() > 0 {
+                            output_pool.as_ref().unwrap().add_executors_batch(v);
+                        }
+                    },
+                );
 
                 Some(ExecutionManager::new(
                     executor,
@@ -199,9 +205,28 @@ impl WorkManager {
             .is_none();
 
         self.waiting_addresses
+            .insert(TypeId::of::<E>(), RwLock::new(SegQueue::new()));
+        self.holding_allocated
             .insert(TypeId::of::<E>(), SegQueue::new());
 
         assert!(not_present);
+    }
+
+    pub fn register_executors_batch(&self, mut executors: Vec<ExecutorAddress>) {
+        while executors.len() > 0 {
+            let first_type = executors[0].executor_type_id;
+
+            let exec_queue = self.waiting_addresses.get(&first_type).unwrap().write();
+            executors
+                .drain_filter(|e| e.executor_type_id == first_type)
+                .for_each(|executor| {
+                    let old_val = self
+                        .packets_map
+                        .insert(executor.to_weak(), self.queues_allocator.alloc_object());
+                    assert!(old_val.is_none());
+                    exec_queue.push(executor);
+                });
+        }
     }
 
     pub fn add_input_packet(&self, mut address: ExecutorAddress, mut packet: PacketAny) {
@@ -209,14 +234,8 @@ impl WorkManager {
         loop {
             match self
                 .packets_map
-                .entry(address.to_weak())
-                .or_insert_with(|| {
-                    self.waiting_addresses
-                        .get(&address.executor_type_id)
-                        .unwrap()
-                        .push(address.clone());
-                    self.queues_allocator.alloc_object()
-                })
+                .get(&address.to_weak())
+                .unwrap()
                 .push((address, packet))
             {
                 Ok(_) => {
@@ -228,7 +247,9 @@ impl WorkManager {
                     packet = val.1;
                 }
             }
-            println!("Failed packet insertion!");
+            let mut wait_lock = self.changes_notifier_mutex.lock();
+            self.changes_notifier_condvar
+                .wait_for(&mut wait_lock, Duration::from_millis(100));
         }
     }
 
@@ -272,11 +293,33 @@ impl WorkManager {
                 .wait_for(&mut wait_lock, Duration::from_millis(100));
         }
 
+        let mut new_executor: Option<(GenericExecutor, bool)> = None;
+
         'main_scheduling_loop: while self.pending_packets_count.load(Ordering::SeqCst) > 0 {
-            // println!(
-            //     "Find work: {}",
-            //     self.pending_packets_count.load(Ordering::SeqCst)
-            // );
+            if let Some((new_executor, is_new)) = new_executor.take() {
+                if let Some(executor) = last_executor.take() {
+                    let address = executor.get_address();
+                    self.holding_allocated
+                        .get(&address.executor_type_id)
+                        .unwrap()
+                        .push(Arc::downgrade(&executor));
+                }
+                if is_new {
+                    new_executor.pre_execute();
+                }
+                *last_executor = Some(new_executor);
+
+                // println!("Packets list:");
+                // for pmap in self.packets_map.iter() {
+                //     let addr = pmap.key();
+                //     let value = pmap.deref();
+                //     let value = value.deref();
+                //     let value = value.deref();
+                //
+                //     println!("Address: {:?} => {:?}", addr, value.len());
+                // }
+            }
+
             if let Some(executor) = last_executor {
                 let strong_addr = executor.get_address();
 
@@ -284,8 +327,8 @@ impl WorkManager {
                     self.pending_packets_count.fetch_sub(1, Ordering::Relaxed);
                     self.changes_notifier_condvar.notify_all();
                     return Some(packet);
-                } else {
-                    // TODO: Save last executor in a queue
+                } else if executor.is_finished() {
+                    last_executor.take();
                 }
             }
 
@@ -314,15 +357,12 @@ impl WorkManager {
             }
 
             if let Some(executor) = duplicated_executor {
-                *last_executor = Some(executor);
+                new_executor = Some((executor, true));
                 continue;
             }
 
             for (_, addr_queue) in self.waiting_addresses.iter() {
-                // println!(
-                //     "Waiting address popped: {}",
-                //     self.pending_packets_count.load(Ordering::SeqCst)
-                // );
+                let addr_queue = addr_queue.read();
                 if let Some(addr) = addr_queue.pop() {
                     let executor = self.alloc_executor(&addr).unwrap();
 
@@ -330,17 +370,36 @@ impl WorkManager {
                         self.duplicable_executors.push(addr.to_weak());
                         self.changes_notifier_condvar.notify_all();
                     }
-
-                    println!(
-                        "Allocating executor, last: {:?}",
-                        last_executor.as_ref().map(|x| (
-                            Arc::strong_count(x),
-                            self.get_packet_from_addr(&x.get_address()).is_some()
-                        ))
-                    );
-
-                    *last_executor = Some(executor);
+                    new_executor = Some((executor, true));
                     continue 'main_scheduling_loop;
+                }
+            }
+
+            for (_, wref_queue) in self.holding_allocated.iter() {
+                let mut allowed_iterations = wref_queue.len();
+                while let Some(weak_ref) = wref_queue.pop() {
+                    if let Some(executor) = weak_ref.upgrade() {
+                        if !executor.is_finished() {
+                            let has_packets = self
+                                .packets_map
+                                .get(&executor.get_address().to_weak())
+                                .as_ref()
+                                .unwrap()
+                                .len()
+                                > 0;
+
+                            if has_packets {
+                                new_executor = Some((executor, false));
+                                continue 'main_scheduling_loop;
+                            } else {
+                                wref_queue.push(weak_ref);
+                            }
+                        }
+                    }
+                    if allowed_iterations == 0 {
+                        break;
+                    }
+                    allowed_iterations -= 1;
                 }
             }
 

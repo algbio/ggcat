@@ -34,10 +34,11 @@ pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
         }
     }
 
-    fn allocate_new_group(
+    fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
         global_params: Arc<Self::GlobalParams>,
         memory_params: Option<Self::MemoryParams>,
         common_packet: Option<Packet<Self::InputPacket>>,
+        executors_initializer: D,
     ) -> Self::BuildParams;
 
     fn get_maximum_concurrency(&self) -> usize;
@@ -68,6 +69,8 @@ pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
     );
 
     fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, packet_send: S);
+
+    fn is_finished(&self) -> bool;
 
     fn get_total_memory(&self) -> u64;
     fn get_current_memory_params(&self) -> Self::MemoryParams;

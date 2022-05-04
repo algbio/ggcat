@@ -81,14 +81,30 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
     type OutputPacket = ReadsBuffer<F::AssociatedExtraData>;
     type GlobalParams = KmersTransformContext<F>;
     type MemoryParams = ();
-    type BuildParams = (Arc<KmersTransformContext<F>>, AsyncBinaryReader, usize);
+    type BuildParams = (
+        Arc<KmersTransformContext<F>>,
+        AsyncBinaryReader,
+        usize,
+        Vec<ExecutorAddress>,
+    );
 
-    fn allocate_new_group(
+    fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
         global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
         common_packet: Option<Packet<Self::InputPacket>>,
+        executors_initializer: D,
     ) -> Self::BuildParams {
         let file = common_packet.unwrap();
+
+        // FIXME: Choose the right number of executors depending on size
+        let second_buckets_count_log = 4;
+
+        // TODO: Enable resplitting
+        let addresses: Vec<_> = (0..(1 << second_buckets_count_log))
+            .map(|_| KmersTransformProcessor::<F>::generate_new_address())
+            .collect();
+
+        executors_initializer(addresses.clone());
 
         (
             global_params,
@@ -100,7 +116,8 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
                 },
                 DEFAULT_PREFETCH_AMOUNT,
             ),
-            4, // FIXME: Choose the right number of executors depending on size
+            second_buckets_count_log,
+            addresses,
         )
     }
 
@@ -121,10 +138,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         self.buffers
             .extend((0..second_buckets_count).map(|_| packet_alloc()));
 
-        // TODO: Enable resplitting
-        self.addresses.extend(
-            (0..second_buckets_count).map(|_| KmersTransformProcessor::<F>::generate_new_address()),
-        );
+        self.addresses = reinit_params.3.clone();
 
         self.preprocessor = Some(F::new_preprocessor(
             &self.context.as_ref().unwrap().global_extra_data,
@@ -176,6 +190,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
             });
         for (packet, address) in self.buffers.drain(..).zip(self.addresses.drain(..)) {
             if packet.reads.len() > 0 {
+                println!("Draining address: {:?}", address.to_weak());
                 packet_send(address, packet);
             }
         }
@@ -194,6 +209,10 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
     }
 
     fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, _packet_send: S) {
+    }
+
+    fn is_finished(&self) -> bool {
+        true
     }
 
     fn get_total_memory(&self) -> u64 {

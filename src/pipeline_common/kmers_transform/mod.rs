@@ -29,7 +29,9 @@ use parallel_processor::execution_manager::executors_list::{
 };
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
-use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
+use parallel_processor::execution_manager::thread_pool::{
+    ExecThreadPool, ExecThreadPoolDataAddTrait,
+};
 use parallel_processor::execution_manager::units_io::{
     ExecOutput, ExecutorInput, ExecutorInputAddressMode,
 };
@@ -255,7 +257,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
     }
 
     pub fn parallel_kmers_transform(&mut self, threads_count: usize) {
-        let read_threads_count = max(1, threads_count / 2);
+        let read_threads_count = 1; //max(1, threads_count / 2);
         let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count / 2));
 
         let max_read_buffers_count =
@@ -272,7 +274,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
         let mut bucket_readers = ExecutorsList::<KmersTransformReader<F>>::new(
             ExecutorAllocMode::Fixed(read_threads_count),
-            PoolAllocMode::Instance {
+            PoolAllocMode::Distinct {
                 capacity: max_read_buffers_count,
             },
             KMERS_TRANSFORM_READS_CHUNKS_SIZE,
@@ -284,7 +286,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         let mut bucket_sequences_processors = ExecutorsList::<KmersTransformProcessor<F>>::new(
             ExecutorAllocMode::MemoryLimited {
                 min_count: threads_count / 2,
-                max_count: threads_count * 4,
+                max_count: threads_count / 2, //threads_count * 4,
                 max_memory: MemoryDataSize::from_gibioctets(4), // TODO: Make dynamic
             },
             PoolAllocMode::Shared {
@@ -308,7 +310,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         bucket_readers.set_output_executors(&bucket_resplitters, ExecOutputMode::FIFO);
 
         let bucket_writers = ExecutorsList::<KmersTransformWriter<F>>::new(
-            ExecutorAllocMode::Fixed(compute_threads_count),
+            ExecutorAllocMode::Fixed(compute_threads_count / 2),
             PoolAllocMode::None,
             (),
             &self.execution_context,
@@ -316,6 +318,14 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         );
 
         bucket_sequences_processors.set_output_executors(&bucket_writers, ExecOutputMode::FIFO);
+
+        compute_thread_pool.add_executors_batch(vec![self
+            .execution_context
+            .finalizer_address
+            .read()
+            .as_ref()
+            .unwrap()
+            .clone()]);
 
         disk_thread_pool.start();
         compute_thread_pool.start();

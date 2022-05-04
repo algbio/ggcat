@@ -32,6 +32,8 @@ pub struct ParallelKmersMergeFinalExecutor<
     backward_seq: Vec<u8>,
     unitigs_temp_colors: color_types::TempUnitigColorStructure<MH, CX>,
     current_bucket: Option<ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>>,
+    bucket_counter: usize,
+    bucket_change_threshold: usize,
     _phantom: PhantomData<H>,
 }
 
@@ -48,6 +50,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             backward_seq: Vec::with_capacity(global_data.k),
             unitigs_temp_colors: CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure(),
             current_bucket: None,
+            bucket_counter: 0,
+            bucket_change_threshold: 16, // TODO: Parametrize
             _phantom: PhantomData,
         }
     }
@@ -64,7 +68,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
         mut map_struct: Packet<Self::MapStruct>,
     ) {
-        // self.current_bucket = Some(global_data.output_results_buckets.pop().unwrap());
+        if self.current_bucket.is_none() {
+            self.current_bucket = Some(global_data.output_results_buckets.pop().unwrap());
+        }
+
         let map_struct = map_struct.deref_mut();
 
         let k = global_data.k;
@@ -301,9 +308,13 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             );
         }
 
-        global_data
-            .output_results_buckets
-            .push(self.current_bucket.take().unwrap());
+        self.bucket_counter += 1;
+        if self.bucket_counter >= self.bucket_change_threshold {
+            self.bucket_counter = 0;
+            global_data
+                .output_results_buckets
+                .push(self.current_bucket.take().unwrap());
+        }
     }
 
     fn finalize(

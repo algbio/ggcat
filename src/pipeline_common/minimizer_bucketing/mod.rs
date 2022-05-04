@@ -28,7 +28,9 @@ use parallel_processor::execution_manager::executors_list::{
 };
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
-use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
+use parallel_processor::execution_manager::thread_pool::{
+    ExecThreadPool, ExecThreadPoolDataAddTrait,
+};
 use parallel_processor::execution_manager::units_io::{
     ExecOutput, ExecutorInput, ExecutorInputAddressMode,
 };
@@ -200,10 +202,11 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
     type MemoryParams = ();
     type BuildParams = Arc<MinimizerBucketingExecutionContext<E::GlobalData>>;
 
-    fn allocate_new_group(
+    fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
         global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
         _common_packet: Option<Packet<Self::InputPacket>>,
+        _executors_initializer: D,
     ) -> Self::BuildParams {
         global_params
     }
@@ -351,6 +354,10 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
         self.context.take();
     }
 
+    fn is_finished(&self) -> bool {
+        false
+    }
+
     fn get_total_memory(&self) -> u64 {
         0
     }
@@ -427,7 +434,7 @@ impl GenericMinimizerBucketing {
 
             let mut file_readers = ExecutorsList::<MinimizerBucketingFilesReader<_, _>>::new(
                 ExecutorAllocMode::Fixed(execution_context.read_threads_count),
-                PoolAllocMode::Instance {
+                PoolAllocMode::Distinct {
                     capacity: max_read_buffers_count,
                 },
                 READ_INTERMEDIATE_CHUNKS_SIZE,
@@ -444,6 +451,13 @@ impl GenericMinimizerBucketing {
                 &compute_thread_pool,
             );
             file_readers.set_output_executors(&bucket_writers, ExecOutputMode::FIFO);
+
+            compute_thread_pool.add_executors_batch(vec![execution_context
+                .executor_group_address
+                .read()
+                .as_ref()
+                .unwrap()
+                .clone()]);
 
             disk_thread_pool.start();
             compute_thread_pool.start();

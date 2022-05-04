@@ -48,12 +48,12 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
     type MemoryParams = ();
     type BuildParams = Arc<KmersTransformContext<F>>;
 
-    fn allocate_new_group(
+    fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
         global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
         _common_packet: Option<Packet<Self::InputPacket>>,
+        _executors_initializer: D,
     ) -> Self::BuildParams {
-        println!("Allocated new group proc!");
         global_params
     }
 
@@ -80,12 +80,10 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         mut packet_alloc: P,
         _packet_send: S,
     ) {
-        println!("Pre execute!");
         self.map_processor.as_mut().unwrap().process_group_start(
             packet_alloc(),
             &self.context.as_ref().unwrap().global_extra_data,
         );
-        println!("End pre execute!");
     }
 
     fn execute<
@@ -97,7 +95,6 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         _packet_alloc: P,
         _packet_send: S,
     ) {
-        println!("Execute processor!");
         self.map_processor
             .as_mut()
             .unwrap()
@@ -112,7 +109,6 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         &mut self,
         mut packet_send: S,
     ) {
-        println!("Finalize processor!");
         let context = self.context.as_ref().unwrap();
 
         let packet = self
@@ -124,6 +120,10 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
             context.finalizer_address.read().as_ref().unwrap().clone(),
             packet,
         );
+    }
+
+    fn is_finished(&self) -> bool {
+        false
     }
 
     fn get_total_memory(&self) -> u64 {

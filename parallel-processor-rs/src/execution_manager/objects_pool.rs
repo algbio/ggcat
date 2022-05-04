@@ -54,8 +54,10 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
                 if !self.strict_capacity
                     || self.allocated_count.fetch_add(1, Ordering::Relaxed) < self.max_count
                 {
+                    println!("Allocate scratch element {}", std::any::type_name::<T>());
                     PoolObject::from_element((self.allocate_fn)(), self)
                 } else {
+                    println!("Force wait pool {}", std::any::type_name::<T>());
                     let mut el = self.channel.1.recv().unwrap();
                     el.reset();
                     PoolObject::from_element(el, self)
@@ -114,7 +116,7 @@ impl<T> DerefMut for PoolObject<T> {
 impl<T> Drop for PoolObject<T> {
     fn drop(&mut self) {
         if let Some(pool_channel) = &mut self.ref_pool {
-            let _ = pool_channel.send(unsafe { self.value.assume_init_read() });
+            let _ = pool_channel.try_send(unsafe { self.value.assume_init_read() });
         } else {
             unsafe { self.value.assume_init_drop() }
         }
