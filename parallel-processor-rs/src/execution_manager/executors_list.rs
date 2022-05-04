@@ -1,8 +1,11 @@
 use crate::execution_manager::executor::Executor;
 use crate::execution_manager::objects_pool::PoolObjectTrait;
-use crate::execution_manager::thread_pool::{ExecThreadPool, ExecThreadPoolDataAddTrait};
-use crate::execution_manager::units_io::ExecOutput;
+use crate::execution_manager::thread_pool::{
+    ExecThreadPool, ExecThreadPoolBuilder, ExecThreadPoolDataAddTrait,
+};
+use crate::execution_manager::work_scheduler::ExecutionManagerInfo;
 use crate::memory_data_size::MemoryDataSize;
+use parking_lot::RwLock;
 use std::any::TypeId;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -23,12 +26,12 @@ pub enum PoolAllocMode {
 }
 
 pub enum ExecOutputMode {
-    LIFO,
-    FIFO,
+    HighPriority,
+    LowPriority,
 }
 
 pub struct ExecutorsList<E: Executor> {
-    pub(crate) thread_pool: Arc<ExecThreadPool>,
+    executor_info: Arc<RwLock<ExecutionManagerInfo>>,
     _phantom: PhantomData<E>,
 }
 
@@ -38,30 +41,31 @@ impl<E: Executor> ExecutorsList<E> {
         pool_alloc_mode: PoolAllocMode,
         pool_init_data: <E::OutputPacket as PoolObjectTrait>::InitData,
         global_params: &Arc<E::GlobalParams>,
-        thread_pool: &Arc<ExecThreadPool>,
+        thread_pool: &mut ExecThreadPoolBuilder,
     ) -> Self {
-        thread_pool.work_manager.write().add_executors::<E>(
+        println!(
+            "********* TYPE ID FOR: {} ==> {:?}",
+            std::any::type_name::<E>(),
+            TypeId::of::<E>()
+        );
+        let executor_info = thread_pool.work_scheduler.add_executors::<E>(
             alloc_mode,
             pool_alloc_mode,
             pool_init_data,
             global_params.clone(),
         );
         Self {
-            thread_pool: thread_pool.clone(),
+            executor_info,
             _phantom: PhantomData,
         }
     }
-}
 
-impl<E: Executor> ExecOutput for ExecutorsList<E> {
-    type OutputPacket = E::OutputPacket;
-
-    fn set_output_executors<W: Executor<InputPacket = E::OutputPacket>>(
+    pub fn set_output_pool(
         &mut self,
-        exec_list: &ExecutorsList<W>,
+        output_pool: &Arc<ExecThreadPool>,
         output_mode: ExecOutputMode,
     ) {
-        self.thread_pool
-            .set_output(TypeId::of::<E>(), TypeId::of::<W>(), &exec_list.thread_pool)
+        let mut exec_info = self.executor_info.write();
+        exec_info.output_pool = Some(output_pool.clone());
     }
 }

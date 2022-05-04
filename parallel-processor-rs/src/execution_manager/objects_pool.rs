@@ -24,46 +24,49 @@ impl<T: PoolObjectTrait> PoolObjectTrait for Box<T> {
 }
 
 pub struct ObjectsPool<T> {
-    pub(crate) channel: (Sender<T>, Receiver<T>),
+    queue: Receiver<T>,
+    pub(crate) returner: Arc<(Sender<T>, AtomicU64)>,
     allocate_fn: Box<dyn (Fn() -> T) + Sync + Send>,
-    allocated_count: AtomicU64,
     max_count: u64,
-    strict_capacity: bool,
 }
 
 impl<T: PoolObjectTrait> ObjectsPool<T> {
-    pub fn new(cap: usize, strict_capacity: bool, init_data: T::InitData) -> Self {
+    pub fn new(cap: usize, init_data: T::InitData) -> Self {
         let channel = bounded(cap);
 
         Self {
-            channel,
+            queue: channel.1,
+            returner: Arc::new((channel.0, AtomicU64::new(0))),
             allocate_fn: Box::new(move || T::allocate_new(&init_data)),
-            allocated_count: AtomicU64::new(0),
             max_count: cap as u64,
-            strict_capacity,
         }
     }
 
     pub fn alloc_object(&self) -> PoolObject<T> {
-        match self.channel.1.try_recv() {
+        self.returner.1.fetch_add(1, Ordering::Relaxed);
+        match self.queue.try_recv() {
             Ok(mut el) => {
                 el.reset();
                 PoolObject::from_element(el, self)
             }
             Err(_) => {
-                if !self.strict_capacity
-                    || self.allocated_count.fetch_add(1, Ordering::Relaxed) < self.max_count
-                {
-                    println!("Allocate scratch element {}", std::any::type_name::<T>());
-                    PoolObject::from_element((self.allocate_fn)(), self)
-                } else {
-                    println!("Force wait pool {}", std::any::type_name::<T>());
-                    let mut el = self.channel.1.recv().unwrap();
-                    el.reset();
-                    PoolObject::from_element(el, self)
-                }
+                // println!(
+                //     "Allocate scratch element {} => {}/{}",
+                //     std::any::type_name::<T>(),
+                //     self.returner.1.load(Ordering::Relaxed),
+                //     self.max_count
+                // );
+                PoolObject::from_element((self.allocate_fn)(), self)
             }
         }
+    }
+
+    pub fn get_available_items(&self) -> i64 {
+        (self.max_count as i64) - (self.returner.1.load(Ordering::Relaxed) as i64)
+    }
+
+    pub fn wait_for_item(&self) {
+        let _ = self.returner.0.try_send(self.queue.recv().unwrap());
     }
 }
 
@@ -79,21 +82,21 @@ impl<T> PoolSender<T> {
 
 pub struct PoolObject<T> {
     pub(crate) value: MaybeUninit<T>,
-    pub(crate) ref_pool: Option<Sender<T>>,
+    pub(crate) returner: Option<Arc<(Sender<T>, AtomicU64)>>,
 }
 
 impl<T> PoolObject<T> {
     fn from_element(value: T, pool: &ObjectsPool<T>) -> Self {
         Self {
             value: MaybeUninit::new(value),
-            ref_pool: Some(pool.channel.0.clone()),
+            returner: Some(pool.returner.clone()),
         }
     }
 
     pub fn new_simple(value: T) -> Self {
         Self {
             value: MaybeUninit::new(value),
-            ref_pool: None,
+            returner: None,
         }
     }
 }
@@ -115,8 +118,11 @@ impl<T> DerefMut for PoolObject<T> {
 
 impl<T> Drop for PoolObject<T> {
     fn drop(&mut self) {
-        if let Some(pool_channel) = &mut self.ref_pool {
-            let _ = pool_channel.try_send(unsafe { self.value.assume_init_read() });
+        if let Some(returner) = &self.returner {
+            returner.1.fetch_sub(1, Ordering::Relaxed);
+            let _ = returner
+                .0
+                .try_send(unsafe { self.value.assume_init_read() });
         } else {
             unsafe { self.value.assume_init_drop() }
         }

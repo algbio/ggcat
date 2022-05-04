@@ -39,7 +39,7 @@ impl<GlobalData: 'static, FileInfo: Clone + Sync + Send + Default + 'static> Poo
 impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default + 'static> Executor
     for MinimizerBucketingFilesReader<GlobalData, FileInfo>
 {
-    const EXECUTOR_TYPE: ExecutorType = ExecutorType::MultipleUnits;
+    const EXECUTOR_TYPE: ExecutorType = ExecutorType::SimplePacketsProcessing;
 
     type InputPacket = (PathBuf, FileInfo);
     type OutputPacket = MinimizerBucketingQueueData<FileInfo>;
@@ -53,20 +53,13 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         _memory_params: Option<Self::MemoryParams>,
         _common_packet: Option<Packet<Self::InputPacket>>,
         _executors_initializer: D,
-    ) -> Self::BuildParams {
-        global_params
+    ) -> (Self::BuildParams, usize) {
+        let read_threads_count = global_params.read_threads_count;
+        (global_params, read_threads_count)
     }
 
-    fn get_maximum_concurrency(&self) -> usize {
-        self.context.as_ref().unwrap().read_threads_count
-    }
-
-    fn reinitialize<P: FnMut() -> Packet<Self::OutputPacket>>(
-        &mut self,
-        context: &Self::BuildParams,
-        _packet_alloc: P,
-    ) {
-        self.context = Some(context.clone());
+    fn required_pool_items(&self) -> u64 {
+        1
     }
 
     fn pre_execute<
@@ -74,9 +67,11 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
+        context: Self::BuildParams,
         _packet_alloc: P,
         _packet_send: S,
     ) {
+        self.context = Some(context);
     }
 
     fn execute<
@@ -88,6 +83,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         mut packet_alloc: P,
         mut packet_send: S,
     ) {
+        // println!("Executing thing {}!", input_packet.0.display());
         let mut data_packet = packet_alloc();
         let file_info = input_packet.1.clone();
 

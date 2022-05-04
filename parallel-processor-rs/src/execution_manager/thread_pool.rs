@@ -1,7 +1,8 @@
-use crate::execution_manager::executor_address::ExecutorAddress;
+use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
+use crate::execution_manager::manager::ExecutionStatus;
 use crate::execution_manager::objects_pool::PoolObjectTrait;
 use crate::execution_manager::packet::PacketAny;
-use crate::execution_manager::work_manager::WorkManager;
+use crate::execution_manager::work_scheduler::WorkScheduler;
 use parking_lot::{Mutex, RwLock};
 use std::any::TypeId;
 use std::marker::PhantomData;
@@ -10,56 +11,92 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 pub trait ExecThreadPoolDataAddTrait: Send + Sync {
-    fn add_data(&self, addr: ExecutorAddress, packet: PacketAny);
+    fn add_data(&self, addr: WeakExecutorAddress, packet: PacketAny);
     fn add_executors_batch(&self, executors: Vec<ExecutorAddress>);
 }
 
-pub struct ExecThreadPool {
-    pub(crate) work_manager: RwLock<WorkManager>,
+pub struct ExecThreadPoolBuilder {
+    pub(crate) work_scheduler: WorkScheduler,
     threads_count: usize,
+}
+
+impl ExecThreadPoolBuilder {
+    pub fn new(threads_count: usize) -> Self {
+        Self {
+            work_scheduler: WorkScheduler::new(threads_count * 2),
+            threads_count,
+        }
+    }
+
+    pub fn build(self) -> Arc<ExecThreadPool> {
+        Arc::new(ExecThreadPool {
+            work_scheduler: Arc::new(self.work_scheduler),
+            is_joining: AtomicBool::new(false),
+            threads_count: self.threads_count,
+            thread_handles: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+pub struct ExecThreadPool {
+    work_scheduler: Arc<WorkScheduler>,
     is_joining: AtomicBool,
+    threads_count: usize,
     thread_handles: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl ExecThreadPool {
-    pub fn new(threads_count: usize, executors_buffer_capacity: usize) -> Arc<Self> {
-        Arc::new(Self {
-            work_manager: RwLock::new(WorkManager::new(
-                threads_count * 2,
-                executors_buffer_capacity,
-            )),
-            threads_count,
-            is_joining: AtomicBool::new(false),
-            thread_handles: Mutex::new(Vec::new()),
-        })
-    }
-
-    pub fn set_output(&self, target_id: TypeId, output_id: TypeId, target: &Arc<ExecThreadPool>) {
-        self.work_manager
-            .write()
-            .set_output(target_id, output_id, target.clone());
-    }
-
-    fn thread(&self) {
-        let work_manager = self.work_manager.read();
-        let mut executor = None;
-
-        while !self.is_joining.load(Ordering::Relaxed) {
-            while let Some(packet) = work_manager.find_work(&mut executor) {
-                executor.as_ref().unwrap().process_packet(packet);
-            }
-        }
-    }
-
-    pub fn start(self: &Arc<Self>) {
+    pub fn start(self: &Arc<Self>, name: &'static str) {
         let mut handles = self.thread_handles.lock();
         assert_eq!(handles.len(), 0);
         for _ in 0..self.threads_count {
             let self_ = self.clone();
-            handles.push(std::thread::spawn(move || {
-                self_.thread();
-            }));
+            handles.push(
+                std::thread::Builder::new()
+                    .name(name.to_string())
+                    .spawn(move || {
+                        self_.thread();
+                    })
+                    .unwrap(),
+            );
         }
+    }
+
+    fn thread(&self) {
+        let mut executor = None;
+        let mut last_info = (false, WeakExecutorAddress::empty());
+
+        while !self.is_joining.load(Ordering::Relaxed) {
+            loop {
+                self.work_scheduler.maybe_change_work(&mut executor);
+                if let Some(executor) = &mut executor {
+                    let return_status = executor
+                        .execute(last_info.0 && executor.get_weak_address() == &last_info.1);
+                    last_info = (
+                        return_status == ExecutionStatus::OutputPoolFull,
+                        *executor.get_weak_address(),
+                    );
+
+                    // println!(
+                    //     "AAA {:?}/{}",
+                    //     return_status,
+                    //     self.is_joining.load(Ordering::Relaxed)
+                    // );
+                    //
+                    if return_status == ExecutionStatus::NoMorePackets
+                        && self.is_joining.load(Ordering::Relaxed)
+                    {
+                        println!("Testing!");
+                        if self.work_scheduler.get_packets_count() == 0 {
+                            break;
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+        println!("Closed thread: {}", self.threads_count);
     }
 
     pub fn join(&self) {
@@ -72,12 +109,12 @@ impl ExecThreadPool {
 }
 
 impl ExecThreadPoolDataAddTrait for ExecThreadPool {
-    fn add_data(&self, addr: ExecutorAddress, packet: PacketAny) {
-        self.work_manager.read().add_input_packet(addr, packet);
+    fn add_data(&self, addr: WeakExecutorAddress, packet: PacketAny) {
+        self.work_scheduler.add_input_packet(addr, packet);
     }
 
     fn add_executors_batch(&self, executors: Vec<ExecutorAddress>) {
-        self.work_manager.read().register_executors_batch(executors);
+        self.work_scheduler.register_executors_batch(executors);
     }
 }
 

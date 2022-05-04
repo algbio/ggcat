@@ -175,8 +175,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         &mut self,
         _global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) -> Packet<Self::MapStruct> {
-        println!("Finalize map packet!");
-
         static COUNTER_KMERS_MAX: AtomicCounter<MaxMode> =
             declare_counter_i64!("kmers_cardinality_max", MaxMode, false);
         static COUNTER_READS_MAX: AtomicCounter<MaxMode> =

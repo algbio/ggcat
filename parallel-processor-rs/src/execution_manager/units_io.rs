@@ -1,17 +1,9 @@
 use crate::execution_manager::executor::Executor;
 use crate::execution_manager::executors_list::{ExecOutputMode, ExecutorsList};
 use crate::execution_manager::packet::Packet;
-use crate::execution_manager::thread_pool::ExecThreadPoolDataAddTrait;
+use crate::execution_manager::thread_pool::{ExecThreadPool, ExecThreadPoolDataAddTrait};
 use std::marker::PhantomData;
-
-pub trait ExecOutput {
-    type OutputPacket;
-    fn set_output_executors<W: Executor<InputPacket = Self::OutputPacket>>(
-        &mut self,
-        exec_list: &ExecutorsList<W>,
-        output_mode: ExecOutputMode,
-    );
-}
+use std::sync::Arc;
 
 pub enum ExecutorInputAddressMode {
     Single,
@@ -32,31 +24,33 @@ impl<T, I: Iterator<Item = T>> ExecutorInput<T, I> {
     }
 }
 
-impl<T: Send + Sync + 'static, I: Iterator<Item = T>> ExecOutput for ExecutorInput<T, I> {
-    type OutputPacket = T;
-
-    fn set_output_executors<W: Executor<InputPacket = Self::OutputPacket>>(
+impl<T: Send + Sync + 'static, I: Iterator<Item = T>> ExecutorInput<T, I> {
+    pub fn set_output_pool<E: Executor>(
         &mut self,
-        exec_list: &ExecutorsList<W>,
+        output_pool: &Arc<ExecThreadPool>,
         output_mode: ExecOutputMode,
     ) {
-        let mut address = W::generate_new_address();
-        let mut addresses = vec![address.clone()];
+        let mut address = E::generate_new_address();
+        let mut addresses = vec![];
 
         let mut data = vec![];
 
         for value in &mut self.iterator {
             data.push((address.clone(), Packet::new_simple(value).upcast()));
             if let ExecutorInputAddressMode::Multiple = &self.addr_mode {
-                address = W::generate_new_address();
                 addresses.push(address.clone());
+                address = E::generate_new_address();
             }
         }
-        addresses.pop();
-        exec_list.thread_pool.add_executors_batch(addresses);
+
+        if let ExecutorInputAddressMode::Single = &self.addr_mode {
+            addresses.push(address);
+        }
+
+        output_pool.add_executors_batch(addresses);
 
         for (addr, packet) in data {
-            exec_list.thread_pool.add_data(addr, packet);
+            output_pool.add_data(addr.to_weak(), packet);
         }
     }
 }

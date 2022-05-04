@@ -3,6 +3,7 @@ use crossbeam::channel::Sender;
 use std::any::Any;
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 pub trait PacketTrait: PoolObjectTrait + Sync + Send {}
@@ -11,9 +12,10 @@ trait PacketPoolReturnerTrait: Send + Sync {
     fn send_any(&self, packet: Box<dyn Any>);
 }
 
-impl<T: Send + Sync + 'static> PacketPoolReturnerTrait for Sender<Box<T>> {
+impl<T: Send + Sync + 'static> PacketPoolReturnerTrait for (Sender<Box<T>>, AtomicU64) {
     fn send_any(&self, packet: Box<dyn Any>) {
-        let _ = self.try_send(packet.downcast().unwrap());
+        self.1.fetch_sub(1, Ordering::Relaxed);
+        let _ = self.0.try_send(packet.downcast().unwrap());
     }
 }
 
@@ -27,24 +29,22 @@ pub struct PacketAny {
     returner: Option<Arc<dyn PacketPoolReturnerTrait>>,
 }
 
-pub struct PacketsPool<T>(ObjectsPool<Box<T>>, Arc<dyn PacketPoolReturnerTrait>);
+pub struct PacketsPool<T>(ObjectsPool<Box<T>>);
 
 // Recursively implement the object trait for the pool, so it can be used recursively
 impl<T: PacketTrait> PoolObjectTrait for PacketsPool<T> {
-    type InitData = (usize, bool, T::InitData);
+    type InitData = (usize, T::InitData);
 
-    fn allocate_new((cap, strict_cap, init_data): &Self::InitData) -> Self {
-        Self::new(*cap, *strict_cap, init_data.clone())
+    fn allocate_new((cap, init_data): &Self::InitData) -> Self {
+        Self::new(*cap, init_data.clone())
     }
 
     fn reset(&mut self) {}
 }
 
 impl<T: PacketTrait> PacketsPool<T> {
-    pub fn new(cap: usize, strict_capacity: bool, init_data: T::InitData) -> Self {
-        let pool = ObjectsPool::new(cap, strict_capacity, init_data);
-        let returner = Arc::new(pool.channel.0.clone());
-        Self(pool, returner)
+    pub fn new(cap: usize, init_data: T::InitData) -> Self {
+        Self(ObjectsPool::new(cap, init_data))
     }
 
     pub fn alloc_packet(&self) -> Packet<T> {
@@ -52,15 +52,23 @@ impl<T: PacketTrait> PacketsPool<T> {
 
         let packet = Packet {
             object: MaybeUninit::new(unsafe { object.value.assume_init_read() }),
-            returner: Some(self.1.clone()),
+            returner: Some(self.0.returner.clone()),
         };
 
         unsafe {
-            std::ptr::drop_in_place(&mut object.ref_pool);
+            std::ptr::drop_in_place(&mut object.returner);
             std::mem::forget(object);
         }
 
         packet
+    }
+
+    pub fn get_available_items(&self) -> i64 {
+        self.0.get_available_items()
+    }
+
+    pub fn wait_for_item(&self) {
+        self.0.wait_for_item()
     }
 }
 
@@ -121,8 +129,7 @@ impl PacketAny {
 impl<T: 'static> Drop for Packet<T> {
     fn drop(&mut self) {
         if let Some(returner) = &self.returner {
-            let value = unsafe { self.object.assume_init_read() };
-            returner.send_any(value);
+            returner.send_any(unsafe { self.object.assume_init_read() });
         } else {
             unsafe { self.object.assume_init_drop() }
         }

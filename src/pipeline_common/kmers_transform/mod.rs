@@ -30,11 +30,9 @@ use parallel_processor::execution_manager::executors_list::{
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::execution_manager::thread_pool::{
-    ExecThreadPool, ExecThreadPoolDataAddTrait,
+    ExecThreadPoolBuilder, ExecThreadPoolDataAddTrait,
 };
-use parallel_processor::execution_manager::units_io::{
-    ExecOutput, ExecutorInput, ExecutorInputAddressMode,
-};
+use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInputAddressMode};
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -140,6 +138,8 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     global_extra_data: Arc<F::GlobalExtraData>,
     async_readers: ScopedThreadLocal<Arc<AsyncReaderThread>>,
     counters: CountersAnalyzer,
+    compute_threads_count: usize,
+    read_threads_count: usize,
 }
 
 impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
@@ -148,6 +148,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         buckets_counters_path: PathBuf,
         buckets_count: usize,
         global_extra_data: Arc<F::GlobalExtraData>,
+        threads_count: usize,
     ) -> Self {
         let mut buckets_list = Vec::with_capacity(file_inputs.len());
 
@@ -190,12 +191,16 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             }
         }
 
+        let read_threads_count = max(1, threads_count / 2);
+
         let execution_context = Arc::new(KmersTransformContext {
             buckets_count,
             processed_buckets: AtomicUsize::new(0),
             finalizer_address: Arc::new(RwLock::new(Some(
                 KmersTransformWriter::<F>::generate_new_address(),
             ))),
+            compute_threads_count: max(1, threads_count.saturating_sub(read_threads_count / 2)),
+            read_threads_count,
             global_extra_data,
             async_readers: ScopedThreadLocal::new(|| {
                 AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE / 2, 4)
@@ -214,58 +219,15 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         }
     }
 
-    fn log_completed_bucket(&self) {
-        self.execution_context
-            .processed_buckets
-            .fetch_add(1, Ordering::Relaxed);
+    pub fn parallel_kmers_transform(&mut self) {
+        let max_read_buffers_count = self.execution_context.compute_threads_count
+            * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed);
 
-        let mut last_info_log = match self.last_info_log.try_lock() {
-            None => return,
-            Some(x) => x,
-        };
-        if last_info_log.elapsed() > MINIMUM_LOG_DELTA_TIME {
-            *last_info_log = Instant::now();
-            drop(last_info_log);
+        let compute_threads_count = self.execution_context.compute_threads_count;
+        let read_threads_count = self.execution_context.read_threads_count;
 
-            let monitor = PHASES_TIMES_MONITOR.read();
-
-            let processed_count = self
-                .execution_context
-                .processed_buckets
-                .load(Ordering::Relaxed);
-            let remaining = self.execution_context.buckets_count - processed_count;
-
-            let eta = Duration::from_secs(
-                (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
-                    * (remaining as f64)) as u64,
-            );
-
-            let est_tot = Duration::from_secs(
-                (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
-                    * (self.execution_context.buckets_count as f64)) as u64,
-            );
-
-            println!(
-                "Processing bucket {} of {} {} phase eta: {:.0?} est.tot: {:.0?}",
-                processed_count,
-                self.execution_context.buckets_count,
-                monitor.get_formatted_counter_without_memory(),
-                eta,
-                est_tot
-            );
-        }
-    }
-
-    pub fn parallel_kmers_transform(&mut self, threads_count: usize) {
-        let read_threads_count = 1; //max(1, threads_count / 2);
-        let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count / 2));
-
-        let max_read_buffers_count =
-            compute_threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed);
-
-        let disk_thread_pool = ExecThreadPool::new(read_threads_count, 1);
-        let compute_thread_pool =
-            ExecThreadPool::new(compute_threads_count, max_read_buffers_count);
+        let mut disk_thread_pool_builder = ExecThreadPoolBuilder::new(read_threads_count);
+        let mut compute_thread_pool_builder = ExecThreadPoolBuilder::new(compute_threads_count);
 
         let mut input_buckets = ExecutorInput::from_iter(
             std::mem::take(&mut self.buckets_list).into_iter(),
@@ -279,22 +241,21 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             },
             KMERS_TRANSFORM_READS_CHUNKS_SIZE,
             &self.execution_context,
-            &disk_thread_pool,
+            &mut disk_thread_pool_builder,
         );
-        input_buckets.set_output_executors(&bucket_readers, ExecOutputMode::FIFO);
 
         let mut bucket_sequences_processors = ExecutorsList::<KmersTransformProcessor<F>>::new(
             ExecutorAllocMode::MemoryLimited {
-                min_count: threads_count / 2,
-                max_count: threads_count / 2, //threads_count * 4,
+                min_count: compute_threads_count * 2,
+                max_count: compute_threads_count * 2, //threads_count * 4, FIXME!
                 max_memory: MemoryDataSize::from_gibioctets(4), // TODO: Make dynamic
             },
             PoolAllocMode::Shared {
-                capacity: threads_count * 4,
+                capacity: compute_threads_count * 4,
             },
             (),
             &self.execution_context,
-            &compute_thread_pool,
+            &mut compute_thread_pool_builder,
         );
 
         let mut bucket_resplitters = ExecutorsList::<KmersTransformResplitter<F>>::new(
@@ -302,22 +263,28 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             PoolAllocMode::None,
             (),
             &self.execution_context,
-            &compute_thread_pool,
+            &mut compute_thread_pool_builder,
         );
-        bucket_resplitters.set_output_executors(&bucket_readers, ExecOutputMode::LIFO);
 
-        bucket_readers.set_output_executors(&bucket_sequences_processors, ExecOutputMode::FIFO);
-        bucket_readers.set_output_executors(&bucket_resplitters, ExecOutputMode::FIFO);
-
-        let bucket_writers = ExecutorsList::<KmersTransformWriter<F>>::new(
+        let _bucket_writers = ExecutorsList::<KmersTransformWriter<F>>::new(
             ExecutorAllocMode::Fixed(compute_threads_count / 2),
             PoolAllocMode::None,
             (),
             &self.execution_context,
-            &compute_thread_pool,
+            &mut compute_thread_pool_builder,
         );
 
-        bucket_sequences_processors.set_output_executors(&bucket_writers, ExecOutputMode::FIFO);
+        let disk_thread_pool = disk_thread_pool_builder.build();
+        let compute_thread_pool = compute_thread_pool_builder.build();
+
+        input_buckets.set_output_pool::<KmersTransformReader<F>>(
+            &disk_thread_pool,
+            ExecOutputMode::LowPriority,
+        );
+        bucket_resplitters.set_output_pool(&disk_thread_pool, ExecOutputMode::HighPriority);
+        bucket_readers.set_output_pool(&compute_thread_pool, ExecOutputMode::LowPriority);
+        bucket_sequences_processors
+            .set_output_pool(&compute_thread_pool, ExecOutputMode::LowPriority);
 
         compute_thread_pool.add_executors_batch(vec![self
             .execution_context
@@ -327,11 +294,14 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             .unwrap()
             .clone()]);
 
-        disk_thread_pool.start();
-        compute_thread_pool.start();
+        disk_thread_pool.start("km_disk");
+        compute_thread_pool.start("km_comp");
 
+        println!("Disk joining!");
         disk_thread_pool.join();
+        println!("Disk joined!");
         compute_thread_pool.join();
+        println!("CTP joined!");
 
         // let mut execution_context = Arc::try_unwrap(execution_context)
         //     .unwrap_or_else(|_| panic!("Cannot get execution context!"));

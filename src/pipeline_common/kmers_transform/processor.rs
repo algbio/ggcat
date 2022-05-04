@@ -40,7 +40,7 @@ impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformProcess
 }
 
 impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
-    const EXECUTOR_TYPE: ExecutorType = ExecutorType::SingleUnit;
+    const EXECUTOR_TYPE: ExecutorType = ExecutorType::SimplePacketsProcessing;
 
     type InputPacket = ReadsBuffer<F::AssociatedExtraData>;
     type OutputPacket = <F::MapProcessorType as KmersTransformMapProcessor<F>>::MapStruct;
@@ -53,23 +53,16 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         _memory_params: Option<Self::MemoryParams>,
         _common_packet: Option<Packet<Self::InputPacket>>,
         _executors_initializer: D,
-    ) -> Self::BuildParams {
-        global_params
+    ) -> (Self::BuildParams, usize) {
+        (global_params, 1)
     }
 
-    fn get_maximum_concurrency(&self) -> usize {
-        1
-    }
-
-    fn reinitialize<P: FnMut() -> Packet<Self::OutputPacket>>(
-        &mut self,
-        reinit_params: &Self::BuildParams,
-        _packet_alloc: P,
-    ) {
-        self.context = Some(reinit_params.clone());
-        self.map_processor = Some(F::new_map_processor(
-            &self.context.as_ref().unwrap().global_extra_data,
-        ));
+    fn required_pool_items(&self) -> u64 {
+        if self.context.is_some() {
+            1
+        } else {
+            0
+        }
     }
 
     fn pre_execute<
@@ -77,13 +70,17 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
+        reinit_params: Self::BuildParams,
         mut packet_alloc: P,
         _packet_send: S,
     ) {
-        self.map_processor.as_mut().unwrap().process_group_start(
-            packet_alloc(),
-            &self.context.as_ref().unwrap().global_extra_data,
-        );
+        self.map_processor = Some(F::new_map_processor(&reinit_params.global_extra_data));
+
+        self.map_processor
+            .as_mut()
+            .unwrap()
+            .process_group_start(packet_alloc(), &reinit_params.global_extra_data);
+        self.context = Some(reinit_params);
     }
 
     fn execute<

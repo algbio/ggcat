@@ -216,8 +216,9 @@ impl AssemblePipeline {
             buckets_counters_path,
             buckets_count,
             global_data,
+            threads_count,
         )
-        .parallel_kmers_transform(threads_count);
+        .parallel_kmers_transform();
 
         RetType {
             sequences,

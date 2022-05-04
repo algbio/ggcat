@@ -3,27 +3,56 @@ use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAd
 use crate::execution_manager::objects_pool::ObjectsPool;
 use crate::execution_manager::objects_pool::PoolObject;
 use crate::execution_manager::packet::{Packet, PacketAny, PacketsPool};
+use crossbeam::queue::SegQueue;
 use parking_lot::{Mutex, RwLock};
 use std::any::{Any, TypeId};
+use std::borrow::Borrow;
+use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-pub type GenericExecutor = Arc<dyn ExecutionManagerTrait>;
+pub type GenericExecutor = Box<dyn ExecutionManagerTrait>;
+
+#[derive(Eq, PartialEq, Debug)]
+pub enum ExecutionStatus {
+    NoMorePackets,
+    MorePackets,
+    OutputPoolFull,
+    Finished,
+}
 
 pub trait ExecutionManagerTrait: Send + Sync {
-    fn pre_execute(&self);
+    fn execute(&mut self, wait: bool) -> ExecutionStatus;
 
-    fn process_packet(&self, packet: PacketAny);
+    fn get_weak_address(&self) -> &WeakExecutorAddress;
 
-    fn get_address(&self) -> ExecutorAddress;
+    fn get_packets_queue_size(&self) -> usize;
 
     fn is_finished(&self) -> bool;
 
-    fn can_split(&self) -> bool;
-
     fn exec_type_id(&self) -> TypeId;
 }
+
+impl Borrow<WeakExecutorAddress> for dyn ExecutionManagerTrait {
+    fn borrow(&self) -> &WeakExecutorAddress {
+        self.get_weak_address()
+    }
+}
+
+impl Hash for dyn ExecutionManagerTrait {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get_weak_address().hash(state)
+    }
+}
+
+impl PartialEq for dyn ExecutionManagerTrait {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_weak_address() == other.get_weak_address()
+    }
+}
+
+impl Eq for dyn ExecutionManagerTrait {}
 
 impl dyn ExecutionManagerTrait {
     pub fn downcast<E: Executor>(&self) -> &ExecutionManager<E> {
@@ -33,91 +62,106 @@ impl dyn ExecutionManagerTrait {
 }
 
 pub struct ExecutionManager<E: Executor> {
-    executor: Mutex<PoolObject<E>>,
-    weak_address: RwLock<WeakExecutorAddress>,
+    executor: PoolObject<E>,
+    weak_address: WeakExecutorAddress,
     pool: Option<Arc<PoolObject<PacketsPool<E::OutputPacket>>>>,
-    build_info: Option<(E::BuildParams, AtomicUsize, usize)>,
+    packets_queue: Box<dyn Fn() -> (Option<Packet<E::InputPacket>>, Option<usize>) + Sync + Send>,
+    build_info: Option<E::BuildParams>,
     output_fn: Arc<dyn (Fn(ExecutorAddress, Packet<E::OutputPacket>)) + Sync + Send>,
+    is_finished: bool,
+    queue_size: usize,
 }
-
-static EXECUTORS_COUNT: AtomicU64 = AtomicU64::new(0);
 
 impl<E: Executor + 'static> ExecutionManager<E> {
     pub fn new(
-        mut executor: PoolObject<E>,
+        executor: PoolObject<E>,
         build_info: E::BuildParams,
         pool: Option<Arc<PoolObject<PacketsPool<E::OutputPacket>>>>,
-        address: ExecutorAddress,
+        packets_queue: Box<
+            dyn Fn() -> (Option<Packet<E::InputPacket>>, Option<usize>) + Sync + Send,
+        >,
+        queue_size: usize,
+        weak_address: WeakExecutorAddress,
         output_fn: impl Fn(ExecutorAddress, Packet<E::OutputPacket>) + Sync + Send + 'static,
     ) -> GenericExecutor {
-        executor.reinitialize(&build_info, || pool.as_ref().unwrap().alloc_packet());
-
-        let maximum_instances = executor.get_maximum_concurrency();
-        EXECUTORS_COUNT.fetch_add(1, Ordering::Relaxed);
-
-        let mut self_ = Arc::new(Self {
-            executor: Mutex::new(executor),
-            weak_address: RwLock::new(WeakExecutorAddress::empty()),
+        let mut self_ = Box::new(Self {
+            executor,
+            weak_address,
             pool,
-            build_info: Some((build_info, AtomicUsize::new(1), maximum_instances)),
+            packets_queue,
+            build_info: Some(build_info),
             output_fn: Arc::new(output_fn),
+            is_finished: false,
+            queue_size,
         });
-        *address.executor_keeper.write() = Some(self_.clone());
-        *self_.weak_address.write() = address.to_weak();
 
         self_
-    }
-
-    pub fn clone_executor(&self, mut new_core: PoolObject<E>) -> Option<GenericExecutor> {
-        let (build_info, current_count, max_count) = self.build_info.as_ref().unwrap();
-
-        if current_count.fetch_add(1, Ordering::Relaxed) >= *max_count {
-            return None;
-        }
-        EXECUTORS_COUNT.fetch_add(1, Ordering::Relaxed);
-
-        new_core.reinitialize(build_info, || self.pool.as_ref().unwrap().alloc_packet());
-
-        Some(Arc::new(Self {
-            executor: Mutex::new(new_core),
-            weak_address: RwLock::new(self.weak_address.read().clone()),
-            pool: self.pool.clone(),
-            build_info: None,
-            output_fn: self.output_fn.clone(),
-        }))
     }
 }
 
 impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
-    fn pre_execute(&self) {
-        self.executor.lock().pre_execute(
-            || self.pool.as_ref().unwrap().alloc_packet(),
-            self.output_fn.deref(),
-        );
+    fn execute(&mut self, mut wait: bool) -> ExecutionStatus {
+        while self.executor.required_pool_items() as i64
+            > self
+                .pool
+                .as_ref()
+                .map(|p| p.get_available_items())
+                .unwrap_or(0)
+        {
+            if wait {
+                self.pool.as_ref().unwrap().wait_for_item();
+                wait = false;
+            } else {
+                return ExecutionStatus::OutputPoolFull;
+            }
+        }
+
+        if let Some(build_info) = self.build_info.take() {
+            self.executor.pre_execute(
+                build_info,
+                || self.pool.as_ref().unwrap().alloc_packet(),
+                self.output_fn.deref(),
+            );
+            if self.executor.is_finished() {
+                self.is_finished = true;
+                return ExecutionStatus::Finished;
+            }
+        }
+
+        let (packet, queue_size) = (self.packets_queue)();
+
+        if let Some(packet) = packet {
+            self.executor.execute(
+                packet,
+                || self.pool.as_ref().unwrap().alloc_packet(),
+                self.output_fn.deref(),
+            );
+        }
+
+        if self.executor.is_finished() || queue_size.is_none() {
+            self.is_finished = true;
+            ExecutionStatus::Finished
+        } else {
+            let queue_size = queue_size.unwrap();
+            self.queue_size = queue_size;
+            if queue_size > 0 {
+                ExecutionStatus::MorePackets
+            } else {
+                ExecutionStatus::NoMorePackets
+            }
+        }
     }
 
-    fn process_packet(&self, packet: PacketAny) {
-        let mut executor = self.executor.lock();
-        executor.execute(
-            packet.downcast(),
-            || self.pool.as_ref().unwrap().alloc_packet(),
-            self.output_fn.deref(),
-        );
-    }
-
-    fn get_address(&self) -> ExecutorAddress {
-        self.weak_address.read().get_strong().unwrap()
+    fn get_weak_address(&self) -> &WeakExecutorAddress {
+        &self.weak_address
     }
 
     fn is_finished(&self) -> bool {
-        self.executor.lock().is_finished() || self.weak_address.read().get_strong_count() <= 1
+        self.is_finished || self.executor.is_finished()
     }
 
-    fn can_split(&self) -> bool {
-        self.build_info
-            .as_ref()
-            .map(|bi| bi.1.load(Ordering::Relaxed) < bi.2)
-            .unwrap_or(false)
+    fn get_packets_queue_size(&self) -> usize {
+        self.queue_size
     }
 
     fn exec_type_id(&self) -> TypeId {
@@ -127,8 +171,6 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
 
 impl<E: Executor> Drop for ExecutionManager<E> {
     fn drop(&mut self) {
-        let index = EXECUTORS_COUNT.fetch_sub(1, Ordering::Relaxed);
-        println!("Finalizing executor!");
-        self.executor.lock().finalize(self.output_fn.deref())
+        self.executor.finalize(self.output_fn.deref())
     }
 }

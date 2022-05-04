@@ -40,7 +40,7 @@ impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformWriter<
 }
 
 impl<F: KmersTransformExecutorFactory> Executor for KmersTransformWriter<F> {
-    const EXECUTOR_TYPE: ExecutorType = ExecutorType::MultipleUnits;
+    const EXECUTOR_TYPE: ExecutorType = ExecutorType::SimplePacketsProcessing;
 
     type InputPacket = <F::MapProcessorType as KmersTransformMapProcessor<F>>::MapStruct;
     type OutputPacket = ();
@@ -53,23 +53,13 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformWriter<F> {
         _memory_params: Option<Self::MemoryParams>,
         _common_packet: Option<Packet<Self::InputPacket>>,
         _executors_initializer: D,
-    ) -> Self::BuildParams {
-        global_params
+    ) -> (Self::BuildParams, usize) {
+        let threads_count = global_params.compute_threads_count;
+        (global_params, threads_count)
     }
 
-    fn get_maximum_concurrency(&self) -> usize {
-        16 // TODO: Parametrize
-    }
-
-    fn reinitialize<P: FnMut() -> Packet<Self::OutputPacket>>(
-        &mut self,
-        reinit_params: &Self::BuildParams,
-        _packet_alloc: P,
-    ) {
-        self.context = Some(reinit_params.clone());
-        if self.final_executor.is_none() {
-            self.final_executor = Some(F::new_final_executor(&reinit_params.global_extra_data));
-        }
+    fn required_pool_items(&self) -> u64 {
+        0
     }
 
     fn pre_execute<
@@ -77,9 +67,14 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformWriter<F> {
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
+        reinit_params: Self::BuildParams,
         _packet_alloc: P,
         _packet_send: S,
     ) {
+        if self.final_executor.is_none() {
+            self.final_executor = Some(F::new_final_executor(&reinit_params.global_extra_data));
+        }
+        self.context = Some(reinit_params);
     }
 
     fn execute<

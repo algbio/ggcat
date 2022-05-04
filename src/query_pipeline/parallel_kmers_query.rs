@@ -337,8 +337,9 @@ impl QueryPipeline {
             buckets_counters_path,
             buckets_count,
             global_data.clone(),
+            threads_count,
         )
-        .parallel_kmers_transform(threads_count);
+        .parallel_kmers_transform();
 
         let global_data =
             Arc::try_unwrap(global_data).unwrap_or_else(|_| panic!("Cannot unwrap global data!"));

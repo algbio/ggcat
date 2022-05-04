@@ -75,7 +75,7 @@ impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformReader<
 }
 
 impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
-    const EXECUTOR_TYPE: ExecutorType = ExecutorType::MultipleCommonPacketUnits;
+    const EXECUTOR_TYPE: ExecutorType = ExecutorType::NeedsInitPacket;
 
     type InputPacket = InputBucketDesc;
     type OutputPacket = ReadsBuffer<F::AssociatedExtraData>;
@@ -93,7 +93,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         _memory_params: Option<Self::MemoryParams>,
         common_packet: Option<Packet<Self::InputPacket>>,
         executors_initializer: D,
-    ) -> Self::BuildParams {
+    ) -> (Self::BuildParams, usize) {
         let file = common_packet.unwrap();
 
         // FIXME: Choose the right number of executors depending on size
@@ -104,33 +104,42 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
             .map(|_| KmersTransformProcessor::<F>::generate_new_address())
             .collect();
 
+        let max_concurrency = 4; // TODO: Optimize for bucket size
+
         executors_initializer(addresses.clone());
 
         (
-            global_params,
-            AsyncBinaryReader::new(
-                &file.path,
-                true,
-                RemoveFileMode::Remove {
-                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-                },
-                DEFAULT_PREFETCH_AMOUNT,
+            (
+                global_params,
+                AsyncBinaryReader::new(
+                    &file.path,
+                    true,
+                    RemoveFileMode::Remove {
+                        remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                    },
+                    DEFAULT_PREFETCH_AMOUNT,
+                ),
+                second_buckets_count_log,
+                addresses,
             ),
-            second_buckets_count_log,
-            addresses,
+            max_concurrency,
         )
     }
 
-    fn get_maximum_concurrency(&self) -> usize {
-        4 // TODO: Optimize for bucket size
+    fn required_pool_items(&self) -> u64 {
+        (1 << self.second_buckets_count_log)
     }
 
-    fn reinitialize<P: FnMut() -> Packet<Self::OutputPacket>>(
+    fn pre_execute<
+        P: FnMut() -> Packet<Self::OutputPacket>,
+        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
+    >(
         &mut self,
-        reinit_params: &Self::BuildParams,
+        reinit_params: Self::BuildParams,
         mut packet_alloc: P,
+        mut packet_send: S,
     ) {
-        self.context = Some(reinit_params.0.clone());
+        self.context = Some(reinit_params.0);
 
         self.second_buckets_count_log = reinit_params.2;
         let second_buckets_count = (1 << self.second_buckets_count_log);
@@ -144,17 +153,8 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
             &self.context.as_ref().unwrap().global_extra_data,
         ));
 
-        self.async_reader = Some(reinit_params.1.clone());
-    }
+        self.async_reader = Some(reinit_params.1);
 
-    fn pre_execute<
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
-        &mut self,
-        mut packet_alloc: P,
-        mut packet_send: S,
-    ) {
         let async_reader_thread = self.context.as_ref().unwrap().async_readers.get();
         let preprocessor = self.preprocessor.as_ref().unwrap();
         let global_extra_data = &self.context.as_ref().unwrap().global_extra_data;
@@ -190,10 +190,13 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
             });
         for (packet, address) in self.buffers.drain(..).zip(self.addresses.drain(..)) {
             if packet.reads.len() > 0 {
-                println!("Draining address: {:?}", address.to_weak());
                 packet_send(address, packet);
             }
         }
+        // println!(
+        //     "Finished bucket: {}",
+        //     self.async_reader.as_ref().unwrap().get_name().display()
+        // );
     }
 
     fn execute<
@@ -209,10 +212,11 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
     }
 
     fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, _packet_send: S) {
+        assert_eq!(self.buffers.len(), 0);
     }
 
     fn is_finished(&self) -> bool {
-        true
+        self.context.is_some()
     }
 
     fn get_total_memory(&self) -> u64 {

@@ -1,5 +1,6 @@
 #![feature(is_sorted, generic_associated_types, int_log, trait_alias)]
 #![feature(drain_filter)]
+#![feature(map_first_last)]
 // #![deny(warnings)]
 
 #[macro_use]
