@@ -236,6 +236,14 @@ impl AsyncBinaryReader {
 }
 
 impl AsyncBinaryReader {
+    pub fn is_finished(&self) -> bool {
+        match &self.opened_file {
+            OpenedFile::None => true,
+            OpenedFile::Plain(f) => f.is_finished(),
+            OpenedFile::Compressed(f) => f.is_finished(),
+        }
+    }
+
     pub fn decode_all_bucket_items<E: BucketItem, F: for<'a> FnMut(E::ReadType<'a>)>(
         &self,
         read_thread: Arc<AsyncReaderThread>,

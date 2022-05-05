@@ -41,6 +41,9 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
 {
     const EXECUTOR_TYPE: ExecutorType = ExecutorType::SimplePacketsProcessing;
 
+    const BASE_PRIORITY: u64 = 0;
+    const PACKET_PRIORITY_MULTIPLIER: u64 = 1;
+
     type InputPacket = (PathBuf, FileInfo);
     type OutputPacket = MinimizerBucketingQueueData<FileInfo>;
     type GlobalParams = MinimizerBucketingExecutionContext<GlobalData>;

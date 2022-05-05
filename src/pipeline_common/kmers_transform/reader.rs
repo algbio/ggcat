@@ -1,4 +1,4 @@
-use crate::config::{DEFAULT_PREFETCH_AMOUNT, USE_SECOND_BUCKET};
+use crate::config::{DEFAULT_PREFETCH_AMOUNT, MINIMUM_LOG_DELTA_TIME, USE_SECOND_BUCKET};
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
 use crate::pipeline_common::kmers_transform::reads_buffer::ReadsBuffer;
@@ -14,10 +14,12 @@ use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::memory_fs::RemoveFileMode;
+use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 pub struct KmersTransformReader<F: KmersTransformExecutorFactory> {
     context: Option<Arc<KmersTransformContext<F>>>,
@@ -74,8 +76,55 @@ impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformReader<
     }
 }
 
+impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
+    // fn log_completed_bucket(&self) {
+    //     self.execution_context
+    //         .processed_buckets
+    //         .fetch_add(1, Ordering::Relaxed);
+    //
+    //     let mut last_info_log = match self.last_info_log.try_lock() {
+    //         None => return,
+    //         Some(x) => x,
+    //     };
+    //     if last_info_log.elapsed() > MINIMUM_LOG_DELTA_TIME {
+    //         *last_info_log = Instant::now();
+    //         drop(last_info_log);
+    //
+    //         let monitor = PHASES_TIMES_MONITOR.read();
+    //
+    //         let processed_count = self
+    //             .execution_context
+    //             .processed_buckets
+    //             .load(Ordering::Relaxed);
+    //         let remaining = self.execution_context.buckets_count - processed_count;
+    //
+    //         let eta = Duration::from_secs(
+    //             (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
+    //                 * (remaining as f64)) as u64,
+    //         );
+    //
+    //         let est_tot = Duration::from_secs(
+    //             (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
+    //                 * (self.execution_context.buckets_count as f64)) as u64,
+    //         );
+    //
+    //         println!(
+    //             "Processing bucket {} of {} {} phase eta: {:.0?} est.tot: {:.0?}",
+    //             processed_count,
+    //             self.execution_context.buckets_count,
+    //             monitor.get_formatted_counter_without_memory(),
+    //             eta,
+    //             est_tot
+    //         );
+    //     }
+    // }
+}
+
 impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
     const EXECUTOR_TYPE: ExecutorType = ExecutorType::NeedsInitPacket;
+
+    const BASE_PRIORITY: u64 = 0;
+    const PACKET_PRIORITY_MULTIPLIER: u64 = 2;
 
     type InputPacket = InputBucketDesc;
     type OutputPacket = ReadsBuffer<F::AssociatedExtraData>;
@@ -97,7 +146,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         let file = common_packet.unwrap();
 
         // FIXME: Choose the right number of executors depending on size
-        let second_buckets_count_log = 4;
+        let second_buckets_count_log = global_params.max_second_buckets_count_log2;
 
         // TODO: Enable resplitting
         let addresses: Vec<_> = (0..(1 << second_buckets_count_log))
@@ -127,7 +176,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
     }
 
     fn required_pool_items(&self) -> u64 {
-        (1 << self.second_buckets_count_log)
+        1
     }
 
     fn pre_execute<
@@ -140,6 +189,10 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         mut packet_send: S,
     ) {
         self.context = Some(reinit_params.0);
+
+        if reinit_params.1.is_finished() {
+            return;
+        }
 
         self.second_buckets_count_log = reinit_params.2;
         let second_buckets_count = (1 << self.second_buckets_count_log);
@@ -193,10 +246,6 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
                 packet_send(address, packet);
             }
         }
-        // println!(
-        //     "Finished bucket: {}",
-        //     self.async_reader.as_ref().unwrap().get_name().display()
-        // );
     }
 
     fn execute<

@@ -42,6 +42,9 @@ impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformProcess
 impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
     const EXECUTOR_TYPE: ExecutorType = ExecutorType::SimplePacketsProcessing;
 
+    const BASE_PRIORITY: u64 = 2;
+    const PACKET_PRIORITY_MULTIPLIER: u64 = 1;
+
     type InputPacket = ReadsBuffer<F::AssociatedExtraData>;
     type OutputPacket = <F::MapProcessorType as KmersTransformMapProcessor<F>>::MapStruct;
     type GlobalParams = KmersTransformContext<F>;
@@ -117,6 +120,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
             context.finalizer_address.read().as_ref().unwrap().clone(),
             packet,
         );
+        // self.context.take();
     }
 
     fn is_finished(&self) -> bool {

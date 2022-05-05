@@ -21,6 +21,9 @@ static EXECUTOR_GLOBAL_ID: AtomicU64 = AtomicU64::new(0);
 pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
     const EXECUTOR_TYPE: ExecutorType;
 
+    const BASE_PRIORITY: u64;
+    const PACKET_PRIORITY_MULTIPLIER: u64;
+
     type InputPacket: Send + Sync;
     type OutputPacket: Send + Sync + PacketTrait;
     type GlobalParams: Send + Sync;
@@ -28,11 +31,12 @@ pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
     type BuildParams: Send + Sync + Clone;
 
     fn generate_new_address() -> ExecutorAddress {
-        ExecutorAddress {
+        let exec = ExecutorAddress {
             executor_keeper: Arc::new(ExecutorDropper::new()),
             executor_type_id: std::any::TypeId::of::<Self>(),
             executor_internal_id: EXECUTOR_GLOBAL_ID.fetch_add(1, Ordering::Relaxed),
-        }
+        };
+        exec
     }
 
     fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
@@ -70,37 +74,4 @@ pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
 
     fn get_total_memory(&self) -> u64;
     fn get_current_memory_params(&self) -> Self::MemoryParams;
-}
-
-mod virt {
-    use crate::execution_manager::executors_list::{
-        ExecOutputMode, ExecutorAllocMode, ExecutorsList,
-    };
-    use crate::execution_manager::thread_pool::ExecThreadPoolBuilder;
-    use crate::execution_manager::units_io::ExecutorInput;
-
-    // fn execute_kmers_merge() {
-    //
-    //     let disk_thread_pool = ExecThreadPool::new(4);
-    //     let compute_thread_pool = ExecThreadPool::new(16);
-    //
-    //     let input_buckets = ExecutorInput::from_iter(files);
-    //
-    //     let bucket_readers = ExecutorsList::<KMBucketReader>::new(ExecutorAllocMode::Fixed(4), &disk_thread_pool);
-    //     input_buckets.set_output(bucket_readers, InputMode::FIFO);
-    //
-    //     let bucket_resplitters = ExecutorsList::<KMBucketReader>::new(ExecutorAllocMode::fixed(16), &compute_thread_pool);
-    //     bucket_readers.set_output(bucket_resplitters, InputMode::FIFO);
-    //     bucket_resplitters.set_output(bucket_readers, InputMode::LIFO);
-    //
-    //     let hmap_builders = ExecutorsList::<KmersHmapBuilding>::new(ExecutorAllocMode::limit_memory(1024MB), &compute_thread_pool);
-    //     bucket_readers.set_output(hmap_builders, InputMode::FIFO);
-    //
-    //     let kmers_extenders = ExecutorsList::<KmersExtenders>::new(ExecutorAllocMode::fixed(16), &compute_thread_pool);
-    //     hmap_builders.set_output(kmers_extenders, InputMode::FIFO);
-    //
-    //
-    //     disk_thread_pool.start();
-    //     compute_thread_pool.start();
-    // }
 }

@@ -11,11 +11,13 @@ use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub type GenericExecutor = Box<dyn ExecutionManagerTrait>;
 
 #[derive(Eq, PartialEq, Debug)]
 pub enum ExecutionStatus {
+    NoMorePacketsNoProgress,
     NoMorePackets,
     MorePackets,
     OutputPoolFull,
@@ -67,7 +69,8 @@ pub struct ExecutionManager<E: Executor> {
     pool: Option<Arc<PoolObject<PacketsPool<E::OutputPacket>>>>,
     packets_queue: Box<dyn Fn() -> (Option<Packet<E::InputPacket>>, Option<usize>) + Sync + Send>,
     build_info: Option<E::BuildParams>,
-    output_fn: Arc<dyn (Fn(ExecutorAddress, Packet<E::OutputPacket>)) + Sync + Send>,
+    output_fn: Box<dyn (Fn(ExecutorAddress, Packet<E::OutputPacket>)) + Sync + Send>,
+    notify_drop: Box<dyn Fn() + Sync + Send>,
     is_finished: bool,
     queue_size: usize,
 }
@@ -83,6 +86,7 @@ impl<E: Executor + 'static> ExecutionManager<E> {
         queue_size: usize,
         weak_address: WeakExecutorAddress,
         output_fn: impl Fn(ExecutorAddress, Packet<E::OutputPacket>) + Sync + Send + 'static,
+        notify_drop: impl Fn() + Sync + Send + 'static,
     ) -> GenericExecutor {
         let mut self_ = Box::new(Self {
             executor,
@@ -90,7 +94,8 @@ impl<E: Executor + 'static> ExecutionManager<E> {
             pool,
             packets_queue,
             build_info: Some(build_info),
-            output_fn: Arc::new(output_fn),
+            output_fn: Box::new(output_fn),
+            notify_drop: Box::new(notify_drop),
             is_finished: false,
             queue_size,
         });
@@ -109,7 +114,10 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
                 .unwrap_or(0)
         {
             if wait {
-                self.pool.as_ref().unwrap().wait_for_item();
+                self.pool
+                    .as_ref()
+                    .unwrap()
+                    .wait_for_item_timeout(Duration::from_millis(100));
                 wait = false;
             } else {
                 return ExecutionStatus::OutputPoolFull;
@@ -130,6 +138,8 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
 
         let (packet, queue_size) = (self.packets_queue)();
 
+        let packet_is_none = packet.is_none();
+
         if let Some(packet) = packet {
             self.executor.execute(
                 packet,
@@ -141,6 +151,8 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
         if self.executor.is_finished() || queue_size.is_none() {
             self.is_finished = true;
             ExecutionStatus::Finished
+        } else if packet_is_none {
+            ExecutionStatus::NoMorePacketsNoProgress
         } else {
             let queue_size = queue_size.unwrap();
             self.queue_size = queue_size;
@@ -171,6 +183,7 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
 
 impl<E: Executor> Drop for ExecutionManager<E> {
     fn drop(&mut self) {
-        self.executor.finalize(self.output_fn.deref())
+        self.executor.finalize(self.output_fn.deref());
+        (self.notify_drop)();
     }
 }

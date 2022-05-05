@@ -44,6 +44,9 @@ impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformResplit
 impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> {
     const EXECUTOR_TYPE: ExecutorType = ExecutorType::NeedsInitPacket;
 
+    const BASE_PRIORITY: u64 = 1;
+    const PACKET_PRIORITY_MULTIPLIER: u64 = 1;
+
     type InputPacket = ReadsBuffer<F::AssociatedExtraData>;
     type OutputPacket = InputBucketDesc;
     type GlobalParams = KmersTransformContext<F>;
@@ -88,7 +91,9 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
         todo!()
     }
 
-    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, packet_send: S) {}
+    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, packet_send: S) {
+        // self.context.take();
+    }
 
     fn is_finished(&self) -> bool {
         false

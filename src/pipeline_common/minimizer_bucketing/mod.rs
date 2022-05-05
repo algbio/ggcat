@@ -194,6 +194,9 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> PoolObjectTrait
 impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucketingExecWriter<E> {
     const EXECUTOR_TYPE: ExecutorType = ExecutorType::SimplePacketsProcessing;
 
+    const BASE_PRIORITY: u64 = 0;
+    const PACKET_PRIORITY_MULTIPLIER: u64 = 1;
+
     type InputPacket = MinimizerBucketingQueueData<E::FileInfo>;
     type OutputPacket = ();
     type GlobalParams = MinimizerBucketingExecutionContext<E::GlobalData>;
@@ -344,7 +347,7 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
 
     fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, packet_send: S) {
         self.tmp_reads_buffer.take().unwrap().finalize();
-        self.context.take();
+        // self.context.take();
     }
 
     fn is_finished(&self) -> bool {
@@ -463,11 +466,13 @@ impl GenericMinimizerBucketing {
             disk_thread_pool.start("mm_disk");
             compute_thread_pool.start("mm_comp");
 
+            disk_thread_pool.wait_for_executors(&file_readers);
             disk_thread_pool.join();
 
             println!("Taking address!");
             execution_context.executor_group_address.write().take();
 
+            compute_thread_pool.wait_for_executors(&bucket_writers);
             compute_thread_pool.join();
         }
 

@@ -1,9 +1,10 @@
 use crate::execution_manager::executor::Executor;
 use crossbeam::channel::*;
-use std::mem::MaybeUninit;
+use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 pub trait PoolObjectTrait: 'static {
     type InitData: Clone + Sync + Send;
@@ -27,7 +28,7 @@ pub struct ObjectsPool<T> {
     queue: Receiver<T>,
     pub(crate) returner: Arc<(Sender<T>, AtomicU64)>,
     allocate_fn: Box<dyn (Fn() -> T) + Sync + Send>,
-    max_count: u64,
+    pub(crate) max_count: u64,
 }
 
 impl<T: PoolObjectTrait> ObjectsPool<T> {
@@ -65,8 +66,14 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
         (self.max_count as i64) - (self.returner.1.load(Ordering::Relaxed) as i64)
     }
 
-    pub fn wait_for_item(&self) {
-        let _ = self.returner.0.try_send(self.queue.recv().unwrap());
+    pub fn get_allocated_items(&self) -> i64 {
+        self.returner.1.load(Ordering::Relaxed) as i64
+    }
+
+    pub fn wait_for_item_timeout(&self, timeout: Duration) {
+        if let Ok(recv) = self.queue.recv_timeout(timeout) {
+            let _ = self.returner.0.try_send(recv);
+        }
     }
 }
 
@@ -81,21 +88,21 @@ impl<T> PoolSender<T> {
 }
 
 pub struct PoolObject<T> {
-    pub(crate) value: MaybeUninit<T>,
+    pub(crate) value: ManuallyDrop<T>,
     pub(crate) returner: Option<Arc<(Sender<T>, AtomicU64)>>,
 }
 
 impl<T> PoolObject<T> {
     fn from_element(value: T, pool: &ObjectsPool<T>) -> Self {
         Self {
-            value: MaybeUninit::new(value),
+            value: ManuallyDrop::new(value),
             returner: Some(pool.returner.clone()),
         }
     }
 
     pub fn new_simple(value: T) -> Self {
         Self {
-            value: MaybeUninit::new(value),
+            value: ManuallyDrop::new(value),
             returner: None,
         }
     }
@@ -105,14 +112,14 @@ impl<T> Deref for PoolObject<T> {
     type Target = T;
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        unsafe { self.value.assume_init_ref() }
+        self.value.deref()
     }
 }
 
 impl<T> DerefMut for PoolObject<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.value.assume_init_mut() }
+        self.value.deref_mut()
     }
 }
 
@@ -122,9 +129,9 @@ impl<T> Drop for PoolObject<T> {
             returner.1.fetch_sub(1, Ordering::Relaxed);
             let _ = returner
                 .0
-                .try_send(unsafe { self.value.assume_init_read() });
+                .try_send(unsafe { ManuallyDrop::take(&mut self.value) });
         } else {
-            unsafe { self.value.assume_init_drop() }
+            unsafe { ManuallyDrop::drop(&mut self.value) }
         }
     }
 }

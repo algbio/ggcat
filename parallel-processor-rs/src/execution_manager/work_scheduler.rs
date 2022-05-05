@@ -33,11 +33,30 @@ struct ExecutorsListManager<E: Executor> {
     executors_allocator: ObjectsPool<E>,
 }
 
+impl<E: Executor> Drop for ExecutorsListManager<E> {
+    fn drop(&mut self) {
+        println!(
+            "Freed execution list manager for: {}",
+            std::any::type_name::<E>()
+        );
+    }
+}
+
 pub struct ExecutionManagerInfo {
     executor_type: ExecutorType,
     pub output_pool: Option<Arc<dyn ExecThreadPoolDataAddTrait>>,
-    allocator: Option<Box<dyn (Fn(WeakExecutorAddress) -> Vec<GenericExecutor>) + Sync + Send>>,
+    allocator: Option<
+        Box<
+            dyn (Fn(WeakExecutorAddress) -> (Vec<GenericExecutor>, ExecutorPriority)) + Sync + Send,
+        >,
+    >,
     pool_remaining_executors: Option<Box<dyn (Fn() -> i64) + Sync + Send>>,
+}
+
+impl Drop for ExecutionManagerInfo {
+    fn drop(&mut self) {
+        println!("Dropped exec manager info!");
+    }
 }
 
 pub struct ExecutorDropper {
@@ -54,6 +73,8 @@ impl ExecutorDropper {
     }
 }
 
+pub static mut DEBUG_EXEC: Option<TypeId> = None;
+
 impl Drop for ExecutorDropper {
     fn drop(&mut self) {
         let scheduler = unsafe { &*(self.scheduler.get()) };
@@ -68,8 +89,9 @@ pub struct WorkScheduler {
     execution_managers_info: HashMap<TypeId, Arc<RwLock<ExecutionManagerInfo>>>,
     packets_map:
         Arc<DashMap<WeakExecutorAddress, Arc<(AtomicBool, PoolObject<SegQueue<PacketAny>>)>>>,
+    active_executors_counters: HashMap<TypeId, Arc<AtomicU64>>,
 
-    priority_list: PriorityManager<WeakExecutorAddress, dyn ExecutionManagerTrait>,
+    priority_list: PriorityManager,
     waiting_addresses: HashMap<TypeId, RwLock<SegQueue<WeakExecutorAddress>>>,
 
     changes_notifier_mutex: Mutex<()>,
@@ -95,6 +117,7 @@ impl WorkScheduler {
         Self {
             execution_managers_info: HashMap::new(),
             packets_map: Default::default(),
+            active_executors_counters: Default::default(),
             priority_list: PriorityManager::new(),
             waiting_addresses: Default::default(),
             changes_notifier_mutex: Default::default(),
@@ -156,6 +179,15 @@ impl WorkScheduler {
 
         let executors_list_manager_aeu = executors_list_manager.clone();
 
+        self.active_executors_counters
+            .insert(TypeId::of::<E>(), Arc::new(AtomicU64::new(0)));
+
+        let active_counter = self
+            .active_executors_counters
+            .get(&TypeId::of::<E>())
+            .unwrap()
+            .clone();
+
         let allocate_execution_units = move |addr: WeakExecutorAddress| {
             let executor_info = executor_info_aeu.upgrade().unwrap();
             let executor_info = executor_info.read();
@@ -165,7 +197,7 @@ impl WorkScheduler {
 
             let packets_queue = match packets_map.get(&addr) {
                 Some(map) => map.clone(),
-                None => return Vec::new(),
+                None => return (Vec::new(), ExecutorPriority::empty()),
             };
 
             // TODO: Memory params
@@ -174,7 +206,7 @@ impl WorkScheduler {
                 None,
                 if needs_build_packet {
                     Some(
-                        WorkScheduler::get_packet(addr, &packets_queue, &packets_map)
+                        Self::get_packet(addr, &packets_queue, &packets_map)
                             .0
                             .unwrap(),
                     )
@@ -192,9 +224,12 @@ impl WorkScheduler {
 
             let mut build_info = Some(build_info);
 
+            assert!(maximum_concurrency > 0);
             let mut execution_managers = Vec::with_capacity(maximum_concurrency);
+            active_counter.fetch_add(maximum_concurrency as u64 - 1, Ordering::SeqCst);
 
             for i in 0..maximum_concurrency {
+                let active_counter = active_counter.clone();
                 let output_pool = executor_info.output_pool.clone();
                 let executor = executors_list_manager_aeu
                     .executors_allocator
@@ -238,10 +273,20 @@ impl WorkScheduler {
                             .unwrap()
                             .add_data(addr.to_weak(), packet.upcast());
                     },
+                    move || {
+                        active_counter.fetch_sub(1, Ordering::SeqCst);
+                    },
                 ));
             }
 
-            execution_managers
+            (
+                execution_managers,
+                ExecutorPriority::new(
+                    E::PACKET_PRIORITY_MULTIPLIER,
+                    packets_queue.1.len() as u64,
+                    E::BASE_PRIORITY,
+                ),
+            )
         };
 
         let pool_remaining_executors = move || {
@@ -285,6 +330,10 @@ impl WorkScheduler {
                         executor.to_weak(),
                         Arc::new((AtomicBool::new(false), self.queues_allocator.alloc_object())),
                     );
+                    self.active_executors_counters
+                        .get(&executor.executor_type_id)
+                        .unwrap()
+                        .fetch_add(1, Ordering::SeqCst);
                     assert!(old_val.is_none());
                     exec_queue.push(executor.to_weak());
                 });
@@ -301,12 +350,15 @@ impl WorkScheduler {
     pub fn add_input_packet(&self, address: WeakExecutorAddress, mut packet: PacketAny) {
         let queue = &self.packets_map.get(&address).unwrap().1;
         queue.push(packet);
-        let len = queue.len();
         self.priority_list
-            .change_priority(&address, |p| p.update_score(len as u64));
+            .change_priority(&address, |p| p.update_score(queue.len() as u64));
+        self.changes_notifier_condvar.notify_all();
     }
 
-    fn alloc_executors(&self, address: WeakExecutorAddress) -> Vec<GenericExecutor> {
+    fn alloc_executors(
+        &self,
+        address: WeakExecutorAddress,
+    ) -> (Vec<GenericExecutor>, ExecutorPriority) {
         let executor_info = self
             .execution_managers_info
             .get(&address.executor_type_id)
@@ -334,6 +386,13 @@ impl WorkScheduler {
         (packet.map(|p| p.downcast()), is_finished)
     }
 
+    pub fn get_allocated_executors(&self, executor_type_id: &TypeId) -> u64 {
+        self.active_executors_counters
+            .get(executor_type_id)
+            .unwrap()
+            .load(Ordering::SeqCst)
+    }
+
     pub fn maybe_change_work(&self, last_executor: &mut Option<GenericExecutor>) {
         let mut new_executor: Option<GenericExecutor> = None;
 
@@ -352,17 +411,9 @@ impl WorkScheduler {
                         .unwrap())();
                     if exec_remaining > 0 {
                         if let Some(addr) = addr_queue.pop() {
-                            let executors = self.alloc_executors(addr);
+                            let (executors, priority) = self.alloc_executors(addr);
                             if executors.len() > 0 {
-                                self.priority_list.add_elements(
-                                    executors,
-                                    ExecutorPriority::new(
-                                        self.packets_map
-                                            .get(&addr)
-                                            .map(|m| m.value().1.len() as u64)
-                                            .unwrap_or(0),
-                                    ),
-                                );
+                                self.priority_list.add_elements(executors, priority);
                             }
                         }
                     } else {
@@ -372,63 +423,89 @@ impl WorkScheduler {
             }
 
             if let Some(executor) = last_executor {
+                unsafe {
+                    if let Some(typeid) = DEBUG_EXEC {
+                        println!("Last executor: {:?}", executor.get_weak_address());
+                    }
+                }
+
                 if executor.is_finished() {
+                    let type_id = executor.get_weak_address().executor_type_id;
                     self.priority_list
-                        .remove_element(last_executor.take().unwrap())
+                        .remove_element(last_executor.take().unwrap().get_weak_address());
                 } else {
-                    let pcnt = executor.get_packets_queue_size();
                     self.priority_list
                         .change_priority(executor.get_weak_address(), |p| {
-                            p.update_score(pcnt as u64)
+                            p.update_score(executor.get_packets_queue_size() as u64)
                         });
                 }
             }
 
             if let Some(new_executor) = self.priority_list.get_element(last_executor.take()) {
                 // println!(
-                //     "Executing with priority: {}/{} // {:?} {:?}",
+                //     "Running executing with priority: {}/{} // {:?} {:?}",
                 //     new_executor.0.total_score.load(Ordering::Relaxed),
                 //     new_executor.1.is_finished(),
                 //     new_executor.1.get_weak_address(),
                 //     std::thread::current().id()
                 // );
+                //
 
-                if new_executor.0.total_score.load(Ordering::Relaxed) != 1839497123 {
-                    let out = std::io::stdout().lock();
-                    println!(
-                        "Packets list: [{:?}] // {}",
-                        new_executor.1.get_weak_address(),
-                        new_executor.0.total_score.load(Ordering::Relaxed)
-                    );
-                    for pmap in self.packets_map.iter() {
-                        let addr = pmap.key();
-                        let value = pmap.deref();
-                        let value = value.deref();
-                        let value = value.deref();
-
-                        println!(
-                            "Address: {:?} => {:?} // {:?}",
-                            addr,
-                            value.1.len(),
-                            self.priority_list.has_element(addr)
-                        );
-                    }
-                    // std::thread::sleep_ms(100);
-                }
-                *last_executor = Some(new_executor.1);
+                *last_executor = Some(new_executor);
                 // );
                 break;
             }
 
+            self.wait_for_progress();
+
             if self.packets_map.len() == 0 {
-                println!("Packets map len is ZERO!");
                 break;
             }
+        }
+    }
 
-            let mut wait_lock = self.changes_notifier_mutex.lock();
+    pub fn print_debug_executors(&self) {
+        let out = std::io::stdout().lock();
+        println!("Executors status:");
+        for pmap in self.packets_map.iter() {
+            use std::ops::Deref;
+            let addr = pmap.key();
+            let value = pmap.deref();
+            let value = value.deref();
+            let value = value.deref();
 
-            self.changes_notifier_condvar
-                .wait_for(&mut wait_lock, Duration::from_millis(100));
+            let exec_remaining = (self
+                .execution_managers_info
+                .get(&addr.executor_type_id)
+                .unwrap()
+                .read()
+                .pool_remaining_executors
+                .as_ref()
+                .unwrap())();
+
+            println!(
+                "Address: {:?} => {:?} // {:?} ER: {}",
+                addr,
+                value.1.len(),
+                self.priority_list.has_element_debug(addr),
+                exec_remaining
+            );
+        }
+    }
+
+    pub fn wait_for_progress(&self) {
+        let mut wait_lock = self.changes_notifier_mutex.lock();
+        self.changes_notifier_condvar
+            .wait_for(&mut wait_lock, Duration::from_millis(100));
+        drop(wait_lock);
+    }
+
+    pub fn finalize(&self) {
+        assert_eq!(self.get_packets_count(), 0);
+        self.priority_list.clear_all();
+        self.packets_map.clear();
+        for (_, manager) in self.execution_managers_info.iter() {
+            manager.write().output_pool.take();
         }
     }
 }

@@ -1,4 +1,6 @@
+use crate::execution_manager::executor::Executor;
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
+use crate::execution_manager::executors_list::ExecutorsList;
 use crate::execution_manager::manager::ExecutionStatus;
 use crate::execution_manager::objects_pool::PoolObjectTrait;
 use crate::execution_manager::packet::PacketAny;
@@ -9,6 +11,7 @@ use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 pub trait ExecThreadPoolDataAddTrait: Send + Sync {
     fn add_data(&self, addr: WeakExecutorAddress, packet: PacketAny);
@@ -64,46 +67,54 @@ impl ExecThreadPool {
 
     fn thread(&self) {
         let mut executor = None;
-        let mut last_info = (false, WeakExecutorAddress::empty());
+        let mut last_status = (false, false);
 
         while !self.is_joining.load(Ordering::Relaxed) {
             loop {
                 self.work_scheduler.maybe_change_work(&mut executor);
                 if let Some(executor) = &mut executor {
-                    let return_status = executor
-                        .execute(last_info.0 && executor.get_weak_address() == &last_info.1);
-                    last_info = (
+                    let return_status = executor.execute(last_status.0 && last_status.1);
+                    last_status = (
                         return_status == ExecutionStatus::OutputPoolFull,
-                        *executor.get_weak_address(),
+                        last_status.0,
                     );
 
-                    // println!(
-                    //     "AAA {:?}/{}",
-                    //     return_status,
-                    //     self.is_joining.load(Ordering::Relaxed)
-                    // );
-                    //
-                    if return_status == ExecutionStatus::NoMorePackets
-                        && self.is_joining.load(Ordering::Relaxed)
-                    {
-                        println!("Testing!");
-                        if self.work_scheduler.get_packets_count() == 0 {
-                            break;
-                        }
+                    let should_wait = last_status.0 && last_status.1;
+
+                    if should_wait || (return_status == ExecutionStatus::NoMorePacketsNoProgress) {
+                        self.work_scheduler.wait_for_progress();
                     }
                 } else {
                     break;
                 }
             }
         }
-        println!("Closed thread: {}", self.threads_count);
+    }
+
+    pub fn wait_for_executors<E: Executor>(&self, _: &ExecutorsList<E>) {
+        while self
+            .work_scheduler
+            .get_allocated_executors(&TypeId::of::<E>())
+            > 0
+        {
+            println!(
+                "Waiting for: {} ==> {}",
+                std::any::type_name::<E>(),
+                self.work_scheduler
+                    .get_allocated_executors(&TypeId::of::<E>())
+            );
+            self.work_scheduler.print_debug_executors();
+            std::thread::sleep(Duration::from_millis(2000));
+        }
     }
 
     pub fn join(&self) {
-        self.is_joining.swap(true, Ordering::Relaxed);
-        let mut handles = self.thread_handles.lock();
-        for handle in handles.drain(..) {
-            handle.join().unwrap();
+        if !self.is_joining.swap(true, Ordering::Relaxed) {
+            let mut handles = self.thread_handles.lock();
+            for handle in handles.drain(..) {
+                handle.join().unwrap();
+            }
+            self.work_scheduler.finalize()
         }
     }
 }
