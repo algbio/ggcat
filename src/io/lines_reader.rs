@@ -103,10 +103,18 @@ impl LinesReader {
     ) {
         let mut tmp_line = Vec::new();
         Self::read_binary_file(
-            file,
+            file.as_ref(),
             |mut buffer: &[u8]| {
                 // File finished
                 if buffer.len() == 0 {
+                    if tmp_line.len() > 0 {
+                        eprintln!(
+                            "WARNING: No newline at ending of file '{}'",
+                            file.as_ref().display()
+                        );
+                        callback(&tmp_line, true);
+                    }
+
                     callback(&[], true);
                     return;
                 }
