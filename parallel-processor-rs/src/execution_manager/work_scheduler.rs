@@ -33,15 +33,6 @@ struct ExecutorsListManager<E: Executor> {
     executors_allocator: ObjectsPool<E>,
 }
 
-impl<E: Executor> Drop for ExecutorsListManager<E> {
-    fn drop(&mut self) {
-        println!(
-            "Freed execution list manager for: {}",
-            std::any::type_name::<E>()
-        );
-    }
-}
-
 pub struct ExecutionManagerInfo {
     executor_type: ExecutorType,
     pub output_pool: Option<Arc<dyn ExecThreadPoolDataAddTrait>>,
