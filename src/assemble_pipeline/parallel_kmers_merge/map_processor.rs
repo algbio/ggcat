@@ -24,7 +24,7 @@ pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManage
     pub rhash_map:
         HashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>,
     pub saved_reads: Vec<u8>,
-    pub rcorrect_reads: TrackedVec<(MH::HashTypeExtendable, usize, u8, bool)>,
+    pub rcorrect_reads: TrackedVec<usize>,
     pub temp_colors: color_types::ColorsBufferTempStructure<MH, CX>,
 }
 
@@ -154,12 +154,9 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                             .saved_reads
                             .extend_from_slice(read.get_packed_slice())
                     }
-                    map_packet.rcorrect_reads.push((
-                        hash,
-                        saved_read_offset.unwrap() + (idx / 4),
-                        (idx % 4) as u8,
-                        is_forward,
-                    ));
+                    map_packet
+                        .rcorrect_reads
+                        .push(saved_read_offset.unwrap() * 4 + idx);
                 }
             }
 

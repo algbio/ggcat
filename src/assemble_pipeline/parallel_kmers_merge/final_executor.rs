@@ -6,6 +6,7 @@ use crate::assemble_pipeline::parallel_kmers_merge::{
 use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE};
+use crate::hashes::HashFunction;
 use crate::hashes::{ExtendableHashTraitType, HashFunctionFactory, MinimizerHashFunctionFactory};
 use crate::io::structs::hash_entry::Direction;
 use crate::pipeline_common::kmers_transform::{
@@ -88,18 +89,21 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             );
         }
 
-        for (hash, read_bases_start, reads_offset, is_forward) in
-            map_struct.rcorrect_reads.drain(..)
-        {
+        for base_index in map_struct.rcorrect_reads.drain(..) {
+            // hash, read_bases_start, reads_offset, is_forward
+            let read_bases_start = base_index / 4;
+            let reads_offset = base_index % 4;
+
             let reads_slice = unsafe {
                 from_raw_parts(
                     map_struct.saved_reads.as_ptr().add(read_bases_start),
-                    (k + reads_offset as usize + 3) / 4,
+                    (k + reads_offset + 3) / 4,
                 )
             };
 
-            let cread =
-                CompressedRead::from_compressed_reads(reads_slice, reads_offset as usize, k);
+            let cread = CompressedRead::from_compressed_reads(reads_slice, reads_offset, k);
+
+            let hash = MH::new(cread, k).iter().next().unwrap();
 
             let rhentry = map_struct
                 .rhash_map
@@ -120,7 +124,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             rhentry.set_used();
             let ignored_status = rhentry.get_flags();
 
-            let (begin_ignored, end_ignored) = if is_forward {
+            let (begin_ignored, end_ignored) = if hash.is_forward() {
                 (
                     ignored_status == READ_FLAG_INCL_BEGIN,
                     ignored_status == READ_FLAG_INCL_END,
