@@ -251,16 +251,16 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             &mut disk_thread_pool_builder,
         );
 
-        let min_maps_count = max(max_second_buckets_count, compute_threads_count) * 8;
+        let min_maps_count = max(max_second_buckets_count, compute_threads_count);
 
         let mut bucket_sequences_processors = ExecutorsList::<KmersTransformProcessor<F>>::new(
             ExecutorAllocMode::MemoryLimited {
                 min_count: min_maps_count,
-                max_count: min_maps_count * 4, //threads_count * 4, FIXME!
+                max_count: min_maps_count * 2,
                 max_memory: MemoryDataSize::from_gibioctets(4), // TODO: Make dynamic
             },
             PoolAllocMode::Shared {
-                capacity: min_maps_count * 16,
+                capacity: min_maps_count * 3,
             },
             (),
             &self.execution_context,

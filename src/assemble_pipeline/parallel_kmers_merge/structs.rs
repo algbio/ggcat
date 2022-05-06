@@ -10,7 +10,7 @@ use std::marker::PhantomData;
 use std::mem::size_of;
 use std::path::PathBuf;
 
-const USED_MARKER: usize = usize::MAX;
+const USED_MARKER: usize = (usize::MAX >> FLAGS_SHIFT);
 const FLAGS_COUNT: usize = 2;
 const FLAGS_SHIFT: usize = size_of::<usize>() * 8 - FLAGS_COUNT;
 const COUNTER_MASK: usize = (1 << FLAGS_SHIFT) - 1;
@@ -35,12 +35,12 @@ impl<CHI> MapEntry<CHI> {
 
     #[inline(always)]
     pub fn set_used(&mut self) {
-        self.count_flags = USED_MARKER;
+        self.count_flags |= USED_MARKER;
     }
 
     #[inline(always)]
     pub fn is_used(&self) -> bool {
-        self.count_flags == USED_MARKER
+        (self.count_flags & USED_MARKER) == USED_MARKER
     }
 
     #[inline(always)]

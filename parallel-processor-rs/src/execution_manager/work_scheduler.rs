@@ -53,12 +53,6 @@ pub struct ExecutionManagerInfo {
     pool_remaining_executors: Option<Box<dyn (Fn() -> i64) + Sync + Send>>,
 }
 
-impl Drop for ExecutionManagerInfo {
-    fn drop(&mut self) {
-        println!("Dropped exec manager info!");
-    }
-}
-
 pub struct ExecutorDropper {
     weak_addr: UnsafeCell<WeakExecutorAddress>,
     scheduler: UnsafeCell<Weak<WorkScheduler>>,
@@ -197,7 +191,11 @@ impl WorkScheduler {
 
             let packets_queue = match packets_map.get(&addr) {
                 Some(map) => map.clone(),
-                None => return (Vec::new(), ExecutorPriority::empty()),
+                None => {
+                    // Do not do anything if we are deallocated without any packet
+                    active_counter.fetch_sub(1, Ordering::Relaxed);
+                    return (Vec::new(), ExecutorPriority::empty());
+                }
             };
 
             // TODO: Memory params
@@ -394,8 +392,6 @@ impl WorkScheduler {
     }
 
     pub fn maybe_change_work(&self, last_executor: &mut Option<GenericExecutor>) {
-        let mut new_executor: Option<GenericExecutor> = None;
-
         'main_scheduling_loop: loop {
             // Allocate as much executors as possible
             for (addr, addr_queue) in self.waiting_addresses.iter() {
@@ -423,14 +419,7 @@ impl WorkScheduler {
             }
 
             if let Some(executor) = last_executor {
-                unsafe {
-                    if let Some(typeid) = DEBUG_EXEC {
-                        println!("Last executor: {:?}", executor.get_weak_address());
-                    }
-                }
-
                 if executor.is_finished() {
-                    let type_id = executor.get_weak_address().executor_type_id;
                     self.priority_list
                         .remove_element(last_executor.take().unwrap().get_weak_address());
                 } else {
@@ -466,6 +455,19 @@ impl WorkScheduler {
 
     pub fn print_debug_executors(&self) {
         let out = std::io::stdout().lock();
+        println!("Executors counters:");
+        for (addr, exec_remaining) in self.execution_managers_info.iter() {
+            println!(
+                "Remaining for executor: {:?} ==> {}",
+                addr,
+                (exec_remaining
+                    .read()
+                    .pool_remaining_executors
+                    .as_ref()
+                    .unwrap())()
+            );
+        }
+
         println!("Executors status:");
         for pmap in self.packets_map.iter() {
             use std::ops::Deref;

@@ -98,13 +98,14 @@ impl ExecThreadPool {
             > 0
         {
             println!(
-                "Waiting for: {} ==> {}",
+                "Waiting for: {:?}/{} ==> {}",
+                TypeId::of::<E>(),
                 std::any::type_name::<E>(),
                 self.work_scheduler
                     .get_allocated_executors(&TypeId::of::<E>())
             );
-            self.work_scheduler.print_debug_executors();
-            std::thread::sleep(Duration::from_millis(2000));
+            // self.work_scheduler.print_debug_executors();
+            std::thread::sleep(Duration::from_millis(300));
         }
     }
 
