@@ -67,8 +67,6 @@ impl ExecutorDropper {
     }
 }
 
-pub static mut DEBUG_EXEC: Option<TypeId> = None;
-
 impl Drop for ExecutorDropper {
     fn drop(&mut self) {
         let scheduler = unsafe { &*(self.scheduler.get()) };

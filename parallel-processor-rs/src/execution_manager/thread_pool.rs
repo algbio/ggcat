@@ -91,20 +91,17 @@ impl ExecThreadPool {
         }
     }
 
+    pub fn get_pending_executors_count<E: Executor>(&self, _: &ExecutorsList<E>) -> u64 {
+        self.work_scheduler
+            .get_allocated_executors(&TypeId::of::<E>())
+    }
+
     pub fn wait_for_executors<E: Executor>(&self, _: &ExecutorsList<E>) {
         while self
             .work_scheduler
             .get_allocated_executors(&TypeId::of::<E>())
             > 0
         {
-            println!(
-                "Waiting for: {:?}/{} ==> {}",
-                TypeId::of::<E>(),
-                std::any::type_name::<E>(),
-                self.work_scheduler
-                    .get_allocated_executors(&TypeId::of::<E>())
-            );
-            // self.work_scheduler.print_debug_executors();
             std::thread::sleep(Duration::from_millis(300));
         }
     }

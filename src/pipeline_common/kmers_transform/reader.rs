@@ -76,50 +76,6 @@ impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformReader<
     }
 }
 
-impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
-    // fn log_completed_bucket(&self) {
-    //     self.execution_context
-    //         .processed_buckets
-    //         .fetch_add(1, Ordering::Relaxed);
-    //
-    //     let mut last_info_log = match self.last_info_log.try_lock() {
-    //         None => return,
-    //         Some(x) => x,
-    //     };
-    //     if last_info_log.elapsed() > MINIMUM_LOG_DELTA_TIME {
-    //         *last_info_log = Instant::now();
-    //         drop(last_info_log);
-    //
-    //         let monitor = PHASES_TIMES_MONITOR.read();
-    //
-    //         let processed_count = self
-    //             .execution_context
-    //             .processed_buckets
-    //             .load(Ordering::Relaxed);
-    //         let remaining = self.execution_context.buckets_count - processed_count;
-    //
-    //         let eta = Duration::from_secs(
-    //             (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
-    //                 * (remaining as f64)) as u64,
-    //         );
-    //
-    //         let est_tot = Duration::from_secs(
-    //             (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
-    //                 * (self.execution_context.buckets_count as f64)) as u64,
-    //         );
-    //
-    //         println!(
-    //             "Processing bucket {} of {} {} phase eta: {:.0?} est.tot: {:.0?}",
-    //             processed_count,
-    //             self.execution_context.buckets_count,
-    //             monitor.get_formatted_counter_without_memory(),
-    //             eta,
-    //             est_tot
-    //         );
-    //     }
-    // }
-}
-
 impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
     const EXECUTOR_TYPE: ExecutorType = ExecutorType::NeedsInitPacket;
 

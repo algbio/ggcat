@@ -33,7 +33,6 @@ use parallel_processor::execution_manager::thread_pool::{
     ExecThreadPoolBuilder, ExecThreadPoolDataAddTrait,
 };
 use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInputAddressMode};
-use parallel_processor::execution_manager::work_scheduler::DEBUG_EXEC;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -126,12 +125,12 @@ pub trait KmersTransformFinalExecutor<F: KmersTransformExecutorFactory>:
 pub struct KmersTransform<F: KmersTransformExecutorFactory> {
     execution_context: Arc<KmersTransformContext<F>>,
     buckets_list: Vec<InputBucketDesc>,
+    last_info_log: Mutex<Instant>,
     _phantom: PhantomData<F>,
 }
 
 pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     buckets_count: usize,
-    processed_buckets: AtomicUsize,
 
     finalizer_address: Arc<RwLock<Option<ExecutorAddress>>>,
 
@@ -141,7 +140,6 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     compute_threads_count: usize,
     read_threads_count: usize,
     max_second_buckets_count_log2: usize,
-    last_info_log: Mutex<Instant>,
 }
 
 impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
@@ -197,7 +195,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
         let execution_context = Arc::new(KmersTransformContext {
             buckets_count,
-            processed_buckets: AtomicUsize::new(0),
             finalizer_address: Arc::new(RwLock::new(Some(
                 KmersTransformWriter::<F>::generate_new_address(),
             ))),
@@ -211,13 +208,13 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 buckets_counters_path,
                 !KEEP_FILES.load(Ordering::Relaxed),
             ),
-            last_info_log: Mutex::new(Instant::now()),
             max_second_buckets_count_log2: 4,
         });
 
         Self {
             execution_context,
             buckets_list,
+            last_info_log: Mutex::new(Instant::now()),
             _phantom: Default::default(),
         }
     }
@@ -306,12 +303,18 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         disk_thread_pool.start("km_disk");
         compute_thread_pool.start("km_comp");
 
+        // Log progress info while waiting for completion
+        let mut bucket_readers_count;
+        while {
+            bucket_readers_count = disk_thread_pool.get_pending_executors_count(&bucket_readers);
+            bucket_readers_count > 0
+        } {
+            self.maybe_log_completed_buckets(bucket_readers_count as usize);
+            std::thread::sleep(Duration::from_millis(300));
+        }
+
         // Wait for the main buckets to be processed
         disk_thread_pool.wait_for_executors(&bucket_readers);
-
-        unsafe {
-            DEBUG_EXEC = Some(TypeId::of::<KmersTransformProcessor<F>>());
-        }
 
         // Wait for the resplitting to be complete
         compute_thread_pool.wait_for_executors(&bucket_resplitters);
@@ -330,5 +333,39 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         compute_thread_pool.wait_for_executors(&bucket_writers);
 
         compute_thread_pool.join();
+    }
+
+    fn maybe_log_completed_buckets(&self, remaining: usize) {
+        let mut last_info_log = match self.last_info_log.try_lock() {
+            None => return,
+            Some(x) => x,
+        };
+        if last_info_log.elapsed() > MINIMUM_LOG_DELTA_TIME {
+            *last_info_log = Instant::now();
+            drop(last_info_log);
+
+            let monitor = PHASES_TIMES_MONITOR.read();
+
+            let processed_count = self.execution_context.buckets_count - remaining;
+
+            let eta = Duration::from_secs(
+                (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
+                    * (remaining as f64)) as u64,
+            );
+
+            let est_tot = Duration::from_secs(
+                (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
+                    * (self.execution_context.buckets_count as f64)) as u64,
+            );
+
+            println!(
+                "Processing bucket {} of {} {} phase eta: {:.0?} est.tot: {:.0?}",
+                processed_count,
+                self.execution_context.buckets_count,
+                monitor.get_formatted_counter_without_memory(),
+                eta,
+                est_tot
+            );
+        }
     }
 }
