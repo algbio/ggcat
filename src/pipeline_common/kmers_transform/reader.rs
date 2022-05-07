@@ -17,6 +17,7 @@ use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use replace_with::replace_with_or_abort;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -86,6 +87,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
 
     const BASE_PRIORITY: u64 = 0;
     const PACKET_PRIORITY_MULTIPLIER: u64 = 2;
+    const STRICT_POOL_ALLOC: bool = true;
 
     type InputPacket = InputBucketDesc;
     type OutputPacket = ReadsBuffer<F::AssociatedExtraData>;
@@ -209,10 +211,10 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
                     .reads
                     .push((flags, extra_data, ind_read));
                 if self.buffers[bucket].reads.len() == self.buffers[bucket].reads.capacity() {
-                    packet_send(
-                        self.addresses[bucket].clone(),
-                        std::mem::replace(&mut self.buffers[bucket], packet_alloc()),
-                    );
+                    replace_with_or_abort(&mut self.buffers[bucket], |buffer| {
+                        packet_send(self.addresses[bucket].clone(), buffer);
+                        packet_alloc()
+                    });
                 }
             });
         for (packet, address) in self.buffers.drain(..).zip(self.addresses.drain(..)) {

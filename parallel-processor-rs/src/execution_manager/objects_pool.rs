@@ -43,8 +43,24 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
         }
     }
 
-    pub fn alloc_object(&self) -> PoolObject<T> {
-        self.returner.1.fetch_add(1, Ordering::Relaxed);
+    pub fn alloc_object(&self, blocking: bool) -> PoolObject<T> {
+        let el_count = self.returner.1.fetch_add(1, Ordering::Relaxed);
+
+        // if el_count > self.max_count + 32 {
+        //     println!(
+        //         "Available items overflow {}/{} {:?}!!!",
+        //         el_count,
+        //         self.max_count,
+        //         std::any::TypeId::of::<T>()
+        //     );
+        // }
+
+        if blocking && (el_count >= self.max_count) {
+            let mut el = self.queue.recv().unwrap();
+            el.reset();
+            return PoolObject::from_element(el, self);
+        }
+
         match self.queue.try_recv() {
             Ok(mut el) => {
                 el.reset();

@@ -48,8 +48,8 @@ impl<T: PacketTrait> PacketsPool<T> {
         Self(ObjectsPool::new(cap, init_data))
     }
 
-    pub fn alloc_packet(&self) -> Packet<T> {
-        let mut object = self.0.alloc_object();
+    pub fn alloc_packet(&self, blocking: bool) -> Packet<T> {
+        let mut object = self.0.alloc_object(blocking);
 
         let packet = Packet {
             object: ManuallyDrop::new(unsafe { ManuallyDrop::take(&mut object.value) }),

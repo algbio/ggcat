@@ -222,7 +222,7 @@ impl WorkScheduler {
                 let output_pool = executor_info.output_pool.clone();
                 let executor = executors_list_manager_aeu
                     .executors_allocator
-                    .alloc_object();
+                    .alloc_object(false);
 
                 let packets_map = packets_map.clone();
                 let packets_queue = packets_queue.clone();
@@ -240,7 +240,7 @@ impl WorkScheduler {
                         PoolMode::None => None,
                         PoolMode::Shared(pool) => Some(pool.clone()),
                         PoolMode::Distinct { pools_allocator } => {
-                            Some(Arc::new(pools_allocator.alloc_object()))
+                            Some(Arc::new(pools_allocator.alloc_object(false)))
                         }
                     },
                     Box::new(move || {
@@ -319,7 +319,10 @@ impl WorkScheduler {
 
                     let old_val = self.packets_map.insert(
                         executor.to_weak(),
-                        Arc::new((AtomicBool::new(false), self.queues_allocator.alloc_object())),
+                        Arc::new((
+                            AtomicBool::new(false),
+                            self.queues_allocator.alloc_object(false),
+                        )),
                     );
                     self.active_executors_counters
                         .get(&executor.executor_type_id)

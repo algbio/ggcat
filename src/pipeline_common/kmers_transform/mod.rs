@@ -232,7 +232,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
         let max_read_buffers_count = max(
             max_second_buckets_count,
-            self.execution_context.compute_threads_count,
+            self.execution_context.read_threads_count
+                + self.execution_context.compute_threads_count,
         ) * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed);
 
         let compute_threads_count = self.execution_context.compute_threads_count;
@@ -318,7 +319,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             bucket_readers_count > 0
         } {
             self.maybe_log_completed_buckets(bucket_readers_count as usize, || {
-                compute_thread_pool.debug_print_queue();
+                // compute_thread_pool.debug_print_queue();
             });
             std::thread::sleep(Duration::from_millis(300));
         }

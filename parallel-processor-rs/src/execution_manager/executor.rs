@@ -23,6 +23,7 @@ pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
 
     const BASE_PRIORITY: u64;
     const PACKET_PRIORITY_MULTIPLIER: u64;
+    const STRICT_POOL_ALLOC: bool;
 
     type InputPacket: Send + Sync;
     type OutputPacket: Send + Sync + PacketTrait;

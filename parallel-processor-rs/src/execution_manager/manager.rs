@@ -106,13 +106,13 @@ impl<E: Executor + 'static> ExecutionManager<E> {
 
 impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
     fn execute(&mut self, mut wait: bool) -> ExecutionStatus {
-        while self.executor.required_pool_items() as i64
-            > self
-                .pool
-                .as_ref()
-                .map(|p| p.get_available_items())
-                .unwrap_or(0)
-        {
+        let available_pool_items = self
+            .pool
+            .as_ref()
+            .map(|p| p.get_available_items())
+            .unwrap_or(0);
+
+        while self.executor.required_pool_items() as i64 > available_pool_items {
             if wait {
                 self.pool
                     .as_ref()
@@ -127,7 +127,12 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
         if let Some(build_info) = self.build_info.take() {
             self.executor.pre_execute(
                 build_info,
-                || self.pool.as_ref().unwrap().alloc_packet(),
+                || {
+                    self.pool
+                        .as_ref()
+                        .unwrap()
+                        .alloc_packet(E::STRICT_POOL_ALLOC)
+                },
                 self.output_fn.deref(),
             );
             if self.executor.is_finished() {
@@ -143,7 +148,12 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
         if let Some(packet) = packet {
             self.executor.execute(
                 packet,
-                || self.pool.as_ref().unwrap().alloc_packet(),
+                || {
+                    self.pool
+                        .as_ref()
+                        .unwrap()
+                        .alloc_packet(E::STRICT_POOL_ALLOC)
+                },
                 self.output_fn.deref(),
             );
         }

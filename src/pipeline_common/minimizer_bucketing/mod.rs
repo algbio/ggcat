@@ -196,6 +196,7 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
 
     const BASE_PRIORITY: u64 = 0;
     const PACKET_PRIORITY_MULTIPLIER: u64 = 1;
+    const STRICT_POOL_ALLOC: bool = false;
 
     type InputPacket = MinimizerBucketingQueueData<E::FileInfo>;
     type OutputPacket = ();

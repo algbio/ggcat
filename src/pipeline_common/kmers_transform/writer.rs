@@ -44,6 +44,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformWriter<F> {
 
     const BASE_PRIORITY: u64 = 0;
     const PACKET_PRIORITY_MULTIPLIER: u64 = 100;
+    const STRICT_POOL_ALLOC: bool = false;
 
     type InputPacket = <F::MapProcessorType as KmersTransformMapProcessor<F>>::MapStruct;
     type OutputPacket = ();

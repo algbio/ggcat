@@ -6,6 +6,7 @@ use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
+use replace_with::replace_with_or_abort;
 use std::marker::PhantomData;
 use std::mem::swap;
 use std::ops::DerefMut;
@@ -43,6 +44,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
 
     const BASE_PRIORITY: u64 = 0;
     const PACKET_PRIORITY_MULTIPLIER: u64 = 1;
+    const STRICT_POOL_ALLOC: bool = true;
 
     type InputPacket = (PathBuf, FileInfo);
     type OutputPacket = MinimizerBucketingQueueData<FileInfo>;
@@ -115,21 +117,22 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
                             <= read_index as usize
                     );
 
-                    let mut tmp_data = packet_alloc();
-                    swap(&mut data_packet, &mut tmp_data);
+                    replace_with_or_abort(&mut data_packet, |packet| {
+                        packet_send(
+                            context
+                                .executor_group_address
+                                .read()
+                                .as_ref()
+                                .unwrap()
+                                .clone(),
+                            packet,
+                        );
+                        packet_alloc()
+                    });
+
                     data = data_packet.deref_mut();
                     data.file_info = file_info.clone();
                     data.start_read_index = read_index;
-
-                    packet_send(
-                        context
-                            .executor_group_address
-                            .read()
-                            .as_ref()
-                            .unwrap()
-                            .clone(),
-                        tmp_data,
-                    );
 
                     if !data.push_sequences(x) {
                         panic!("Out of memory!");
