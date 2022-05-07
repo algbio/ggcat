@@ -5,7 +5,7 @@ impl PanicOnDrop {
         Self(message)
     }
 
-    pub fn manually_drop(self) {
+    pub fn disengage(self) {
         std::mem::forget(self);
     }
 }

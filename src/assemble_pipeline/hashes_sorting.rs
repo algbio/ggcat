@@ -122,7 +122,7 @@ impl AssemblePipeline {
                         }
                     }
                 }
-                buffers.put_back(links_tmp.finalize());
+                buffers.put_back(links_tmp.finalize().0);
             });
         links_buckets.finalize()
     }

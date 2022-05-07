@@ -1,13 +1,14 @@
+use crate::config::BucketIndexType;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BucketCounter {
-    count: u64,
-    is_outlier: bool,
+    pub count: u64,
+    pub is_outlier: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -54,6 +55,10 @@ impl CountersAnalyzer {
         }
 
         Self { counters, median }
+    }
+
+    pub fn get_counters_for_bucket(&self, bucket: BucketIndexType) -> Vec<BucketCounter> {
+        self.counters[bucket as usize].clone()
     }
 
     pub fn print_debug(&self) {

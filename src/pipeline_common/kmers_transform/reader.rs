@@ -2,9 +2,11 @@ use crate::config::{DEFAULT_PREFETCH_AMOUNT, MINIMUM_LOG_DELTA_TIME, USE_SECOND_
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
 use crate::pipeline_common::kmers_transform::reads_buffer::ReadsBuffer;
+use crate::pipeline_common::kmers_transform::resplitter::KmersTransformResplitter;
 use crate::pipeline_common::kmers_transform::{
     KmersTransformContext, KmersTransformExecutorFactory, KmersTransformPreprocessor,
 };
+use crate::pipeline_common::minimizer_bucketing::counters_analyzer::BucketCounter;
 use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::KEEP_FILES;
 use itertools::Itertools;
@@ -33,6 +35,7 @@ pub struct KmersTransformReader<F: KmersTransformExecutorFactory> {
 
 pub struct InputBucketDesc {
     pub(crate) path: PathBuf,
+    pub(crate) sub_bucket_counters: Vec<BucketCounter>,
     pub(crate) resplitted: bool,
 }
 
@@ -42,12 +45,14 @@ impl PoolObjectTrait for InputBucketDesc {
     fn allocate_new(init_data: &Self::InitData) -> Self {
         Self {
             path: PathBuf::new(),
+            sub_bucket_counters: Vec::new(),
             resplitted: false,
         }
     }
 
     fn reset(&mut self) {
         self.resplitted = false;
+        self.sub_bucket_counters.clear();
     }
 }
 impl PacketTrait for InputBucketDesc {}
@@ -106,7 +111,16 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
 
         // TODO: Enable resplitting
         let addresses: Vec<_> = (0..(1 << second_buckets_count_log))
-            .map(|_| KmersTransformProcessor::<F>::generate_new_address())
+            .map(|i| {
+                if !file.resplitted
+                    && file.sub_bucket_counters.len() < i
+                    && file.sub_bucket_counters[i].is_outlier
+                {
+                    KmersTransformResplitter::<F>::generate_new_address()
+                } else {
+                    KmersTransformProcessor::<F>::generate_new_address()
+                }
+            })
             .collect();
 
         let max_concurrency = 4; // TODO: Optimize for bucket size

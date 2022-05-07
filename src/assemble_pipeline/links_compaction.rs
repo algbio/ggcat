@@ -382,9 +382,9 @@ impl AssemblePipeline {
             }
 
             totsum.fetch_add(rem_links, Ordering::Relaxed);
-            link_buffers.put_back(links_tmp.finalize());
+            link_buffers.put_back(links_tmp.finalize().0);
             final_links_tmp.finalize();
-            result_buffers.put_back(results_tmp.finalize());
+            result_buffers.put_back(results_tmp.finalize().0);
         });
 
         (links_buckets.finalize(), totsum.load(Ordering::Relaxed))

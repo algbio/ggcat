@@ -213,6 +213,7 @@ impl AssemblePipeline {
 
         KmersTransform::<ParallelKmersMergeFactory<H, MH, CX>>::new(
             file_inputs,
+            out_directory.as_ref(),
             buckets_counters_path,
             buckets_count,
             global_data,

@@ -184,7 +184,7 @@ impl AssemblePipeline {
                 index += 1;
             });
 
-            buffers.put_back(tmp_reads_buffer.finalize());
+            buffers.put_back(tmp_reads_buffer.finalize().0);
             tmp_lonely_unitigs_buffer.finalize();
 
             assert_eq!(map_index, mappings.len())

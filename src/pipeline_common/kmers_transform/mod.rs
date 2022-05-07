@@ -41,7 +41,7 @@ use parking_lot::{Mutex, RwLock};
 use std::any::TypeId;
 use std::cmp::max;
 use std::marker::PhantomData;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -136,21 +136,27 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
 
     global_extra_data: Arc<F::GlobalExtraData>,
     async_readers: ScopedThreadLocal<Arc<AsyncReaderThread>>,
-    counters: CountersAnalyzer,
     compute_threads_count: usize,
     read_threads_count: usize,
     max_second_buckets_count_log2: usize,
+    temp_dir: PathBuf,
 }
 
 impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
     pub fn new(
         file_inputs: Vec<PathBuf>,
+        temp_dir: &Path,
         buckets_counters_path: PathBuf,
         buckets_count: usize,
         global_extra_data: Arc<F::GlobalExtraData>,
         threads_count: usize,
     ) -> Self {
         let mut buckets_list = Vec::with_capacity(file_inputs.len());
+
+        let counters = CountersAnalyzer::load_from_file(
+            buckets_counters_path,
+            !KEEP_FILES.load(Ordering::Relaxed),
+        );
 
         let mut files_with_sizes: Vec<_> = file_inputs
             .into_iter()
@@ -184,8 +190,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     entry
                 };
 
+                let bucket_index = Utils::get_bucket_index(&file_entry);
+
                 buckets_list.push(InputBucketDesc {
                     path: file_entry,
+                    sub_bucket_counters: counters.get_counters_for_bucket(bucket_index),
                     resplitted: false,
                 })
             }
@@ -204,11 +213,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             async_readers: ScopedThreadLocal::new(|| {
                 AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE / 2, 4)
             }),
-            counters: CountersAnalyzer::load_from_file(
-                buckets_counters_path,
-                !KEEP_FILES.load(Ordering::Relaxed),
-            ),
-            max_second_buckets_count_log2: 4,
+            max_second_buckets_count_log2: 4, // FIXME: Check against counters!
+            temp_dir: temp_dir.to_path_buf(),
         });
 
         Self {
@@ -346,7 +352,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
             let monitor = PHASES_TIMES_MONITOR.read();
 
-            let processed_count = self.execution_context.buckets_count - remaining;
+            let processed_count = max(1, self.execution_context.buckets_count - remaining);
 
             let eta = Duration::from_secs(
                 (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)

@@ -57,7 +57,7 @@ impl<B: LockFreeBucket> BucketsThreadDispatcher<B> {
         element.write_to(bucket_buf, extra_data);
     }
 
-    pub fn finalize(mut self) -> BucketsThreadBuffer {
+    pub fn finalize(mut self) -> (BucketsThreadBuffer, Arc<MultiThreadBuckets<B>>) {
         for (index, vec) in self.thread_data.buffers.iter_mut().enumerate() {
             if vec.len() == 0 {
                 continue;
@@ -65,7 +65,7 @@ impl<B: LockFreeBucket> BucketsThreadDispatcher<B> {
             self.mtb.add_data(index as u16, vec.as_slice());
             vec.clear();
         }
-        self.drop_panic.manually_drop();
-        self.thread_data
+        self.drop_panic.disengage();
+        (self.thread_data, self.mtb)
     }
 }
