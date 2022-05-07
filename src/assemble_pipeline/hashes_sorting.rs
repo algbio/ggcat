@@ -33,7 +33,7 @@ impl AssemblePipeline {
             .write()
             .start_phase("phase: hashes sorting".to_string());
 
-        let mut links_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        let links_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             output_dir.as_ref().join("links"),
             &(

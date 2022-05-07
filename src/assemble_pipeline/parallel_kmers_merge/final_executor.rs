@@ -18,7 +18,6 @@ use core::slice::from_raw_parts;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::execution_manager::packet::Packet;
-use parallel_processor::mem_tracker::MemoryInfo;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 
@@ -315,7 +314,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         self.bucket_counter += 1;
         if self.bucket_counter >= self.bucket_change_threshold {
             self.bucket_counter = 0;
-            global_data
+            let _ = global_data
                 .output_results_buckets
                 .push(self.current_bucket.take().unwrap());
         }

@@ -149,7 +149,7 @@ impl Drop for PacketAny {
 
 impl PoolObjectTrait for () {
     type InitData = ();
-    fn allocate_new(init_data: &Self::InitData) -> Self {
+    fn allocate_new(_init_data: &Self::InitData) -> Self {
         panic!("Cannot create () type as object!");
     }
 

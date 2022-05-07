@@ -50,21 +50,20 @@ pub fn run_query<
     };
 
     let counters_buckets = if step <= QuerierStartingStep::KmersCounting {
-        // QueryPipeline::parallel_kmers_counting::<
-        //     BucketingHash,
-        //     MergingHash,
-        //     AssemblerColorsManager,
-        //     _,
-        // >(
-        //     buckets,
-        //     counters,
-        //     buckets_count,
-        //     temp_dir.as_path(),
-        //     k,
-        //     m,
-        //     threads_count,
-        // )
-        panic!("AAAAA");
+        QueryPipeline::parallel_kmers_counting::<
+            BucketingHash,
+            MergingHash,
+            AssemblerColorsManager,
+            _,
+        >(
+            buckets,
+            counters,
+            buckets_count,
+            temp_dir.as_path(),
+            k,
+            m,
+            threads_count,
+        )
     } else {
         Utils::generate_bucket_names(temp_dir.join("counters"), buckets_count, Some("tmp"))
     };

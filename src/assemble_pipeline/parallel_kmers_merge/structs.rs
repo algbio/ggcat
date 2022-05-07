@@ -10,7 +10,7 @@ use std::marker::PhantomData;
 use std::mem::size_of;
 use std::path::PathBuf;
 
-const USED_MARKER: usize = (usize::MAX >> FLAGS_SHIFT);
+const USED_MARKER: usize = usize::MAX >> FLAGS_SHIFT;
 const FLAGS_COUNT: usize = 2;
 const FLAGS_SHIFT: usize = size_of::<usize>() * 8 - FLAGS_COUNT;
 const COUNTER_MASK: usize = (1 << FLAGS_SHIFT) - 1;

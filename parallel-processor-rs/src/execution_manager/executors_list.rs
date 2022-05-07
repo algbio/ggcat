@@ -1,12 +1,9 @@
 use crate::execution_manager::executor::Executor;
 use crate::execution_manager::objects_pool::PoolObjectTrait;
-use crate::execution_manager::thread_pool::{
-    ExecThreadPool, ExecThreadPoolBuilder, ExecThreadPoolDataAddTrait,
-};
+use crate::execution_manager::thread_pool::{ExecThreadPool, ExecThreadPoolBuilder};
 use crate::execution_manager::work_scheduler::ExecutionManagerInfo;
 use crate::memory_data_size::MemoryDataSize;
 use parking_lot::RwLock;
-use std::any::TypeId;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -63,7 +60,7 @@ impl<E: Executor> ExecutorsList<E> {
     pub fn set_output_pool(
         &mut self,
         output_pool: &Arc<ExecThreadPool>,
-        output_mode: ExecOutputMode,
+        _output_mode: ExecOutputMode, // TODO (maybe)
     ) {
         let mut exec_info = self.executor_info.write();
         exec_info.output_pool = Some(output_pool.clone());

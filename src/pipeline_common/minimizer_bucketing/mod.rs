@@ -35,13 +35,11 @@ use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInp
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::RwLock;
 use std::cmp::max;
-use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 pub trait MinimizerInputSequence: HashableSequence + Copy {
     fn get_subslice(&self, range: Range<usize>) -> Self;
@@ -219,11 +217,13 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
     }
 
     fn pre_execute<
+        PF: FnMut() -> Packet<Self::OutputPacket>,
         P: FnMut() -> Packet<Self::OutputPacket>,
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
         context: Self::BuildParams,
+        _packet_alloc_force: PF,
         _packet_alloc: P,
         _packet_send: S,
     ) {
@@ -346,9 +346,8 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
         }
     }
 
-    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, packet_send: S) {
+    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, _packet_send: S) {
         self.tmp_reads_buffer.take().unwrap().finalize();
-        // self.context.take();
     }
 
     fn is_finished(&self) -> bool {
@@ -396,7 +395,7 @@ impl GenericMinimizerBucketing {
 
         let second_buckets_count = max(16, threads_count.next_power_of_two());
 
-        let mut execution_context = Arc::new(MinimizerBucketingExecutionContext {
+        let execution_context = Arc::new(MinimizerBucketingExecutionContext {
             buckets,
             current_file: AtomicUsize::new(0),
             executor_group_address: RwLock::new(Some(
@@ -416,8 +415,6 @@ impl GenericMinimizerBucketing {
         });
 
         {
-            let input_files_count = input_files.len();
-
             let max_read_buffers_count =
                 compute_threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed);
 
@@ -477,10 +474,10 @@ impl GenericMinimizerBucketing {
             compute_thread_pool.join();
         }
 
-        let mut execution_context = Arc::try_unwrap(execution_context)
+        let execution_context = Arc::try_unwrap(execution_context)
             .unwrap_or_else(|_| panic!("Cannot get execution context!"));
 
-        let mut common_context = Arc::try_unwrap(execution_context.common)
+        let common_context = Arc::try_unwrap(execution_context.common)
             .unwrap_or_else(|_| panic!("Cannot get common execution context!"));
 
         let counters_analyzer = CountersAnalyzer::new(common_context.global_counters);

@@ -1,48 +1,32 @@
 use crate::assemble_pipeline::assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
 use crate::assemble_pipeline::parallel_kmers_merge::final_executor::ParallelKmersMergeFinalExecutor;
-use crate::assemble_pipeline::parallel_kmers_merge::map_processor::{
-    ParallelKmersMergeMapPacket, ParallelKmersMergeMapProcessor,
-};
+use crate::assemble_pipeline::parallel_kmers_merge::map_processor::ParallelKmersMergeMapProcessor;
 use crate::assemble_pipeline::parallel_kmers_merge::preprocessor::ParallelKmersMergePreprocessor;
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{
-    BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
-    RESPLITTING_MAX_K_M_DIFFERENCE,
+    BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, RESPLITTING_MAX_K_M_DIFFERENCE,
 };
-use crate::hashes::{ExtendableHashTraitType, HashFunction, MinimizerHashFunctionFactory};
-use crate::hashes::{HashFunctionFactory, HashableSequence};
+use crate::hashes::HashFunctionFactory;
+use crate::hashes::MinimizerHashFunctionFactory;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::hash_entry::HashEntry;
-use crate::pipeline_common::kmers_transform::{
-    KmersTransform, KmersTransformExecutorFactory, KmersTransformMapProcessor,
-    KmersTransformPreprocessor,
-};
+use crate::pipeline_common::kmers_transform::{KmersTransform, KmersTransformExecutorFactory};
 use crate::pipeline_common::minimizer_bucketing::{
     MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory,
 };
-use crate::utils::compressed_read::CompressedReadIndipendent;
+use crate::utils::get_memory_mode;
 use crate::utils::owned_drop::OwnedDrop;
-use crate::utils::{get_memory_mode, Utils};
-use crate::CompressedRead;
-use core::slice::from_raw_parts;
 use crossbeam::queue::*;
-use hashbrown::HashMap;
-use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
+use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
-use parallel_processor::counter_stats::counter::{AtomicCounter, AvgMode, MaxMode};
-use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter_i64};
-use parallel_processor::execution_manager::packet::Packet;
-use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
 #[cfg(feature = "mem-analysis")]
 use parallel_processor::mem_tracker::MemoryInfo;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
-use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use structs::*;
@@ -155,7 +139,7 @@ impl AssemblePipeline {
             .write()
             .start_phase("phase: kmers merge".to_string());
 
-        let mut hashes_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        let hashes_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             out_directory.as_ref().join("hashes"),
             &(

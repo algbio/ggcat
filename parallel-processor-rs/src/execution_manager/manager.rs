@@ -1,15 +1,11 @@
 use crate::execution_manager::executor::Executor;
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
-use crate::execution_manager::objects_pool::ObjectsPool;
 use crate::execution_manager::objects_pool::PoolObject;
-use crate::execution_manager::packet::{Packet, PacketAny, PacketsPool};
-use crossbeam::queue::SegQueue;
-use parking_lot::{Mutex, RwLock};
-use std::any::{Any, TypeId};
+use crate::execution_manager::packet::{Packet, PacketsPool};
+use std::any::TypeId;
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -88,7 +84,7 @@ impl<E: Executor + 'static> ExecutionManager<E> {
         output_fn: impl Fn(ExecutorAddress, Packet<E::OutputPacket>) + Sync + Send + 'static,
         notify_drop: impl Fn() + Sync + Send + 'static,
     ) -> GenericExecutor {
-        let mut self_ = Box::new(Self {
+        Box::new(Self {
             executor,
             weak_address,
             pool,
@@ -98,9 +94,7 @@ impl<E: Executor + 'static> ExecutionManager<E> {
             notify_drop: Box::new(notify_drop),
             is_finished: false,
             queue_size,
-        });
-
-        self_
+        })
     }
 }
 
@@ -127,6 +121,7 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
         if let Some(build_info) = self.build_info.take() {
             self.executor.pre_execute(
                 build_info,
+                || self.pool.as_ref().unwrap().alloc_packet(false),
                 || {
                     self.pool
                         .as_ref()

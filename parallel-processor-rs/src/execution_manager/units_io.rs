@@ -1,8 +1,7 @@
 use crate::execution_manager::executor::Executor;
-use crate::execution_manager::executors_list::{ExecOutputMode, ExecutorsList};
+use crate::execution_manager::executors_list::ExecOutputMode;
 use crate::execution_manager::packet::Packet;
 use crate::execution_manager::thread_pool::{ExecThreadPool, ExecThreadPoolDataAddTrait};
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 pub enum ExecutorInputAddressMode {
@@ -28,7 +27,7 @@ impl<T: Send + Sync + 'static, I: Iterator<Item = T>> ExecutorInput<T, I> {
     pub fn set_output_pool<E: Executor>(
         &mut self,
         output_pool: &Arc<ExecThreadPool>,
-        output_mode: ExecOutputMode,
+        _output_mode: ExecOutputMode,
     ) {
         let mut address = E::generate_new_address();
         let mut addresses = vec![];

@@ -89,7 +89,7 @@ impl CountersAnalyzer {
         let file = BufReader::new(File::open(&path).unwrap());
         let rval = bincode::deserialize_from(file).unwrap();
         if remove {
-            std::fs::remove_file(path);
+            let _ = std::fs::remove_file(path);
         }
         rval
     }

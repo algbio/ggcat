@@ -1,15 +1,12 @@
 mod reader;
 
 use crate::config::{
-    BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
-    KMERS_TRANSFORM_READS_CHUNKS_SIZE, MINIMUM_LOG_DELTA_TIME, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
-    USE_SECOND_BUCKET,
+    BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, KMERS_TRANSFORM_READS_CHUNKS_SIZE,
+    MINIMUM_LOG_DELTA_TIME, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
 };
-use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
 use crate::pipeline_common::kmers_transform::reader::{InputBucketDesc, KmersTransformReader};
-use crate::pipeline_common::kmers_transform::reads_buffer::ReadsBuffer;
 use crate::pipeline_common::kmers_transform::resplitter::KmersTransformResplitter;
 use crate::pipeline_common::kmers_transform::writer::KmersTransformWriter;
 use crate::pipeline_common::minimizer_bucketing::counters_analyzer::CountersAnalyzer;
@@ -17,11 +14,7 @@ use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutorFacto
 use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::utils::Utils;
 use crate::{CompressedRead, KEEP_FILES};
-use crossbeam::channel::{bounded, unbounded, Receiver};
-use crossbeam::queue::ArrayQueue;
-use parallel_processor::buckets::readers::async_binary_reader::{
-    AsyncBinaryReader, AsyncReaderThread,
-};
+use parallel_processor::buckets::readers::async_binary_reader::AsyncReaderThread;
 use parallel_processor::execution_manager::executor::Executor;
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::executors_list::{
@@ -34,11 +27,10 @@ use parallel_processor::execution_manager::thread_pool::{
 };
 use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInputAddressMode};
 use parallel_processor::memory_data_size::MemoryDataSize;
-use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
+use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use parking_lot::{Mutex, RwLock};
-use std::any::TypeId;
 use std::cmp::max;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -359,15 +351,15 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
             let monitor = PHASES_TIMES_MONITOR.read();
 
-            let mut buckets_count = self.execution_context.buckets_count;
-            let mut extra_buckets_count = self
+            let buckets_count = self.execution_context.buckets_count;
+            let extra_buckets_count = self
                 .execution_context
                 .extra_buckets_count
                 .load(Ordering::Relaxed);
 
             let total_buckets_count = buckets_count + extra_buckets_count;
 
-            let processed_count = max(1, total_buckets_count - remaining);
+            let processed_count = max(1, total_buckets_count.checked_sub(remaining).unwrap_or(0));
 
             let eta = Duration::from_secs(
                 (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)

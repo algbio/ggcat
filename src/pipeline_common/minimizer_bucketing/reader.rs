@@ -8,7 +8,6 @@ use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
 use replace_with::replace_with_or_abort;
 use std::marker::PhantomData;
-use std::mem::swap;
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -68,11 +67,13 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
     }
 
     fn pre_execute<
+        PF: FnMut() -> Packet<Self::OutputPacket>,
         P: FnMut() -> Packet<Self::OutputPacket>,
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
         context: Self::BuildParams,
+        _packet_alloc_force: PF,
         _packet_alloc: P,
         _packet_send: S,
     ) {

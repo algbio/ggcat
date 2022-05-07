@@ -3,10 +3,8 @@ use crate::execution_manager::manager::ExecutionManagerTrait;
 use parking_lot::Mutex;
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap};
-use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 const CURRENT_ADDITIONAL_SCORE_VALUE: u64 = 2;
 
@@ -41,6 +39,10 @@ impl ExecutorPriority {
         self_.update_score(packets_count);
 
         self_
+    }
+
+    pub fn update_id(&mut self) {
+        self.unique_id = UNIQUE_ID.fetch_sub(1, Ordering::Relaxed);
     }
 
     pub fn update_score(&mut self, packets_count: u64) {
@@ -94,15 +96,18 @@ impl PriorityManager {
         }
     }
 
-    pub fn add_elements(
+    pub fn add_elements_with_atomic_func(
         &self,
-        elements: Vec<Box<dyn ExecutionManagerTrait>>,
-        priority: ExecutorPriority,
+        elements_func: impl FnOnce() -> Vec<Box<dyn ExecutionManagerTrait>>,
+        mut priority: ExecutorPriority,
     ) {
+        let mut internal = self.internal.lock();
+
+        let elements = elements_func();
+        priority.update_id();
+
         let key: &WeakExecutorAddress = elements[0].as_ref().borrow();
         let key = key.clone();
-
-        let mut internal = self.internal.lock();
 
         let old_el = internal.priority_map.insert(priority.clone(), elements);
         assert!(old_el.is_none());
@@ -116,7 +121,7 @@ impl PriorityManager {
         change_fn: impl FnOnce(&mut ExecutorPriority),
     ) {
         let mut internal = self.internal.lock();
-        let mut internal = internal.deref_mut();
+        let internal = internal.deref_mut();
 
         if let Some(priority) = internal.reverse_map.get_mut(key) {
             if let Some((_, value)) = internal.priority_map.remove_entry(priority) {
@@ -147,7 +152,7 @@ impl PriorityManager {
         return_element: Option<Box<dyn ExecutionManagerTrait>>,
     ) -> Option<Box<dyn ExecutionManagerTrait>> {
         let mut internal = self.internal.lock();
-        let mut internal = internal.deref_mut();
+        let internal = internal.deref_mut();
 
         if let Some(mut entry) = internal.priority_map.last_entry() {
             let new_score = entry.key().total_score;

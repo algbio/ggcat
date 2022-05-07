@@ -73,7 +73,7 @@ impl AssemblePipeline {
             .write()
             .start_phase("phase: reads reorganization".to_string());
 
-        let mut buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
+        let buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
             temp_path.join("reads_bucket"),
             &(

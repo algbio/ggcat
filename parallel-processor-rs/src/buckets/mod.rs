@@ -48,11 +48,6 @@ impl<B: LockFreeBucket> MultiThreadBuckets<B> {
     }
 
     pub fn finalize(self: Arc<Self>) -> Vec<PathBuf> {
-        while Arc::strong_count(&self) > 1 {
-            println!("Arc busy {}, waiting", Arc::strong_count(&self));
-            std::thread::sleep_ms(1000);
-        }
-
         let mut self_ = Arc::try_unwrap(self)
             .unwrap_or_else(|_| panic!("Cannot take full ownership of multi thread buckets!"));
 

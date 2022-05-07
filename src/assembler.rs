@@ -152,7 +152,7 @@ pub fn run_assembler<
             let _ = remove_file(file);
         }
 
-        let mut result_map_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        let result_map_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             temp_dir.join("results_map"),
             &(
@@ -161,7 +161,7 @@ pub fn run_assembler<
             ),
         ));
 
-        let mut final_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        let final_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             temp_dir.join("unitigs_map"),
             &(

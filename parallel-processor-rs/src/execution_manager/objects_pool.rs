@@ -1,9 +1,8 @@
-use crate::execution_manager::executor::Executor;
 use crossbeam::channel::*;
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub trait PoolObjectTrait: 'static {
@@ -90,16 +89,6 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
         if let Ok(recv) = self.queue.recv_timeout(timeout) {
             let _ = self.returner.0.try_send(recv);
         }
-    }
-}
-
-pub struct PoolSender<T> {
-    sender: Sender<T>,
-}
-
-impl<T> PoolSender<T> {
-    pub fn send_data(&self, data: T) {
-        self.sender.send(data);
     }
 }
 

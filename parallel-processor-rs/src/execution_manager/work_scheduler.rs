@@ -1,20 +1,18 @@
 use crate::execution_manager::executor::{Executor, ExecutorType};
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
-use crate::execution_manager::executors_list::{ExecutorAllocMode, ExecutorsList, PoolAllocMode};
-use crate::execution_manager::manager::{ExecutionManager, ExecutionManagerTrait, GenericExecutor};
+use crate::execution_manager::executors_list::{ExecutorAllocMode, PoolAllocMode};
+use crate::execution_manager::manager::{ExecutionManager, GenericExecutor};
 use crate::execution_manager::objects_pool::{ObjectsPool, PoolObject, PoolObjectTrait};
 use crate::execution_manager::packet::{Packet, PacketAny, PacketsPool};
 use crate::execution_manager::priority::{ExecutorPriority, PriorityManager};
 use crate::execution_manager::thread_pool::ExecThreadPoolDataAddTrait;
-use crossbeam::queue::{ArrayQueue, SegQueue};
+use crossbeam::queue::SegQueue;
 use dashmap::mapref::entry::Entry;
-use dashmap::mapref::one::Ref;
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock};
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
@@ -38,7 +36,14 @@ pub struct ExecutionManagerInfo {
     pub output_pool: Option<Arc<dyn ExecThreadPoolDataAddTrait>>,
     allocator: Option<
         Box<
-            dyn (Fn(WeakExecutorAddress) -> (Vec<GenericExecutor>, ExecutorPriority)) + Sync + Send,
+            dyn (Fn(
+                    WeakExecutorAddress,
+                ) -> (
+                    Vec<GenericExecutor>,
+                    Option<(Arc<dyn ExecThreadPoolDataAddTrait>, Vec<ExecutorAddress>)>,
+                    ExecutorPriority,
+                )) + Sync
+                + Send,
         >,
     >,
     pool_remaining_executors: Option<Box<dyn (Fn() -> i64) + Sync + Send>>,
@@ -185,9 +190,11 @@ impl WorkScheduler {
                 None => {
                     // Do not do anything if we are deallocated without any packet
                     active_counter.fetch_sub(1, Ordering::Relaxed);
-                    return (Vec::new(), ExecutorPriority::empty());
+                    return (Vec::new(), None, ExecutorPriority::empty());
                 }
             };
+
+            let mut new_addresses = None;
 
             // TODO: Memory params
             let (build_info, maximum_concurrency) = E::allocate_new_group(
@@ -203,11 +210,7 @@ impl WorkScheduler {
                     None
                 },
                 |v| {
-                    executor_info
-                        .output_pool
-                        .as_ref()
-                        .unwrap()
-                        .add_executors_batch(v);
+                    new_addresses = Some((executor_info.output_pool.as_ref().unwrap().clone(), v));
                 },
             );
 
@@ -270,6 +273,7 @@ impl WorkScheduler {
 
             (
                 execution_managers,
+                new_addresses,
                 ExecutorPriority::new(
                     E::PACKET_PRIORITY_MULTIPLIER,
                     packets_queue.1.len() as u64,
@@ -341,7 +345,7 @@ impl WorkScheduler {
             .sum::<usize>()
     }
 
-    pub fn add_input_packet(&self, address: WeakExecutorAddress, mut packet: PacketAny) {
+    pub fn add_input_packet(&self, address: WeakExecutorAddress, packet: PacketAny) {
         let queue = &self.packets_map.get(&address).unwrap().1;
         queue.push(packet);
         self.priority_list
@@ -352,7 +356,11 @@ impl WorkScheduler {
     fn alloc_executors(
         &self,
         address: WeakExecutorAddress,
-    ) -> (Vec<GenericExecutor>, ExecutorPriority) {
+    ) -> (
+        Vec<GenericExecutor>,
+        Option<(Arc<dyn ExecThreadPoolDataAddTrait>, Vec<ExecutorAddress>)>,
+        ExecutorPriority,
+    ) {
         let executor_info = self
             .execution_managers_info
             .get(&address.executor_type_id)
@@ -388,7 +396,7 @@ impl WorkScheduler {
     }
 
     pub fn maybe_change_work(&self, last_executor: &mut Option<GenericExecutor>) {
-        'main_scheduling_loop: loop {
+        loop {
             // Allocate as much executors as possible
             for (addr, addr_queue) in self.waiting_addresses.iter() {
                 let addr_queue = addr_queue.read();
@@ -403,9 +411,17 @@ impl WorkScheduler {
                         .unwrap())();
                     if exec_remaining > 0 {
                         if let Some(addr) = addr_queue.pop() {
-                            let (executors, priority) = self.alloc_executors(addr);
+                            let (executors, new_addresses, priority) = self.alloc_executors(addr);
                             if executors.len() > 0 {
-                                self.priority_list.add_elements(executors, priority);
+                                self.priority_list.add_elements_with_atomic_func(
+                                    || {
+                                        if let Some((output_pool, addresses)) = new_addresses {
+                                            output_pool.add_executors_batch(addresses);
+                                        }
+                                        executors
+                                    },
+                                    priority,
+                                );
                             }
                         }
                     } else {
@@ -450,7 +466,7 @@ impl WorkScheduler {
     }
 
     pub fn print_debug_executors(&self) {
-        let out = std::io::stdout().lock();
+        let _out = std::io::stdout().lock();
         println!("Executors counters:");
         for (addr, exec_remaining) in self.execution_managers_info.iter() {
             println!(
@@ -466,7 +482,6 @@ impl WorkScheduler {
 
         println!("Executors status:");
         for pmap in self.packets_map.iter() {
-            use std::ops::Deref;
             let addr = pmap.key();
             let value = pmap.deref();
             let value = value.deref();

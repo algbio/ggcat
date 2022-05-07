@@ -1,6 +1,6 @@
 use crate::config::{
     SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, USE_SECOND_BUCKET,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
 };
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -12,22 +12,15 @@ use crate::pipeline_common::kmers_transform::{
 use crate::pipeline_common::minimizer_bucketing::{
     MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory,
 };
-use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::utils::get_memory_mode;
-use crate::KEEP_FILES;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::async_binary_reader::AsyncBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
-use parallel_processor::memory_fs::file::writer::FileWriter;
-use parallel_processor::memory_fs::RemoveFileMode;
-use std::marker::PhantomData;
 use std::ops::DerefMut;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -87,7 +80,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
     ) -> (Self::BuildParams, usize) {
         let subsplit_buckets_count_log = 7; // FIXME!
         let buckets = Arc::new(MultiThreadBuckets::new(
-            (1 << subsplit_buckets_count_log),
+            1 << subsplit_buckets_count_log,
             global_params.temp_dir.join(format!(
                 "resplit-bucket{}",
                 BUCKET_RESPLIT_COUNTER.fetch_add(1, Ordering::Relaxed)
@@ -104,7 +97,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
             .collect();
         global_params
             .extra_buckets_count
-            .fetch_add((1 << subsplit_buckets_count_log), Ordering::Relaxed);
+            .fetch_add(1 << subsplit_buckets_count_log, Ordering::Relaxed);
         executors_initializer(output_addresses.clone());
 
         // TODO: Find best count of writing threads
@@ -125,11 +118,13 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
     }
 
     fn pre_execute<
+        PF: FnMut() -> Packet<Self::OutputPacket>,
         P: FnMut() -> Packet<Self::OutputPacket>,
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
         reinit_params: Self::BuildParams,
+        _packet_alloc_force: PF,
         _packet_alloc: P,
         _packet_send: S,
     ) {
@@ -156,7 +151,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
 
         let mut preproc_info = <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::PreprocessInfo::default();
         let resplitter = self.resplitter.as_mut().unwrap();
-        let mut local_buffer = self.thread_local_buffers.as_mut().unwrap();
+        let local_buffer = self.thread_local_buffers.as_mut().unwrap();
 
         for (flags, extra, bases) in input_packet.reads.drain(..) {
             let sequence = bases.as_reference(&input_packet.reads_buffer);

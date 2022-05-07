@@ -2,7 +2,6 @@ use crate::buckets::bucket_writer::BucketItem;
 use crate::buckets::{LockFreeBucket, MultiThreadBuckets};
 use crate::memory_data_size::MemoryDataSize;
 use crate::utils::panic_on_drop::PanicOnDrop;
-use std::ops::DerefMut;
 use std::sync::Arc;
 
 pub struct BucketsThreadBuffer {

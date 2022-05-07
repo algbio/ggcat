@@ -1,4 +1,4 @@
-use crate::config::{DEFAULT_PREFETCH_AMOUNT, MINIMUM_LOG_DELTA_TIME, USE_SECOND_BUCKET};
+use crate::config::{DEFAULT_PREFETCH_AMOUNT, USE_SECOND_BUCKET};
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
 use crate::pipeline_common::kmers_transform::reads_buffer::ReadsBuffer;
@@ -9,20 +9,17 @@ use crate::pipeline_common::kmers_transform::{
 use crate::pipeline_common::minimizer_bucketing::counters_analyzer::BucketCounter;
 use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::KEEP_FILES;
-use itertools::Itertools;
 use parallel_processor::buckets::readers::async_binary_reader::AsyncBinaryReader;
 use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::memory_fs::RemoveFileMode;
-use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use replace_with::replace_with_or_abort;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 pub struct KmersTransformReader<F: KmersTransformExecutorFactory> {
     context: Option<Arc<KmersTransformContext<F>>>,
@@ -43,7 +40,7 @@ pub struct InputBucketDesc {
 impl PoolObjectTrait for InputBucketDesc {
     type InitData = ();
 
-    fn allocate_new(init_data: &Self::InitData) -> Self {
+    fn allocate_new(_init_data: &Self::InitData) -> Self {
         Self {
             path: PathBuf::new(),
             sub_bucket_counters: Vec::new(),
@@ -156,11 +153,13 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
     }
 
     fn pre_execute<
+        PF: FnMut() -> Packet<Self::OutputPacket>,
         P: FnMut() -> Packet<Self::OutputPacket>,
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
         reinit_params: Self::BuildParams,
+        mut packet_alloc_force: PF,
         mut packet_alloc: P,
         mut packet_send: S,
     ) {
@@ -171,10 +170,10 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         }
 
         self.second_buckets_count_log = reinit_params.2;
-        let second_buckets_count = (1 << self.second_buckets_count_log);
+        let second_buckets_count = 1 << self.second_buckets_count_log;
 
         self.buffers
-            .extend((0..second_buckets_count).map(|_| packet_alloc()));
+            .extend((0..second_buckets_count).map(|_| packet_alloc_force()));
 
         self.addresses = reinit_params.3.clone();
 

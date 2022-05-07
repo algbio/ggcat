@@ -1,12 +1,8 @@
 use crate::execution_manager::executor_address::ExecutorAddress;
-use crate::execution_manager::manager::{ExecutionManager, ExecutionManagerTrait};
-use crate::execution_manager::objects_pool::{ObjectsPool, PoolObject, PoolObjectTrait};
+use crate::execution_manager::objects_pool::PoolObjectTrait;
 use crate::execution_manager::packet::Packet;
 use crate::execution_manager::packet::PacketTrait;
 use crate::execution_manager::work_scheduler::ExecutorDropper;
-use parking_lot::RwLock;
-use std::any::Any;
-use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -50,11 +46,13 @@ pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
     fn required_pool_items(&self) -> u64;
 
     fn pre_execute<
+        PF: FnMut() -> Packet<Self::OutputPacket>,
         P: FnMut() -> Packet<Self::OutputPacket>,
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
         reinit_params: Self::BuildParams,
+        packet_alloc_force: PF,
         packet_alloc: P,
         packet_send: S,
     );

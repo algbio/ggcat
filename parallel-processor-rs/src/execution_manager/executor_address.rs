@@ -1,10 +1,8 @@
-use crate::execution_manager::manager::{ExecutionManagerTrait, GenericExecutor};
 use crate::execution_manager::work_scheduler::ExecutorDropper;
-use parking_lot::RwLock;
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ExecutorAddress {

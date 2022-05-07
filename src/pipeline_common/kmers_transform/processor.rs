@@ -1,21 +1,11 @@
-use crate::config::{DEFAULT_PREFETCH_AMOUNT, USE_SECOND_BUCKET};
-use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::pipeline_common::kmers_transform::reads_buffer::ReadsBuffer;
 use crate::pipeline_common::kmers_transform::{
     KmersTransformContext, KmersTransformExecutorFactory, KmersTransformMapProcessor,
 };
-use crate::utils::compressed_read::CompressedReadIndipendent;
-use crate::KEEP_FILES;
-use hashbrown::HashMap;
-use parallel_processor::buckets::readers::async_binary_reader::AsyncBinaryReader;
 use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
-use parallel_processor::memory_fs::RemoveFileMode;
-use std::marker::PhantomData;
-use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub struct KmersTransformProcessor<F: KmersTransformExecutorFactory> {
@@ -70,12 +60,14 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
     }
 
     fn pre_execute<
+        PF: FnMut() -> Packet<Self::OutputPacket>,
         P: FnMut() -> Packet<Self::OutputPacket>,
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
         reinit_params: Self::BuildParams,
-        mut packet_alloc: P,
+        mut packet_alloc_force: PF,
+        _packet_alloc: P,
         _packet_send: S,
     ) {
         self.map_processor = Some(F::new_map_processor(&reinit_params.global_extra_data));
@@ -83,7 +75,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         self.map_processor
             .as_mut()
             .unwrap()
-            .process_group_start(packet_alloc(), &reinit_params.global_extra_data);
+            .process_group_start(packet_alloc_force(), &reinit_params.global_extra_data);
         self.context = Some(reinit_params);
     }
 

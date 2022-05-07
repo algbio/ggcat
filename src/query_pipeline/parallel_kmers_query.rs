@@ -112,7 +112,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         todo!()
     }
 
-    fn new_map_processor(global_data: &Arc<Self::GlobalExtraData>) -> Self::MapProcessorType {
+    fn new_map_processor(_global_data: &Arc<Self::GlobalExtraData>) -> Self::MapProcessorType {
         todo!()
     }
 
@@ -295,7 +295,6 @@ impl QueryPipeline {
         P: AsRef<Path> + std::marker::Sync,
     >(
         file_inputs: Vec<PathBuf>,
-        temp_dir: &Path,
         buckets_counters_path: PathBuf,
         buckets_count: usize,
         out_directory: P,

@@ -77,7 +77,7 @@ impl AssemblePipeline {
     ) -> (Vec<PathBuf>, u64) {
         let totsum = AtomicU64::new(0);
 
-        let mut links_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        let links_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             output_dir
                 .as_ref()
