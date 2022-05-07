@@ -81,6 +81,7 @@ pub struct WorkScheduler {
     changes_notifier_condvar: Condvar,
 
     queues_allocator: ObjectsPool<SegQueue<PacketAny>>,
+    push_executors_lock: Mutex<()>,
 }
 
 impl<T: 'static> PoolObjectTrait for SegQueue<T> {
@@ -106,6 +107,7 @@ impl WorkScheduler {
             changes_notifier_mutex: Default::default(),
             changes_notifier_condvar: Default::default(),
             queues_allocator: ObjectsPool::new(queue_buffers_pool_size, ()),
+            push_executors_lock: Mutex::new(()),
         }
     }
 
@@ -300,6 +302,8 @@ impl WorkScheduler {
     }
 
     pub fn register_executors_batch(self: &Arc<Self>, mut executors: Vec<ExecutorAddress>) {
+        let _push_executors_lock = self.push_executors_lock.lock();
+
         while executors.len() > 0 {
             let first_type = executors[0].executor_type_id;
 

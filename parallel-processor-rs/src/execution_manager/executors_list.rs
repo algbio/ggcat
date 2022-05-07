@@ -43,11 +43,11 @@ impl<E: Executor> ExecutorsList<E> {
         global_params: &Arc<E::GlobalParams>,
         thread_pool: &mut ExecThreadPoolBuilder,
     ) -> Self {
-        // println!(
-        //     "********* TYPE ID FOR: {} ==> {:?}",
-        //     std::any::type_name::<E>(),
-        //     TypeId::of::<E>()
-        // );
+        println!(
+            "********* TYPE ID FOR: {} ==> {:?}",
+            std::any::type_name::<E>(),
+            TypeId::of::<E>()
+        );
         let executor_info = thread_pool.work_scheduler.add_executors::<E>(
             alloc_mode,
             pool_alloc_mode,

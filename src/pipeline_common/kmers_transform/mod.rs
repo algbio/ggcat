@@ -131,6 +131,7 @@ pub struct KmersTransform<F: KmersTransformExecutorFactory> {
 
 pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     buckets_count: usize,
+    extra_buckets_count: AtomicUsize,
 
     finalizer_address: Arc<RwLock<Option<ExecutorAddress>>>,
 
@@ -204,6 +205,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
         let execution_context = Arc::new(KmersTransformContext {
             buckets_count,
+            extra_buckets_count: AtomicUsize::new(0),
             finalizer_address: Arc::new(RwLock::new(Some(
                 KmersTransformWriter::<F>::generate_new_address(),
             ))),
@@ -315,7 +317,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             bucket_readers_count = disk_thread_pool.get_pending_executors_count(&bucket_readers);
             bucket_readers_count > 0
         } {
-            self.maybe_log_completed_buckets(bucket_readers_count as usize);
+            self.maybe_log_completed_buckets(bucket_readers_count as usize, || {
+                compute_thread_pool.debug_print_queue();
+            });
             std::thread::sleep(Duration::from_millis(300));
         }
 
@@ -341,18 +345,28 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         compute_thread_pool.join();
     }
 
-    fn maybe_log_completed_buckets(&self, remaining: usize) {
+    fn maybe_log_completed_buckets(&self, remaining: usize, extra_debug: impl FnOnce()) -> bool {
         let mut last_info_log = match self.last_info_log.try_lock() {
-            None => return,
+            None => return false,
             Some(x) => x,
         };
         if last_info_log.elapsed() > MINIMUM_LOG_DELTA_TIME {
             *last_info_log = Instant::now();
             drop(last_info_log);
 
+            extra_debug();
+
             let monitor = PHASES_TIMES_MONITOR.read();
 
-            let processed_count = max(1, self.execution_context.buckets_count - remaining);
+            let mut buckets_count = self.execution_context.buckets_count;
+            let mut extra_buckets_count = self
+                .execution_context
+                .extra_buckets_count
+                .load(Ordering::Relaxed);
+
+            let total_buckets_count = buckets_count + extra_buckets_count;
+
+            let processed_count = max(1, total_buckets_count - remaining);
 
             let eta = Duration::from_secs(
                 (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
@@ -361,17 +375,25 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
             let est_tot = Duration::from_secs(
                 (monitor.get_phase_timer().as_secs_f64() / (processed_count as f64)
-                    * (self.execution_context.buckets_count as f64)) as u64,
+                    * (total_buckets_count as f64)) as u64,
             );
 
             println!(
-                "Processing bucket {} of {} {} phase eta: {:.0?} est.tot: {:.0?}",
+                "Processing bucket {} of [{}{}] {} phase eta: {:.0?} est.tot: {:.0?}",
                 processed_count,
-                self.execution_context.buckets_count,
+                buckets_count,
+                if extra_buckets_count > 0 {
+                    format!("+{}", extra_buckets_count)
+                } else {
+                    String::new()
+                },
                 monitor.get_formatted_counter_without_memory(),
                 eta,
                 est_tot
             );
+            true
+        } else {
+            false
         }
     }
 }

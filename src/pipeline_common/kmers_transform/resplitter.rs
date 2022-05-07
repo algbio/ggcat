@@ -33,9 +33,11 @@ use std::sync::Arc;
 
 pub struct KmersTransformResplitter<F: KmersTransformExecutorFactory> {
     context: Option<Arc<KmersTransformContext<F>>>,
+    out_addresses: Option<Arc<Vec<ExecutorAddress>>>,
     resplitter:
         Option<<F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType>,
     thread_local_buffers: Option<BucketsThreadDispatcher<CompressedBinaryWriter>>,
+    subsplit_buckets_count_log: usize,
 }
 
 impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformResplitter<F> {
@@ -44,8 +46,10 @@ impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformResplit
     fn allocate_new(_init_data: &Self::InitData) -> Self {
         Self {
             context: None,
+            out_addresses: None,
             resplitter: None,
             thread_local_buffers: None,
+            subsplit_buckets_count_log: 0,
         }
     }
 
@@ -58,7 +62,7 @@ impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformResplit
 static BUCKET_RESPLIT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> {
-    const EXECUTOR_TYPE: ExecutorType = ExecutorType::NeedsInitPacket;
+    const EXECUTOR_TYPE: ExecutorType = ExecutorType::SimplePacketsProcessing;
 
     const BASE_PRIORITY: u64 = 1;
     const PACKET_PRIORITY_MULTIPLIER: u64 = 1;
@@ -70,17 +74,19 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
     type BuildParams = (
         Arc<KmersTransformContext<F>>,
         Arc<MultiThreadBuckets<CompressedBinaryWriter>>,
+        usize,
+        Arc<Vec<ExecutorAddress>>,
     );
 
     fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
         global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
         _common_packet: Option<Packet<Self::InputPacket>>,
-        _executors_initializer: D,
+        executors_initializer: D,
     ) -> (Self::BuildParams, usize) {
-        let subsplit_buckets_count = 128; // FIXME!
+        let subsplit_buckets_count_log = 7; // FIXME!
         let buckets = Arc::new(MultiThreadBuckets::new(
-            subsplit_buckets_count,
+            (1 << subsplit_buckets_count_log),
             global_params.temp_dir.join(format!(
                 "resplit-bucket{}",
                 BUCKET_RESPLIT_COUNTER.fetch_add(1, Ordering::Relaxed)
@@ -91,9 +97,26 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
                 DEFAULT_LZ4_COMPRESSION_LEVEL,
             ),
         ));
+
+        let output_addresses: Vec<_> = (0..(1 << subsplit_buckets_count_log))
+            .map(|_| KmersTransformReader::<F>::generate_new_address())
+            .collect();
+        global_params
+            .extra_buckets_count
+            .fetch_add((1 << subsplit_buckets_count_log), Ordering::Relaxed);
+        executors_initializer(output_addresses.clone());
+
         // TODO: Find best count of writing threads
-        let threads_count = global_params.compute_threads_count;
-        ((global_params, buckets), threads_count)
+        let threads_count = global_params.read_threads_count;
+        (
+            (
+                global_params,
+                buckets,
+                subsplit_buckets_count_log,
+                Arc::new(output_addresses),
+            ),
+            threads_count,
+        )
     }
 
     fn required_pool_items(&self) -> u64 {
@@ -111,6 +134,8 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
     ) {
         self.resplitter = Some(F::new_resplitter(&reinit_params.0.global_extra_data));
         self.context = Some(reinit_params.0);
+        self.out_addresses = Some(reinit_params.3);
+        self.subsplit_buckets_count_log = reinit_params.2;
         self.thread_local_buffers = Some(BucketsThreadDispatcher::new(
             &reinit_params.1,
             BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, reinit_params.1.count()),
@@ -142,7 +167,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
                 0..sequence.bases_count(),
                 |bucket, _sec_bucket, seq, flags, extra| {
                     local_buffer.add_element(
-                        bucket,
+                        bucket % (1 << self.subsplit_buckets_count_log),
                         &extra,
                         &CompressedReadsBucketHelper::<
                             _,
@@ -160,20 +185,22 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
         &mut self,
         mut packet_send: S,
     ) {
-        self.context.take();
-        self.resplitter.take();
-        let buckets = self.thread_local_buffers.take().unwrap().finalize().1;
-        if Arc::strong_count(&buckets) == 1 {
-            for bucket in buckets.finalize() {
-                packet_send(
-                    KmersTransformReader::<F>::generate_new_address(),
-                    Packet::new_simple(InputBucketDesc {
-                        path: bucket,
-                        sub_bucket_counters: vec![],
-                        resplitted: true,
-                    }),
-                );
+        if self.context.take().is_some() {
+            self.resplitter.take();
+            let buckets = self.thread_local_buffers.take().unwrap().finalize().1;
+            if Arc::strong_count(&buckets) == 1 {
+                for (i, bucket) in buckets.finalize().into_iter().enumerate() {
+                    packet_send(
+                        self.out_addresses.as_ref().unwrap()[i].clone(),
+                        Packet::new_simple(InputBucketDesc {
+                            path: bucket,
+                            sub_bucket_counters: vec![],
+                            resplitted: true,
+                        }),
+                    );
+                }
             }
+            self.out_addresses.take();
         }
     }
 

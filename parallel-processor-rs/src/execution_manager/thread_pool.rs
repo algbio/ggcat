@@ -91,6 +91,10 @@ impl ExecThreadPool {
         }
     }
 
+    pub fn debug_print_queue(&self) {
+        self.work_scheduler.print_debug_executors()
+    }
+
     pub fn get_pending_executors_count<E: Executor>(&self, _: &ExecutorsList<E>) -> u64 {
         self.work_scheduler
             .get_allocated_executors(&TypeId::of::<E>())

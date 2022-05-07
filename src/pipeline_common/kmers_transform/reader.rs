@@ -113,9 +113,13 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         let addresses: Vec<_> = (0..(1 << second_buckets_count_log))
             .map(|i| {
                 if !file.resplitted
-                    && file.sub_bucket_counters.len() < i
+                    && i < file.sub_bucket_counters.len()
                     && file.sub_bucket_counters[i].is_outlier
                 {
+                    println!(
+                        "Sub-bucket {} is an outlier with size {}!",
+                        i, file.sub_bucket_counters[i].count
+                    );
                     KmersTransformResplitter::<F>::generate_new_address()
                 } else {
                     KmersTransformProcessor::<F>::generate_new_address()
