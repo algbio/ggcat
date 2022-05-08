@@ -2,7 +2,6 @@ use crate::colors::ColorIndexType;
 use crate::io::chunks_writer::ChunksWriter;
 use crossbeam::channel::*;
 use crossbeam::queue::*;
-use parallel_processor::mem_tracker::tracked_box::TrackedBox;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use std::cell::UnsafeCell;
 use std::cmp::max;
@@ -12,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 struct AsyncBuffer<T, P: ChunksWriter<TargetData = T>> {
-    data: Option<UnsafeCell<TrackedBox<[T]>>>,
+    data: Option<UnsafeCell<Box<[T]>>>,
     position: AtomicUsize,
     reference: *const AsyncSliceQueue<T, P>,
 }
@@ -44,7 +43,7 @@ pub struct AsyncSliceQueue<T, P: ChunksWriter<TargetData = T>> {
         Sender<Vec<SliceReference<T, P>>>,
         Receiver<Vec<SliceReference<T, P>>>,
     ),
-    available_buffers: SegQueue<TrackedBox<[T]>>,
+    available_buffers: SegQueue<Box<[T]>>,
     slices_queue: SegQueue<(ColorIndexType, Vec<SliceReference<T, P>>)>,
     push_lock: Mutex<(u64, (ColorIndexType, Vec<SliceReference<T, P>>))>,
     current_slice: RwLock<Option<Arc<AsyncBuffer<T, P>>>>,
@@ -86,7 +85,7 @@ impl<T: Copy, P: ChunksWriter<TargetData = T>> AsyncSliceQueue<T, P> {
 
     fn alloc_buffer(&self, min_length: usize) -> Arc<AsyncBuffer<T, P>> {
         let buffer = self.available_buffers.pop().unwrap_or_else(|| unsafe {
-            TrackedBox::new_zeroed_slice(max(min_length, self.buffer_min_size)).assume_init()
+            Box::new_zeroed_slice(max(min_length, self.buffer_min_size)).assume_init()
         });
 
         Arc::new(AsyncBuffer {

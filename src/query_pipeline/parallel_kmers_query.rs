@@ -7,6 +7,7 @@ use crate::hashes::HashFunctionFactory;
 use crate::hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint};
+use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
 use crate::pipeline_common::kmers_transform::{
     KmersTransform, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
     KmersTransformMapProcessor, KmersTransformPreprocessor,
@@ -24,6 +25,7 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -112,7 +114,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         todo!()
     }
 
-    fn new_map_processor(_global_data: &Arc<Self::GlobalExtraData>) -> Self::MapProcessorType {
+    fn new_map_processor(
+        _global_data: &Arc<Self::GlobalExtraData>,
+        _mem_tracker: MemoryTracker<KmersTransformProcessor<Self>>,
+    ) -> Self::MapProcessorType {
         todo!()
     }
 
@@ -176,7 +181,11 @@ impl<MH: HashFunctionFactory> PoolObjectTrait for ParallelKmersQueryMapPacket<MH
         self.query_map.clear();
     }
 }
-impl<MH: HashFunctionFactory> PacketTrait for ParallelKmersQueryMapPacket<MH> {}
+impl<MH: HashFunctionFactory> PacketTrait for ParallelKmersQueryMapPacket<MH> {
+    fn get_size(&self) -> usize {
+        (self.phset.len() + self.query_reads.len() + self.query_map.len()) * 16 // TODO: Compute correct values
+    }
+}
 
 struct ParallelKmersQueryMapProcessor<
     H: MinimizerHashFunctionFactory,

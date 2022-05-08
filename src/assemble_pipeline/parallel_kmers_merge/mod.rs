@@ -11,6 +11,7 @@ use crate::hashes::HashFunctionFactory;
 use crate::hashes::MinimizerHashFunctionFactory;
 use crate::io::structs::hash_entry::Direction;
 use crate::io::structs::hash_entry::HashEntry;
+use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
 use crate::pipeline_common::kmers_transform::{KmersTransform, KmersTransformExecutorFactory};
 use crate::pipeline_common::minimizer_bucketing::{
     MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory,
@@ -22,6 +23,7 @@ use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
+use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 #[cfg(feature = "mem-analysis")]
 use parallel_processor::mem_tracker::MemoryInfo;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -51,7 +53,7 @@ pub struct GlobalMergeData<MH: HashFunctionFactory, CX: ColorsManager> {
     global_resplit_data: Arc<MinimizerBucketingCommonData<()>>,
 }
 
-struct ParallelKmersMergeFactory<
+pub struct ParallelKmersMergeFactory<
     H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
@@ -81,8 +83,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         ParallelKmersMergePreprocessor::new()
     }
 
-    fn new_map_processor(_global_data: &Arc<Self::GlobalExtraData>) -> Self::MapProcessorType {
-        ParallelKmersMergeMapProcessor::new()
+    fn new_map_processor(
+        _global_data: &Arc<Self::GlobalExtraData>,
+        mem_tracker: MemoryTracker<KmersTransformProcessor<Self>>,
+    ) -> Self::MapProcessorType {
+        ParallelKmersMergeMapProcessor::new(mem_tracker)
     }
 
     fn new_final_executor(global_data: &Arc<Self::GlobalExtraData>) -> Self::FinalExecutorType {

@@ -1,11 +1,13 @@
 use crate::io::sequences_reader::FastaSequence;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::PacketTrait;
-use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
+use std::mem::size_of;
+
+type SequencesType = (usize, usize, usize, usize);
 
 pub struct MinimizerBucketingQueueData<F: Clone + Sync + Send + Default + 'static> {
-    data: TrackedVec<u8>,
-    pub sequences: TrackedVec<(usize, usize, usize, usize)>,
+    data: Vec<u8>,
+    pub sequences: Vec<SequencesType>,
     pub file_info: F,
     pub start_read_index: u64,
 }
@@ -13,8 +15,8 @@ pub struct MinimizerBucketingQueueData<F: Clone + Sync + Send + Default + 'stati
 impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> {
     pub fn new(capacity: usize, file_info: F) -> Self {
         Self {
-            data: TrackedVec::with_capacity(capacity),
-            sequences: TrackedVec::with_capacity(capacity / 512),
+            data: Vec::with_capacity(capacity),
+            sequences: Vec::with_capacity(capacity / 512),
             file_info,
             start_read_index: 0,
         }
@@ -79,4 +81,9 @@ impl<F: Clone + Sync + Send + Default + 'static> PoolObjectTrait
         self.sequences.clear();
     }
 }
-impl<F: Clone + Sync + Send + Default + 'static> PacketTrait for MinimizerBucketingQueueData<F> {}
+
+impl<F: Clone + Sync + Send + Default + 'static> PacketTrait for MinimizerBucketingQueueData<F> {
+    fn get_size(&self) -> usize {
+        self.data.len() + (self.sequences.len() * size_of::<SequencesType>())
+    }
+}

@@ -14,7 +14,6 @@ pub mod buckets;
 pub mod debug_allocator;
 pub mod execution_manager;
 pub mod fast_smart_bucket_sort;
-pub mod mem_tracker;
 pub mod memory_data_size;
 pub mod phase_times_monitor;
 pub mod utils;

@@ -89,6 +89,10 @@ impl ExecThreadPool {
         }
     }
 
+    pub fn debug_print_memory(&self) {
+        self.work_scheduler.print_debug_memory()
+    }
+
     pub fn debug_print_queue(&self) {
         self.work_scheduler.print_debug_executors()
     }

@@ -167,7 +167,7 @@ impl PriorityManager {
 
                 let mut score = priority.total_score;
 
-                if score > 0 {
+                if score > priority.base_offset {
                     score += priority.packets_multiplier * CURRENT_ADDITIONAL_SCORE_VALUE;
                 }
 

@@ -4,33 +4,36 @@ use crate::pipeline_common::kmers_transform::{
 };
 use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
+use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
 use std::sync::Arc;
 
 pub struct KmersTransformWriter<F: KmersTransformExecutorFactory> {
-    context: Option<Arc<KmersTransformContext<F>>>,
+    context: Arc<KmersTransformContext<F>>,
+    mem_tracker: MemoryTracker<Self>,
     final_executor: Option<F::FinalExecutorType>,
 }
 
 impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformWriter<F> {
-    type InitData = ();
+    type InitData = (Arc<KmersTransformContext<F>>, MemoryTracker<Self>);
 
-    fn allocate_new(_init_data: &Self::InitData) -> Self {
+    fn allocate_new((context, mem_tracker): &Self::InitData) -> Self {
         Self {
-            context: None,
+            context: context.clone(),
+            mem_tracker: mem_tracker.clone(),
             final_executor: None,
         }
     }
 
-    fn reset(&mut self) {
-        self.final_executor.take();
-        self.context.take();
-    }
+    fn reset(&mut self) {}
 }
 
 impl<F: KmersTransformExecutorFactory> Executor for KmersTransformWriter<F> {
     const EXECUTOR_TYPE: ExecutorType = ExecutorType::SimplePacketsProcessing;
+
+    const MEMORY_FIELDS_COUNT: usize = 1;
+    const MEMORY_FIELDS: &'static [&'static str] = &["BUFFER_SIZES"];
 
     const BASE_PRIORITY: u64 = 0;
     const PACKET_PRIORITY_MULTIPLIER: u64 = 100;
@@ -40,7 +43,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformWriter<F> {
     type OutputPacket = ();
     type GlobalParams = KmersTransformContext<F>;
     type MemoryParams = ();
-    type BuildParams = Arc<KmersTransformContext<F>>;
+    type BuildParams = ();
 
     fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
         global_params: Arc<Self::GlobalParams>,
@@ -49,7 +52,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformWriter<F> {
         _executors_initializer: D,
     ) -> (Self::BuildParams, usize) {
         let threads_count = global_params.compute_threads_count;
-        (global_params, threads_count)
+        ((), threads_count)
     }
 
     fn required_pool_items(&self) -> u64 {
@@ -62,15 +65,12 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformWriter<F> {
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
-        reinit_params: Self::BuildParams,
+        _reinit_params: Self::BuildParams,
         _packet_alloc_force: PF,
         _packet_alloc: P,
         _packet_send: S,
     ) {
-        if self.final_executor.is_none() {
-            self.final_executor = Some(F::new_final_executor(&reinit_params.global_extra_data));
-        }
-        self.context = Some(reinit_params);
+        self.final_executor = Some(F::new_final_executor(&self.context.global_extra_data));
     }
 
     fn execute<
@@ -82,30 +82,22 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformWriter<F> {
         _packet_alloc: P,
         _packet_send: S,
     ) {
-        let context = self.context.as_ref().unwrap();
         self.final_executor
             .as_mut()
             .unwrap()
-            .process_map(&context.global_extra_data, input_packet);
+            .process_map(&self.context.global_extra_data, input_packet);
     }
 
     fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, _packet_send: S) {
-        let context = self.context.as_ref().unwrap();
         self.final_executor
             .take()
             .unwrap()
-            .finalize(&context.global_extra_data);
-        // self.context.take();
+            .finalize(&self.context.global_extra_data);
     }
 
     fn is_finished(&self) -> bool {
         false
     }
-
-    fn get_total_memory(&self) -> u64 {
-        0
-    }
-
     fn get_current_memory_params(&self) -> Self::MemoryParams {
         ()
     }

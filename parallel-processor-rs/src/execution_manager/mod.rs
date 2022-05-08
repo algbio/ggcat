@@ -2,6 +2,7 @@ pub mod executor;
 pub mod executor_address;
 pub mod executors_list;
 pub mod manager;
+pub mod memory_tracker;
 pub mod objects_pool;
 pub mod packet;
 pub mod priority;

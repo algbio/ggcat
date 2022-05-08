@@ -1,3 +1,4 @@
+use crate::execution_manager::memory_tracker::MemoryTrackerManager;
 use crate::execution_manager::objects_pool::{ObjectsPool, PoolObjectTrait};
 use crossbeam::channel::Sender;
 use std::any::Any;
@@ -7,16 +8,24 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-pub trait PacketTrait: PoolObjectTrait + Sync + Send {}
+pub trait PacketTrait: PoolObjectTrait + Sync + Send {
+    fn get_size(&self) -> usize;
+}
 
 trait PacketPoolReturnerTrait: Send + Sync {
     fn send_any(&self, packet: Box<dyn Any>);
 }
 
-impl<T: Send + Sync + 'static> PacketPoolReturnerTrait for (Sender<Box<T>>, AtomicU64) {
+impl<T: Send + Sync + PacketTrait + 'static> PacketPoolReturnerTrait
+    for (Arc<(Sender<Box<T>>, AtomicU64)>, Arc<MemoryTrackerManager>)
+{
     fn send_any(&self, packet: Box<dyn Any>) {
-        self.1.fetch_sub(1, Ordering::Relaxed);
-        let _ = self.0.try_send(packet.downcast().unwrap());
+        self.0 .1.fetch_sub(1, Ordering::Relaxed);
+        let mut packet = packet.downcast::<T>().unwrap();
+        self.1.remove_queue_packet(packet.deref());
+        packet.reset();
+        assert_eq!(packet.get_size(), 0);
+        let _ = self.0 .0.try_send(packet);
     }
 }
 
@@ -30,30 +39,44 @@ pub struct PacketAny {
     returner: Option<Arc<dyn PacketPoolReturnerTrait>>,
 }
 
-pub struct PacketsPool<T>(pub ObjectsPool<Box<T>>);
+pub struct PacketsPool<T> {
+    objects_pool: ObjectsPool<Box<T>>,
+    returner: Arc<(Arc<(Sender<Box<T>>, AtomicU64)>, Arc<MemoryTrackerManager>)>,
+}
 
 // Recursively implement the object trait for the pool, so it can be used recursively
 impl<T: PacketTrait> PoolObjectTrait for PacketsPool<T> {
-    type InitData = (usize, T::InitData);
+    type InitData = (usize, T::InitData, Arc<MemoryTrackerManager>);
 
-    fn allocate_new((cap, init_data): &Self::InitData) -> Self {
-        Self::new(*cap, init_data.clone())
+    fn allocate_new((cap, init_data, mem_tracker): &Self::InitData) -> Self {
+        Self::new(*cap, init_data.clone(), mem_tracker)
     }
 
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        self.objects_pool.reset_max_count();
+    }
 }
 
 impl<T: PacketTrait> PacketsPool<T> {
-    pub fn new(cap: usize, init_data: T::InitData) -> Self {
-        Self(ObjectsPool::new(cap, init_data))
+    pub fn new(
+        cap: usize,
+        init_data: T::InitData,
+        mem_tracker: &Arc<MemoryTrackerManager>,
+    ) -> Self {
+        let objects_pool = ObjectsPool::new(cap, init_data);
+        let returner = Arc::new((objects_pool.returner.clone(), mem_tracker.clone()));
+        Self {
+            objects_pool,
+            returner,
+        }
     }
 
     pub fn alloc_packet(&self, blocking: bool) -> Packet<T> {
-        let mut object = self.0.alloc_object(blocking);
+        let mut object = self.objects_pool.alloc_object(blocking, true);
 
         let packet = Packet {
             object: ManuallyDrop::new(unsafe { ManuallyDrop::take(&mut object.value) }),
-            returner: Some(object.returner.as_ref().unwrap().clone()),
+            returner: Some(self.returner.clone()),
         };
 
         unsafe {
@@ -65,11 +88,11 @@ impl<T: PacketTrait> PacketsPool<T> {
     }
 
     pub fn get_available_items(&self) -> i64 {
-        self.0.get_available_items()
+        self.objects_pool.get_available_items()
     }
 
     pub fn wait_for_item_timeout(&self, timeout: Duration) {
-        self.0.wait_for_item_timeout(timeout)
+        self.objects_pool.wait_for_item_timeout(timeout)
     }
 }
 
@@ -157,4 +180,8 @@ impl PoolObjectTrait for () {
         panic!("Cannot reset () type as object!");
     }
 }
-impl PacketTrait for () {}
+impl PacketTrait for () {
+    fn get_size(&self) -> usize {
+        0
+    }
+}

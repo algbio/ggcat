@@ -1,6 +1,7 @@
 use crate::utils::compressed_read::CompressedReadIndipendent;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::PacketTrait;
+use std::mem::size_of;
 
 pub struct ReadsBuffer<E: Send + Sync + 'static> {
     pub reads: Vec<(u8, E, CompressedReadIndipendent)>,
@@ -29,4 +30,8 @@ impl<E: Send + Sync + 'static> PoolObjectTrait for ReadsBuffer<E> {
     }
 }
 
-impl<E: Send + Sync + 'static> PacketTrait for ReadsBuffer<E> {}
+impl<E: Send + Sync + 'static> PacketTrait for ReadsBuffer<E> {
+    fn get_size(&self) -> usize {
+        self.reads.len() * size_of::<(u8, E, CompressedReadIndipendent)>() + self.reads_buffer.len()
+    }
+}

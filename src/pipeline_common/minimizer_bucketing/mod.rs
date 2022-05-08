@@ -26,6 +26,7 @@ use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::executors_list::{
     ExecOutputMode, ExecutorAllocMode, ExecutorsList, PoolAllocMode,
 };
+use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
 use parallel_processor::execution_manager::thread_pool::{
@@ -166,7 +167,8 @@ static TOT_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 static VALID_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 
 struct MinimizerBucketingExecWriter<E: MinimizerBucketingExecutorFactory + 'static> {
-    context: Option<Arc<MinimizerBucketingExecutionContext<E::GlobalData>>>,
+    context: Arc<MinimizerBucketingExecutionContext<E::GlobalData>>,
+    mem_tracker: MemoryTracker<Self>,
     counters: Vec<u8>,
     counters_log: u32,
     tmp_reads_buffer: Option<BucketsThreadDispatcher<CompressedBinaryWriter>>,
@@ -175,11 +177,15 @@ struct MinimizerBucketingExecWriter<E: MinimizerBucketingExecutorFactory + 'stat
 impl<E: MinimizerBucketingExecutorFactory + 'static> PoolObjectTrait
     for MinimizerBucketingExecWriter<E>
 {
-    type InitData = ();
+    type InitData = (
+        Arc<MinimizerBucketingExecutionContext<E::GlobalData>>,
+        MemoryTracker<Self>,
+    );
 
-    fn allocate_new(_: &Self::InitData) -> Self {
+    fn allocate_new((context, mem_tracker): &Self::InitData) -> Self {
         Self {
-            context: None,
+            context: context.clone(),
+            mem_tracker: mem_tracker.clone(),
             counters: vec![],
             counters_log: 0,
             tmp_reads_buffer: None,
@@ -196,11 +202,14 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
     const PACKET_PRIORITY_MULTIPLIER: u64 = 1;
     const STRICT_POOL_ALLOC: bool = false;
 
+    const MEMORY_FIELDS_COUNT: usize = 1;
+    const MEMORY_FIELDS: &'static [&'static str] = &["TMP_READS_BUFFER"];
+
     type InputPacket = MinimizerBucketingQueueData<E::FileInfo>;
     type OutputPacket = ();
     type GlobalParams = MinimizerBucketingExecutionContext<E::GlobalData>;
     type MemoryParams = ();
-    type BuildParams = Arc<MinimizerBucketingExecutionContext<E::GlobalData>>;
+    type BuildParams = ();
 
     fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
         global_params: Arc<Self::GlobalParams>,
@@ -209,7 +218,7 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
         _executors_initializer: D,
     ) -> (Self::BuildParams, usize) {
         let max_concurrency = global_params.threads_count;
-        (global_params, max_concurrency)
+        ((), max_concurrency)
     }
 
     fn required_pool_items(&self) -> u64 {
@@ -222,22 +231,25 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
-        context: Self::BuildParams,
+        _reinit_params: Self::BuildParams,
         _packet_alloc_force: PF,
         _packet_alloc: P,
         _packet_send: S,
     ) {
-        self.counters_log = context.common.second_buckets_count.log2();
+        self.counters_log = self.context.common.second_buckets_count.log2();
         self.counters.resize(
-            context.common.second_buckets_count * context.common.buckets_count,
+            self.context.common.second_buckets_count * self.context.common.buckets_count,
             0,
         );
 
         self.tmp_reads_buffer = Some(BucketsThreadDispatcher::new(
-            &context.buckets,
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, context.buckets.count()),
+            &self.context.buckets,
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, self.context.buckets.count()),
         ));
-        self.context = Some(context);
+
+        self.mem_tracker.update_memory_usage(&[
+            DEFAULT_PER_CPU_BUFFER_SIZE.octets as usize * self.context.buckets.count()
+        ]);
     }
 
     fn execute<
@@ -249,14 +261,12 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
         _packet_alloc: P,
         _packet_send: S,
     ) {
-        let context = self.context.as_ref().unwrap();
-
-        let global_counters = &context.common.global_counters;
-        let second_buckets_count_mask = context.common.second_buckets_count_mask;
+        let global_counters = &self.context.common.global_counters;
+        let second_buckets_count_mask = self.context.common.second_buckets_count_mask;
 
         let mut total_bases = 0;
-        let mut sequences_splitter = SequencesSplitter::new(context.common.k);
-        let mut buckets_processor = E::new(&context.common);
+        let mut sequences_splitter = SequencesSplitter::new(self.context.common.k);
+        let mut buckets_processor = E::new(&self.context.common);
 
         let mut preprocess_info = E::PreprocessInfo::default();
 
@@ -325,8 +335,8 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
             .is_ok();
 
         if do_print_log {
-            let current_file = context.current_file.load(Ordering::Relaxed);
-            let processed_files = context.processed_files.load(Ordering::Relaxed);
+            let current_file = self.context.current_file.load(Ordering::Relaxed);
+            let processed_files = self.context.processed_files.load(Ordering::Relaxed);
 
             println!(
                 "Elaborated {} sequences! [{} | {:.2}% qb] ({}[{}]/{} => {:.2}%) {}",
@@ -337,8 +347,8 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
                     * 100.0,
                 processed_files,
                 current_file,
-                context.total_files,
-                processed_files as f64 / max(1, context.total_files) as f64 * 100.0,
+                self.context.total_files,
+                processed_files as f64 / max(1, self.context.total_files) as f64 * 100.0,
                 PHASES_TIMES_MONITOR
                     .read()
                     .get_formatted_counter_without_memory()
@@ -353,11 +363,6 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
     fn is_finished(&self) -> bool {
         false
     }
-
-    fn get_total_memory(&self) -> u64 {
-        0
-    }
-
     fn get_current_memory_params(&self) -> Self::MemoryParams {
         ()
     }

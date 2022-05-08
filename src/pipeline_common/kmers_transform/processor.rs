@@ -4,33 +4,38 @@ use crate::pipeline_common::kmers_transform::{
 };
 use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
+use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
 use std::sync::Arc;
 
 pub struct KmersTransformProcessor<F: KmersTransformExecutorFactory> {
-    context: Option<Arc<KmersTransformContext<F>>>,
-    map_processor: Option<F::MapProcessorType>,
+    context: Arc<KmersTransformContext<F>>,
+    map_processor: F::MapProcessorType,
+    initialized: bool,
 }
 
 impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformProcessor<F> {
-    type InitData = ();
+    type InitData = (Arc<KmersTransformContext<F>>, MemoryTracker<Self>);
 
-    fn allocate_new(_init_data: &Self::InitData) -> Self {
+    fn allocate_new((context, memory_tracker): &Self::InitData) -> Self {
         Self {
-            context: None,
-            map_processor: None,
+            context: context.clone(),
+            map_processor: F::new_map_processor(&context.global_extra_data, memory_tracker.clone()),
+            initialized: false,
         }
     }
 
     fn reset(&mut self) {
-        self.context.take();
-        self.map_processor.take();
+        self.initialized = false;
     }
 }
 
 impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
     const EXECUTOR_TYPE: ExecutorType = ExecutorType::SimplePacketsProcessing;
+
+    const MEMORY_FIELDS_COUNT: usize = 2;
+    const MEMORY_FIELDS: &'static [&'static str] = &["MAP_SIZE", "CORRECT_READS"];
 
     const BASE_PRIORITY: u64 = 2;
     const PACKET_PRIORITY_MULTIPLIER: u64 = 1;
@@ -40,23 +45,19 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
     type OutputPacket = <F::MapProcessorType as KmersTransformMapProcessor<F>>::MapStruct;
     type GlobalParams = KmersTransformContext<F>;
     type MemoryParams = ();
-    type BuildParams = Arc<KmersTransformContext<F>>;
+    type BuildParams = ();
 
     fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
-        global_params: Arc<Self::GlobalParams>,
+        _global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
         _common_packet: Option<Packet<Self::InputPacket>>,
         _executors_initializer: D,
     ) -> (Self::BuildParams, usize) {
-        (global_params, 1)
+        ((), 1)
     }
 
     fn required_pool_items(&self) -> u64 {
-        if self.context.is_some() {
-            1
-        } else {
-            0
-        }
+        0
     }
 
     fn pre_execute<
@@ -65,18 +66,14 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
-        reinit_params: Self::BuildParams,
+        _reinit_params: Self::BuildParams,
         mut packet_alloc_force: PF,
         _packet_alloc: P,
         _packet_send: S,
     ) {
-        self.map_processor = Some(F::new_map_processor(&reinit_params.global_extra_data));
-
         self.map_processor
-            .as_mut()
-            .unwrap()
-            .process_group_start(packet_alloc_force(), &reinit_params.global_extra_data);
-        self.context = Some(reinit_params);
+            .process_group_start(packet_alloc_force(), &self.context.global_extra_data);
+        self.initialized = true;
     }
 
     fn execute<
@@ -88,40 +85,33 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         _packet_alloc: P,
         _packet_send: S,
     ) {
-        self.map_processor
-            .as_mut()
-            .unwrap()
-            .process_group_batch_sequences(
-                &self.context.as_ref().unwrap().global_extra_data,
-                &input_packet.reads,
-                &input_packet.reads_buffer,
-            );
+        self.map_processor.process_group_batch_sequences(
+            &self.context.global_extra_data,
+            &input_packet.reads,
+            &input_packet.reads_buffer,
+        );
     }
 
     fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(
         &mut self,
         mut packet_send: S,
     ) {
-        let context = self.context.as_ref().unwrap();
-
         let packet = self
             .map_processor
-            .as_mut()
-            .unwrap()
-            .process_group_finalize(&context.global_extra_data);
+            .process_group_finalize(&self.context.global_extra_data);
         packet_send(
-            context.finalizer_address.read().as_ref().unwrap().clone(),
+            self.context
+                .finalizer_address
+                .read()
+                .as_ref()
+                .unwrap()
+                .clone(),
             packet,
         );
-        // self.context.take();
     }
 
     fn is_finished(&self) -> bool {
         false
-    }
-
-    fn get_total_memory(&self) -> u64 {
-        0
     }
 
     fn get_current_memory_params(&self) -> Self::MemoryParams {

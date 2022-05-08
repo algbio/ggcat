@@ -9,7 +9,6 @@ edition = "2021"
 byteorder = "1.4.3"
 crossbeam = "0.8.0"
 filebuffer = "0.4.0"
-heapless = "0.7.1"
 lazy_static = "1.4.0"
 libc = "0.2.94"
 parking_lot = { version = "0.12.0", features = ["arc_lock", "send_guard"] }

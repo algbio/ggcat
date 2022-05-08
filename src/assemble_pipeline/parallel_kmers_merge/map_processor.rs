@@ -8,6 +8,7 @@ use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashableSequence;
 use crate::hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
 use crate::pipeline_common::kmers_transform::{
     KmersTransformExecutorFactory, KmersTransformMapProcessor,
 };
@@ -15,16 +16,17 @@ use crate::utils::compressed_read::CompressedReadIndipendent;
 use hashbrown::HashMap;
 use parallel_processor::counter_stats::counter::{AtomicCounter, AvgMode, MaxMode};
 use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter_i64};
+use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
-use parallel_processor::mem_tracker::tracked_vec::TrackedVec;
+use std::mem::size_of;
 use std::ops::DerefMut;
 
 pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManager> {
     pub rhash_map:
         HashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>,
     pub saved_reads: Vec<u8>,
-    pub rcorrect_reads: TrackedVec<usize>,
+    pub rcorrect_reads: Vec<usize>,
     pub temp_colors: color_types::ColorsBufferTempStructure<MH, CX>,
 }
 
@@ -47,7 +49,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
         Self {
             rhash_map: HashMap::with_capacity(4096),
             saved_reads: vec![],
-            rcorrect_reads: TrackedVec::new(),
+            rcorrect_reads: Vec::new(),
             temp_colors: <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::allocate_temp_buffer_structure()
         }
     }
@@ -63,6 +65,15 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
 impl<MH: HashFunctionFactory, CX: ColorsManager> PacketTrait
     for ParallelKmersMergeMapPacket<MH, CX>
 {
+    fn get_size(&self) -> usize {
+        self.rhash_map.len()
+            * (size_of::<(
+                MH::HashTypeUnextendable,
+                MapEntry<color_types::HashMapTempColorIndex<MH, CX>>,
+            )>() + 1)
+            + self.saved_reads.len()
+            + self.rcorrect_reads.len() * size_of::<usize>()
+    }
 }
 
 pub struct ParallelKmersMergeMapProcessor<
@@ -75,13 +86,19 @@ pub struct ParallelKmersMergeMapProcessor<
             <Self as KmersTransformMapProcessor<ParallelKmersMergeFactory<H, MH, CX>>>::MapStruct,
         >,
     >,
+    mem_tracker: MemoryTracker<KmersTransformProcessor<ParallelKmersMergeFactory<H, MH, CX>>>,
 }
 
 impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     ParallelKmersMergeMapProcessor<H, MH, CX>
 {
-    pub fn new() -> Self {
-        Self { map_packet: None }
+    pub fn new(
+        mem_tracker: MemoryTracker<KmersTransformProcessor<ParallelKmersMergeFactory<H, MH, CX>>>,
+    ) -> Self {
+        Self {
+            map_packet: None,
+            mem_tracker,
+        }
     }
 }
 
@@ -159,13 +176,9 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                         .push(saved_read_offset.unwrap() * 4 + idx);
                 }
             }
-
-            #[cfg(feature = "mem-analysis")]
-            {
-                let len = map_packet.rcorrect_reads.len();
-                map_packet.rcorrect_reads.update_maximum_usage(len);
-            }
         }
+        self.mem_tracker
+            .update_memory_usage(&[map_packet.get_size(), 0])
     }
 
     fn process_group_finalize(

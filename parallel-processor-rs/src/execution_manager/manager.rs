@@ -7,7 +7,6 @@ use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::Duration;
 
 pub type GenericExecutor = Box<dyn ExecutionManagerTrait>;
 
@@ -99,24 +98,24 @@ impl<E: Executor + 'static> ExecutionManager<E> {
 }
 
 impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
-    fn execute(&mut self, mut wait: bool) -> ExecutionStatus {
-        let available_pool_items = self
-            .pool
-            .as_ref()
-            .map(|p| p.get_available_items())
-            .unwrap_or(0);
-
-        while self.executor.required_pool_items() as i64 > available_pool_items {
-            if wait {
-                self.pool
-                    .as_ref()
-                    .unwrap()
-                    .wait_for_item_timeout(Duration::from_millis(100));
-                wait = false;
-            } else {
-                return ExecutionStatus::OutputPoolFull;
-            }
-        }
+    fn execute(&mut self, _wait: bool) -> ExecutionStatus {
+        // let available_pool_items = self
+        //     .pool
+        //     .as_ref()
+        //     .map(|p| p.get_available_items())
+        //     .unwrap_or(0);
+        //
+        // while self.executor.required_pool_items() as i64 > available_pool_items {
+        //     if wait {
+        //         self.pool
+        //             .as_ref()
+        //             .unwrap()
+        //             .wait_for_item_timeout(Duration::from_millis(100));
+        //         wait = false;
+        //     } else {
+        //         return ExecutionStatus::OutputPoolFull;
+        //     }
+        // }
 
         if let Some(build_info) = self.build_info.take() {
             self.executor.pre_execute(

@@ -1,4 +1,5 @@
 use crate::execution_manager::executor_address::ExecutorAddress;
+use crate::execution_manager::memory_tracker::MemoryTracker;
 use crate::execution_manager::objects_pool::PoolObjectTrait;
 use crate::execution_manager::packet::Packet;
 use crate::execution_manager::packet::PacketTrait;
@@ -14,8 +15,13 @@ pub enum ExecutorType {
 
 static EXECUTOR_GLOBAL_ID: AtomicU64 = AtomicU64::new(0);
 
-pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
+pub trait Executor:
+    Sized + PoolObjectTrait<InitData = (Arc<Self::GlobalParams>, MemoryTracker<Self>)> + Sync + Send
+{
     const EXECUTOR_TYPE: ExecutorType;
+
+    const MEMORY_FIELDS_COUNT: usize;
+    const MEMORY_FIELDS: &'static [&'static str];
 
     const BASE_PRIORITY: u64;
     const PACKET_PRIORITY_MULTIPLIER: u64;
@@ -71,6 +77,5 @@ pub trait Executor: PoolObjectTrait<InitData = ()> + Sync + Send {
 
     fn is_finished(&self) -> bool;
 
-    fn get_total_memory(&self) -> u64;
     fn get_current_memory_params(&self) -> Self::MemoryParams;
 }

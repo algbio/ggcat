@@ -6,6 +6,7 @@
 #![feature(test)]
 #![feature(slice_partition_dedup)]
 #![feature(int_log)]
+#![feature(new_uninit)]
 // #![deny(warnings)]
 #![allow(dead_code)]
 

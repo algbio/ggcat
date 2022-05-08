@@ -4,9 +4,11 @@ use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutionCont
 use nightly_quirks::branch_pred::unlikely;
 use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
+use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
 use replace_with::replace_with_or_abort;
+use std::cmp::max;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::path::PathBuf;
@@ -14,21 +16,26 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub struct MinimizerBucketingFilesReader<
-    GlobalData: 'static,
+    GlobalData: Sync + Send + 'static,
     FileInfo: Clone + Sync + Send + Default + 'static,
 > {
-    context: Option<Arc<MinimizerBucketingExecutionContext<GlobalData>>>,
+    context: Arc<MinimizerBucketingExecutionContext<GlobalData>>,
+    mem_tracker: MemoryTracker<Self>,
     _phantom: PhantomData<FileInfo>,
 }
 
-impl<GlobalData: 'static, FileInfo: Clone + Sync + Send + Default + 'static> PoolObjectTrait
-    for MinimizerBucketingFilesReader<GlobalData, FileInfo>
+impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default + 'static>
+    PoolObjectTrait for MinimizerBucketingFilesReader<GlobalData, FileInfo>
 {
-    type InitData = ();
+    type InitData = (
+        Arc<MinimizerBucketingExecutionContext<GlobalData>>,
+        MemoryTracker<Self>,
+    );
 
-    fn allocate_new(_: &Self::InitData) -> Self {
+    fn allocate_new((context, mem_tracker): &Self::InitData) -> Self {
         Self {
-            context: None,
+            context: context.clone(),
+            mem_tracker: mem_tracker.clone(),
             _phantom: PhantomData,
         }
     }
@@ -41,6 +48,9 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
 {
     const EXECUTOR_TYPE: ExecutorType = ExecutorType::SimplePacketsProcessing;
 
+    const MEMORY_FIELDS_COUNT: usize = 1;
+    const MEMORY_FIELDS: &'static [&'static str] = &["SEQ_BUFFER"];
+
     const BASE_PRIORITY: u64 = 0;
     const PACKET_PRIORITY_MULTIPLIER: u64 = 1;
     const STRICT_POOL_ALLOC: bool = true;
@@ -50,7 +60,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
     type GlobalParams = MinimizerBucketingExecutionContext<GlobalData>;
     type MemoryParams = ();
 
-    type BuildParams = Arc<MinimizerBucketingExecutionContext<GlobalData>>;
+    type BuildParams = ();
 
     fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
         global_params: Arc<Self::GlobalParams>,
@@ -59,7 +69,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         _executors_initializer: D,
     ) -> (Self::BuildParams, usize) {
         let read_threads_count = global_params.read_threads_count;
-        (global_params, read_threads_count)
+        ((), read_threads_count)
     }
 
     fn required_pool_items(&self) -> u64 {
@@ -72,12 +82,11 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
-        context: Self::BuildParams,
+        _reinit_params: Self::BuildParams,
         _packet_alloc_force: PF,
         _packet_alloc: P,
         _packet_send: S,
     ) {
-        self.context = Some(context);
     }
 
     fn execute<
@@ -93,24 +102,29 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         let mut data_packet = packet_alloc();
         let file_info = input_packet.1.clone();
 
-        let context = self.context.as_mut().unwrap();
-
         let data = data_packet.deref_mut();
         data.file_info = file_info.clone();
         data.start_read_index = 0;
 
         let mut read_index = 0;
 
-        context.current_file.fetch_add(1, Ordering::Relaxed);
+        self.context.current_file.fetch_add(1, Ordering::Relaxed);
+
+        let mut max_len = 0;
 
         SequencesReader::process_file_extended(
             &input_packet.0,
             |x| {
                 let mut data = data_packet.deref_mut();
 
-                if x.seq.len() < context.common.k {
+                if x.seq.len() < self.context.common.k {
                     return;
                 }
+
+                max_len = max(
+                    max_len,
+                    x.ident.len() + x.seq.len() + x.qual.map(|q| q.len()).unwrap_or(0),
+                );
 
                 if unlikely(!data.push_sequences(x)) {
                     assert!(
@@ -120,7 +134,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
 
                     replace_with_or_abort(&mut data_packet, |packet| {
                         packet_send(
-                            context
+                            self.context
                                 .executor_group_address
                                 .read()
                                 .as_ref()
@@ -130,6 +144,8 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
                         );
                         packet_alloc()
                     });
+
+                    self.mem_tracker.update_memory_usage(&[max_len]);
 
                     data = data_packet.deref_mut();
                     data.file_info = file_info.clone();
@@ -146,7 +162,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
 
         if data_packet.sequences.len() > 0 {
             packet_send(
-                context
+                self.context
                     .executor_group_address
                     .read()
                     .as_ref()
@@ -156,7 +172,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
             );
         }
 
-        context.processed_files.fetch_add(1, Ordering::Relaxed);
+        self.context.processed_files.fetch_add(1, Ordering::Relaxed);
     }
 
     fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, _packet_send: S) {
@@ -165,11 +181,6 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
     fn is_finished(&self) -> bool {
         false
     }
-
-    fn get_total_memory(&self) -> u64 {
-        0
-    }
-
     fn get_current_memory_params(&self) -> Self::MemoryParams {
         ()
     }

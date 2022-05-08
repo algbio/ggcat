@@ -92,7 +92,7 @@ impl BucketType for BinaryWriter {
     }
 
     fn write_batch_data_lock_free(&self, _bytes: &[u8]) {
-        todo!()
+        unimplemented!()
     }
 
     fn get_path(&self) -> PathBuf {

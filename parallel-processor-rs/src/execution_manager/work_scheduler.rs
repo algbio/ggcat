@@ -2,6 +2,7 @@ use crate::execution_manager::executor::{Executor, ExecutorType};
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
 use crate::execution_manager::executors_list::{ExecutorAllocMode, PoolAllocMode};
 use crate::execution_manager::manager::{ExecutionManager, GenericExecutor};
+use crate::execution_manager::memory_tracker::MemoryTrackerManager;
 use crate::execution_manager::objects_pool::{ObjectsPool, PoolObject, PoolObjectTrait};
 use crate::execution_manager::packet::{Packet, PacketAny, PacketsPool};
 use crate::execution_manager::priority::{ExecutorPriority, PriorityManager};
@@ -84,12 +85,13 @@ pub struct WorkScheduler {
 
     changes_notifier_mutex: Mutex<()>,
     changes_notifier_condvar: Condvar,
+    memory_tracker: Arc<MemoryTrackerManager>,
 
     queues_allocator: ObjectsPool<SegQueue<PacketAny>>,
     push_executors_lock: Mutex<()>,
 }
 
-impl<T: 'static> PoolObjectTrait for SegQueue<T> {
+impl<T: Send + Sync + 'static> PoolObjectTrait for SegQueue<T> {
     type InitData = ();
 
     fn allocate_new(_: &Self::InitData) -> Self {
@@ -111,6 +113,7 @@ impl WorkScheduler {
             waiting_addresses: Default::default(),
             changes_notifier_mutex: Default::default(),
             changes_notifier_condvar: Default::default(),
+            memory_tracker: Arc::new(MemoryTrackerManager::new()),
             queues_allocator: ObjectsPool::new(queue_buffers_pool_size, ()),
             push_executors_lock: Mutex::new(()),
         }
@@ -122,7 +125,6 @@ impl WorkScheduler {
             let entry = o.get();
 
             entry.0.store(true, Ordering::SeqCst);
-
             if entry.1.len() == 0 {
                 o.remove_entry();
             }
@@ -144,17 +146,27 @@ impl WorkScheduler {
         let executors_list_manager = Arc::new(ExecutorsListManager::<E> {
             packet_pools: match pool_alloc_mode {
                 PoolAllocMode::None => PoolMode::None,
-                PoolAllocMode::Shared { capacity } => PoolMode::Shared(Arc::new(
-                    PoolObject::new_simple(PacketsPool::new(capacity, pool_init_data)),
-                )),
+                PoolAllocMode::Shared { capacity } => {
+                    PoolMode::Shared(Arc::new(PoolObject::new_simple(PacketsPool::new(
+                        capacity,
+                        pool_init_data,
+                        &self.memory_tracker,
+                    ))))
+                }
                 PoolAllocMode::Distinct { capacity } => PoolMode::Distinct {
                     pools_allocator: ObjectsPool::new(
                         executors_max_count,
-                        (capacity, pool_init_data),
+                        (capacity, pool_init_data, self.memory_tracker.clone()),
                     ),
                 },
             },
-            executors_allocator: ObjectsPool::new(executors_max_count, ()),
+            executors_allocator: ObjectsPool::new(
+                executors_max_count,
+                (
+                    global_params.clone(),
+                    self.memory_tracker.get_executor_instance(),
+                ),
+            ),
         });
 
         let executor_info = Arc::new(RwLock::new(ExecutionManagerInfo {
@@ -177,6 +189,8 @@ impl WorkScheduler {
             .get(&TypeId::of::<E>())
             .unwrap()
             .clone();
+
+        let mem_tracker = self.memory_tracker.clone();
 
         let allocate_execution_units = move |addr: WeakExecutorAddress| {
             let executor_info = executor_info_aeu.upgrade().unwrap();
@@ -225,12 +239,14 @@ impl WorkScheduler {
                 let output_pool = executor_info.output_pool.clone();
                 let executor = executors_list_manager_aeu
                     .executors_allocator
-                    .alloc_object(false);
+                    .alloc_object(false, false);
 
                 let packets_map = packets_map.clone();
                 let packets_queue = packets_queue.clone();
 
                 let queue_size = packets_queue.1.len();
+
+                let mem_tracker = mem_tracker.clone();
 
                 execution_managers.push(ExecutionManager::new(
                     executor,
@@ -243,7 +259,7 @@ impl WorkScheduler {
                         PoolMode::None => None,
                         PoolMode::Shared(pool) => Some(pool.clone()),
                         PoolMode::Distinct { pools_allocator } => {
-                            Some(Arc::new(pools_allocator.alloc_object(false)))
+                            Some(Arc::new(pools_allocator.alloc_object(false, false)))
                         }
                     },
                     Box::new(move || {
@@ -260,6 +276,7 @@ impl WorkScheduler {
                     queue_size,
                     addr.clone(),
                     move |addr, packet| {
+                        mem_tracker.add_queue_packet(packet.deref());
                         output_pool
                             .as_ref()
                             .unwrap()
@@ -325,7 +342,7 @@ impl WorkScheduler {
                         executor.to_weak(),
                         Arc::new((
                             AtomicBool::new(false),
-                            self.queues_allocator.alloc_object(false),
+                            self.queues_allocator.alloc_object(false, false),
                         )),
                     );
                     self.active_executors_counters
@@ -333,6 +350,7 @@ impl WorkScheduler {
                         .unwrap()
                         .fetch_add(1, Ordering::SeqCst);
                     assert!(old_val.is_none());
+
                     exec_queue.push(executor.to_weak());
                 });
         }
@@ -443,17 +461,7 @@ impl WorkScheduler {
             }
 
             if let Some(new_executor) = self.priority_list.get_element(last_executor.take()) {
-                // println!(
-                //     "Running executing with priority: {}/{} // {:?} {:?}",
-                //     new_executor.0.total_score.load(Ordering::Relaxed),
-                //     new_executor.1.is_finished(),
-                //     new_executor.1.get_weak_address(),
-                //     std::thread::current().id()
-                // );
-                //
-
                 *last_executor = Some(new_executor);
-                // );
                 break;
             }
 
@@ -463,6 +471,10 @@ impl WorkScheduler {
                 break;
             }
         }
+    }
+
+    pub fn print_debug_memory(&self) {
+        self.memory_tracker.print_debug();
     }
 
     pub fn print_debug_executors(&self) {

@@ -20,6 +20,7 @@ use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::executors_list::{
     ExecOutputMode, ExecutorAllocMode, ExecutorsList, PoolAllocMode,
 };
+use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::execution_manager::thread_pool::{
@@ -38,7 +39,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-mod processor;
+pub mod processor;
 mod reads_buffer;
 mod resplitter;
 mod writer;
@@ -64,7 +65,10 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
     ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType;
 
     fn new_preprocessor(global_data: &Arc<Self::GlobalExtraData>) -> Self::PreprocessorType;
-    fn new_map_processor(global_data: &Arc<Self::GlobalExtraData>) -> Self::MapProcessorType;
+    fn new_map_processor(
+        global_data: &Arc<Self::GlobalExtraData>,
+        mem_tracker: MemoryTracker<KmersTransformProcessor<Self>>,
+    ) -> Self::MapProcessorType;
     fn new_final_executor(global_data: &Arc<Self::GlobalExtraData>) -> Self::FinalExecutorType;
 }
 
@@ -312,6 +316,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         } {
             self.maybe_log_completed_buckets(bucket_readers_count as usize, || {
                 // compute_thread_pool.debug_print_queue();
+                disk_thread_pool.debug_print_memory();
+                compute_thread_pool.debug_print_memory();
             });
             std::thread::sleep(Duration::from_millis(300));
         }
