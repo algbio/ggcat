@@ -18,6 +18,8 @@ use core::slice::from_raw_parts;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::execution_manager::packet::Packet;
+use parking_lot::{const_mutex, Mutex};
+use std::any::Any;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 
@@ -57,6 +59,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     }
 }
 
+static DEBUG_MAPS_HOLDER: Mutex<Vec<Box<dyn Any + Sync + Send>>> = const_mutex(Vec::new());
+
 impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformFinalExecutor<ParallelKmersMergeFactory<H, MH, CX>>
     for ParallelKmersMergeFinalExecutor<H, MH, CX>
@@ -66,13 +70,13 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     fn process_map(
         &mut self,
         global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
-        mut map_struct: Packet<Self::MapStruct>,
+        mut map_struct_packet: Packet<Self::MapStruct>,
     ) {
         if self.current_bucket.is_none() {
             self.current_bucket = Some(global_data.output_results_buckets.pop().unwrap());
         }
 
-        let map_struct = map_struct.deref_mut();
+        let map_struct = map_struct_packet.deref_mut();
 
         let k = global_data.k;
         let buckets_count = global_data.buckets_count;
@@ -318,6 +322,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 .output_results_buckets
                 .push(self.current_bucket.take().unwrap());
         }
+        DEBUG_MAPS_HOLDER.lock().push(Box::new(map_struct_packet));
     }
 
     fn finalize(

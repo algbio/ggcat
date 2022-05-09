@@ -218,7 +218,7 @@ impl WorkScheduler {
                     Some(
                         Self::get_packet(addr, &packets_queue, &packets_map)
                             .0
-                            .unwrap(),
+                            .unwrap(), // FIXME: Resolve spurious crash with extra buckets
                     )
                 } else {
                     None
