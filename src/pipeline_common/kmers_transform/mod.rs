@@ -226,11 +226,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
     pub fn parallel_kmers_transform(mut self) {
         let max_second_buckets_count = 1 << self.execution_context.max_second_buckets_count_log2;
 
-        let max_read_buffers_count = max(
+        let max_extra_read_buffers_count = max(
             max_second_buckets_count,
             self.execution_context.read_threads_count
                 + self.execution_context.compute_threads_count,
-        ) * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed);
+        );
 
         let compute_threads_count = self.execution_context.compute_threads_count;
         let read_threads_count = self.execution_context.read_threads_count;
@@ -246,7 +246,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         let mut bucket_readers = ExecutorsList::<KmersTransformReader<F>>::new(
             ExecutorAllocMode::Fixed(read_threads_count),
             PoolAllocMode::Distinct {
-                capacity: max_read_buffers_count,
+                capacity: max_extra_read_buffers_count,
             },
             KMERS_TRANSFORM_READS_CHUNKS_SIZE,
             &self.execution_context,
@@ -262,7 +262,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 max_memory: MemoryDataSize::from_gibioctets(4), // TODO: Make dynamic
             },
             PoolAllocMode::Shared {
-                capacity: min_maps_count * 3,
+                capacity: min_maps_count * 2,
             },
             (),
             &self.execution_context,
