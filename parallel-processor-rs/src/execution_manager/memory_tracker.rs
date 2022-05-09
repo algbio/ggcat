@@ -35,11 +35,6 @@ impl MemoryTrackerManager {
                 .or_insert(((0, 0), 0));
             entry.value_mut().0 .0 += packet.get_size();
             entry.value_mut().0 .1 += 1;
-            println!(
-                "Allocating packet: {} ==> {}",
-                packet as *const T as usize,
-                entry.value().0 .1
-            );
 
             let crt_val = entry.value_mut().0 .0;
             let max_val = entry.value().1;
@@ -54,11 +49,6 @@ impl MemoryTrackerManager {
                 .unwrap();
             entry.value_mut().0 .0 -= packet.get_size();
             entry.value_mut().0 .1 -= 1;
-            println!(
-                "Deallocating packet: {} ==> {}",
-                packet as *const T as usize,
-                entry.value().0 .1
-            );
         }
     }
 

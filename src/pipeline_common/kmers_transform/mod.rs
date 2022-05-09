@@ -315,7 +315,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             bucket_readers_count > 0
         } {
             self.maybe_log_completed_buckets(bucket_readers_count as usize, || {
-                // compute_thread_pool.debug_print_queue();
+                compute_thread_pool.debug_print_queue();
                 disk_thread_pool.debug_print_memory();
                 compute_thread_pool.debug_print_memory();
             });
