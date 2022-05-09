@@ -123,7 +123,8 @@ impl<E: Executor> Clone for MemoryTracker<E> {
             .get_mut(&(std::any::type_name::<E>() as *const str))
             .unwrap()
             .value_mut()
-            .1 += 1;
+            .0
+             .1 += 1;
         Self {
             manager: self.manager.clone(),
             last_memory_usage: 0,
