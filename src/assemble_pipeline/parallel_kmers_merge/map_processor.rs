@@ -201,6 +201,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         COUNTER_READS_MAX.max(len);
         COUNTER_READS_MAX_LAST.max(len);
         COUNTER_READS_AVG.add_value(len);
+        self.mem_tracker.update_memory_usage(&[0, 0]);
 
         map_packet
     }
