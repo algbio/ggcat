@@ -21,7 +21,7 @@ use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
-use std::ops::DerefMut;
+use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -145,20 +145,20 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
         S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
     >(
         &mut self,
-        mut input_packet: Packet<Self::InputPacket>,
+        input_packet: Packet<Self::InputPacket>,
         _packet_alloc: P,
         _packet_send: S,
     ) {
-        let input_packet = input_packet.deref_mut();
+        let input_packet = input_packet.deref();
 
         let mut preproc_info = <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::PreprocessInfo::default();
         let resplitter = &mut self.resplitter;
         let local_buffer = self.thread_local_buffers.as_mut().unwrap();
 
-        for (flags, extra, bases) in input_packet.reads.drain(..) {
+        for (flags, extra, bases) in &input_packet.reads {
             let sequence = bases.as_reference(&input_packet.reads_buffer);
 
-            resplitter.reprocess_sequence(flags, &extra, &mut preproc_info);
+            resplitter.reprocess_sequence(*flags, &extra, &mut preproc_info);
             resplitter.process_sequence::<_, _>(
                 &preproc_info,
                 sequence,

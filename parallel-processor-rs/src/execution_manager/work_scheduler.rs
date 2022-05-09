@@ -39,11 +39,11 @@ pub struct ExecutionManagerInfo {
         Box<
             dyn (Fn(
                     WeakExecutorAddress,
-                ) -> (
+                ) -> Option<(
                     Vec<GenericExecutor>,
                     Option<(Arc<dyn ExecThreadPoolDataAddTrait>, Vec<ExecutorAddress>)>,
                     ExecutorPriority,
-                )) + Sync
+                )>) + Sync
                 + Send,
         >,
     >,
@@ -204,7 +204,7 @@ impl WorkScheduler {
                 None => {
                     // Do not do anything if we are deallocated without any packet
                     active_counter.fetch_sub(1, Ordering::Relaxed);
-                    return (Vec::new(), None, ExecutorPriority::empty());
+                    return None;
                 }
             };
 
@@ -215,11 +215,7 @@ impl WorkScheduler {
                 global_params.clone(),
                 None,
                 if needs_build_packet {
-                    Some(
-                        Self::get_packet(addr, &packets_queue, &packets_map)
-                            .0
-                            .unwrap(), // FIXME: Resolve spurious crash with extra buckets
-                    )
+                    Some(Self::get_packet(addr, &packets_queue, &packets_map).0?)
                 } else {
                     None
                 },
@@ -288,7 +284,7 @@ impl WorkScheduler {
                 ));
             }
 
-            (
+            Some((
                 execution_managers,
                 new_addresses,
                 ExecutorPriority::new(
@@ -296,7 +292,7 @@ impl WorkScheduler {
                     packets_queue.1.len() as u64,
                     E::BASE_PRIORITY,
                 ),
-            )
+            ))
         };
 
         let pool_remaining_executors = move || {
@@ -374,11 +370,11 @@ impl WorkScheduler {
     fn alloc_executors(
         &self,
         address: WeakExecutorAddress,
-    ) -> (
+    ) -> Option<(
         Vec<GenericExecutor>,
         Option<(Arc<dyn ExecThreadPoolDataAddTrait>, Vec<ExecutorAddress>)>,
         ExecutorPriority,
-    ) {
+    )> {
         let executor_info = self
             .execution_managers_info
             .get(&address.executor_type_id)
@@ -418,7 +414,8 @@ impl WorkScheduler {
             // Allocate as much executors as possible
             for (addr, addr_queue) in self.waiting_addresses.iter() {
                 let addr_queue = addr_queue.read();
-                while addr_queue.len() > 0 {
+                let mut missed_iterations_count = 0;
+                'alloc_loop: while addr_queue.len() > 0 {
                     let exec_remaining = (self
                         .execution_managers_info
                         .get(addr)
@@ -429,17 +426,26 @@ impl WorkScheduler {
                         .unwrap())();
                     if exec_remaining > 0 {
                         if let Some(addr) = addr_queue.pop() {
-                            let (executors, new_addresses, priority) = self.alloc_executors(addr);
-                            if executors.len() > 0 {
-                                self.priority_list.add_elements_with_atomic_func(
-                                    || {
-                                        if let Some((output_pool, addresses)) = new_addresses {
-                                            output_pool.add_executors_batch(addresses);
-                                        }
-                                        executors
-                                    },
-                                    priority,
-                                );
+                            if let Some((executors, new_addresses, priority)) =
+                                self.alloc_executors(addr)
+                            {
+                                if executors.len() > 0 {
+                                    self.priority_list.add_elements_with_atomic_func(
+                                        || {
+                                            if let Some((output_pool, addresses)) = new_addresses {
+                                                output_pool.add_executors_batch(addresses);
+                                            }
+                                            executors
+                                        },
+                                        priority,
+                                    );
+                                }
+                            } else {
+                                addr_queue.push(addr);
+                                missed_iterations_count += 1;
+                                if missed_iterations_count > addr_queue.len() {
+                                    break 'alloc_loop;
+                                }
                             }
                         }
                     } else {

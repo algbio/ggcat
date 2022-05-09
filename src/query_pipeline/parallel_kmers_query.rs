@@ -22,6 +22,7 @@ use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::utils::get_memory_mode;
 use crate::CompressedRead;
 use byteorder::{ReadBytesExt, WriteBytesExt};
+use hashbrown::HashMap;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
@@ -33,7 +34,7 @@ use std::cmp::min;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
-use std::ops::DerefMut;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -132,6 +133,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 &global_data.counters_buckets,
                 counters_buffers,
             ),
+            query_map: HashMap::new(),
             _phantom: PhantomData,
         }
     }
@@ -160,7 +162,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 
 struct ParallelKmersQueryMapPacket<MH: HashFunctionFactory> {
     phset: hashbrown::HashSet<MH::HashTypeUnextendable>,
-    query_map: hashbrown::HashMap<u64, u64>,
     query_reads: Vec<(u64, MH::HashTypeUnextendable)>,
 }
 
@@ -170,7 +171,6 @@ impl<MH: HashFunctionFactory> PoolObjectTrait for ParallelKmersQueryMapPacket<MH
     fn allocate_new(_init_data: &Self::InitData) -> Self {
         Self {
             phset: hashbrown::HashSet::new(),
-            query_map: hashbrown::HashMap::new(),
             query_reads: Vec::new(),
         }
     }
@@ -178,12 +178,11 @@ impl<MH: HashFunctionFactory> PoolObjectTrait for ParallelKmersQueryMapPacket<MH
     fn reset(&mut self) {
         self.phset.clear();
         self.query_reads.clear();
-        self.query_map.clear();
     }
 }
 impl<MH: HashFunctionFactory> PacketTrait for ParallelKmersQueryMapPacket<MH> {
     fn get_size(&self) -> usize {
-        (self.phset.len() + self.query_reads.len() + self.query_map.len()) * 16 // TODO: Compute correct values
+        (self.phset.len() + self.query_reads.len()) * 16 // TODO: Compute correct values
     }
 }
 
@@ -257,6 +256,7 @@ struct ParallelKmersQueryFinalExecutor<
     CX: ColorsManager,
 > {
     counters_tmp: BucketsThreadDispatcher<LockFreeBinaryWriter>,
+    query_map: hashbrown::HashMap<u64, u64>,
     _phantom: PhantomData<(H, MH, CX)>,
 }
 
@@ -269,17 +269,17 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     fn process_map(
         &mut self,
         _global_data: &GlobalQueryMergeData,
-        mut map_struct: Packet<Self::MapStruct>,
+        map_struct: Packet<Self::MapStruct>,
     ) {
-        let map_struct = map_struct.deref_mut();
+        let map_struct = map_struct.deref();
 
-        for (query_index, kmer_hash) in map_struct.query_reads.drain(..) {
-            if map_struct.phset.contains(&kmer_hash) {
-                *map_struct.query_map.entry(query_index).or_insert(0) += 1;
+        for (query_index, kmer_hash) in &map_struct.query_reads {
+            if map_struct.phset.contains(kmer_hash) {
+                *self.query_map.entry(*query_index).or_insert(0) += 1;
             }
         }
 
-        for (query_index, counter) in map_struct.query_map.drain() {
+        for (query_index, counter) in self.query_map.drain() {
             self.counters_tmp.add_element(
                 (query_index % 0xFF) as BucketIndexType,
                 &(),

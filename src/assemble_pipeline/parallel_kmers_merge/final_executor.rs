@@ -18,8 +18,6 @@ use core::slice::from_raw_parts;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::execution_manager::packet::Packet;
-use parking_lot::{const_mutex, Mutex};
-use std::any::Any;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 
@@ -92,10 +90,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             );
         }
 
-        for base_index in map_struct.rcorrect_reads.drain(..) {
+        for base_index in &map_struct.rcorrect_reads {
             // hash, read_bases_start, reads_offset, is_forward
-            let read_bases_start = base_index / 4;
-            let reads_offset = base_index % 4;
+            let read_bases_start = *base_index / 4;
+            let reads_offset = *base_index % 4;
 
             let reads_slice = unsafe {
                 from_raw_parts(
