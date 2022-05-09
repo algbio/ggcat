@@ -57,6 +57,11 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
     }
 
     pub fn reset_max_count(&self) {
+        println!(
+            "Resetting max count from {} to {}!",
+            self.max_count_extended.load(Ordering::Relaxed),
+            self.max_count
+        );
         self.max_count_extended
             .store(self.max_count, Ordering::Relaxed);
     }
