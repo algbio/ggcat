@@ -230,6 +230,14 @@ impl WorkScheduler {
             let mut execution_managers = Vec::with_capacity(maximum_concurrency);
             active_counter.fetch_add(maximum_concurrency as u64 - 1, Ordering::SeqCst);
 
+            let pool = match &executors_list_manager_aeu.packet_pools {
+                PoolMode::None => None,
+                PoolMode::Shared(pool) => Some(pool.clone()),
+                PoolMode::Distinct { pools_allocator } => {
+                    Some(Arc::new(pools_allocator.alloc_object(false, false)))
+                }
+            };
+
             for i in 0..maximum_concurrency {
                 let active_counter = active_counter.clone();
                 let output_pool = executor_info.output_pool.clone();
@@ -251,13 +259,7 @@ impl WorkScheduler {
                     } else {
                         build_info.as_ref().unwrap().clone()
                     },
-                    match &executors_list_manager_aeu.packet_pools {
-                        PoolMode::None => None,
-                        PoolMode::Shared(pool) => Some(pool.clone()),
-                        PoolMode::Distinct { pools_allocator } => {
-                            Some(Arc::new(pools_allocator.alloc_object(false, false)))
-                        }
-                    },
+                    pool.clone(),
                     Box::new(move || {
                         let (packet, del) = Self::get_packet(addr, &packets_queue, &packets_map);
                         (

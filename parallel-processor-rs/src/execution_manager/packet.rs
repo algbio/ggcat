@@ -49,7 +49,6 @@ impl<T: PacketTrait> PoolObjectTrait for PacketsPool<T> {
     type InitData = (usize, T::InitData, Arc<MemoryTrackerManager>);
 
     fn allocate_new((cap, init_data, mem_tracker): &Self::InitData) -> Self {
-        println!("Allocated packets queue with size: {}", cap);
         Self::new(*cap, init_data.clone(), mem_tracker)
     }
 
