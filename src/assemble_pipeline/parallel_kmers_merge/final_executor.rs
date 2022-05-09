@@ -59,7 +59,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     }
 }
 
-static DEBUG_MAPS_HOLDER: Mutex<Vec<Box<dyn Any + Sync + Send>>> = const_mutex(Vec::new());
+// static DEBUG_MAPS_HOLDER: Mutex<Vec<Box<dyn Any + Sync + Send>>> = const_mutex(Vec::new());
 
 impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     KmersTransformFinalExecutor<ParallelKmersMergeFactory<H, MH, CX>>
@@ -322,7 +322,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 .output_results_buckets
                 .push(self.current_bucket.take().unwrap());
         }
-        DEBUG_MAPS_HOLDER.lock().push(Box::new(map_struct_packet));
+        // DEBUG_MAPS_HOLDER.lock().push(Box::new(map_struct_packet));
     }
 
     fn finalize(

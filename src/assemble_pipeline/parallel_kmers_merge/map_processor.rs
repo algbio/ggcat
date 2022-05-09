@@ -72,7 +72,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PacketTrait
                 MapEntry<color_types::HashMapTempColorIndex<MH, CX>>,
             )>() + 1)
             + self.saved_reads.len()
-            + self.rcorrect_reads.len() * size_of::<usize>()
+        // + self.rcorrect_reads.len() * size_of::<usize>()
     }
 }
 
