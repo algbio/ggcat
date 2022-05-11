@@ -233,6 +233,14 @@ impl AsyncBinaryReader {
             opened_file,
         }
     }
+
+    pub fn get_chunks_count(&self) -> usize {
+        match &self.opened_file {
+            OpenedFile::None => 0,
+            OpenedFile::Plain(file) => file.get_chunks_count(),
+            OpenedFile::Compressed(file) => file.get_chunks_count(),
+        }
+    }
 }
 
 impl AsyncBinaryReader {

@@ -8,7 +8,7 @@ pub type BucketIndexType = u16;
 pub type MinimizerType = u32;
 
 pub const READ_INTERMEDIATE_CHUNKS_SIZE: usize = 1024 * 512 * 1;
-pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(2);
+pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(4);
 
 pub const KMERS_TRANSFORM_READS_CHUNKS_SIZE: usize = 32 * 1024;
 
@@ -32,8 +32,12 @@ pub const DEFAULT_LZ4_COMPRESSION_LEVEL: u32 = 0;
 
 // 192MB of reads for each bucket
 pub const MAX_BUCKET_SIZE: u64 = 192 * 1024 * 1024;
-pub const MIN_BUCKETS_COUNT_LOG: usize = 9;
+pub const MIN_BUCKETS_COUNT_LOG: usize = 10;
 pub const MAX_BUCKETS_COUNT_LOG: usize = 13;
+
+pub const MIN_BUCKET_CHUNKS_FOR_READING_THREAD: usize = 2;
+
+pub const MINIMUM_SUBBUCKET_SIZE: u64 = 5000;
 
 pub const USE_SECOND_BUCKET: bool = false;
 

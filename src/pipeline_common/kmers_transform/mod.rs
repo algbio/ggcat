@@ -2,7 +2,7 @@ mod reader;
 
 use crate::config::{
     BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, KMERS_TRANSFORM_READS_CHUNKS_SIZE,
-    MINIMUM_LOG_DELTA_TIME, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
+    MINIMUM_LOG_DELTA_TIME,
 };
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
@@ -315,9 +315,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             bucket_readers_count > 0
         } {
             self.maybe_log_completed_buckets(bucket_readers_count as usize, || {
-                compute_thread_pool.debug_print_queue();
-                disk_thread_pool.debug_print_memory();
-                compute_thread_pool.debug_print_memory();
+                // compute_thread_pool.debug_print_queue();
+                // disk_thread_pool.debug_print_memory();
+                // compute_thread_pool.debug_print_memory();
             });
             std::thread::sleep(Duration::from_millis(300));
         }

@@ -136,6 +136,10 @@ impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
         self.parallel_reader.total_file_size()
     }
 
+    pub fn get_chunks_count(&self) -> usize {
+        self.sequential_reader.index.index.len()
+    }
+
     pub fn is_finished(&self) -> bool {
         self.parallel_index.load(Ordering::Relaxed) as usize
             >= self.sequential_reader.index.index.len()

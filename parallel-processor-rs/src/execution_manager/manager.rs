@@ -152,15 +152,15 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
             );
         }
 
+        self.queue_size = queue_size.unwrap_or(0);
+
         if self.executor.is_finished() || queue_size.is_none() {
             self.is_finished = true;
             ExecutionStatus::Finished
         } else if packet_is_none {
             ExecutionStatus::NoMorePacketsNoProgress
         } else {
-            let queue_size = queue_size.unwrap();
-            self.queue_size = queue_size;
-            if queue_size > 0 {
+            if self.queue_size > 0 {
                 ExecutionStatus::MorePackets
             } else {
                 ExecutionStatus::NoMorePackets

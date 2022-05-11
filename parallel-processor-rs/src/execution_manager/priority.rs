@@ -1,9 +1,8 @@
 use crate::execution_manager::executor_address::WeakExecutorAddress;
 use crate::execution_manager::manager::ExecutionManagerTrait;
-use parking_lot::Mutex;
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap};
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 const CURRENT_ADDITIONAL_SCORE_VALUE: u64 = 2;
@@ -77,56 +76,44 @@ impl PartialEq for ExecutorPriority {
 
 impl Eq for ExecutorPriority {}
 
-struct PriorityManagerInternal {
+pub struct PriorityManager {
     priority_map: BTreeMap<ExecutorPriority, Vec<Box<dyn ExecutionManagerTrait>>>,
     reverse_map: HashMap<WeakExecutorAddress, ExecutorPriority>,
-}
-
-pub struct PriorityManager {
-    internal: Mutex<PriorityManagerInternal>,
 }
 
 impl PriorityManager {
     pub fn new() -> Self {
         Self {
-            internal: Mutex::new(PriorityManagerInternal {
-                priority_map: BTreeMap::new(),
-                reverse_map: HashMap::new(),
-            }),
+            priority_map: BTreeMap::new(),
+            reverse_map: HashMap::new(),
         }
     }
 
-    pub fn add_elements_with_atomic_func(
-        &self,
-        elements_func: impl FnOnce() -> Vec<Box<dyn ExecutionManagerTrait>>,
+    pub fn add_elements(
+        &mut self,
+        elements: Vec<Box<dyn ExecutionManagerTrait>>,
         mut priority: ExecutorPriority,
     ) {
-        let mut internal = self.internal.lock();
-
-        let elements = elements_func();
         priority.update_id();
 
         let key: &WeakExecutorAddress = elements[0].as_ref().borrow();
         let key = key.clone();
 
-        let old_el = internal.priority_map.insert(priority.clone(), elements);
+        let old_el = self.priority_map.insert(priority.clone(), elements);
         assert!(old_el.is_none());
 
-        internal.reverse_map.insert(key, priority.clone());
+        self.reverse_map.insert(key, priority.clone());
     }
 
     pub fn change_priority(
-        &self,
+        &mut self,
         key: &WeakExecutorAddress,
         change_fn: impl FnOnce(&mut ExecutorPriority),
     ) {
-        let mut internal = self.internal.lock();
-        let internal = internal.deref_mut();
-
-        if let Some(priority) = internal.reverse_map.get_mut(key) {
-            if let Some((_, value)) = internal.priority_map.remove_entry(priority) {
+        if let Some(priority) = self.reverse_map.get_mut(key) {
+            if let Some((_, value)) = self.priority_map.remove_entry(priority) {
                 change_fn(priority);
-                internal.priority_map.insert(priority.clone(), value);
+                self.priority_map.insert(priority.clone(), value);
             } else {
                 change_fn(priority);
             }
@@ -134,36 +121,28 @@ impl PriorityManager {
     }
 
     pub fn elements_count_debug(&self) -> usize {
-        let internal = self.internal.lock();
-        std::cmp::max(internal.reverse_map.len(), internal.priority_map.len())
+        std::cmp::max(self.reverse_map.len(), self.priority_map.len())
     }
 
     pub fn has_element_debug(&self, el: &WeakExecutorAddress) -> (bool, bool, u64) {
-        let il = self.internal.lock();
-        if let Some(prio) = il.reverse_map.get(el) {
-            (true, il.priority_map.contains_key(prio), prio.total_score)
+        if let Some(prio) = self.reverse_map.get(el) {
+            (true, self.priority_map.contains_key(prio), prio.total_score)
         } else {
             (false, false, 0)
         }
     }
 
     pub fn get_element(
-        &self,
+        &mut self,
         return_element: Option<Box<dyn ExecutionManagerTrait>>,
     ) -> Option<Box<dyn ExecutionManagerTrait>> {
-        let mut internal = self.internal.lock();
-        let internal = internal.deref_mut();
-
-        if let Some(mut entry) = internal.priority_map.last_entry() {
+        if let Some(mut entry) = self.priority_map.last_entry() {
             let new_score = entry.key().total_score;
 
             let new_entry;
 
             if let Some(ret_element) = return_element {
-                let priority = internal
-                    .reverse_map
-                    .get(ret_element.deref().borrow())?
-                    .clone();
+                let priority = self.reverse_map.get(ret_element.deref().borrow())?.clone();
 
                 let mut score = priority.total_score;
 
@@ -178,8 +157,7 @@ impl PriorityManager {
                     if entry.get().len() == 0 {
                         entry.remove();
                     }
-                    internal
-                        .priority_map
+                    self.priority_map
                         .entry(priority)
                         .or_insert_with(|| Vec::new())
                         .push(ret_element);
@@ -197,17 +175,14 @@ impl PriorityManager {
         }
     }
 
-    pub fn remove_element(&self, addr: &WeakExecutorAddress) {
-        let mut internal = self.internal.lock();
-
-        if let Some(prio) = internal.reverse_map.remove(addr) {
-            internal.priority_map.remove(&prio);
+    pub fn remove_element(&mut self, addr: &WeakExecutorAddress) {
+        if let Some(prio) = self.reverse_map.remove(addr) {
+            self.priority_map.remove(&prio);
         }
     }
 
-    pub fn clear_all(&self) {
-        let mut internal = self.internal.lock();
-        internal.priority_map.clear();
-        internal.reverse_map.clear();
+    pub fn clear_all(&mut self) {
+        self.priority_map.clear();
+        self.reverse_map.clear();
     }
 }

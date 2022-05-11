@@ -83,6 +83,7 @@ impl ExecThreadPool {
                         self.work_scheduler.wait_for_progress();
                     }
                 } else {
+                    self.work_scheduler.wait_for_progress();
                     break;
                 }
             }
