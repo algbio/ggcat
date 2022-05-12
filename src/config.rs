@@ -26,7 +26,7 @@ pub const MINIMIZER_BUCKETS_CHECKPOINT_SIZE: CompressedCheckpointSize =
 pub const DEFAULT_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024 * 4;
 pub const DEFAULT_PER_CPU_BUFFER_SIZE: MemoryDataSize = MemoryDataSize::from_kibioctets(4);
 
-pub const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(2);
+pub const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(10);
 
 pub const DEFAULT_LZ4_COMPRESSION_LEVEL: u32 = 0;
 

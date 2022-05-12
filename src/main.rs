@@ -88,7 +88,7 @@ arg_enum! {
 }
 
 use crate::config::FLUSH_QUEUE_FACTOR;
-use crate::utils::compute_best_m;
+use crate::utils::{compute_best_m, DEBUG_LEVEL};
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 
@@ -149,6 +149,10 @@ struct CommonArgs {
     /// The log2 of the number of buckets
     #[structopt(short = "b", long = "buckets-count-log")]
     pub buckets_count_log: Option<usize>,
+
+    /// The level of debugging
+    #[structopt(short = "d", long = "debug-level", default_value = "0")]
+    pub debug_level: usize,
 }
 
 #[derive(StructOpt, Debug)]
@@ -226,6 +230,8 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) {
     KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
 
     PREFER_MEMORY.store(args.prefer_memory, Ordering::Relaxed);
+
+    DEBUG_LEVEL.store(args.debug_level, Ordering::Relaxed);
 
     ThreadPoolBuilder::new()
         .num_threads(args.threads_count)

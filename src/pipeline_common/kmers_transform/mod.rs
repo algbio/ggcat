@@ -13,7 +13,7 @@ use crate::pipeline_common::minimizer_bucketing::counters_analyzer::CountersAnal
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::utils::Utils;
-use crate::{CompressedRead, KEEP_FILES};
+use crate::{CompressedRead, DEBUG_LEVEL, KEEP_FILES};
 use parallel_processor::buckets::readers::async_binary_reader::AsyncReaderThread;
 use parallel_processor::execution_manager::executor::Executor;
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
@@ -318,9 +318,16 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             bucket_readers_count > 0
         } {
             self.maybe_log_completed_buckets(bucket_readers_count as usize, || {
-                compute_thread_pool.debug_print_queue();
-                disk_thread_pool.debug_print_memory();
-                compute_thread_pool.debug_print_memory();
+                let debug_level = DEBUG_LEVEL.load(Ordering::Relaxed);
+
+                if debug_level >= 2 {
+                    compute_thread_pool.debug_print_queue();
+                }
+
+                if debug_level >= 1 {
+                    disk_thread_pool.debug_print_memory();
+                    compute_thread_pool.debug_print_memory();
+                }
             });
             std::thread::sleep(Duration::from_millis(300));
         }

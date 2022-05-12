@@ -14,9 +14,11 @@ use crate::PREFER_MEMORY;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use std::cmp::{max, min};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct Utils;
+
+pub static DEBUG_LEVEL: AtomicUsize = AtomicUsize::new(0);
 
 const C_INV_LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
 
