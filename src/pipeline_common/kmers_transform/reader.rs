@@ -185,7 +185,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         }
 
         let mut addresses: Vec<_> = vec![None; queue.len()];
-        let mut dbg_counters: Vec<_> = vec![None; queue.len()];
+        let mut dbg_counters: Vec<_> = vec![0; queue.len()];
 
         for (count, index, outlier) in queue.into_iter() {
             dbg_counters[index] = count.0;
