@@ -1,6 +1,5 @@
 use crate::config::{
-    DEFAULT_PREFETCH_AMOUNT, MINIMUM_SUBBUCKET_SIZE, MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
-    USE_SECOND_BUCKET,
+    DEFAULT_PREFETCH_AMOUNT, MIN_BUCKET_CHUNKS_FOR_READING_THREAD, USE_SECOND_BUCKET,
 };
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
