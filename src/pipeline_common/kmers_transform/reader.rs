@@ -197,12 +197,12 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
 
         let addresses: Vec<_> = addresses.into_iter().map(|a| a.unwrap()).collect();
 
-        // println!(
-        //     "Chunks {} concurrency: {} REMAPPINGS: {:?}",
-        //     reader.get_chunks_count(),
-        //     max_concurrency,
-        //     &buckets_remapping
-        // );
+        println!(
+            "Chunks {} concurrency: {} REMAPPINGS: {:?}",
+            reader.get_chunks_count(),
+            max_concurrency,
+            &buckets_remapping
+        );
 
         executors_initializer(addresses.clone());
 
