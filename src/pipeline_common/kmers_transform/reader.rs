@@ -185,8 +185,10 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         }
 
         let mut addresses: Vec<_> = vec![None; queue.len()];
+        let mut dbg_counters: Vec<_> = vec![None; queue.len()];
 
         for (count, index, outlier) in queue.into_iter() {
+            dbg_counters[index] = count.0;
             addresses[index] = Some(if outlier {
                 println!("Sub-bucket {} is an outlier with size {}!", index, count.0);
                 KmersTransformResplitter::<F>::generate_new_address()
@@ -198,10 +200,11 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         let addresses: Vec<_> = addresses.into_iter().map(|a| a.unwrap()).collect();
 
         println!(
-            "Chunks {} concurrency: {} REMAPPINGS: {:?}",
+            "Chunks {} concurrency: {} REMAPPINGS: {:?} // {:?}",
             reader.get_chunks_count(),
             max_concurrency,
-            &buckets_remapping
+            &buckets_remapping,
+            dbg_counters
         );
 
         executors_initializer(addresses.clone());
