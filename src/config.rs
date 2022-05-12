@@ -37,7 +37,7 @@ pub const MAX_BUCKETS_COUNT_LOG: usize = 13;
 
 pub const MIN_BUCKET_CHUNKS_FOR_READING_THREAD: usize = 2;
 
-pub const MINIMUM_SUBBUCKET_SIZE: u64 = 5000;
+pub const MINIMUM_SUBBUCKET_SIZE: u64 = 10000;
 
 pub const USE_SECOND_BUCKET: bool = false;
 

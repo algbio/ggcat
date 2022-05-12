@@ -5,7 +5,8 @@ use crate::assemble_pipeline::parallel_kmers_merge::preprocessor::ParallelKmersM
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{
-    BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, RESPLITTING_MAX_K_M_DIFFERENCE,
+    BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, MINIMUM_SUBBUCKET_SIZE,
+    RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use crate::hashes::HashFunctionFactory;
 use crate::hashes::MinimizerHashFunctionFactory;
@@ -207,6 +208,7 @@ impl AssemblePipeline {
             buckets_count,
             global_data,
             threads_count,
+            MINIMUM_SUBBUCKET_SIZE * k * 2,
         )
         .parallel_kmers_transform();
 

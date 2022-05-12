@@ -164,7 +164,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
 
             // Alloc a new bucket
             if smallest_bucket.0 .0 > 0
-                && smallest_bucket.0 .0 + biggest_sub_bucket.0.count > MINIMUM_SUBBUCKET_SIZE
+                && smallest_bucket.0 .0 + biggest_sub_bucket.0.count > global_params.min_bucket_size
             {
                 // Restore the sub bucket
                 bucket_sizes.push_back(biggest_sub_bucket);
