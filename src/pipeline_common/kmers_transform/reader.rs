@@ -200,11 +200,15 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         let addresses: Vec<_> = addresses.into_iter().map(|a| a.unwrap()).collect();
 
         println!(
-            "Chunks {} concurrency: {} REMAPPINGS: {:?} // {:?}",
+            "Chunks {} concurrency: {} REMAPPINGS: {:?} // {:?} // {:?}",
             reader.get_chunks_count(),
             max_concurrency,
             &buckets_remapping,
-            dbg_counters
+            dbg_counters,
+            file.sub_bucket_counters
+                .iter()
+                .map(|x| x.count)
+                .collect::<Vec<_>>()
         );
 
         executors_initializer(addresses.clone());
