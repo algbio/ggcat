@@ -349,7 +349,7 @@ impl QueryPipeline {
             buckets_count,
             global_data.clone(),
             threads_count,
-            MINIMUM_SUBBUCKET_SIZE * k * 2,
+            (MINIMUM_SUBBUCKET_SIZE * k * 2) as u64,
         )
         .parallel_kmers_transform();
 
