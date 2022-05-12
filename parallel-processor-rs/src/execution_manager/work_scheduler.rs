@@ -35,6 +35,7 @@ struct ExecutorsListManager<E: Executor> {
 enum ExecutorAllocResult {
     AlreadyDeleted,
     PacketMissing,
+    NoMorePools,
     Allocated(Vec<GenericExecutor>, ExecutorPriority),
 }
 
@@ -156,7 +157,7 @@ impl WorkScheduler {
                 }
                 PoolAllocMode::Distinct { capacity } => PoolMode::Distinct {
                     pools_allocator: ObjectsPool::new(
-                        executors_max_count,
+                        executors_max_count * 2,
                         (capacity, pool_init_data, self.memory_tracker.clone()),
                     ),
                 },
@@ -209,6 +210,18 @@ impl WorkScheduler {
                 }
             };
 
+            let pool = match &executors_list_manager_aeu.packet_pools {
+                PoolMode::None => None,
+                PoolMode::Shared(pool) => Some(pool.clone()),
+                PoolMode::Distinct { pools_allocator } => {
+                    if pools_allocator.get_available_items() > 0 {
+                        Some(Arc::new(pools_allocator.alloc_object(false, false)))
+                    } else {
+                        return ExecutorAllocResult::NoMorePools;
+                    }
+                }
+            };
+
             // TODO: Memory params
             let (build_info, maximum_concurrency) = E::allocate_new_group(
                 global_params.clone(),
@@ -238,14 +251,6 @@ impl WorkScheduler {
             assert!(maximum_concurrency > 0);
             let mut execution_managers = Vec::with_capacity(maximum_concurrency);
             active_counter.fetch_add(maximum_concurrency as u64 - 1, Ordering::SeqCst);
-
-            let pool = match &executors_list_manager_aeu.packet_pools {
-                PoolMode::None => None,
-                PoolMode::Shared(pool) => Some(pool.clone()),
-                PoolMode::Distinct { pools_allocator } => {
-                    Some(Arc::new(pools_allocator.alloc_object(false, false)))
-                }
-            };
 
             for i in 0..maximum_concurrency {
                 let active_counter = active_counter.clone();
@@ -450,6 +455,10 @@ impl WorkScheduler {
                             if missed_iterations_count > addr_queue.len() {
                                 break 'alloc_loop;
                             }
+                        }
+                        ExecutorAllocResult::NoMorePools => {
+                            addr_queue.push_front(addr);
+                            break 'alloc_loop;
                         }
                         ExecutorAllocResult::AlreadyDeleted => {
                             // Do nothing

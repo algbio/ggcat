@@ -1,12 +1,11 @@
 use crate::execution_manager::memory_tracker::MemoryTrackerManager;
 use crate::execution_manager::objects_pool::{ObjectsPool, PoolObjectTrait};
-use crossbeam::channel::Sender;
+use parking_lot::{Condvar, Mutex};
 use std::any::Any;
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 pub trait PacketTrait: PoolObjectTrait + Sync + Send {
     fn get_size(&self) -> usize;
@@ -17,15 +16,21 @@ trait PacketPoolReturnerTrait: Send + Sync {
 }
 
 impl<T: Send + Sync + PacketTrait + 'static> PacketPoolReturnerTrait
-    for (Arc<(Sender<Box<T>>, AtomicU64)>, Arc<MemoryTrackerManager>)
+    for (
+        Arc<(Arc<Mutex<Vec<Box<T>>>>, Condvar, AtomicU64)>,
+        Arc<MemoryTrackerManager>,
+    )
 {
     fn send_any(&self, packet: Box<dyn Any>) {
-        self.0 .1.fetch_sub(1, Ordering::Relaxed);
+        self.0 .2.fetch_sub(1, Ordering::Relaxed);
         let mut packet = packet.downcast::<T>().unwrap();
         self.1.remove_queue_packet(packet.deref());
         packet.reset();
-        assert_eq!(packet.get_size(), 0);
-        let _ = self.0 .0.try_send(packet);
+        let mut vec_lock = self.0 .0.lock();
+        if vec_lock.len() < vec_lock.capacity() {
+            vec_lock.push(packet);
+            self.0 .1.notify_one();
+        }
     }
 }
 
@@ -41,7 +46,10 @@ pub struct PacketAny {
 
 pub struct PacketsPool<T> {
     objects_pool: ObjectsPool<Box<T>>,
-    returner: Arc<(Arc<(Sender<Box<T>>, AtomicU64)>, Arc<MemoryTrackerManager>)>,
+    returner: Arc<(
+        Arc<(Arc<Mutex<Vec<Box<T>>>>, Condvar, AtomicU64)>,
+        Arc<MemoryTrackerManager>,
+    )>,
 }
 
 // Recursively implement the object trait for the pool, so it can be used recursively
@@ -91,9 +99,9 @@ impl<T: PacketTrait> PacketsPool<T> {
         self.objects_pool.get_available_items()
     }
 
-    pub fn wait_for_item_timeout(&self, timeout: Duration) {
-        self.objects_pool.wait_for_item_timeout(timeout)
-    }
+    // pub fn wait_for_item_timeout(&self, timeout: Duration) {
+    //     self.objects_pool.wait_for_item_timeout(timeout)
+    // }
 }
 
 impl<T: Any + Send + Sync> Packet<T> {

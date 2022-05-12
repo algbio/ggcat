@@ -1,9 +1,8 @@
-use crossbeam::channel::*;
+use parking_lot::{Condvar, Mutex};
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 pub trait PoolObjectTrait: Send + Sync + 'static {
     type InitData: Clone + Sync + Send;
@@ -24,8 +23,8 @@ impl<T: PoolObjectTrait> PoolObjectTrait for Box<T> {
 }
 
 pub struct ObjectsPool<T> {
-    queue: Receiver<T>,
-    pub(crate) returner: Arc<(Sender<T>, AtomicU64)>,
+    queue: Arc<Mutex<Vec<T>>>,
+    pub(crate) returner: Arc<(Arc<Mutex<Vec<T>>>, Condvar, AtomicU64)>,
     allocate_fn: Box<dyn (Fn() -> T) + Sync + Send>,
     max_count: u64,
     max_count_extended: AtomicU64,
@@ -35,21 +34,25 @@ pub trait PoolReturner<T: Send + Sync>: Send + Sync {
     fn return_element(&self, el: T);
 }
 
-impl<T: PoolObjectTrait> PoolReturner<T> for (Sender<T>, AtomicU64) {
+impl<T: PoolObjectTrait> PoolReturner<T> for (Arc<Mutex<Vec<T>>>, Condvar, AtomicU64) {
     fn return_element(&self, mut el: T) {
-        self.1.fetch_sub(1, Ordering::Relaxed);
+        self.2.fetch_sub(1, Ordering::Relaxed);
         el.reset();
-        let _ = self.0.try_send(el);
+        let mut vec_lock = self.0.lock();
+        if vec_lock.len() < vec_lock.capacity() {
+            vec_lock.push(el);
+            self.1.notify_one();
+        }
     }
 }
 
 impl<T: PoolObjectTrait> ObjectsPool<T> {
     pub fn new(cap: usize, init_data: T::InitData) -> Self {
-        let channel = bounded(cap);
+        let channel = Arc::new(Mutex::new(Vec::with_capacity(cap)));
 
         Self {
-            queue: channel.1,
-            returner: Arc::new((channel.0, AtomicU64::new(0))),
+            queue: channel.clone(),
+            returner: Arc::new((channel, Condvar::new(), AtomicU64::new(0))),
             allocate_fn: Box::new(move || T::allocate_new(&init_data)),
             max_count: cap as u64,
             max_count_extended: AtomicU64::new(cap as u64),
@@ -61,37 +64,47 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
             .store(self.max_count, Ordering::Relaxed);
     }
 
+    fn alloc_wait(&self) -> T {
+        let mut queue = self.queue.lock();
+        loop {
+            match queue.pop() {
+                Some(x) => return x,
+                None => self.returner.1.wait(&mut queue),
+            }
+        }
+    }
+
     pub fn alloc_object(&self, blocking: bool, extend_size: bool) -> PoolObject<T> {
-        let el_count = self.returner.1.fetch_add(1, Ordering::Relaxed);
+        let el_count = self.returner.2.fetch_add(1, Ordering::Relaxed);
 
         if el_count >= self.max_count_extended.load(Ordering::Relaxed) {
             if blocking {
-                return PoolObject::from_element(self.queue.recv().unwrap(), self);
+                return PoolObject::from_element(self.alloc_wait(), self);
             } else if extend_size {
                 self.max_count_extended.fetch_add(1, Ordering::Relaxed);
             }
         }
 
-        match self.queue.try_recv() {
-            Ok(el) => PoolObject::from_element(el, self),
-            Err(_) => PoolObject::from_element((self.allocate_fn)(), self),
+        match self.queue.lock().pop() {
+            Some(el) => PoolObject::from_element(el, self),
+            None => PoolObject::from_element((self.allocate_fn)(), self),
         }
     }
 
     pub fn get_available_items(&self) -> i64 {
         (self.max_count_extended.load(Ordering::Relaxed) as i64)
-            - (self.returner.1.load(Ordering::Relaxed) as i64)
+            - (self.returner.2.load(Ordering::Relaxed) as i64)
     }
 
     pub fn get_allocated_items(&self) -> i64 {
-        self.returner.1.load(Ordering::Relaxed) as i64
+        self.returner.2.load(Ordering::Relaxed) as i64
     }
 
-    pub fn wait_for_item_timeout(&self, timeout: Duration) {
-        if let Ok(recv) = self.queue.recv_timeout(timeout) {
-            let _ = self.returner.0.try_send(recv);
-        }
-    }
+    // pub fn wait_for_item_timeout(&self, timeout: Duration) {
+    //     if let Ok(recv) = self.queue.recv_timeout(timeout) {
+    //         let _ = self.returner.0.try_send(recv);
+    //     }
+    // }
 }
 
 pub struct PoolObject<T: Send + Sync> {

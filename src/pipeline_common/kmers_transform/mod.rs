@@ -197,7 +197,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             }
         }
 
-        let read_threads_count = max(1, threads_count / 2);
+        let read_threads_count = max(1, threads_count / 4 * 3);
 
         let execution_context = Arc::new(KmersTransformContext {
             buckets_count,
@@ -315,9 +315,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             bucket_readers_count > 0
         } {
             self.maybe_log_completed_buckets(bucket_readers_count as usize, || {
-                // compute_thread_pool.debug_print_queue();
-                // disk_thread_pool.debug_print_memory();
-                // compute_thread_pool.debug_print_memory();
+                compute_thread_pool.debug_print_queue();
+                disk_thread_pool.debug_print_memory();
+                compute_thread_pool.debug_print_memory();
             });
             std::thread::sleep(Duration::from_millis(300));
         }
