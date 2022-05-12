@@ -472,7 +472,6 @@ impl GenericMinimizerBucketing {
             disk_thread_pool.wait_for_executors(&file_readers);
             disk_thread_pool.join();
 
-            println!("Taking address!");
             execution_context.executor_group_address.write().take();
 
             compute_thread_pool.wait_for_executors(&bucket_writers);
