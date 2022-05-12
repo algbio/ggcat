@@ -64,6 +64,11 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
             .store(self.max_count, Ordering::Relaxed);
     }
 
+    pub fn set_max_count_ratio(&self, ratio: u64) {
+        self.max_count_extended
+            .store(self.max_count * ratio, Ordering::Relaxed);
+    }
+
     fn alloc_wait(&self) -> T {
         let mut queue = self.queue.lock();
         loop {
@@ -74,15 +79,11 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
         }
     }
 
-    pub fn alloc_object(&self, blocking: bool, extend_size: bool) -> PoolObject<T> {
+    pub fn alloc_object(&self, blocking: bool) -> PoolObject<T> {
         let el_count = self.returner.2.fetch_add(1, Ordering::Relaxed);
 
-        if el_count >= self.max_count_extended.load(Ordering::Relaxed) {
-            if blocking {
-                return PoolObject::from_element(self.alloc_wait(), self);
-            } else if extend_size {
-                self.max_count_extended.fetch_add(1, Ordering::Relaxed);
-            }
+        if blocking && el_count >= self.max_count_extended.load(Ordering::Relaxed) {
+            return PoolObject::from_element(self.alloc_wait(), self);
         }
 
         match self.queue.lock().pop() {

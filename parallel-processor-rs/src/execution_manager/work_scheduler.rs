@@ -210,12 +210,15 @@ impl WorkScheduler {
                 }
             };
 
+            let mut pool_size_adjust = false;
+
             let pool = match &executors_list_manager_aeu.packet_pools {
                 PoolMode::None => None,
                 PoolMode::Shared(pool) => Some(pool.clone()),
                 PoolMode::Distinct { pools_allocator } => {
                     if pools_allocator.get_available_items() > 0 {
-                        Some(Arc::new(pools_allocator.alloc_object(false, false)))
+                        pool_size_adjust = true;
+                        Some(Arc::new(pools_allocator.alloc_object(false)))
                     } else {
                         return ExecutorAllocResult::NoMorePools;
                     }
@@ -246,9 +249,15 @@ impl WorkScheduler {
                 },
             );
 
+            assert!(maximum_concurrency > 0);
+            if pool_size_adjust {
+                pool.as_ref()
+                    .unwrap()
+                    .set_max_count_ratio(maximum_concurrency as u64);
+            }
+
             let mut build_info = Some(build_info);
 
-            assert!(maximum_concurrency > 0);
             let mut execution_managers = Vec::with_capacity(maximum_concurrency);
             active_counter.fetch_add(maximum_concurrency as u64 - 1, Ordering::SeqCst);
 
@@ -257,7 +266,7 @@ impl WorkScheduler {
                 let output_pool = executor_info.output_pool.clone();
                 let executor = executors_list_manager_aeu
                     .executors_allocator
-                    .alloc_object(false, false);
+                    .alloc_object(false);
 
                 let packets_map = packets_map.clone();
                 let packets_queue = packets_queue.clone();
@@ -348,7 +357,7 @@ impl WorkScheduler {
                 executor.to_weak(),
                 Arc::new((
                     AtomicBool::new(false),
-                    self.queues_allocator.alloc_object(false, false),
+                    self.queues_allocator.alloc_object(false),
                 )),
             );
             self.active_executors_counters

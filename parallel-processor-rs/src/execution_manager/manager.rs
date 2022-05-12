@@ -120,7 +120,12 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
         if let Some(build_info) = self.build_info.take() {
             self.executor.pre_execute(
                 build_info,
-                || self.pool.as_ref().unwrap().alloc_packet(false),
+                || {
+                    self.pool
+                        .as_ref()
+                        .unwrap()
+                        .alloc_packet(E::STRICT_POOL_ALLOC)
+                },
                 || {
                     self.pool
                         .as_ref()

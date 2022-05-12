@@ -80,7 +80,7 @@ impl<T: PacketTrait> PacketsPool<T> {
     }
 
     pub fn alloc_packet(&self, blocking: bool) -> Packet<T> {
-        let mut object = self.objects_pool.alloc_object(blocking, true);
+        let mut object = self.objects_pool.alloc_object(blocking);
 
         let packet = Packet {
             object: ManuallyDrop::new(unsafe { ManuallyDrop::take(&mut object.value) }),
@@ -99,6 +99,9 @@ impl<T: PacketTrait> PacketsPool<T> {
         self.objects_pool.get_available_items()
     }
 
+    pub fn set_max_count_ratio(&self, ratio: u64) {
+        self.objects_pool.set_max_count_ratio(ratio);
+    }
     // pub fn wait_for_item_timeout(&self, timeout: Duration) {
     //     self.objects_pool.wait_for_item_timeout(timeout)
     // }
