@@ -110,7 +110,6 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
     ) -> (Self::BuildParams, usize) {
         let file = common_packet.unwrap();
 
-        // FIXME: Choose the right number of executors depending on size
         let second_buckets_log_max = global_params.max_second_buckets_count_log2;
 
         let reader = AsyncBinaryReader::new(
@@ -122,14 +121,6 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
             DEFAULT_PREFETCH_AMOUNT,
         );
 
-        let max_concurrency = min(
-            min(4, global_params.read_threads_count),
-            max(
-                1,
-                reader.get_chunks_count() / MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
-            ),
-        );
-
         let second_buckets_max = 1 << second_buckets_log_max;
 
         let mut buckets_remapping = vec![0; second_buckets_max];
@@ -137,9 +128,12 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         let mut queue = BinaryHeap::new();
         queue.push((Reverse(0), 0, false));
 
+        let mut sequences_count = 0;
+
         let mut bucket_sizes: VecDeque<_> = (0..(1 << second_buckets_log_max))
             .map(|i| {
                 if !file.resplitted && i < file.sub_bucket_counters.len() {
+                    sequences_count += file.sub_bucket_counters[i].count;
                     (file.sub_bucket_counters[i].clone(), i)
                 } else {
                     (
@@ -153,7 +147,14 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
             })
             .collect();
 
+        let file_size = reader.get_file_size();
+
+        let sequences_size_ratio =
+            file_size as f64 / (sequences_count * global_params.k as u64) as f64 * 2.67;
+
         bucket_sizes.make_contiguous().sort();
+
+        let unique_estimator_factor = (sequences_size_ratio * sequences_size_ratio).min(1.0);
 
         while bucket_sizes.len() > 0 {
             let buckets_count = queue.len();
@@ -161,10 +162,13 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
 
             let biggest_sub_bucket = bucket_sizes.pop_back().unwrap();
 
+            let uniq_estimate_count =
+                (unique_estimator_factor * (biggest_sub_bucket.0.count as f64)) as u64;
+
             // Alloc a new bucket
             if (smallest_bucket.2 == biggest_sub_bucket.0.is_outlier)
                 && smallest_bucket.0 .0 > 0
-                && smallest_bucket.0 .0 + biggest_sub_bucket.0.count > global_params.min_bucket_size
+                && smallest_bucket.0 .0 + uniq_estimate_count > global_params.min_bucket_size
             {
                 // Restore the sub bucket
                 bucket_sizes.push_back(biggest_sub_bucket);
@@ -178,7 +182,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
             }
 
             // Assign the sub-bucket to the current smallest bucket
-            smallest_bucket.0 .0 += biggest_sub_bucket.0.count;
+            smallest_bucket.0 .0 += uniq_estimate_count;
             smallest_bucket.2 |= biggest_sub_bucket.0.is_outlier;
             buckets_remapping[biggest_sub_bucket.1] = smallest_bucket.1;
             queue.push(smallest_bucket);
@@ -199,8 +203,22 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
 
         let addresses: Vec<_> = addresses.into_iter().map(|a| a.unwrap()).collect();
 
+        let threads_ratio =
+            global_params.compute_threads_count as f64 / global_params.read_threads_count as f64;
+
+        let addr_concurrency = max(1, (addresses.len() as f64 / threads_ratio + 0.5) as usize);
+        let chunks_concurrency = max(
+            1,
+            reader.get_chunks_count() / MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
+        );
+
+        let max_concurrency = min(
+            min(4, global_params.read_threads_count),
+            min(addr_concurrency, chunks_concurrency),
+        );
+
         println!(
-            "Chunks {} concurrency: {} REMAPPINGS: {:?} // {:?} // {:?}",
+            "Chunks {} concurrency: {} REMAPPINGS: {:?} // {:?} // {:?} RATIO: {:.2}",
             reader.get_chunks_count(),
             max_concurrency,
             &buckets_remapping,
@@ -208,7 +226,8 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
             file.sub_bucket_counters
                 .iter()
                 .map(|x| x.count)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            sequences_size_ratio
         );
 
         ops.declare_addresses(addresses.clone());

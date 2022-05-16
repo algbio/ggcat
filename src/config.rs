@@ -41,7 +41,7 @@ pub const USE_SECOND_BUCKET: bool = false;
 
 pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 5;
 
-pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 1024 * 128;
+pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 1024;
 pub const SECOND_BUCKETS_COUNT: usize = 16;
 
 pub struct SwapPriority {}
