@@ -10,7 +10,7 @@ pub type MinimizerType = u32;
 pub const READ_INTERMEDIATE_CHUNKS_SIZE: usize = 1024 * 512 * 1;
 pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(4);
 
-pub const KMERS_TRANSFORM_READS_CHUNKS_SIZE: usize = 32 * 1024;
+pub const KMERS_TRANSFORM_READS_CHUNKS_SIZE: usize = 4 * 1024;
 
 /// 2MB read file prefetch
 pub const DEFAULT_PREFETCH_AMOUNT: Option<usize> = Some(1024 * 1024 * 2);
