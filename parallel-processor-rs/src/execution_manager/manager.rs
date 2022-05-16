@@ -102,6 +102,7 @@ pub struct ExecutionManager<E: Executor> {
     packets_queue: Box<dyn Fn() -> (Option<Packet<E::InputPacket>>, Option<usize>) + Sync + Send>,
     build_info: Option<E::BuildParams>,
     output_fn: Box<dyn (Fn(ExecutorAddress, Packet<E::OutputPacket>)) + Sync + Send>,
+    declare_fn: Box<dyn (Fn(Vec<ExecutorAddress>)) + Sync + Send>,
     notify_drop: Box<dyn Fn() + Sync + Send>,
     is_finished: bool,
     queue_size: usize,
@@ -118,6 +119,7 @@ impl<E: Executor + 'static> ExecutionManager<E> {
         queue_size: usize,
         weak_address: WeakExecutorAddress,
         output_fn: impl Fn(ExecutorAddress, Packet<E::OutputPacket>) + Sync + Send + 'static,
+        declare_fn: impl Fn(Vec<ExecutorAddress>) + Sync + Send + 'static,
         notify_drop: impl Fn() + Sync + Send + 'static,
     ) -> GenericExecutor {
         Box::new(Self {
@@ -127,6 +129,7 @@ impl<E: Executor + 'static> ExecutionManager<E> {
             packets_queue,
             build_info: Some(build_info),
             output_fn: Box::new(output_fn),
+            declare_fn: Box::new(declare_fn),
             notify_drop: Box::new(notify_drop),
             is_finished: false,
             queue_size,
@@ -239,7 +242,7 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
 impl<E: Executor> Drop for ExecutionManager<E> {
     fn drop(&mut self) {
         self.executor.finalize(ExecutorsOperationsImpl {
-            func_declare_addresses: |_| panic!("Not supported"),
+            func_declare_addresses: self.declare_fn.deref(),
             func_packet_alloc: || panic!("Not supported"),
             func_packet_alloc_force: || panic!("Not supported"),
             func_packet_send: self.output_fn.deref(),

@@ -272,6 +272,7 @@ impl WorkScheduler {
             for i in 0..maximum_concurrency {
                 let active_counter = active_counter.clone();
                 let output_pool = executor_info.output_pool.clone();
+                let output_pool_decl = executor_info.output_pool.clone();
                 let executor = executors_list_manager_aeu
                     .executors_allocator
                     .alloc_object(false);
@@ -310,6 +311,13 @@ impl WorkScheduler {
                             .as_ref()
                             .unwrap()
                             .add_data(addr.to_weak(), packet.upcast());
+                    },
+                    move |v| {
+                        output_pool_decl
+                            .as_ref()
+                            .unwrap()
+                            .clone()
+                            .add_executors_batch(v);
                     },
                     move || {
                         active_counter.fetch_sub(1, Ordering::SeqCst);
