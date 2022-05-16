@@ -149,7 +149,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
 
         let file_size = reader.get_file_size();
 
-        let multiplier = 4.0 / ((3 * global_params.k - global_params.m) as f64 / 2.0);
+        let multiplier = 4.0 / ((4 * global_params.k - global_params.m) as f64 / 2.0);
 
         let sequences_size_ratio = file_size as f64 / sequences_count as f64 * multiplier;
 
