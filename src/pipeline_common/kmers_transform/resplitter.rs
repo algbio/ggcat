@@ -96,9 +96,6 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
         let output_addresses: Vec<_> = (0..(1 << subsplit_buckets_count_log))
             .map(|_| KmersTransformReader::<F>::generate_new_address())
             .collect();
-        global_params
-            .extra_buckets_count
-            .fetch_add(1 << subsplit_buckets_count_log, Ordering::Relaxed);
 
         // TODO: Find best count of writing threads
         let threads_count = 4; //global_params.read_threads_count;
@@ -173,7 +170,9 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
             let buckets = buckets_dispatcher.finalize().1;
             if Arc::strong_count(&buckets) == 1 {
                 ops.declare_addresses(self.out_addresses.as_ref().unwrap().deref().clone());
-
+                self.context
+                    .extra_buckets_count
+                    .fetch_add(1 << self.subsplit_buckets_count_log, Ordering::Relaxed);
                 for (i, bucket) in buckets.finalize().into_iter().enumerate() {
                     ops.packet_send(
                         self.out_addresses.as_ref().unwrap()[i].clone(),

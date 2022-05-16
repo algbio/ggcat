@@ -208,6 +208,7 @@ impl AssemblePipeline {
             buckets_count,
             global_data,
             threads_count,
+            m,
             k,
             (MINIMUM_SUBBUCKET_KMERS_COUNT / k) as u64,
         )

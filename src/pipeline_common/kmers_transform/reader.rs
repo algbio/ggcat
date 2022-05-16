@@ -149,8 +149,9 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
 
         let file_size = reader.get_file_size();
 
-        let sequences_size_ratio =
-            file_size as f64 / (sequences_count * global_params.k as u64) as f64 * 2.67;
+        let multiplier = 4.0 / ((3 * global_params.k - global_params.m) as f64 / 2.0);
+
+        let sequences_size_ratio = file_size as f64 / sequences_count as f64 * multiplier;
 
         bucket_sizes.make_contiguous().sort();
 

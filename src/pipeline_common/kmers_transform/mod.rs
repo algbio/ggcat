@@ -127,6 +127,7 @@ pub struct KmersTransform<F: KmersTransformExecutorFactory> {
 
 pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     k: usize,
+    m: usize,
     min_bucket_size: u64,
     buckets_count: usize,
     extra_buckets_count: AtomicUsize,
@@ -150,6 +151,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         global_extra_data: Arc<F::GlobalExtraData>,
         threads_count: usize,
         k: usize,
+        m: usize,
         min_bucket_size: u64,
     ) -> Self {
         let mut buckets_list = Vec::with_capacity(file_inputs.len());
@@ -205,6 +207,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
         let execution_context = Arc::new(KmersTransformContext {
             k,
+            m,
             min_bucket_size,
             buckets_count,
             extra_buckets_count: AtomicUsize::new(0),
