@@ -499,8 +499,8 @@ impl WorkScheduler {
     }
 
     pub fn print_debug_executors(&self) {
-        let _out = std::io::stdout().lock();
         let internal = self.internal.lock();
+        let _out = std::io::stdout().lock();
         println!("Executors counters:");
         for (addr, exec_remaining) in self.execution_managers_info.iter() {
             println!(
@@ -550,7 +550,7 @@ impl WorkScheduler {
     pub fn finalize(&self) {
         let mut internal = self.internal.lock();
         assert_eq!(self.get_packets_count(), 0);
-        internal.priority_list.clear_all();
+        internal.priority_list.finalize();
         self.packets_map.clear();
         for (_, manager) in self.execution_managers_info.iter() {
             manager.write().output_pool.take();

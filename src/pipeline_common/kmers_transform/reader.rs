@@ -123,7 +123,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         );
 
         let max_concurrency = min(
-            global_params.read_threads_count,
+            min(4, global_params.read_threads_count),
             max(
                 1,
                 reader.get_chunks_count() / MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
@@ -162,7 +162,8 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
             let biggest_sub_bucket = bucket_sizes.pop_back().unwrap();
 
             // Alloc a new bucket
-            if smallest_bucket.0 .0 > 0
+            if (smallest_bucket.2 == biggest_sub_bucket.0.is_outlier)
+                && smallest_bucket.0 .0 > 0
                 && smallest_bucket.0 .0 + biggest_sub_bucket.0.count > global_params.min_bucket_size
             {
                 // Restore the sub bucket
@@ -184,10 +185,10 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         }
 
         let mut addresses: Vec<_> = vec![None; queue.len()];
-        // let mut dbg_counters: Vec<_> = vec![0; queue.len()];
+        let mut dbg_counters: Vec<_> = vec![0; queue.len()];
 
         for (count, index, outlier) in queue.into_iter() {
-            // dbg_counters[index] = count.0;
+            dbg_counters[index] = count.0;
             addresses[index] = Some(if outlier {
                 println!("Sub-bucket {} is an outlier with size {}!", index, count.0);
                 KmersTransformResplitter::<F>::generate_new_address()
@@ -198,17 +199,17 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
 
         let addresses: Vec<_> = addresses.into_iter().map(|a| a.unwrap()).collect();
 
-        // println!(
-        //     "Chunks {} concurrency: {} REMAPPINGS: {:?} // {:?} // {:?}",
-        //     reader.get_chunks_count(),
-        //     max_concurrency,
-        //     &buckets_remapping,
-        //     dbg_counters,
-        //     file.sub_bucket_counters
-        //         .iter()
-        //         .map(|x| x.count)
-        //         .collect::<Vec<_>>()
-        // );
+        println!(
+            "Chunks {} concurrency: {} REMAPPINGS: {:?} // {:?} // {:?}",
+            reader.get_chunks_count(),
+            max_concurrency,
+            &buckets_remapping,
+            dbg_counters,
+            file.sub_bucket_counters
+                .iter()
+                .map(|x| x.count)
+                .collect::<Vec<_>>()
+        );
 
         executors_initializer(addresses.clone());
 

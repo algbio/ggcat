@@ -2,7 +2,7 @@ mod reader;
 
 use crate::config::{
     BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, KMERS_TRANSFORM_READS_CHUNKS_SIZE,
-    MINIMUM_LOG_DELTA_TIME,
+    MINIMUM_LOG_DELTA_TIME, SECOND_BUCKETS_COUNT,
 };
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
@@ -208,13 +208,13 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             finalizer_address: Arc::new(RwLock::new(Some(
                 KmersTransformWriter::<F>::generate_new_address(),
             ))),
-            compute_threads_count: max(1, threads_count.saturating_sub(read_threads_count / 2)),
+            compute_threads_count: max(1, threads_count.saturating_sub(read_threads_count / 4)),
             read_threads_count,
             global_extra_data,
             async_readers: ScopedThreadLocal::new(|| {
                 AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE / 2, 4)
             }),
-            max_second_buckets_count_log2: 4, // FIXME: Check against counters!
+            max_second_buckets_count_log2: SECOND_BUCKETS_COUNT.log2() as usize,
             temp_dir: temp_dir.to_path_buf(),
         });
 
@@ -231,9 +231,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
         let max_extra_read_buffers_count = max(
             max_second_buckets_count,
-            self.execution_context.read_threads_count
-                + self.execution_context.compute_threads_count,
-        );
+            self.execution_context.compute_threads_count,
+        ) + self.execution_context.read_threads_count;
 
         let compute_threads_count = self.execution_context.compute_threads_count;
         let read_threads_count = self.execution_context.read_threads_count;

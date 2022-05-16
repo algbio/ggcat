@@ -3,12 +3,12 @@ mod queue_data;
 mod reader;
 mod sequences_splitter;
 
-use crate::config::USE_SECOND_BUCKET;
 use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE, READ_INTERMEDIATE_CHUNKS_SIZE,
     READ_INTERMEDIATE_QUEUE_MULTIPLIER,
 };
+use crate::config::{SECOND_BUCKETS_COUNT, USE_SECOND_BUCKET};
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
@@ -398,7 +398,7 @@ impl GenericMinimizerBucketing {
         });
         input_files.reverse();
 
-        let second_buckets_count = max(16, threads_count.next_power_of_two());
+        let second_buckets_count = max(SECOND_BUCKETS_COUNT, threads_count.next_power_of_two());
 
         let execution_context = Arc::new(MinimizerBucketingExecutionContext {
             buckets,

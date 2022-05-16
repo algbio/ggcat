@@ -181,8 +181,8 @@ impl PriorityManager {
         }
     }
 
-    pub fn clear_all(&mut self) {
-        self.priority_map.clear();
-        self.reverse_map.clear();
+    pub fn finalize(&mut self) {
+        assert_eq!(self.priority_map.len(), 0);
+        assert_eq!(self.reverse_map.len(), 0);
     }
 }

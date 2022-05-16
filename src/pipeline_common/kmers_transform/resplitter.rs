@@ -102,7 +102,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
         executors_initializer(output_addresses.clone());
 
         // TODO: Find best count of writing threads
-        let threads_count = global_params.read_threads_count;
+        let threads_count = 4; //global_params.read_threads_count;
         (
             (
                 buckets,

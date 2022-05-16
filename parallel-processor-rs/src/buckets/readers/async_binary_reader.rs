@@ -135,9 +135,14 @@ impl AsyncReaderThread {
         let mut thread = self.thread.lock();
         let mt_self = self.clone();
         if thread.is_none() {
-            *thread = Some(std::thread::spawn(move || {
-                mt_self.read_thread();
-            }));
+            *thread = Some(
+                std::thread::Builder::new()
+                    .name(String::from("async_reader"))
+                    .spawn(move || {
+                        mt_self.read_thread();
+                    })
+                    .unwrap(),
+            );
         }
         drop(thread);
 

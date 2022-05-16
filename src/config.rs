@@ -37,11 +37,12 @@ pub const MAX_BUCKETS_COUNT_LOG: usize = 13;
 
 pub const MIN_BUCKET_CHUNKS_FOR_READING_THREAD: usize = 2;
 
-pub const MINIMUM_SUBBUCKET_SIZE: usize = 10000;
-
 pub const USE_SECOND_BUCKET: bool = false;
 
 pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 5;
+
+pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 1024;
+pub const SECOND_BUCKETS_COUNT: usize = 16;
 
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]

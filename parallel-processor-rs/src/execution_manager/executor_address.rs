@@ -14,6 +14,11 @@ unsafe impl Send for ExecutorAddress {}
 unsafe impl Sync for ExecutorAddress {}
 
 impl ExecutorAddress {
+
+    pub fn is_of_type<T: 'static>(&self) -> bool {
+        self.executor_type_id == TypeId::of::<T>()
+    }
+
     pub fn to_weak(&self) -> WeakExecutorAddress {
         WeakExecutorAddress {
             executor_type_id: self.executor_type_id,

@@ -11,8 +11,10 @@ pub struct VecReader<R: Read> {
 
 impl<R: Read> VecReader<R> {
     pub fn new(capacity: usize, reader: R) -> VecReader<R> {
-        let mut vec = vec![];
-        vec.resize(capacity, 0);
+        let mut vec = Vec::with_capacity(capacity);
+        unsafe {
+            vec.set_len(capacity);
+        }
         VecReader {
             vec,
             fill: 0,

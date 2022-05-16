@@ -1,6 +1,6 @@
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use crate::config::{
-    BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_SUBBUCKET_SIZE,
+    BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_SUBBUCKET_KMERS_COUNT,
     RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use crate::hashes::HashFunction;
@@ -349,7 +349,7 @@ impl QueryPipeline {
             buckets_count,
             global_data.clone(),
             threads_count,
-            (MINIMUM_SUBBUCKET_SIZE * k * 2) as u64,
+            (MINIMUM_SUBBUCKET_KMERS_COUNT / k) as u64,
         )
         .parallel_kmers_transform();
 
