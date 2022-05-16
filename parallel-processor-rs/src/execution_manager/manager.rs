@@ -1,10 +1,11 @@
-use crate::execution_manager::executor::Executor;
+use crate::execution_manager::executor::{Executor, ExecutorOperations};
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
 use crate::execution_manager::objects_pool::PoolObject;
 use crate::execution_manager::packet::{Packet, PacketsPool};
 use std::any::TypeId;
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -17,6 +18,42 @@ pub enum ExecutionStatus {
     MorePackets,
     OutputPoolFull,
     Finished,
+}
+
+pub(crate) struct ExecutorsOperationsImpl<
+    E: Executor,
+    D: FnMut(Vec<ExecutorAddress>),
+    A: FnMut() -> Packet<E::OutputPacket>,
+    F: FnMut() -> Packet<E::OutputPacket>,
+    S: FnMut(ExecutorAddress, Packet<E::OutputPacket>),
+> {
+    pub(crate) func_declare_addresses: D,
+    pub(crate) func_packet_alloc: A,
+    pub(crate) func_packet_alloc_force: F,
+    pub(crate) func_packet_send: S,
+    pub(crate) _phantom: PhantomData<&'static E>,
+}
+
+impl<
+        E: Executor,
+        D: FnMut(Vec<ExecutorAddress>),
+        A: FnMut() -> Packet<E::OutputPacket>,
+        F: FnMut() -> Packet<E::OutputPacket>,
+        S: FnMut(ExecutorAddress, Packet<E::OutputPacket>),
+    > ExecutorOperations<E> for ExecutorsOperationsImpl<E, D, A, F, S>
+{
+    fn declare_addresses(&mut self, addresses: Vec<ExecutorAddress>) {
+        (self.func_declare_addresses)(addresses)
+    }
+    fn packet_alloc(&mut self) -> Packet<E::OutputPacket> {
+        (self.func_packet_alloc)()
+    }
+    fn packet_alloc_force(&mut self) -> Packet<E::OutputPacket> {
+        (self.func_packet_alloc_force)()
+    }
+    fn packet_send(&mut self, address: ExecutorAddress, packet: Packet<E::OutputPacket>) {
+        (self.func_packet_send)(address, packet)
+    }
 }
 
 pub trait ExecutionManagerTrait: Send + Sync {
@@ -120,19 +157,23 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
         if let Some(build_info) = self.build_info.take() {
             self.executor.pre_execute(
                 build_info,
-                || {
-                    self.pool
-                        .as_ref()
-                        .unwrap()
-                        .alloc_packet(E::STRICT_POOL_ALLOC)
+                ExecutorsOperationsImpl {
+                    func_declare_addresses: |_| panic!("Not supported!"),
+                    func_packet_alloc: || {
+                        self.pool
+                            .as_ref()
+                            .unwrap()
+                            .alloc_packet(E::STRICT_POOL_ALLOC)
+                    },
+                    func_packet_alloc_force: || {
+                        self.pool
+                            .as_ref()
+                            .unwrap()
+                            .alloc_packet(E::STRICT_POOL_ALLOC)
+                    },
+                    func_packet_send: self.output_fn.deref(),
+                    _phantom: Default::default(),
                 },
-                || {
-                    self.pool
-                        .as_ref()
-                        .unwrap()
-                        .alloc_packet(E::STRICT_POOL_ALLOC)
-                },
-                self.output_fn.deref(),
             );
             if self.executor.is_finished() {
                 self.is_finished = true;
@@ -147,13 +188,18 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
         if let Some(packet) = packet {
             self.executor.execute(
                 packet,
-                || {
-                    self.pool
-                        .as_ref()
-                        .unwrap()
-                        .alloc_packet(E::STRICT_POOL_ALLOC)
+                ExecutorsOperationsImpl {
+                    func_declare_addresses: |_| panic!("Not supported"),
+                    func_packet_alloc: || {
+                        self.pool
+                            .as_ref()
+                            .unwrap()
+                            .alloc_packet(E::STRICT_POOL_ALLOC)
+                    },
+                    func_packet_alloc_force: || panic!("Not supported!"),
+                    func_packet_send: self.output_fn.deref(),
+                    _phantom: Default::default(),
                 },
-                self.output_fn.deref(),
             );
         }
 
@@ -192,7 +238,13 @@ impl<E: Executor> ExecutionManagerTrait for ExecutionManager<E> {
 
 impl<E: Executor> Drop for ExecutionManager<E> {
     fn drop(&mut self) {
-        self.executor.finalize(self.output_fn.deref());
+        self.executor.finalize(ExecutorsOperationsImpl {
+            func_declare_addresses: |_| panic!("Not supported"),
+            func_packet_alloc: || panic!("Not supported"),
+            func_packet_alloc_force: || panic!("Not supported"),
+            func_packet_send: self.output_fn.deref(),
+            _phantom: Default::default(),
+        });
         (self.notify_drop)();
     }
 }

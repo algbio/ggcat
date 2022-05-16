@@ -1,7 +1,9 @@
 use crate::execution_manager::executor::{Executor, ExecutorType};
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
 use crate::execution_manager::executors_list::{ExecutorAllocMode, PoolAllocMode};
-use crate::execution_manager::manager::{ExecutionManager, GenericExecutor};
+use crate::execution_manager::manager::{
+    ExecutionManager, ExecutorsOperationsImpl, GenericExecutor,
+};
 use crate::execution_manager::memory_tracker::MemoryTrackerManager;
 use crate::execution_manager::objects_pool::{ObjectsPool, PoolObject, PoolObjectTrait};
 use crate::execution_manager::packet::{Packet, PacketAny, PacketsPool};
@@ -239,13 +241,19 @@ impl WorkScheduler {
                 } else {
                     None
                 },
-                |v| {
-                    executor_info
-                        .output_pool
-                        .as_ref()
-                        .unwrap()
-                        .clone()
-                        .add_executors_batch(v);
+                ExecutorsOperationsImpl {
+                    func_declare_addresses: |v| {
+                        executor_info
+                            .output_pool
+                            .as_ref()
+                            .unwrap()
+                            .clone()
+                            .add_executors_batch(v);
+                    },
+                    func_packet_alloc: || panic!("Not supported"),
+                    func_packet_alloc_force: || panic!("Not supported"),
+                    func_packet_send: |_, _| panic!("Not supported"),
+                    _phantom: Default::default(),
                 },
             );
 

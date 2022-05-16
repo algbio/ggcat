@@ -16,7 +16,7 @@ use crate::utils::get_memory_mode;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
-use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
+use parallel_processor::execution_manager::executor::{Executor, ExecutorOperations, ExecutorType};
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
@@ -73,11 +73,11 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
         Arc<Vec<ExecutorAddress>>,
     );
 
-    fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
+    fn allocate_new_group<E: ExecutorOperations<Self>>(
         global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
         _common_packet: Option<Packet<Self::InputPacket>>,
-        executors_initializer: D,
+        mut ops: E,
     ) -> (Self::BuildParams, usize) {
         let subsplit_buckets_count_log = 7; // FIXME!
         let buckets = Arc::new(MultiThreadBuckets::new(
@@ -99,7 +99,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
         global_params
             .extra_buckets_count
             .fetch_add(1 << subsplit_buckets_count_log, Ordering::Relaxed);
-        executors_initializer(output_addresses.clone());
+        ops.declare_addresses(output_addresses.clone());
 
         // TODO: Find best count of writing threads
         let threads_count = 4; //global_params.read_threads_count;
@@ -117,16 +117,10 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
         0
     }
 
-    fn pre_execute<
-        PF: FnMut() -> Packet<Self::OutputPacket>,
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
+    fn pre_execute<E: ExecutorOperations<Self>>(
         &mut self,
         (mt_buckets, buckets_count_log, out_addresses): Self::BuildParams,
-        _packet_alloc_force: PF,
-        _packet_alloc: P,
-        _packet_send: S,
+        _ops: E,
     ) {
         self.out_addresses = Some(out_addresses);
         self.subsplit_buckets_count_log = buckets_count_log;
@@ -140,14 +134,10 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
         ]);
     }
 
-    fn execute<
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
+    fn execute<E: ExecutorOperations<Self>>(
         &mut self,
         input_packet: Packet<Self::InputPacket>,
-        _packet_alloc: P,
-        _packet_send: S,
+        _ops: E,
     ) {
         let input_packet = input_packet.deref();
 
@@ -179,15 +169,12 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
         }
     }
 
-    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(
-        &mut self,
-        mut packet_send: S,
-    ) {
+    fn finalize<E: ExecutorOperations<Self>>(&mut self, mut ops: E) {
         if let Some(buckets_dispatcher) = self.thread_local_buffers.take() {
             let buckets = buckets_dispatcher.finalize().1;
             if Arc::strong_count(&buckets) == 1 {
                 for (i, bucket) in buckets.finalize().into_iter().enumerate() {
-                    packet_send(
+                    ops.packet_send(
                         self.out_addresses.as_ref().unwrap()[i].clone(),
                         Packet::new_simple(InputBucketDesc {
                             path: bucket,

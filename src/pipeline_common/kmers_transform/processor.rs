@@ -2,8 +2,7 @@ use crate::pipeline_common::kmers_transform::reads_buffer::ReadsBuffer;
 use crate::pipeline_common::kmers_transform::{
     KmersTransformContext, KmersTransformExecutorFactory, KmersTransformMapProcessor,
 };
-use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
-use parallel_processor::execution_manager::executor_address::ExecutorAddress;
+use parallel_processor::execution_manager::executor::{Executor, ExecutorOperations, ExecutorType};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
@@ -47,11 +46,11 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
     type MemoryParams = ();
     type BuildParams = ();
 
-    fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
+    fn allocate_new_group<E: ExecutorOperations<Self>>(
         _global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
         _common_packet: Option<Packet<Self::InputPacket>>,
-        _executors_initializer: D,
+        _ops: E,
     ) -> (Self::BuildParams, usize) {
         ((), 1)
     }
@@ -60,30 +59,20 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         0
     }
 
-    fn pre_execute<
-        PF: FnMut() -> Packet<Self::OutputPacket>,
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
+    fn pre_execute<E: ExecutorOperations<Self>>(
         &mut self,
         _reinit_params: Self::BuildParams,
-        mut packet_alloc_force: PF,
-        _packet_alloc: P,
-        _packet_send: S,
+        mut ops: E,
     ) {
         self.map_processor
-            .process_group_start(packet_alloc_force(), &self.context.global_extra_data);
+            .process_group_start(ops.packet_alloc_force(), &self.context.global_extra_data);
         self.initialized = true;
     }
 
-    fn execute<
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
+    fn execute<E: ExecutorOperations<Self>>(
         &mut self,
         input_packet: Packet<Self::InputPacket>,
-        _packet_alloc: P,
-        _packet_send: S,
+        _ops: E,
     ) {
         self.map_processor.process_group_batch_sequences(
             &self.context.global_extra_data,
@@ -92,14 +81,11 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         );
     }
 
-    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(
-        &mut self,
-        mut packet_send: S,
-    ) {
+    fn finalize<E: ExecutorOperations<Self>>(&mut self, mut ops: E) {
         let packet = self
             .map_processor
             .process_group_finalize(&self.context.global_extra_data);
-        packet_send(
+        ops.packet_send(
             self.context
                 .finalizer_address
                 .read()

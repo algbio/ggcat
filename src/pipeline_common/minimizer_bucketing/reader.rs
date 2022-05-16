@@ -2,8 +2,7 @@ use crate::io::sequences_reader::SequencesReader;
 use crate::pipeline_common::minimizer_bucketing::queue_data::MinimizerBucketingQueueData;
 use crate::pipeline_common::minimizer_bucketing::MinimizerBucketingExecutionContext;
 use nightly_quirks::branch_pred::unlikely;
-use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
-use parallel_processor::execution_manager::executor_address::ExecutorAddress;
+use parallel_processor::execution_manager::executor::{Executor, ExecutorOperations, ExecutorType};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
@@ -62,11 +61,11 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
 
     type BuildParams = ();
 
-    fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
+    fn allocate_new_group<E: ExecutorOperations<Self>>(
         global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
         _common_packet: Option<Packet<Self::InputPacket>>,
-        _executors_initializer: D,
+        _ops: E,
     ) -> (Self::BuildParams, usize) {
         let read_threads_count = global_params.read_threads_count;
         ((), read_threads_count)
@@ -76,30 +75,20 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         1
     }
 
-    fn pre_execute<
-        PF: FnMut() -> Packet<Self::OutputPacket>,
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
+    fn pre_execute<E: ExecutorOperations<Self>>(
         &mut self,
         _reinit_params: Self::BuildParams,
-        _packet_alloc_force: PF,
-        _packet_alloc: P,
-        _packet_send: S,
+        _ops: E,
     ) {
     }
 
-    fn execute<
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
+    fn execute<E: ExecutorOperations<Self>>(
         &mut self,
         input_packet: Packet<Self::InputPacket>,
-        mut packet_alloc: P,
-        mut packet_send: S,
+        mut ops: E,
     ) {
         // println!("Executing thing {}!", input_packet.0.display());
-        let mut data_packet = packet_alloc();
+        let mut data_packet = ops.packet_alloc();
         let file_info = input_packet.1.clone();
 
         let data = data_packet.deref_mut();
@@ -133,7 +122,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
                     );
 
                     replace_with_or_abort(&mut data_packet, |packet| {
-                        packet_send(
+                        ops.packet_send(
                             self.context
                                 .executor_group_address
                                 .read()
@@ -142,7 +131,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
                                 .clone(),
                             packet,
                         );
-                        packet_alloc()
+                        ops.packet_alloc()
                     });
 
                     self.mem_tracker.update_memory_usage(&[max_len]);
@@ -161,7 +150,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         );
 
         if data_packet.sequences.len() > 0 {
-            packet_send(
+            ops.packet_send(
                 self.context
                     .executor_group_address
                     .read()
@@ -175,8 +164,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         self.context.processed_files.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, _packet_send: S) {
-    }
+    fn finalize<E: ExecutorOperations<Self>>(&mut self, _ops: E) {}
 
     fn is_finished(&self) -> bool {
         false

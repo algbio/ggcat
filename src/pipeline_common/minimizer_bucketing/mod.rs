@@ -21,7 +21,7 @@ use crate::utils::get_memory_mode;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
-use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
+use parallel_processor::execution_manager::executor::{Executor, ExecutorOperations, ExecutorType};
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::executors_list::{
     ExecOutputMode, ExecutorAllocMode, ExecutorsList, PoolAllocMode,
@@ -211,11 +211,11 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
     type MemoryParams = ();
     type BuildParams = ();
 
-    fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
+    fn allocate_new_group<EX: ExecutorOperations<Self>>(
         global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
         _common_packet: Option<Packet<Self::InputPacket>>,
-        _executors_initializer: D,
+        _ops: EX,
     ) -> (Self::BuildParams, usize) {
         let max_concurrency = global_params.threads_count;
         ((), max_concurrency)
@@ -225,16 +225,10 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
         0
     }
 
-    fn pre_execute<
-        PF: FnMut() -> Packet<Self::OutputPacket>,
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
+    fn pre_execute<EX: ExecutorOperations<Self>>(
         &mut self,
         _reinit_params: Self::BuildParams,
-        _packet_alloc_force: PF,
-        _packet_alloc: P,
-        _packet_send: S,
+        _ops: EX,
     ) {
         self.counters_log = self.context.common.second_buckets_count.log2();
         self.counters.resize(
@@ -252,14 +246,10 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
         ]);
     }
 
-    fn execute<
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
+    fn execute<EX: ExecutorOperations<Self>>(
         &mut self,
         input_packet: Packet<Self::InputPacket>,
-        _packet_alloc: P,
-        _packet_send: S,
+        _ops: EX,
     ) {
         let global_counters = &self.context.common.global_counters;
         let second_buckets_count_mask = self.context.common.second_buckets_count_mask;
@@ -356,7 +346,7 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
         }
     }
 
-    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, _packet_send: S) {
+    fn finalize<EX: ExecutorOperations<Self>>(&mut self, _ops: EX) {
         self.tmp_reads_buffer.take().unwrap().finalize();
     }
 

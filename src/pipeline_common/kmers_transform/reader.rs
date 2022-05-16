@@ -12,7 +12,7 @@ use crate::pipeline_common::minimizer_bucketing::counters_analyzer::BucketCounte
 use crate::utils::compressed_read::CompressedReadIndipendent;
 use crate::KEEP_FILES;
 use parallel_processor::buckets::readers::async_binary_reader::AsyncBinaryReader;
-use parallel_processor::execution_manager::executor::{Executor, ExecutorType};
+use parallel_processor::execution_manager::executor::{Executor, ExecutorOperations, ExecutorType};
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
@@ -102,11 +102,11 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
     type MemoryParams = ();
     type BuildParams = (AsyncBinaryReader, usize, Vec<usize>, Vec<ExecutorAddress>);
 
-    fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
+    fn allocate_new_group<E: ExecutorOperations<Self>>(
         global_params: Arc<Self::GlobalParams>,
         _memory_params: Option<Self::MemoryParams>,
         common_packet: Option<Packet<Self::InputPacket>>,
-        executors_initializer: D,
+        mut ops: E,
     ) -> (Self::BuildParams, usize) {
         let file = common_packet.unwrap();
 
@@ -211,7 +211,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
                 .collect::<Vec<_>>()
         );
 
-        executors_initializer(addresses.clone());
+        ops.declare_addresses(addresses.clone());
 
         (
             (reader, second_buckets_log_max, buckets_remapping, addresses),
@@ -223,23 +223,17 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         1
     }
 
-    fn pre_execute<
-        PF: FnMut() -> Packet<Self::OutputPacket>,
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
+    fn pre_execute<E: ExecutorOperations<Self>>(
         &mut self,
         (async_binary_reader, second_buckets_log_max, remappings, addresses): Self::BuildParams,
-        mut packet_alloc_force: PF,
-        mut packet_alloc: P,
-        mut packet_send: S,
+        mut ops: E,
     ) {
         if async_binary_reader.is_finished() {
             return;
         }
 
         self.buffers
-            .extend((0..addresses.len()).map(|_| packet_alloc_force()));
+            .extend((0..addresses.len()).map(|_| ops.packet_alloc_force()));
 
         self.addresses = addresses;
         self.async_reader = Some(async_binary_reader);
@@ -278,31 +272,27 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
                     .push((flags, extra_data, ind_read));
                 if self.buffers[bucket].reads.len() == self.buffers[bucket].reads.capacity() {
                     replace_with_or_abort(&mut self.buffers[bucket], |buffer| {
-                        packet_send(self.addresses[bucket].clone(), buffer);
-                        packet_alloc()
+                        ops.packet_send(self.addresses[bucket].clone(), buffer);
+                        ops.packet_alloc()
                     });
                 }
             });
         for (packet, address) in self.buffers.drain(..).zip(self.addresses.drain(..)) {
             if packet.reads.len() > 0 {
-                packet_send(address, packet);
+                ops.packet_send(address, packet);
             }
         }
     }
 
-    fn execute<
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
+    fn execute<E: ExecutorOperations<Self>>(
         &mut self,
         _input_packet: Packet<Self::InputPacket>,
-        _packet_alloc: P,
-        _packet_send: S,
+        _ops: E,
     ) {
         panic!("Multiple packet processing not supported!");
     }
 
-    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, _packet_send: S) {
+    fn finalize<E: ExecutorOperations<Self>>(&mut self, _ops: E) {
         assert_eq!(self.buffers.len(), 0);
     }
 

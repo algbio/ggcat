@@ -15,6 +15,13 @@ pub enum ExecutorType {
 
 static EXECUTOR_GLOBAL_ID: AtomicU64 = AtomicU64::new(0);
 
+pub trait ExecutorOperations<E: Executor> {
+    fn declare_addresses(&mut self, addresses: Vec<ExecutorAddress>);
+    fn packet_alloc(&mut self) -> Packet<E::OutputPacket>;
+    fn packet_alloc_force(&mut self) -> Packet<E::OutputPacket>;
+    fn packet_send(&mut self, address: ExecutorAddress, packet: Packet<E::OutputPacket>);
+}
+
 pub trait Executor:
     Sized + PoolObjectTrait<InitData = (Arc<Self::GlobalParams>, MemoryTracker<Self>)> + Sync + Send
 {
@@ -42,38 +49,26 @@ pub trait Executor:
         exec
     }
 
-    fn allocate_new_group<D: FnOnce(Vec<ExecutorAddress>)>(
+    fn allocate_new_group<E: ExecutorOperations<Self>>(
         global_params: Arc<Self::GlobalParams>,
         memory_params: Option<Self::MemoryParams>,
         common_packet: Option<Packet<Self::InputPacket>>,
-        executors_initializer: D,
+        ops: E,
     ) -> (Self::BuildParams, usize);
 
     fn required_pool_items(&self) -> u64;
 
-    fn pre_execute<
-        PF: FnMut() -> Packet<Self::OutputPacket>,
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
+    fn pre_execute<E: ExecutorOperations<Self>>(
         &mut self,
         reinit_params: Self::BuildParams,
-        packet_alloc_force: PF,
-        packet_alloc: P,
-        packet_send: S,
+        ops: E,
     );
-
-    fn execute<
-        P: FnMut() -> Packet<Self::OutputPacket>,
-        S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>),
-    >(
+    fn execute<E: ExecutorOperations<Self>>(
         &mut self,
         input_packet: Packet<Self::InputPacket>,
-        packet_alloc: P,
-        packet_send: S,
+        ops: E,
     );
-
-    fn finalize<S: FnMut(ExecutorAddress, Packet<Self::OutputPacket>)>(&mut self, packet_send: S);
+    fn finalize<E: ExecutorOperations<Self>>(&mut self, ops: E);
 
     fn is_finished(&self) -> bool;
 
