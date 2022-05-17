@@ -356,7 +356,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H, DefaultColorsManager>
         for i in data.slice.0..data.slice.1 {
             write!(
                 buffer,
-                " ({}, {})",
+                " C:{}:{}",
                 data.data.colors[i].0, data.data.colors[i].1
             )
             .unwrap();
