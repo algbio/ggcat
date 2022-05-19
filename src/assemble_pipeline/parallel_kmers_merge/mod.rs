@@ -3,6 +3,9 @@ use crate::assemble_pipeline::parallel_kmers_merge::final_executor::ParallelKmer
 use crate::assemble_pipeline::parallel_kmers_merge::map_processor::ParallelKmersMergeMapProcessor;
 use crate::assemble_pipeline::parallel_kmers_merge::preprocessor::ParallelKmersMergePreprocessor;
 use crate::assemble_pipeline::AssemblePipeline;
+use crate::colors::colors_manager::color_types::{
+    GlobalColorsTable, MinimizerBucketingSeqColorDataType,
+};
 use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, MINIMUM_SUBBUCKET_KMERS_COUNT,
@@ -47,7 +50,7 @@ pub struct GlobalMergeData<MH: HashFunctionFactory, CX: ColorsManager> {
     m: usize,
     buckets_count: usize,
     min_multiplicity: usize,
-    colors_global_table: Arc<CX::GlobalColorsTable>,
+    colors_global_table: Arc<GlobalColorsTable<MH, CX>>,
     output_results_buckets:
         ArrayQueue<ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>>,
     hashes_buckets: Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
@@ -65,7 +68,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 {
     type SequencesResplitterFactory = AssemblerMinimizerBucketingExecutorFactory<H, CX>;
     type GlobalExtraData = GlobalMergeData<MH, CX>;
-    type AssociatedExtraData = CX::MinimizerBucketingSeqColorDataType;
+    type AssociatedExtraData = MinimizerBucketingSeqColorDataType<CX>;
 
     type PreprocessorType = ParallelKmersMergePreprocessor<H, MH, CX>;
     type MapProcessorType = ParallelKmersMergeMapProcessor<H, MH, CX>;
@@ -133,7 +136,7 @@ impl AssemblePipeline {
     >(
         file_inputs: Vec<PathBuf>,
         buckets_counters_path: PathBuf,
-        colors_global_table: Arc<CX::GlobalColorsTable>,
+        colors_global_table: Arc<GlobalColorsTable<MH, CX>>,
         buckets_count: usize,
         min_multiplicity: usize,
         out_directory: P,

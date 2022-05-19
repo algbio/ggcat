@@ -50,6 +50,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "atoi"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c57d12312ff59c811c0643f4d80830505833c9ffaebd193d819392b265be8e"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "atty"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -438,6 +447,7 @@ name = "ggcat"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "atoi",
  "backtrace",
  "bincode",
  "bstr",

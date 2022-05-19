@@ -42,6 +42,7 @@ flate2 = { default-features = false, features = ["cloudflare_zlib"], version = "
 typenum = "1.15.0"
 nightly-quirks = { path = "nightly-quirks" }
 fs_extra = "1.2.0"
+atoi = "1.0.0"
 
 [profile.release]
 debug = true

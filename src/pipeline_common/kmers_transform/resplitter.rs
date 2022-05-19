@@ -136,15 +136,12 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
         _ops: E,
     ) {
         let input_packet = input_packet.deref();
-
-        let mut preproc_info = <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::PreprocessInfo::default();
         let resplitter = &mut self.resplitter;
         let local_buffer = self.thread_local_buffers.as_mut().unwrap();
 
         for (flags, extra, bases) in &input_packet.reads {
             let sequence = bases.as_reference(&input_packet.reads_buffer);
-
-            resplitter.reprocess_sequence(*flags, &extra, &mut preproc_info);
+            let preproc_info = resplitter.reprocess_sequence(*flags, extra);
             resplitter.process_sequence::<_, _>(
                 &preproc_info,
                 sequence,

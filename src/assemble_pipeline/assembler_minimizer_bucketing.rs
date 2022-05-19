@@ -1,6 +1,8 @@
 use crate::assemble_pipeline::parallel_kmers_merge::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use crate::assemble_pipeline::AssemblePipeline;
+use crate::colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
+use crate::colors::default_colors_manager::SingleSequenceInfo;
 use crate::config::BucketIndexType;
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
@@ -25,19 +27,24 @@ pub struct AssemblerMinimizerBucketingExecutor<H: MinimizerHashFunctionFactory, 
 }
 
 pub struct AssemblerPreprocessInfo<CX: ColorsManager> {
-    color_info: CX::MinimizerBucketingSeqColorDataType,
+    color_info: MinimizerBucketingSeqColorDataType<CX>,
     include_first: bool,
     include_last: bool,
 }
 
-impl<CX: ColorsManager> Default for AssemblerPreprocessInfo<CX> {
-    fn default() -> Self {
-        Self {
-            color_info: CX::MinimizerBucketingSeqColorDataType::default(),
-            include_first: false,
-            include_last: false,
-        }
-    }
+// impl<CX: ColorsManager> Default for AssemblerPreprocessInfo<CX> {
+//     fn default() -> Self {
+//         Self {
+//             color_info: CX::MinimizerBucketingSeqColorDataType::default(),
+//             include_first: false,
+//             include_last: false,
+//         }
+//     }
+// }
+
+#[derive(Clone, Default)]
+pub struct InputFileInfo {
+    file_index: usize,
 }
 
 pub struct AssemblerMinimizerBucketingExecutorFactory<
@@ -49,9 +56,9 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecu
     for AssemblerMinimizerBucketingExecutorFactory<H, CX>
 {
     type GlobalData = ();
-    type ExtraData = CX::MinimizerBucketingSeqColorDataType;
+    type ExtraData = MinimizerBucketingSeqColorDataType<CX>;
     type PreprocessInfo = AssemblerPreprocessInfo<CX>;
-    type FileInfo = u64;
+    type FileInfo = InputFileInfo;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U2;
@@ -77,14 +84,16 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         &mut self,
         file_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::FileInfo,
         _read_index: u64,
-        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
-        _sequence: &FastaSequence,
-    ) {
-        *preprocess_info = AssemblerPreprocessInfo {
-            color_info: CX::MinimizerBucketingSeqColorDataType::create(*file_info),
+        sequence: &FastaSequence,
+    ) -> <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo{
+        AssemblerPreprocessInfo {
+            color_info: MinimizerBucketingSeqColorDataType::<CX>::create(SingleSequenceInfo {
+                file_index: file_info.file_index,
+                sequence_ident: sequence.ident,
+            }),
             include_first: true,
             include_last: true,
-        };
+        }
     }
 
     #[inline(always)]
@@ -92,11 +101,12 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         &mut self,
         flags: u8,
         extra_data: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
-    ) {
-        preprocess_info.include_first = (flags & READ_FLAG_INCL_BEGIN) != 0;
-        preprocess_info.include_last = (flags & READ_FLAG_INCL_END) != 0;
-        preprocess_info.color_info = *extra_data;
+    ) -> <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo{
+        AssemblerPreprocessInfo {
+            color_info: extra_data.clone(), // FIXME: Find a more efficient way to deal with multiple data
+            include_first: (flags & READ_FLAG_INCL_BEGIN) != 0,
+            include_last: (flags & READ_FLAG_INCL_END) != 0,
+        }
     }
 
     fn process_sequence<
@@ -140,7 +150,9 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                     H::get_second_bucket(last_hash) & self.global_data.buckets_count_mask,
                     sequence.get_subslice((max(1, last_index) - 1)..(index + self.global_data.k)),
                     include_first as u8,
-                    preprocess_info.color_info,
+                    preprocess_info
+                        .color_info
+                        .get_subslice((max(1, last_index) - 1)..(index + 1)), // FIXME: Check if the subslice is correct
                 );
                 last_index = index + 1;
                 last_hash = min_hash;
@@ -155,7 +167,9 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
             H::get_second_bucket(last_hash) & self.global_data.buckets_count_mask,
             sequence.get_subslice(start_index..sequence.seq_len()),
             include_first as u8 | ((include_last as u8) << 1),
-            preprocess_info.color_info,
+            preprocess_info
+                .color_info
+                .get_subslice(start_index..(sequence.seq_len() + 1 - self.global_data.k)), // FIXME: Check if the subslice is correct,
         );
     }
 }
@@ -176,7 +190,7 @@ impl AssemblePipeline {
         let input_files: Vec<_> = input_files
             .into_iter()
             .enumerate()
-            .map(|(i, f)| (f, i as u64))
+            .map(|(i, f)| (f, InputFileInfo { file_index: i }))
             .collect();
 
         GenericMinimizerBucketing::do_bucketing::<AssemblerMinimizerBucketingExecutorFactory<H, CX>>(

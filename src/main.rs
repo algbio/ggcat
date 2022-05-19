@@ -11,7 +11,6 @@
 #![allow(dead_code)]
 
 extern crate alloc;
-extern crate core;
 extern crate test;
 
 mod assemble_pipeline;
@@ -87,6 +86,7 @@ arg_enum! {
     }
 }
 
+use crate::colors::non_colored::NonColoredManager;
 use crate::config::FLUSH_QUEUE_FACTOR;
 use crate::utils::{compute_best_m, DEBUG_LEVEL};
 use parallel_processor::memory_fs::MemoryFs;
@@ -307,7 +307,7 @@ fn main() {
             if args.colors {
                 dispatch_assembler_hash_type::<DefaultColorsManager>(args);
             } else {
-                dispatch_assembler_hash_type::<()>(args);
+                dispatch_assembler_hash_type::<NonColoredManager>(args);
             }
         }
         CliArgs::Matches(args) => {
@@ -325,7 +325,7 @@ fn main() {
             if args.colors {
                 dispatch_querier_hash_type::<DefaultColorsManager>(args);
             } else {
-                dispatch_querier_hash_type::<()>(args);
+                dispatch_querier_hash_type::<NonColoredManager>(args);
             }
         }
         CliArgs::Utils(args) => {

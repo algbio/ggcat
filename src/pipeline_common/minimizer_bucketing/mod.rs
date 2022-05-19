@@ -66,7 +66,7 @@ impl MinimizerInputSequence for &[u8] {
 pub trait MinimizerBucketingExecutorFactory: Sized {
     type GlobalData: Sync + Send + 'static;
     type ExtraData: SequenceExtraData;
-    type PreprocessInfo: Default;
+    type PreprocessInfo;
     type FileInfo: Clone + Sync + Send + Default + 'static;
 
     #[allow(non_camel_case_types)]
@@ -85,16 +85,14 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
         &mut self,
         file_info: &Factory::FileInfo,
         read_index: u64,
-        preprocess_info: &mut Factory::PreprocessInfo,
         sequence: &FastaSequence,
-    );
+    ) -> Factory::PreprocessInfo;
 
     fn reprocess_sequence(
         &mut self,
         flags: u8,
         intermediate_data: &Factory::ExtraData,
-        preprocess_info: &mut Factory::PreprocessInfo,
-    );
+    ) -> Factory::PreprocessInfo;
 
     fn process_sequence<
         S: MinimizerInputSequence,
@@ -258,8 +256,6 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
         let mut sequences_splitter = SequencesSplitter::new(self.context.common.k);
         let mut buckets_processor = E::new(&self.context.common);
 
-        let mut preprocess_info = E::PreprocessInfo::default();
-
         let mut sequences_count = 0;
 
         let input_packet = input_packet.deref();
@@ -267,10 +263,9 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
 
         for (index, x) in input_packet.iter_sequences().enumerate() {
             total_bases += x.seq.len() as u64;
-            buckets_processor.preprocess_fasta(
+            let preprocess_info = buckets_processor.preprocess_fasta(
                 &input_packet.file_info,
                 input_packet.start_read_index + index as u64,
-                &mut preprocess_info,
                 &x,
             );
 

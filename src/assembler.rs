@@ -1,7 +1,7 @@
 use crate::assemble_pipeline::parallel_kmers_merge::structs::RetType;
 use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::colors::colors_manager::ColorsManager;
+use crate::colors::colors_manager::{ColorsManager, ColorsMergeManager};
 use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_LOG_DELTA_TIME};
 use crate::hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use crate::io::reads_writer::ReadsWriter;
@@ -49,10 +49,12 @@ pub fn run_assembler<
         .map(|f| f.file_name().unwrap().to_string_lossy().to_string())
         .collect();
 
-    let global_colors_table = Arc::new(AssemblerColorsManager::create_colors_table(
-        output_file.with_extension("colors.dat"),
-        color_names,
-    ));
+    let global_colors_table = Arc::new(
+        AssemblerColorsManager::ColorsMergeManagerType::create_colors_table(
+            output_file.with_extension("colors.dat"),
+            color_names,
+        ),
+    );
 
     let (buckets, counters) = if step <= AssemblerStartingStep::MinimizerBucketing {
         AssemblePipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
@@ -116,7 +118,7 @@ pub fn run_assembler<
         return;
     }
 
-    AssemblerColorsManager::print_color_stats(&global_colors_table);
+    AssemblerColorsManager::ColorsMergeManagerType::print_color_stats(&global_colors_table);
 
     drop(global_colors_table);
 

@@ -1,3 +1,4 @@
+use crate::colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_SUBBUCKET_KMERS_COUNT,
@@ -97,7 +98,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 {
     type SequencesResplitterFactory = QuerierMinimizerBucketingExecutorFactory<H, CX>;
     type GlobalExtraData = GlobalQueryMergeData;
-    type AssociatedExtraData = QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>;
+    type AssociatedExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
 
     type PreprocessorType = ParallelKmersQueryPreprocessor<H, MH, CX>;
     type MapProcessorType = ParallelKmersQueryMapProcessor<H, MH, CX>;
@@ -215,7 +216,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         global_data: &GlobalQueryMergeData,
         batch: &Vec<(
             u8,
-            QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>,
+            QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>,
             CompressedReadIndipendent,
         )>,
         ref_sequences: &Vec<u8>,

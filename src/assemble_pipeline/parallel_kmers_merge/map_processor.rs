@@ -2,8 +2,9 @@ use crate::assemble_pipeline::parallel_kmers_merge::structs::MapEntry;
 use crate::assemble_pipeline::parallel_kmers_merge::{
     ParallelKmersMergeFactory, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END,
 };
-use crate::colors::colors_manager::ColorsMergeManager;
+use crate::colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use crate::colors::colors_manager::{color_types, ColorsManager};
+use crate::colors::colors_manager::{ColorsMergeManager, MinimizerBucketingSeqColorData};
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashableSequence;
@@ -50,7 +51,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
             rhash_map: HashMap::with_capacity(4096),
             saved_reads: vec![],
             rcorrect_reads: Vec::new(),
-            temp_colors: <CX::ColorsMergeManagerType<MH> as ColorsMergeManager<MH, CX>>::allocate_temp_buffer_structure()
+            temp_colors: CX::ColorsMergeManagerType::<MH>::allocate_temp_buffer_structure(),
         }
     }
 
@@ -121,7 +122,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
         batch: &Vec<(
             u8,
-            CX::MinimizerBucketingSeqColorDataType,
+            MinimizerBucketingSeqColorDataType<CX>,
             CompressedReadIndipendent,
         )>,
         ref_sequences: &Vec<u8>,
@@ -138,7 +139,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             let last_hash_pos = read.bases_count() - k;
             let mut saved_read_offset = None;
 
-            for (idx, hash) in hashes.iter_enumerate() {
+            for ((idx, hash), kmer_color) in hashes.iter_enumerate().zip(color.get_iterator()) {
                 let begin_ignored = flags & READ_FLAG_INCL_BEGIN == 0 && idx == 0;
                 let end_ignored = flags & READ_FLAG_INCL_END == 0 && idx == last_hash_pos;
 
@@ -160,7 +161,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 
                 CX::ColorsMergeManagerType::<MH>::add_temp_buffer_structure_el(
                     &mut map_packet.temp_colors,
-                    &color,
+                    &kmer_color,
                     (idx, hash.to_unextendable()),
                 );
 

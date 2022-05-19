@@ -1,4 +1,6 @@
+use crate::colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
+use crate::colors::default_colors_manager::SingleSequenceInfo;
 use crate::config::BucketIndexType;
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
@@ -81,7 +83,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecu
     for QuerierMinimizerBucketingExecutorFactory<H, CX>
 {
     type GlobalData = ();
-    type ExtraData = QueryKmersReferenceData<CX::MinimizerBucketingSeqColorDataType>;
+    type ExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
     type PreprocessInfo = ReadType;
     type FileInfo = FileType;
 
@@ -109,10 +111,9 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         &mut self,
         file_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::FileInfo,
         read_index: u64,
-        preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
         _sequence: &FastaSequence,
-    ) {
-        *preprocess_info = match file_info {
+    ) -> <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo{
+        match file_info {
             FileType::Graph => ReadType::Graph,
             FileType::Query => ReadType::Query(NonZeroU64::new(read_index + 1).unwrap()),
         }
@@ -123,8 +124,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         &mut self,
         _flags: u8,
         _extra_data: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-        _preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
-    ) {
+    ) -> <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo{
         todo!()
     }
 
@@ -156,8 +156,11 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                     0,
                     match preprocess_info {
                         ReadType::Graph => QueryKmersReferenceData::Graph(
-                            CX::MinimizerBucketingSeqColorDataType::create(
-                                0, // FIXME! build the correct colors!
+                            MinimizerBucketingSeqColorDataType::<CX>::create(
+                                SingleSequenceInfo {
+                                    file_index: 0,
+                                    sequence_ident: &[],
+                                }, // FIXME! build the correct colors!
                             ),
                         ),
 
@@ -177,9 +180,14 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
             0,
             match preprocess_info {
                 ReadType::Graph => {
-                    QueryKmersReferenceData::Graph(CX::MinimizerBucketingSeqColorDataType::create(
-                        0, // FIXME! build the correct colors!
-                    ))
+                    QueryKmersReferenceData::Graph(
+                        MinimizerBucketingSeqColorDataType::<CX>::create(
+                            SingleSequenceInfo {
+                                file_index: 0,
+                                sequence_ident: &[],
+                            }, // FIXME! build the correct colors!
+                        ),
+                    )
                 }
 
                 ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
