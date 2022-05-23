@@ -110,7 +110,7 @@ impl SequenceExtraData for MinBkMultipleColors {
     fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write) {
         encode_varint(|b| writer.write_all(b), buffer.len() as u64).unwrap();
 
-        for (pos, color) in buffer[self.colors_slice].iter() {
+        for (pos, color) in buffer[self.colors_slice.clone()].iter() {
             encode_varint(|b| writer.write_all(b), *pos as u64).unwrap();
             encode_varint(|b| writer.write_all(b), *color as u64).unwrap();
         }
@@ -145,7 +145,7 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
 
     fn get_iterator<'a>(&'a self, buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator<'a> {
         MinBkSingleColorIterator {
-            colors_slice: &buffer[self.colors_slice],
+            colors_slice: &buffer[self.colors_slice.clone()],
             vec_pos: 0,
             iter_idx: 0,
         }

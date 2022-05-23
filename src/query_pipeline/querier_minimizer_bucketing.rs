@@ -42,7 +42,7 @@ impl Default for FileType {
 }
 
 pub struct ReadTypeBuffered<CX: ColorsManager> {
-    colors_buffer: <MinimizerBucketingSeqColorDataType<CX> as SequenceExtraData>::TempBuffer,
+    colors_buffer: <QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraData>::TempBuffer,
     read_type: ReadType<CX>,
 }
 
@@ -57,7 +57,8 @@ pub enum ReadType<CX: ColorsManager> {
 impl<CX: ColorsManager> Default for ReadTypeBuffered<CX> {
     fn default() -> Self {
         Self {
-            colors_buffer: MinimizerBucketingSeqColorDataType::<CX>::new_temp_buffer(),
+            colors_buffer:
+                QueryKmersReferenceData::<MinimizerBucketingSeqColorDataType<CX>>::new_temp_buffer(),
             read_type: ReadType::Query(NonZeroU64::new(1).unwrap()),
         }
     }
@@ -129,7 +130,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
-            &mut preprocess_info.color_info_buffer,
+            &mut preprocess_info.colors_buffer.0,
         );
 
         let color = MinimizerBucketingSeqColorDataType::<CX>::create(
@@ -137,7 +138,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                 file_index: 0, // FIXME: Change this to support querying of raw reads
                 sequence_ident: sequence.ident,
             },
-            &mut preprocess_info.colors_buffer,
+            &mut preprocess_info.colors_buffer.0,
         );
 
         preprocess_info.read_type = match file_info {
@@ -183,7 +184,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                     H::get_second_bucket(last_hash) & self.global_data.buckets_count_mask,
                     sequence.get_subslice(last_index..(index + self.global_data.k)),
                     0,
-                    match preprocess_info {
+                    match &preprocess_info.read_type {
                         ReadType::Graph { color } => QueryKmersReferenceData::Graph(
                             color.get_subslice(last_index..(index + 1)), // FIXME: Check if the subslice is correct,
                         ),

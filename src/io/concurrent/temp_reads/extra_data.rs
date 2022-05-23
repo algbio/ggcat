@@ -74,10 +74,8 @@ pub trait SequenceExtraData:
 }
 
 pub trait SequenceExtraDataOwned: SequenceExtraData {
-    #[inline(always)]
     fn decode_from_slice(slice: &[u8]) -> Option<Self>;
 
-    #[inline(always)]
     unsafe fn decode_from_pointer(ptr: *const u8) -> Option<Self>;
 
     fn decode(reader: &mut impl Read) -> Option<Self>;

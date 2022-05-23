@@ -8,6 +8,8 @@ use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE};
 use crate::hashes::HashFunction;
 use crate::hashes::{ExtendableHashTraitType, HashFunctionFactory, MinimizerHashFunctionFactory};
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use crate::io::structs::hash_entry::Direction;
 use crate::pipeline_common::kmers_transform::{
     KmersTransformExecutorFactory, KmersTransformFinalExecutor,
@@ -32,6 +34,8 @@ pub struct ParallelKmersMergeFinalExecutor<
     backward_seq: Vec<u8>,
     unitigs_temp_colors: color_types::TempUnitigColorStructure<MH, CX>,
     current_bucket: Option<ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>>,
+    temp_color_buffer:
+        <color_types::PartialUnitigsColorStructure<MH, CX> as SequenceExtraData>::TempBuffer,
     bucket_counter: usize,
     bucket_change_threshold: usize,
     _phantom: PhantomData<H>,
@@ -50,6 +54,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             backward_seq: Vec::with_capacity(global_data.k),
             unitigs_temp_colors: CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure(),
             current_bucket: None,
+            temp_color_buffer: color_types::PartialUnitigsColorStructure::<MH, CX>::new_temp_buffer(
+            ),
             bucket_counter: 0,
             bucket_change_threshold: 16, // TODO: Parametrize
             _phantom: PhantomData,
@@ -285,11 +291,15 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 &self.backward_seq[..]
             };
 
-            let read_index = current_bucket.add_read(
-                color_types::ColorsMergeManagerType::<MH, CX>::encode_part_unitigs_colors(
-                    &mut self.unitigs_temp_colors,
-                ),
-                out_seq,
+            let colors = color_types::ColorsMergeManagerType::<MH, CX>::encode_part_unitigs_colors(
+                &mut self.unitigs_temp_colors,
+                &mut self.temp_color_buffer,
+            );
+
+            let read_index = current_bucket.add_read(colors, out_seq, &self.temp_color_buffer);
+
+            color_types::PartialUnitigsColorStructure::<MH, CX>::clear_temp_buffer(
+                &mut self.temp_color_buffer,
             );
 
             Self::write_hashes(

@@ -62,7 +62,7 @@ impl AssemblePipeline {
 
                 LockFreeBinaryReader::new(input, RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed)
-                }, DEFAULT_PREFETCH_AMOUNT).decode_all_bucket_items::<HashEntry<H::HashTypeUnextendable>, _>((), |h| {
+                }, DEFAULT_PREFETCH_AMOUNT).decode_all_bucket_items::<HashEntry<H::HashTypeUnextendable>, _>((), &mut (), |h, _| {
                     hashes_vec.push(h);
                 });
 

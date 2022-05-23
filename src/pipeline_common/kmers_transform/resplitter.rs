@@ -153,10 +153,11 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformResplitter<F> 
                 &preprocess_info,
                 sequence,
                 0..sequence.bases_count(),
-                |bucket, _sec_bucket, seq, flags, extra| {
-                    local_buffer.add_element(
+                |bucket, _sec_bucket, seq, flags, extra, extra_buffer| {
+                    local_buffer.add_element_extended(
                         bucket % (1 << self.subsplit_buckets_count_log),
                         &extra,
+                        extra_buffer,
                         &CompressedReadsBucketHelper::<
                             _,
                             <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,

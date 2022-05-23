@@ -66,7 +66,7 @@ impl MinimizerInputSequence for &[u8] {
 pub trait MinimizerBucketingExecutorFactory: Sized {
     type GlobalData: Sync + Send + 'static;
     type ExtraData: SequenceExtraData;
-    type PreprocessInfo;
+    type PreprocessInfo: Default;
     type FileInfo: Clone + Sync + Send + Default + 'static;
 
     #[allow(non_camel_case_types)]
@@ -300,12 +300,11 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
                         tmp_reads_buffer.add_element_extended(
                             bucket,
                             &extra,
-                            &extra_buffer,
+                            extra_buffer,
                             &CompressedReadsBucketHelper::<
                                 _,
                                 E::FLAGS_COUNT,
                                 { USE_SECOND_BUCKET },
-                                true,
                             >::new(seq, flags, second_bucket as u8),
                         );
                     },

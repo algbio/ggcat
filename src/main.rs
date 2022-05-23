@@ -284,11 +284,9 @@ fn main() {
         let stderr = std::io::stderr();
         let mut err_lock = stderr.lock();
 
-        let _ = writeln!(
-            err_lock,
-            "Thread panicked at location: {:?}",
-            info.location()
-        );
+        if let Some(location) = info.location() {
+            let _ = writeln!(err_lock, "Thread panicked at location: {}", location);
+        }
         if let Some(message) = info.message() {
             let _ = writeln!(err_lock, "Error message: {}", message);
         }
@@ -319,6 +317,7 @@ fn main() {
             for color in colors {
                 println!("MATCH: {}", color);
             }
+            return; // Skip final memory deallocation
         }
         CliArgs::Query(args) => {
             initialize(&args.common_args, &args.output_file);

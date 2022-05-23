@@ -1,6 +1,6 @@
 use crate::assemble_pipeline::links_compaction::LinkMapping;
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
+use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{
     SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
     DEFAULT_PREFETCH_AMOUNT,
@@ -32,6 +32,7 @@ use parking_lot::Mutex;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::io::{Read, Write};
+use std::mem::transmute;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -42,21 +43,36 @@ pub struct ReorganizedReadsExtraData<CX: SequenceExtraData> {
     pub color: CX,
 }
 
-impl<CX: SequenceExtraData> SequenceExtraDataTempBufferManagement<(CX::TempBuffer,)>
+#[repr(transparent)]
+pub struct ReorganizedReadsBuffer<CX: SequenceExtraData>(pub CX::TempBuffer);
+impl<CX: SequenceExtraData> ReorganizedReadsBuffer<CX> {
+    pub fn from_inner_mut(inner: &mut CX::TempBuffer) -> &mut Self {
+        unsafe { transmute(inner) }
+    }
+    pub fn from_inner(inner: &CX::TempBuffer) -> &Self {
+        unsafe { transmute(inner) }
+    }
+}
+
+impl<CX: SequenceExtraData> SequenceExtraDataTempBufferManagement<ReorganizedReadsBuffer<CX>>
     for ReorganizedReadsExtraData<CX>
 {
     #[inline(always)]
-    fn new_temp_buffer() -> (CX::TempBuffer,) {
-        (CX::new_temp_buffer(),)
+    fn new_temp_buffer() -> ReorganizedReadsBuffer<CX> {
+        ReorganizedReadsBuffer(CX::new_temp_buffer())
     }
 
     #[inline(always)]
-    fn clear_temp_buffer(buffer: &mut (CX::TempBuffer,)) {
+    fn clear_temp_buffer(buffer: &mut ReorganizedReadsBuffer<CX>) {
         CX::clear_temp_buffer(&mut buffer.0)
     }
 
     #[inline(always)]
-    fn copy_extra_from(extra: Self, src: &(CX::TempBuffer,), dst: &mut (CX::TempBuffer,)) -> Self {
+    fn copy_extra_from(
+        extra: Self,
+        src: &ReorganizedReadsBuffer<CX>,
+        dst: &mut ReorganizedReadsBuffer<CX>,
+    ) -> Self {
         let changed_color = CX::copy_extra_from(extra.color, &src.0, &mut dst.0);
         Self {
             unitig: extra.unitig,
@@ -66,7 +82,7 @@ impl<CX: SequenceExtraData> SequenceExtraDataTempBufferManagement<(CX::TempBuffe
 }
 
 impl<CX: SequenceExtraData> SequenceExtraData for ReorganizedReadsExtraData<CX> {
-    type TempBuffer = (CX::TempBuffer,);
+    type TempBuffer = ReorganizedReadsBuffer<CX>;
 
     #[inline(always)]
     fn decode_extended(buffer: &mut Self::TempBuffer, mut reader: &mut impl Read) -> Option<Self> {
@@ -190,7 +206,7 @@ impl AssemblePipeline {
                                 unitig: UnitigIndex::new(bucket_index, index as usize, false),
                                 color,
                             },
-                            color_buffer,
+                            ReorganizedReadsBuffer::from_inner(color_buffer),
                             &CompressedReadsBucketHelper::<
                                 ReorganizedReadsExtraData<
                                     color_types::PartialUnitigsColorStructure<MH, CX>,

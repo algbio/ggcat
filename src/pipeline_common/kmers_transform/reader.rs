@@ -290,14 +290,15 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
                         &read,
                         &mut self.buffers[bucket].reads_buffer,
                     );
-                    self.buffers[bucket]
-                        .reads
-                        .push((flags, extra_data, ind_read));
                     extra_data = F::AssociatedExtraData::copy_extra_from(
                         extra_data,
                         extra_buffer,
                         &mut self.buffers[bucket].extra_buffer,
                     );
+
+                    self.buffers[bucket]
+                        .reads
+                        .push((flags, extra_data, ind_read));
 
                     if self.buffers[bucket].reads.len() == self.buffers[bucket].reads.capacity() {
                         replace_with_or_abort(&mut self.buffers[bucket], |buffer| {

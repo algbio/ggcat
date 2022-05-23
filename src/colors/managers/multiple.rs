@@ -116,11 +116,9 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
 
                         let slice = &mut data.temp_colors[slice_start..slice_end];
                         slice.sort_unstable();
+
                         // Assign the subset color index to the current kmer
-
                         let unique_colors = slice.partition_dedup().0;
-
-                        // println!("Unique colors: {:?}", unique_colors);
 
                         let partition = from_raw_parts(unique_colors.as_ptr(), unique_colors.len());
                         if partition == &data.temp_colors[last_partition.0..last_partition.1] {
@@ -129,6 +127,15 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
                             entry.color_index.color_index = global_colors_table.get_id(partition);
                             last_color = entry.color_index.color_index;
                             last_partition = (slice_start, slice_end);
+                        }
+
+                        if partition.len() > 390 {
+                            println!(
+                                "Unique colors: {:?} with index: {:x}/{}",
+                                partition,
+                                entry.color_index.color_index,
+                                entry.color_index.color_index
+                            );
                         }
                     }
                 }
@@ -195,7 +202,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
 
         let len = src.slice.end - src.slice.start;
 
-        let colors_slice = &src_buffer.colors[src.slice];
+        let colors_slice = &src_buffer.colors.as_slice();
 
         for i in 0..len {
             let color = colors_slice[get_index(i)];
@@ -240,8 +247,13 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
         colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
         buffer: &mut impl Write,
     ) {
-        for i in colors.slice {
-            write!(buffer, " C:{:x}:{}", colors_buffer[i].0, colors_buffer[i].1).unwrap();
+        for i in colors.slice.clone() {
+            write!(
+                buffer,
+                " C:{:x}:{}",
+                colors_buffer.colors[i].0, colors_buffer.colors[i].1
+            )
+            .unwrap();
         }
     }
 
@@ -265,28 +277,31 @@ pub struct DefaultUnitigsTempColorData {
     colors: VecDeque<(ColorIndexType, u64)>,
 }
 
+#[derive(Debug)]
+pub struct UnitigsSerializerTempBuffer {
+    colors: Vec<(ColorIndexType, u64)>,
+}
+
 #[derive(Clone, Debug)]
 pub struct UnitigColorDataSerializer {
     slice: Range<usize>,
 }
 
-impl SequenceExtraDataTempBufferManagement<DefaultUnitigsTempColorData>
+impl SequenceExtraDataTempBufferManagement<UnitigsSerializerTempBuffer>
     for UnitigColorDataSerializer
 {
-    fn new_temp_buffer() -> DefaultUnitigsTempColorData {
-        DefaultUnitigsTempColorData {
-            colors: VecDeque::new(),
-        }
+    fn new_temp_buffer() -> UnitigsSerializerTempBuffer {
+        UnitigsSerializerTempBuffer { colors: Vec::new() }
     }
 
-    fn clear_temp_buffer(buffer: &mut DefaultUnitigsTempColorData) {
+    fn clear_temp_buffer(buffer: &mut UnitigsSerializerTempBuffer) {
         buffer.colors.clear();
     }
 
     fn copy_extra_from(
         extra: Self,
-        src: &DefaultUnitigsTempColorData,
-        dst: &mut DefaultUnitigsTempColorData,
+        src: &UnitigsSerializerTempBuffer,
+        dst: &mut UnitigsSerializerTempBuffer,
     ) -> Self {
         let start = dst.colors.len();
         dst.colors.extend(&src.colors[extra.slice]);
@@ -297,7 +312,7 @@ impl SequenceExtraDataTempBufferManagement<DefaultUnitigsTempColorData>
 }
 
 impl SequenceExtraData for UnitigColorDataSerializer {
-    type TempBuffer = DefaultUnitigsTempColorData;
+    type TempBuffer = UnitigsSerializerTempBuffer;
 
     fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
         let start = buffer.colors.len();
@@ -305,7 +320,7 @@ impl SequenceExtraData for UnitigColorDataSerializer {
         let colors_count = decode_varint(|| reader.read_u8().ok())?;
 
         for _ in 0..colors_count {
-            buffer.colors.push_back((
+            buffer.colors.push((
                 decode_varint(|| reader.read_u8().ok())? as ColorIndexType,
                 decode_varint(|| reader.read_u8().ok())?,
             ));
@@ -319,7 +334,7 @@ impl SequenceExtraData for UnitigColorDataSerializer {
         let colors_count = self.slice.end - self.slice.start;
         encode_varint(|b| writer.write_all(b), colors_count as u64).unwrap();
 
-        for i in self.slice {
+        for i in self.slice.clone() {
             let el = buffer.colors[i];
             encode_varint(|b| writer.write_all(b), el.0 as u64).unwrap();
             encode_varint(|b| writer.write_all(b), el.1).unwrap();

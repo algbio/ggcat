@@ -77,6 +77,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformProcessor<F> {
         self.map_processor.process_group_batch_sequences(
             &self.context.global_extra_data,
             &input_packet.reads,
+            &input_packet.extra_buffer,
             &input_packet.reads_buffer,
         );
     }
