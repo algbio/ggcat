@@ -170,9 +170,13 @@ impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
         Some(D::decode_stream(reader, size))
     }
 
-    pub fn decode_bucket_items_parallel<E: BucketItem, F: for<'a> FnMut(E::ReadType<'a>)>(
+    pub fn decode_bucket_items_parallel<
+        E: BucketItem,
+        F: for<'a> FnMut(E::ReadType<'a>, &mut E::ExtraDataBuffer),
+    >(
         &self,
         mut buffer: E::ReadBuffer,
+        mut extra_buffer: E::ExtraDataBuffer,
         mut func: F,
     ) -> bool {
         let mut stream = match self.get_read_parallel_stream() {
@@ -180,23 +184,27 @@ impl<D: ChunkDecoder> GenericChunkedBinaryReader<D> {
             Some(stream) => stream,
         };
 
-        while let Some(el) = E::read_from(&mut stream, &mut buffer) {
-            func(el);
+        while let Some(el) = E::read_from(&mut stream, &mut buffer, &mut extra_buffer) {
+            func(el, &mut extra_buffer);
         }
         return true;
     }
 }
 
 impl<D: ChunkDecoder> BucketReader for GenericChunkedBinaryReader<D> {
-    fn decode_all_bucket_items<E: BucketItem, F: for<'a> FnMut(E::ReadType<'a>)>(
+    fn decode_all_bucket_items<
+        E: BucketItem,
+        F: for<'a> FnMut(E::ReadType<'a>, &mut E::ExtraDataBuffer),
+    >(
         mut self,
         mut buffer: E::ReadBuffer,
+        extra_buffer: &mut E::ExtraDataBuffer,
         mut func: F,
     ) {
         let mut stream = self.get_single_stream();
 
-        while let Some(el) = E::read_from(&mut stream, &mut buffer) {
-            func(el);
+        while let Some(el) = E::read_from(&mut stream, &mut buffer, extra_buffer) {
+            func(el, extra_buffer);
         }
     }
 

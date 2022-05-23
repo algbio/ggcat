@@ -9,6 +9,7 @@ use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::HashableSequence;
 use crate::hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
 use crate::pipeline_common::kmers_transform::{
     KmersTransformExecutorFactory, KmersTransformMapProcessor,
@@ -125,6 +126,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             MinimizerBucketingSeqColorDataType<CX>,
             CompressedReadIndipendent,
         )>,
+        extra_data_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraData>::TempBuffer,
         ref_sequences: &Vec<u8>,
     ) {
         let k = global_data.k;
@@ -139,7 +141,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             let last_hash_pos = read.bases_count() - k;
             let mut saved_read_offset = None;
 
-            for ((idx, hash), kmer_color) in hashes.iter_enumerate().zip(color.get_iterator()) {
+            for ((idx, hash), kmer_color) in hashes
+                .iter_enumerate()
+                .zip(color.get_iterator(extra_data_buffer))
+            {
                 let begin_ignored = flags & READ_FLAG_INCL_BEGIN == 0 && idx == 0;
                 let end_ignored = flags & READ_FLAG_INCL_END == 0 && idx == last_hash_pos;
 

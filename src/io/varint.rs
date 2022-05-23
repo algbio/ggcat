@@ -1,9 +1,12 @@
 use std::mem::MaybeUninit;
 
+pub const VARINT_FLAGS_MAX_SIZE: usize = 10;
+pub const VARINT_MAX_SIZE: usize = 9;
+
 #[inline(always)]
 #[allow(clippy::uninit_assumed_init)]
 pub fn encode_varint<T>(write_bytes: impl FnOnce(&[u8]) -> T, mut value: u64) -> T {
-    let mut bytes: [u8; 9] = unsafe { MaybeUninit::uninit().assume_init() };
+    let mut bytes: [u8; VARINT_MAX_SIZE] = unsafe { MaybeUninit::uninit().assume_init() };
     let mut index = 0;
     while index < bytes.len() {
         let rem = ((value > 127) as u8) << 7;
@@ -25,7 +28,7 @@ pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, FLAGS_COUNT: typenum::Unsig
     mut value: u64,
     flags: u8,
 ) -> T {
-    let mut bytes: [u8; 10] = unsafe { MaybeUninit::uninit().assume_init() };
+    let mut bytes: [u8; VARINT_FLAGS_MAX_SIZE] = unsafe { MaybeUninit::uninit().assume_init() };
 
     let useful_first_bits: usize = 8 - FLAGS_COUNT::to_usize();
     let first_byte_max_value: u8 = ((1u16 << (useful_first_bits - 1)) - 1) as u8;

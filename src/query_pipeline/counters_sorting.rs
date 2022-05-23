@@ -1,7 +1,7 @@
 use crate::config::DEFAULT_PREFETCH_AMOUNT;
-use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use crate::io::concurrent::temp_reads::extra_data::{SequenceExtraData, SequenceExtraDataOwned};
 use crate::io::sequences_reader::SequencesReader;
-use crate::io::varint::{decode_varint, encode_varint};
+use crate::io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use crate::query_pipeline::QueryPipeline;
 use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
@@ -24,7 +24,9 @@ pub struct CounterEntry {
 }
 
 impl SequenceExtraData for CounterEntry {
-    fn decode<'a>(reader: &'a mut impl Read) -> Option<Self> {
+    type TempBuffer = ();
+
+    fn decode_extended(_: &mut (), reader: &mut impl Read) -> Option<Self> {
         let query_index = decode_varint(|| reader.read_u8().ok())?;
         let counter = decode_varint(|| reader.read_u8().ok())?;
         Some(Self {
@@ -33,29 +35,31 @@ impl SequenceExtraData for CounterEntry {
         })
     }
 
-    fn encode<'a>(&self, writer: &'a mut impl Write) {
+    fn encode_extended(&self, _: &(), writer: &mut impl Write) {
         encode_varint(|b| writer.write_all(b).ok(), self.query_index);
         encode_varint(|b| writer.write_all(b).ok(), self.counter);
     }
 
     fn max_size(&self) -> usize {
-        20
+        VARINT_MAX_SIZE * 2
     }
 }
 
 impl BucketItem for CounterEntry {
     type ExtraData = ();
+    type ExtraDataBuffer = ();
     type ReadBuffer = ();
     type ReadType<'a> = Self;
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
+    fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData, _: &()) {
         self.encode(bucket);
     }
 
     fn read_from<'a, S: Read>(
         mut stream: S,
         _read_buffer: &'a mut Self::ReadBuffer,
+        _: &mut (),
     ) -> Option<Self::ReadType<'a>> {
         Self::decode(&mut stream)
     }
@@ -99,7 +103,7 @@ impl QueryPipeline {
                 },
                 DEFAULT_PREFETCH_AMOUNT,
             )
-            .decode_all_bucket_items::<CounterEntry, _>((), |h| {
+            .decode_all_bucket_items::<CounterEntry, _>((), &mut (), |h, _| {
                 counters_vec.push(h);
             });
 

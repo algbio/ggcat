@@ -5,8 +5,10 @@ use crate::config::BucketIndexType;
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::MinimizerHashFunctionFactory;
-use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
-use crate::io::varint::{decode_varint, encode_varint};
+use crate::io::concurrent::temp_reads::extra_data::{
+    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+};
+use crate::io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use crate::pipeline_common::minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
@@ -39,32 +41,44 @@ impl Default for FileType {
     }
 }
 
-#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-pub enum ReadType {
-    Graph,
+pub struct ReadTypeBuffered<CX: ColorsManager> {
+    colors_buffer: <MinimizerBucketingSeqColorDataType<CX> as SequenceExtraData>::TempBuffer,
+    read_type: ReadType<CX>,
+}
+
+#[derive(Clone)]
+pub enum ReadType<CX: ColorsManager> {
+    Graph {
+        color: MinimizerBucketingSeqColorDataType<CX>,
+    },
     Query(NonZeroU64),
 }
 
-impl Default for ReadType {
+impl<CX: ColorsManager> Default for ReadTypeBuffered<CX> {
     fn default() -> Self {
-        Self::Graph
+        Self {
+            colors_buffer: MinimizerBucketingSeqColorDataType::<CX>::new_temp_buffer(),
+            read_type: ReadType::Query(NonZeroU64::new(1).unwrap()),
+        }
     }
 }
 
 impl SequenceExtraData for KmersQueryData {
+    type TempBuffer = ();
+
     #[inline(always)]
-    fn decode<'a>(reader: &'a mut impl Read) -> Option<Self> {
+    fn decode_extended(_: &mut (), reader: &mut impl Read) -> Option<Self> {
         Some(Self(decode_varint(|| reader.read_u8().ok())?))
     }
 
     #[inline(always)]
-    fn encode<'a>(&self, writer: &'a mut impl Write) {
+    fn encode_extended(&self, _: &(), writer: &mut impl Write) {
         encode_varint(|b| writer.write_all(b), self.0).unwrap();
     }
 
     #[inline(always)]
     fn max_size(&self) -> usize {
-        10
+        VARINT_MAX_SIZE
     }
 }
 
@@ -84,7 +98,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecu
 {
     type GlobalData = ();
     type ExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
-    type PreprocessInfo = ReadType;
+    type PreprocessInfo = ReadTypeBuffered<CX>;
     type FileInfo = FileType;
 
     #[allow(non_camel_case_types)]
@@ -111,10 +125,23 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         &mut self,
         file_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::FileInfo,
         read_index: u64,
-        _sequence: &FastaSequence,
-    ) -> <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo{
-        match file_info {
-            FileType::Graph => ReadType::Graph,
+        sequence: &FastaSequence,
+        preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+    ) {
+        MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
+            &mut preprocess_info.color_info_buffer,
+        );
+
+        let color = MinimizerBucketingSeqColorDataType::<CX>::create(
+            SingleSequenceInfo {
+                file_index: 0, // FIXME: Change this to support querying of raw reads
+                sequence_ident: sequence.ident,
+            },
+            &mut preprocess_info.colors_buffer,
+        );
+
+        preprocess_info.read_type = match file_info {
+            FileType::Graph => ReadType::Graph { color },
             FileType::Query => ReadType::Query(NonZeroU64::new(read_index + 1).unwrap()),
         }
     }
@@ -124,13 +151,15 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         &mut self,
         _flags: u8,
         _extra_data: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-    ) -> <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo{
+        _extra_data_buffer: &<<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraData>::TempBuffer,
+        _preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+    ) {
         todo!()
     }
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData),
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraData>::TempBuffer),
     >(
         &mut self,
         preprocess_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -155,17 +184,13 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                     sequence.get_subslice(last_index..(index + self.global_data.k)),
                     0,
                     match preprocess_info {
-                        ReadType::Graph => QueryKmersReferenceData::Graph(
-                            MinimizerBucketingSeqColorDataType::<CX>::create(
-                                SingleSequenceInfo {
-                                    file_index: 0,
-                                    sequence_ident: &[],
-                                }, // FIXME! build the correct colors!
-                            ),
+                        ReadType::Graph { color } => QueryKmersReferenceData::Graph(
+                            color.get_subslice(last_index..(index + 1)), // FIXME: Check if the subslice is correct,
                         ),
 
                         ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
                     },
+                    &preprocess_info.colors_buffer,
                 );
 
                 last_index = index + 1;
@@ -178,20 +203,18 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
             H::get_second_bucket(last_hash) & self.global_data.buckets_count_mask,
             sequence.get_subslice(last_index..sequence.seq_len()),
             0,
-            match preprocess_info {
-                ReadType::Graph => {
+            match &preprocess_info.read_type {
+                ReadType::Graph { color } => {
                     QueryKmersReferenceData::Graph(
-                        MinimizerBucketingSeqColorDataType::<CX>::create(
-                            SingleSequenceInfo {
-                                file_index: 0,
-                                sequence_ident: &[],
-                            }, // FIXME! build the correct colors!
-                        ),
+                        color.get_subslice(
+                            last_index..(sequence.seq_len() + 1 - self.global_data.k),
+                        ), // FIXME: Check if the subslice is correct,
                     )
                 }
 
                 ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
             },
+            &preprocess_info.colors_buffer,
         );
     }
 }

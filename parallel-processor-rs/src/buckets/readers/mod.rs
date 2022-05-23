@@ -8,9 +8,13 @@ pub mod lock_free_binary_reader;
 pub mod unbuffered_compressed_binary_reader;
 
 pub trait BucketReader {
-    fn decode_all_bucket_items<E: BucketItem, F: for<'a> FnMut(E::ReadType<'a>)>(
+    fn decode_all_bucket_items<
+        E: BucketItem,
+        F: for<'a> FnMut(E::ReadType<'a>, &mut E::ExtraDataBuffer),
+    >(
         self,
         buffer: E::ReadBuffer,
+        extra_buffer: &mut E::ExtraDataBuffer,
         func: F,
     );
 

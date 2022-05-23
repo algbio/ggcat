@@ -41,11 +41,24 @@ impl<'a, B: LockFreeBucket> SingleBucketThreadDispatcher<'a, B> {
         self.buffer.clear();
     }
 
-    pub fn add_element<T: BucketItem + ?Sized>(&mut self, extra_data: &T::ExtraData, element: &T) {
+    pub fn add_element_extended<T: BucketItem + ?Sized>(
+        &mut self,
+        extra_data: &T::ExtraData,
+        extra_buffer: &T::ExtraDataBuffer,
+        element: &T,
+    ) {
         if element.get_size(extra_data) + self.buffer.len() > self.buffer.capacity() {
             self.flush_buffer();
         }
-        element.write_to(&mut self.buffer, extra_data);
+        element.write_to(&mut self.buffer, extra_data, extra_buffer);
+    }
+
+    pub fn add_element<T: BucketItem<ExtraDataBuffer = ()> + ?Sized>(
+        &mut self,
+        extra_data: &T::ExtraData,
+        element: &T,
+    ) {
+        self.add_element_extended(extra_data, &(), element);
     }
 
     pub fn finalize(self) {}

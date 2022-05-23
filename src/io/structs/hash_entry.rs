@@ -27,16 +27,18 @@ pub struct HashEntry<H: Copy> {
 impl<H: Serialize + DeserializeOwned + Copy> BucketItem for HashEntry<H> {
     type ExtraData = ();
     type ReadBuffer = ();
+    type ExtraDataBuffer = ();
     type ReadType<'a> = Self;
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
+    fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData, _: &()) {
         serialize_into(bucket, self).unwrap();
     }
 
     fn read_from<'a, S: Read>(
         stream: S,
         _read_buffer: &'a mut Self::ReadBuffer,
+        _: &mut (),
     ) -> Option<Self::ReadType<'a>> {
         deserialize_from(stream).ok()
     }

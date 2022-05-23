@@ -7,7 +7,9 @@ use crate::config::{
 use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
 use crate::hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
-use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use crate::io::concurrent::temp_reads::extra_data::{
+    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+};
 use crate::io::varint::{decode_varint, encode_varint};
 use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
 use crate::pipeline_common::kmers_transform::{
@@ -46,11 +48,36 @@ pub enum QueryKmersReferenceData<CX: MinimizerBucketingSeqColorData> {
     Query(NonZeroU64),
 }
 
-impl<CX: MinimizerBucketingSeqColorData> SequenceExtraData for QueryKmersReferenceData<CX> {
+impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataTempBufferManagement<(CX::TempBuffer,)>
+    for QueryKmersReferenceData<CX>
+{
     #[inline(always)]
-    fn decode<'a>(reader: &'a mut impl Read) -> Option<Self> {
+    fn new_temp_buffer() -> (CX::TempBuffer,) {
+        (CX::new_temp_buffer(),)
+    }
+
+    #[inline(always)]
+    fn clear_temp_buffer(buffer: &mut (CX::TempBuffer,)) {
+        CX::clear_temp_buffer(&mut buffer.0);
+    }
+
+    #[inline(always)]
+    fn copy_extra_from(extra: Self, src: &(CX::TempBuffer,), dst: &mut (CX::TempBuffer,)) -> Self {
+        match extra {
+            QueryKmersReferenceData::Graph(color) =>
+            QueryKmersReferenceData::Graph(CX::copy_extra_from(color, &src.0, &mut dst.0)),
+            QueryKmersReferenceData::Query(index) => QueryKmersReferenceData::Query(index),
+        }
+    }
+}
+
+impl<CX: MinimizerBucketingSeqColorData> SequenceExtraData for QueryKmersReferenceData<CX> {
+    type TempBuffer = (CX::TempBuffer,);
+
+    #[inline(always)]
+    fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
         match reader.read_u8().ok()? {
-            0 => Some(Self::Graph(CX::decode(reader)?)),
+            0 => Some(Self::Graph(CX::decode_extended(&mut buffer.0, reader)?)),
             _ => Some(Self::Query(
                 NonZeroU64::new(decode_varint(|| reader.read_u8().ok())? + 1).unwrap(),
             )),
@@ -58,11 +85,11 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraData for QueryKmersReferen
     }
 
     #[inline(always)]
-    fn encode<'a>(&self, writer: &'a mut impl Write) {
+    fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write) {
         match self {
             Self::Graph(cx) => {
                 writer.write_u8(0).unwrap();
-                CX::encode(cx, writer);
+                CX::encode_extended(cx, &buffer.0, writer);
             }
             Self::Query(val) => {
                 writer.write_u8(1).unwrap();
@@ -219,6 +246,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>,
             CompressedReadIndipendent,
         )>,
+        _extra_data_buffer: &<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraData>::TempBuffer,
         ref_sequences: &Vec<u8>,
     ) {
         let k = global_data.k;

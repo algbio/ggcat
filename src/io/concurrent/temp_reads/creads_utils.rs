@@ -1,6 +1,6 @@
 use crate::hashes::HashableSequence;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
-use crate::io::varint::{decode_varint_flags, encode_varint_flags};
+use crate::io::varint::{decode_varint_flags, encode_varint_flags, VARINT_FLAGS_MAX_SIZE};
 use crate::CompressedRead;
 use byteorder::ReadBytesExt;
 use parallel_processor::buckets::bucket_writer::BucketItem;
@@ -17,7 +17,6 @@ pub struct CompressedReadsBucketHelper<
     E: SequenceExtraData,
     FlagsCount: typenum::Unsigned,
     const WITH_SECOND_BUCKET: bool,
-    const RESET_BUFFER: bool,
 > {
     read: ReadData<'a>,
     extra_bucket: u8,
@@ -25,13 +24,8 @@ pub struct CompressedReadsBucketHelper<
     _phantom: PhantomData<(E, FlagsCount)>,
 }
 
-impl<
-        'a,
-        E: SequenceExtraData,
-        FlagsCount: typenum::Unsigned,
-        const WITH_SECOND_BUCKET: bool,
-        const RESET_BUFFER: bool,
-    > CompressedReadsBucketHelper<'a, E, FlagsCount, WITH_SECOND_BUCKET, RESET_BUFFER>
+impl<'a, E: SequenceExtraData, FlagsCount: typenum::Unsigned, const WITH_SECOND_BUCKET: bool>
+    CompressedReadsBucketHelper<'a, E, FlagsCount, WITH_SECOND_BUCKET>
 {
     #[inline(always)]
     pub fn new(read: &'a [u8], flags: u8, extra_bucket: u8) -> Self {
@@ -54,26 +48,26 @@ impl<
     }
 }
 
-impl<
-        'a,
-        E: SequenceExtraData,
-        FlagsCount: typenum::Unsigned,
-        const WITH_SECOND_BUCKET: bool,
-        const RESET_BUFFER: bool,
-    > BucketItem
-    for CompressedReadsBucketHelper<'a, E, FlagsCount, WITH_SECOND_BUCKET, RESET_BUFFER>
+impl<'a, E: SequenceExtraData, FlagsCount: typenum::Unsigned, const WITH_SECOND_BUCKET: bool>
+    BucketItem for CompressedReadsBucketHelper<'a, E, FlagsCount, WITH_SECOND_BUCKET>
 {
     type ExtraData = E;
     type ReadBuffer = Vec<u8>;
+    type ExtraDataBuffer = E::TempBuffer;
     type ReadType<'b> = (u8, u8, E, CompressedRead<'b>);
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Vec<u8>, extra_data: &Self::ExtraData) {
+    fn write_to(
+        &self,
+        bucket: &mut Vec<u8>,
+        extra_data: &Self::ExtraData,
+        extra_data_buffer: &Self::ExtraDataBuffer,
+    ) {
         if WITH_SECOND_BUCKET {
             bucket.push(self.extra_bucket);
         }
 
-        extra_data.encode(bucket);
+        extra_data.encode_extended(extra_data_buffer, bucket);
         match self.read {
             ReadData::Plain(read) => {
                 CompressedRead::from_plain_write_directly_to_buffer_with_flags::<FlagsCount>(
@@ -95,6 +89,7 @@ impl<
     fn read_from<'b, S: Read>(
         mut stream: S,
         read_buffer: &'b mut Self::ReadBuffer,
+        extra_read_buffer: &mut Self::ExtraDataBuffer,
     ) -> Option<Self::ReadType<'b>> {
         let second_bucket = if WITH_SECOND_BUCKET {
             stream.read_u8().ok()?
@@ -102,16 +97,15 @@ impl<
             0
         };
 
-        let extra = E::decode(&mut stream)?;
+        let extra = E::decode_extended(extra_read_buffer, &mut stream)?;
         let (size, flags) = decode_varint_flags::<_, FlagsCount>(|| stream.read_u8().ok())?;
 
         if size == 0 {
             return None;
         }
 
-        if RESET_BUFFER {
-            read_buffer.clear();
-        }
+        read_buffer.clear();
+
         let bytes = ((size + 3) / 4) as usize;
         read_buffer.reserve(bytes);
         let buffer_start = read_buffer.len();
@@ -136,6 +130,9 @@ impl<
             ReadData::Packed(read) => read.bases_count(),
         };
 
-        ((bases_count + 3) / 4) + extra.max_size() + 10 + if WITH_SECOND_BUCKET { 1 } else { 0 }
+        ((bases_count + 3) / 4)
+            + extra.max_size()
+            + VARINT_FLAGS_MAX_SIZE
+            + if WITH_SECOND_BUCKET { 1 } else { 0 }
     }
 }

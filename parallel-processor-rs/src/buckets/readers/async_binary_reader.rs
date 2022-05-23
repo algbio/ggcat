@@ -265,15 +265,19 @@ impl AsyncBinaryReader {
         }
     }
 
-    pub fn decode_all_bucket_items<E: BucketItem, F: for<'a> FnMut(E::ReadType<'a>)>(
+    pub fn decode_all_bucket_items<
+        E: BucketItem,
+        F: for<'a> FnMut(E::ReadType<'a>, &mut E::ExtraDataBuffer),
+    >(
         &self,
         read_thread: Arc<AsyncReaderThread>,
         mut buffer: E::ReadBuffer,
+        mut extra_buffer: E::ExtraDataBuffer,
         mut func: F,
     ) {
         let mut stream = read_thread.read_bucket(self.opened_file.clone());
-        while let Some(el) = E::read_from(&mut stream, &mut buffer) {
-            func(el);
+        while let Some(el) = E::read_from(&mut stream, &mut buffer, &mut extra_buffer) {
+            func(el, &mut extra_buffer);
         }
     }
 

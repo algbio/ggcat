@@ -96,6 +96,7 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
         &mut self,
         global_data: &F::GlobalExtraData,
         batch: &Vec<(u8, F::AssociatedExtraData, CompressedReadIndipendent)>,
+        extra_data_buffer: &<F::AssociatedExtraData as SequenceExtraData>::TempBuffer,
         ref_sequences: &Vec<u8>,
     );
     fn process_group_finalize(

@@ -27,11 +27,12 @@ impl<const LEN: usize> SortedData<LEN> {
 
 impl<const LEN: usize> BucketItem for SortedData<LEN> {
     type ExtraData = ();
+    type ExtraDataBuffer = ();
     type ReadBuffer = Self;
     type ReadType<'a> = &'a Self;
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Vec<u8>, _: &Self::ExtraData) {
+    fn write_to(&self, bucket: &mut Vec<u8>, _: &Self::ExtraData, _: &Self::ExtraDataBuffer) {
         bucket
             .write(unsafe { from_raw_parts(self as *const Self as *const u8, LEN) })
             .unwrap();
@@ -41,6 +42,7 @@ impl<const LEN: usize> BucketItem for SortedData<LEN> {
     fn read_from<'a, S: Read>(
         mut stream: S,
         read_buffer: &'a mut Self::ReadBuffer,
+        _: &mut Self::ExtraDataBuffer,
     ) -> Option<Self::ReadType<'a>> {
         stream
             .read(unsafe { from_raw_parts_mut(read_buffer as *mut Self as *mut u8, LEN) })

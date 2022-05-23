@@ -3,14 +3,17 @@ use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_memmap::ColorsMemMap;
 use crate::colors::storage::roaring::RoaringColorsSerializer;
 use crate::hashes::HashFunctionFactory;
-use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
-use crate::io::varint::{decode_varint, encode_varint};
+use crate::io::concurrent::temp_reads::extra_data::{
+    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+};
+use crate::io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use crate::ColorIndexType;
 use byteorder::ReadBytesExt;
 use core::slice::from_raw_parts;
 use hashbrown::HashMap;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
+use std::ops::Range;
 use std::path::Path;
 
 pub struct MultipleColorsManager<H: HashFunctionFactory> {
@@ -179,20 +182,23 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
     fn join_structures<const REVERSE: bool>(
         dest: &mut Self::TempUnitigColorStructure,
         src: &Self::PartialUnitigsColorStructure,
+        src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
         mut skip: u64,
     ) {
         let get_index = |i| {
             if REVERSE {
-                src.slice.0 + i
+                src.slice.start + i
             } else {
-                src.slice.1 - i - 1
+                src.slice.end - i - 1
             }
         };
 
-        let len = src.slice.1 - src.slice.0;
+        let len = src.slice.end - src.slice.start;
+
+        let colors_slice = &src_buffer.colors[src.slice];
 
         for i in 0..len {
-            let color = src.data.colors[get_index(i)];
+            let color = colors_slice[get_index(i)];
 
             if color.1 <= skip {
                 skip -= color.1;
@@ -217,29 +223,25 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
         }
     }
 
-    fn clear_deserialized_unitigs_colors() {
-        if let Some(data) = unsafe { DESERIALIZED_TEMP_COLOR_DATA.as_mut() } {
-            data.colors.clear();
-        }
-    }
-
     fn encode_part_unitigs_colors(
         ts: &mut Self::TempUnitigColorStructure,
+        colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
     ) -> Self::PartialUnitigsColorStructure {
+        colors_buffer.colors.clear();
+        colors_buffer.colors.extend(ts.colors.iter());
+
         UnitigColorDataSerializer {
-            data: unsafe { &mut *(ts as *mut _) },
-            slice: (0, ts.colors.len()),
+            slice: 0..colors_buffer.colors.len(),
         }
     }
 
-    fn print_color_data(data: &Self::PartialUnitigsColorStructure, buffer: &mut impl Write) {
-        for i in data.slice.0..data.slice.1 {
-            write!(
-                buffer,
-                " C:{:x}:{}",
-                data.data.colors[i].0, data.data.colors[i].1
-            )
-            .unwrap();
+    fn print_color_data(
+        colors: &Self::PartialUnitigsColorStructure,
+        colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
+        buffer: &mut impl Write,
+    ) {
+        for i in colors.slice {
+            write!(buffer, " C:{:x}:{}", colors_buffer[i].0, colors_buffer[i].1).unwrap();
         }
     }
 
@@ -265,48 +267,60 @@ pub struct DefaultUnitigsTempColorData {
 
 #[derive(Clone, Debug)]
 pub struct UnitigColorDataSerializer {
-    data: &'static DefaultUnitigsTempColorData,
-    slice: (usize, usize),
+    slice: Range<usize>,
 }
 
-// FIXME: Workaround for allocations!
-#[thread_local]
-static mut DESERIALIZED_TEMP_COLOR_DATA: Option<DefaultUnitigsTempColorData> = None;
+impl SequenceExtraDataTempBufferManagement<DefaultUnitigsTempColorData>
+    for UnitigColorDataSerializer
+{
+    fn new_temp_buffer() -> DefaultUnitigsTempColorData {
+        DefaultUnitigsTempColorData {
+            colors: VecDeque::new(),
+        }
+    }
+
+    fn clear_temp_buffer(buffer: &mut DefaultUnitigsTempColorData) {
+        buffer.colors.clear();
+    }
+
+    fn copy_extra_from(
+        extra: Self,
+        src: &DefaultUnitigsTempColorData,
+        dst: &mut DefaultUnitigsTempColorData,
+    ) -> Self {
+        let start = dst.colors.len();
+        dst.colors.extend(&src.colors[extra.slice]);
+        Self {
+            slice: start..dst.colors.len(),
+        }
+    }
+}
 
 impl SequenceExtraData for UnitigColorDataSerializer {
-    fn decode<'a>(reader: &'a mut impl Read) -> Option<Self> {
-        let temp_data = unsafe {
-            if DESERIALIZED_TEMP_COLOR_DATA.is_none() {
-                DESERIALIZED_TEMP_COLOR_DATA = Some(DefaultUnitigsTempColorData {
-                    colors: VecDeque::new(),
-                });
-            }
+    type TempBuffer = DefaultUnitigsTempColorData;
 
-            DESERIALIZED_TEMP_COLOR_DATA.as_mut().unwrap()
-        };
-
-        let start = temp_data.colors.len();
+    fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
+        let start = buffer.colors.len();
 
         let colors_count = decode_varint(|| reader.read_u8().ok())?;
 
         for _ in 0..colors_count {
-            temp_data.colors.push_back((
+            buffer.colors.push_back((
                 decode_varint(|| reader.read_u8().ok())? as ColorIndexType,
                 decode_varint(|| reader.read_u8().ok())?,
             ));
         }
         Some(Self {
-            data: temp_data,
-            slice: (start, temp_data.colors.len()),
+            slice: start..buffer.colors.len(),
         })
     }
 
-    fn encode<'a>(&self, writer: &'a mut impl Write) {
-        let colors_count = self.slice.1 - self.slice.0;
+    fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write) {
+        let colors_count = self.slice.end - self.slice.start;
         encode_varint(|b| writer.write_all(b), colors_count as u64).unwrap();
 
-        for i in self.slice.0..self.slice.1 {
-            let el = self.data.colors[i];
+        for i in self.slice {
+            let el = buffer.colors[i];
             encode_varint(|b| writer.write_all(b), el.0 as u64).unwrap();
             encode_varint(|b| writer.write_all(b), el.1).unwrap();
         }
@@ -314,6 +328,6 @@ impl SequenceExtraData for UnitigColorDataSerializer {
 
     #[inline(always)]
     fn max_size(&self) -> usize {
-        (2 * (self.slice.1 - self.slice.0) + 1) * 9
+        (2 * (self.slice.end - self.slice.start) + 1) * VARINT_MAX_SIZE
     }
 }

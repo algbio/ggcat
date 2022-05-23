@@ -7,6 +7,9 @@ use crate::config::BucketIndexType;
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
 use crate::hashes::MinimizerHashFunctionFactory;
+use crate::io::concurrent::temp_reads::extra_data::{
+    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+};
 use crate::io::sequences_reader::FastaSequence;
 use crate::pipeline_common::minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
@@ -28,19 +31,24 @@ pub struct AssemblerMinimizerBucketingExecutor<H: MinimizerHashFunctionFactory, 
 
 pub struct AssemblerPreprocessInfo<CX: ColorsManager> {
     color_info: MinimizerBucketingSeqColorDataType<CX>,
+    color_info_buffer: <MinimizerBucketingSeqColorDataType<CX> as SequenceExtraData>::TempBuffer,
     include_first: bool,
     include_last: bool,
 }
 
-// impl<CX: ColorsManager> Default for AssemblerPreprocessInfo<CX> {
-//     fn default() -> Self {
-//         Self {
-//             color_info: CX::MinimizerBucketingSeqColorDataType::default(),
-//             include_first: false,
-//             include_last: false,
-//         }
-//     }
-// }
+impl<CX: ColorsManager> Default for AssemblerPreprocessInfo<CX> {
+    fn default() -> Self {
+        Self {
+            color_info: MinimizerBucketingSeqColorDataType::<CX>::default(),
+            color_info_buffer:
+                <MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement<
+                    <MinimizerBucketingSeqColorDataType<CX> as SequenceExtraData>::TempBuffer,
+                >>::new_temp_buffer(),
+            include_first: false,
+            include_last: false,
+        }
+    }
+}
 
 #[derive(Clone, Default)]
 pub struct InputFileInfo {
@@ -85,15 +93,21 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         file_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::FileInfo,
         _read_index: u64,
         sequence: &FastaSequence,
-    ) -> <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo{
-        AssemblerPreprocessInfo {
-            color_info: MinimizerBucketingSeqColorDataType::<CX>::create(SingleSequenceInfo {
+        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+    ) {
+        MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
+            &mut preprocess_info.color_info_buffer,
+        );
+
+        preprocess_info.color_info = MinimizerBucketingSeqColorDataType::<CX>::create(
+            SingleSequenceInfo {
                 file_index: file_info.file_index,
                 sequence_ident: sequence.ident,
-            }),
-            include_first: true,
-            include_last: true,
-        }
+            },
+            &mut preprocess_info.color_info_buffer,
+        );
+        preprocess_info.include_first = true;
+        preprocess_info.include_last = true;
     }
 
     #[inline(always)]
@@ -101,17 +115,24 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         &mut self,
         flags: u8,
         extra_data: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-    ) -> <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo{
-        AssemblerPreprocessInfo {
-            color_info: extra_data.clone(), // FIXME: Find a more efficient way to deal with multiple data
-            include_first: (flags & READ_FLAG_INCL_BEGIN) != 0,
-            include_last: (flags & READ_FLAG_INCL_END) != 0,
-        }
+        extra_data_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraData>::TempBuffer,
+        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+    ) {
+        MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
+            &mut preprocess_info.color_info_buffer,
+        );
+        preprocess_info.color_info = MinimizerBucketingSeqColorDataType::<CX>::copy_extra_from(
+            extra_data.clone(),
+            extra_data_buffer,
+            &mut preprocess_info.color_info_buffer,
+        );
+        preprocess_info.include_first = (flags & READ_FLAG_INCL_BEGIN) != 0;
+        preprocess_info.include_last = (flags & READ_FLAG_INCL_END) != 0;
     }
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData)
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraData>::TempBuffer),
     >(
         &mut self,
         preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -153,6 +174,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                     preprocess_info
                         .color_info
                         .get_subslice((max(1, last_index) - 1)..(index + 1)), // FIXME: Check if the subslice is correct
+                    &preprocess_info.color_info_buffer,
                 );
                 last_index = index + 1;
                 last_hash = min_hash;
@@ -170,6 +192,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
             preprocess_info
                 .color_info
                 .get_subslice(start_index..(sequence.seq_len() + 1 - self.global_data.k)), // FIXME: Check if the subslice is correct,
+            &preprocess_info.color_info_buffer,
         );
     }
 }

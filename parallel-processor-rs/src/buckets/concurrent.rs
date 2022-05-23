@@ -40,10 +40,11 @@ impl<B: LockFreeBucket> BucketsThreadDispatcher<B> {
     }
 
     #[inline]
-    pub fn add_element<T: BucketItem + ?Sized>(
+    pub fn add_element_extended<T: BucketItem + ?Sized>(
         &mut self,
         bucket: u16,
         extra_data: &T::ExtraData,
+        extra_data_buffer: &T::ExtraDataBuffer,
         element: &T,
     ) {
         let bucket_buf = &mut self.thread_data.buffers[bucket as usize];
@@ -53,7 +54,17 @@ impl<B: LockFreeBucket> BucketsThreadDispatcher<B> {
             self.mtb.add_data(bucket, bucket_buf.as_slice());
             bucket_buf.clear();
         }
-        element.write_to(bucket_buf, extra_data);
+        element.write_to(bucket_buf, extra_data, extra_data_buffer);
+    }
+
+    #[inline]
+    pub fn add_element<T: BucketItem<ExtraDataBuffer = ()> + ?Sized>(
+        &mut self,
+        bucket: u16,
+        extra_data: &T::ExtraData,
+        element: &T,
+    ) {
+        self.add_element_extended(bucket, extra_data, &(), element);
     }
 
     pub fn finalize(mut self) -> (BucketsThreadBuffer, Arc<MultiThreadBuckets<B>>) {

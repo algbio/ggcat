@@ -1,6 +1,6 @@
 use crate::config::BucketIndexType;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
-use crate::io::varint::{decode_varint, encode_varint};
+use crate::io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use crate::utils::vec_slice::VecSlice;
 use byteorder::ReadBytesExt;
 use parallel_processor::buckets::bucket_writer::BucketItem;
@@ -163,13 +163,15 @@ impl PartialEq for UnitigIndex {
 }
 
 impl SequenceExtraData for UnitigIndex {
-    fn decode<'a>(reader: &'a mut impl Read) -> Option<Self> {
+    type TempBuffer = ();
+
+    fn decode_extended(_: &mut (), reader: &mut impl Read) -> Option<Self> {
         let bucket = decode_varint(|| reader.read_u8().ok())? as BucketIndexType;
         let index = decode_varint(|| reader.read_u8().ok())?;
         Some(UnitigIndex::new_raw(bucket, index as usize))
     }
 
-    fn encode<'a>(&self, writer: &'a mut impl Write) {
+    fn encode_extended(&self, _: &(), writer: &mut impl Write) {
         encode_varint(
             |b| writer.write_all(b).ok(),
             self.raw_bucket_revcomplemented() as u64,
@@ -178,7 +180,7 @@ impl SequenceExtraData for UnitigIndex {
     }
 
     fn max_size(&self) -> usize {
-        12
+        VARINT_MAX_SIZE * 2
     }
 }
 
@@ -243,11 +245,12 @@ pub struct UnitigLink {
 
 impl BucketItem for UnitigLink {
     type ExtraData = Vec<UnitigIndex>;
+    type ExtraDataBuffer = ();
     type ReadBuffer = Vec<UnitigIndex>;
     type ReadType<'a> = Self;
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Vec<u8>, extra_data: &Self::ExtraData) {
+    fn write_to(&self, bucket: &mut Vec<u8>, extra_data: &Self::ExtraData, _: &()) {
         encode_varint(|b| bucket.write_all(b), self.entry).unwrap();
         bucket.write_all(&[self.flags.0]).unwrap();
 
@@ -267,6 +270,7 @@ impl BucketItem for UnitigLink {
     fn read_from<'a, S: Read>(
         mut stream: S,
         read_buffer: &'a mut Self::ReadBuffer,
+        _: &mut (),
     ) -> Option<Self::ReadType<'a>> {
         let entry = decode_varint(|| stream.read_u8().ok())?;
         let flags = stream.read_u8().ok()?;

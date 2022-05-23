@@ -11,7 +11,9 @@ use crate::assemble_pipeline::build_unitigs::write_fasta_entry;
 use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
-use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use crate::io::concurrent::temp_reads::extra_data::{
+    SequenceExtraData, SequenceExtraDataOwned, SequenceExtraDataTempBufferManagement,
+};
 use crate::io::reads_writer::ReadsWriter;
 use crate::io::structs::unitig_link::UnitigIndex;
 use crate::utils::{get_memory_mode, Utils};
@@ -40,19 +42,44 @@ pub struct ReorganizedReadsExtraData<CX: SequenceExtraData> {
     pub color: CX,
 }
 
-impl<CX: SequenceExtraData> SequenceExtraData for ReorganizedReadsExtraData<CX> {
+impl<CX: SequenceExtraData> SequenceExtraDataTempBufferManagement<(CX::TempBuffer,)>
+    for ReorganizedReadsExtraData<CX>
+{
     #[inline(always)]
-    fn decode<'a>(mut reader: &'a mut impl Read) -> Option<Self> {
+    fn new_temp_buffer() -> (CX::TempBuffer,) {
+        (CX::new_temp_buffer(),)
+    }
+
+    #[inline(always)]
+    fn clear_temp_buffer(buffer: &mut (CX::TempBuffer,)) {
+        CX::clear_temp_buffer(&mut buffer.0)
+    }
+
+    #[inline(always)]
+    fn copy_extra_from(extra: Self, src: &(CX::TempBuffer,), dst: &mut (CX::TempBuffer,)) -> Self {
+        let changed_color = CX::copy_extra_from(extra.color, &src.0, &mut dst.0);
+        Self {
+            unitig: extra.unitig,
+            color: changed_color,
+        }
+    }
+}
+
+impl<CX: SequenceExtraData> SequenceExtraData for ReorganizedReadsExtraData<CX> {
+    type TempBuffer = (CX::TempBuffer,);
+
+    #[inline(always)]
+    fn decode_extended(buffer: &mut Self::TempBuffer, mut reader: &mut impl Read) -> Option<Self> {
         Some(Self {
             unitig: UnitigIndex::decode(&mut reader)?,
-            color: CX::decode(&mut reader)?,
+            color: CX::decode_extended(&mut buffer.0, &mut reader)?,
         })
     }
 
     #[inline(always)]
-    fn encode<'a>(&self, mut writer: &'a mut impl Write) {
+    fn encode_extended(&self, buffer: &Self::TempBuffer, mut writer: &mut impl Write) {
         self.unitig.encode(&mut writer);
-        self.color.encode(&mut writer);
+        self.color.encode_extended(&buffer.0, &mut writer);
     }
 
     #[inline(always)]
@@ -116,7 +143,7 @@ impl AssemblePipeline {
                 },
                 DEFAULT_PREFETCH_AMOUNT,
             )
-            .decode_all_bucket_items::<LinkMapping, _>((), |link| {
+            .decode_all_bucket_items::<LinkMapping, _>((), &mut (), |link, _| {
                 mappings.push(link);
             });
 
@@ -130,6 +157,9 @@ impl AssemblePipeline {
 
             let mut fasta_temp_buffer = Vec::new();
 
+            let mut colors_buffer =
+                color_types::PartialUnitigsColorStructure::<MH, CX>::new_temp_buffer();
+
             CompressedBinaryReader::new(
                 read_file,
                 RemoveFileMode::Remove {
@@ -141,48 +171,54 @@ impl AssemblePipeline {
                 color_types::PartialUnitigsColorStructure<MH, CX>,
                 typenum::U0,
                 false,
-                true,
-            >, _>(Vec::new(), |(_, _, color, seq)| {
-                if seq.bases_count() > decompress_buffer.len() {
-                    decompress_buffer.resize(seq.bases_count(), 0);
-                }
-                seq.write_unpacked_to_slice(&mut decompress_buffer[..seq.bases_count()]);
+            >, _>(
+                Vec::new(),
+                &mut colors_buffer,
+                |(_, _, color, seq), color_buffer| {
+                    if seq.bases_count() > decompress_buffer.len() {
+                        decompress_buffer.resize(seq.bases_count(), 0);
+                    }
+                    seq.write_unpacked_to_slice(&mut decompress_buffer[..seq.bases_count()]);
 
-                let seq = &decompress_buffer[..seq.bases_count()];
+                    let seq = &decompress_buffer[..seq.bases_count()];
 
-                if map_index < mappings.len() && mappings[map_index].entry == index {
-                    // Mapping found
-                    tmp_reads_buffer.add_element(
-                        mappings[map_index].bucket,
-                        &ReorganizedReadsExtraData {
-                            unitig: UnitigIndex::new(bucket_index, index as usize, false),
+                    if map_index < mappings.len() && mappings[map_index].entry == index {
+                        // Mapping found
+                        tmp_reads_buffer.add_element_extended(
+                            mappings[map_index].bucket,
+                            &ReorganizedReadsExtraData {
+                                unitig: UnitigIndex::new(bucket_index, index as usize, false),
+                                color,
+                            },
+                            color_buffer,
+                            &CompressedReadsBucketHelper::<
+                                ReorganizedReadsExtraData<
+                                    color_types::PartialUnitigsColorStructure<MH, CX>,
+                                >,
+                                typenum::U0,
+                                false,
+                            >::new(seq, 0, 0),
+                        );
+                        map_index += 1;
+                    } else {
+                        // No mapping, write unitig to file
+                        write_fasta_entry::<MH, CX, _>(
+                            &mut fasta_temp_buffer,
+                            &mut tmp_lonely_unitigs_buffer,
                             color,
-                        },
-                        &CompressedReadsBucketHelper::<
-                            ReorganizedReadsExtraData<
-                                color_types::PartialUnitigsColorStructure<MH, CX>,
-                            >,
-                            typenum::U0,
-                            false,
-                            true,
-                        >::new(seq, 0, 0),
-                    );
-                    map_index += 1;
-                } else {
-                    // No mapping, write unitig to file
-                    write_fasta_entry::<MH, CX, _>(
-                        &mut fasta_temp_buffer,
-                        &mut tmp_lonely_unitigs_buffer,
-                        color,
-                        seq,
-                        0,
-                    );
-                }
+                            color_buffer,
+                            seq,
+                            0,
+                        );
+                    }
 
-                color_types::ColorsMergeManagerType::<MH, CX>::clear_deserialized_unitigs_colors();
+                    color_types::PartialUnitigsColorStructure::<MH, CX>::clear_temp_buffer(
+                        color_buffer,
+                    );
 
-                index += 1;
-            });
+                    index += 1;
+                },
+            );
 
             buffers.put_back(tmp_reads_buffer.finalize().0);
             tmp_lonely_unitigs_buffer.finalize();

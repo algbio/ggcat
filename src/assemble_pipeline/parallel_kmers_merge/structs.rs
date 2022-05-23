@@ -75,10 +75,13 @@ pub struct ResultsBucket<X: SequenceExtraData> {
 }
 
 impl<X: SequenceExtraData> ResultsBucket<X> {
-    pub fn add_read(&mut self, el: X, read: &[u8]) -> u64 {
+    pub fn add_read(&mut self, el: X, read: &[u8], extra_buffer: &X::TempBuffer) -> u64 {
         self.temp_buffer.clear();
-        CompressedReadsBucketHelper::<X, typenum::U0, false, true>::new(read, 0, 0)
-            .write_to(&mut self.temp_buffer, &el);
+        CompressedReadsBucketHelper::<X, typenum::U0, false, true>::new(read, 0, 0).write_to(
+            &mut self.temp_buffer,
+            &el,
+            extra_buffer,
+        );
         self.reads_writer.write_data(self.temp_buffer.as_slice());
 
         let read_index = self.read_index;

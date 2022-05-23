@@ -86,17 +86,27 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
         file_info: &Factory::FileInfo,
         read_index: u64,
         sequence: &FastaSequence,
-    ) -> Factory::PreprocessInfo;
+        preprocess_info: &mut Factory::PreprocessInfo,
+    );
 
     fn reprocess_sequence(
         &mut self,
         flags: u8,
         intermediate_data: &Factory::ExtraData,
-    ) -> Factory::PreprocessInfo;
+        intermediate_data_buffer: &<Factory::ExtraData as SequenceExtraData>::TempBuffer,
+        preprocess_info: &mut Factory::PreprocessInfo,
+    );
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, Factory::ExtraData),
+        F: FnMut(
+            BucketIndexType,
+            BucketIndexType,
+            S,
+            u8,
+            Factory::ExtraData,
+            &<Factory::ExtraData as SequenceExtraData>::TempBuffer,
+        ),
     >(
         &mut self,
         preprocess_info: &Factory::PreprocessInfo,
@@ -258,15 +268,17 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
 
         let mut sequences_count = 0;
 
+        let mut preprocess_info = Default::default();
         let input_packet = input_packet.deref();
         let tmp_reads_buffer = self.tmp_reads_buffer.as_mut().unwrap();
 
         for (index, x) in input_packet.iter_sequences().enumerate() {
             total_bases += x.seq.len() as u64;
-            let preprocess_info = buckets_processor.preprocess_fasta(
+            buckets_processor.preprocess_fasta(
                 &input_packet.file_info,
                 input_packet.start_read_index + index as u64,
                 &x,
+                &mut preprocess_info,
             );
 
             sequences_splitter.process_sequences(&x, None, &mut |sequence: &[u8], range| {
@@ -274,7 +286,7 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
                     &preprocess_info,
                     sequence,
                     range,
-                    |bucket, second_bucket, seq, flags, extra| {
+                    |bucket, second_bucket, seq, flags, extra, extra_buffer| {
                         let counter = &mut self.counters[((bucket as usize) << self.counters_log)
                             + (second_bucket & second_buckets_count_mask) as usize];
 
@@ -285,9 +297,10 @@ impl<E: MinimizerBucketingExecutorFactory + 'static> Executor for MinimizerBucke
                                 .fetch_add(256, Ordering::Relaxed);
                         }
 
-                        tmp_reads_buffer.add_element(
+                        tmp_reads_buffer.add_element_extended(
                             bucket,
                             &extra,
+                            &extra_buffer,
                             &CompressedReadsBucketHelper::<
                                 _,
                                 E::FLAGS_COUNT,

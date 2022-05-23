@@ -47,8 +47,8 @@ pub trait MinimizerBucketingSeqColorData:
     where
         Self: 'a;
 
-    fn create<'a>(file_info: SingleSequenceInfo<'a>) -> Self;
-    fn get_iterator<'a>(&'a self) -> Self::KmerColorIterator<'a>;
+    fn create(file_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self;
+    fn get_iterator<'a>(&'a self, buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator<'a>;
     fn get_subslice(&self, range: Range<usize>) -> Self;
 }
 
@@ -116,20 +116,24 @@ pub trait ColorsMergeManager<H: HashFunctionFactory>: Sized {
     fn join_structures<const REVERSE: bool>(
         dest: &mut Self::TempUnitigColorStructure,
         src: &Self::PartialUnitigsColorStructure,
+        src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
         skip: u64,
     );
 
     fn pop_base(target: &mut Self::TempUnitigColorStructure);
 
-    fn clear_deserialized_unitigs_colors();
-
     /// Encodes partial unitig colors into the extra data structure
     fn encode_part_unitigs_colors(
         ts: &mut Self::TempUnitigColorStructure,
+        colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
     ) -> Self::PartialUnitigsColorStructure;
 
     /// Encodes the color data as ident sequence
-    fn print_color_data(data: &Self::PartialUnitigsColorStructure, buffer: &mut impl Write);
+    fn print_color_data(
+        color: &Self::PartialUnitigsColorStructure,
+        color_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
+        buffer: &mut impl Write,
+    );
 
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]);
 }

@@ -23,13 +23,15 @@ impl ColorsManager for NonColoredManager {
 }
 
 impl SequenceExtraData for NonColoredManager {
+    type TempBuffer = ();
+
     #[inline(always)]
-    fn decode<'a>(_reader: &'a mut impl Read) -> Option<Self> {
+    fn decode_extended(_: &mut (), _reader: &mut impl Read) -> Option<Self> {
         Some(NonColoredManager)
     }
 
     #[inline(always)]
-    fn encode<'a>(&self, _writer: &'a mut impl Write) {}
+    fn encode_extended(&self, _: &(), _writer: &mut impl Write) {}
 
     #[inline(always)]
     fn max_size(&self) -> usize {
@@ -51,12 +53,12 @@ impl MinimizerBucketingSeqColorData for NonColoredManager {
     type KmerColorIterator<'a> = std::iter::Repeat<NonColoredManager>;
 
     #[inline(always)]
-    fn create(_file_index: SingleSequenceInfo) -> Self {
+    fn create(_file_index: SingleSequenceInfo, _: &mut ()) -> Self {
         NonColoredManager
     }
 
     #[inline(always)]
-    fn get_iterator<'a>(&'a self) -> Self::KmerColorIterator<'a> {
+    fn get_iterator<'a>(&'a self, _: &'a ()) -> Self::KmerColorIterator<'a> {
         std::iter::repeat(NonColoredManager)
     }
 
@@ -150,6 +152,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for NonColoredManager {
     fn join_structures<const REVERSE: bool>(
         _dest: &mut Self::TempUnitigColorStructure,
         _src: &Self::PartialUnitigsColorStructure,
+        _src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
         _skip: u64,
     ) {
     }
@@ -158,16 +161,19 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for NonColoredManager {
     fn pop_base(_target: &mut Self::TempUnitigColorStructure) {}
 
     #[inline(always)]
-    fn clear_deserialized_unitigs_colors() {}
-
-    #[inline(always)]
     fn encode_part_unitigs_colors(
         _ts: &mut Self::TempUnitigColorStructure,
+        _colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
     ) -> Self::PartialUnitigsColorStructure {
         NonColoredManager
     }
 
-    fn print_color_data(_data: &Self::PartialUnitigsColorStructure, _buffer: &mut impl Write) {}
+    fn print_color_data(
+        _data: &Self::PartialUnitigsColorStructure,
+        _colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
+        _buffer: &mut impl Write,
+    ) {
+    }
 
     fn debug_tucs(_str: &Self::TempUnitigColorStructure, _seq: &[u8]) {}
 }

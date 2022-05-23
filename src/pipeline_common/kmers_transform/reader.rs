@@ -2,6 +2,7 @@ use crate::config::{
     DEFAULT_PREFETCH_AMOUNT, MIN_BUCKET_CHUNKS_FOR_READING_THREAD, USE_SECOND_BUCKET,
 };
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
+use crate::io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
 use crate::pipeline_common::kmers_transform::reads_buffer::ReadsBuffer;
 use crate::pipeline_common::kmers_transform::resplitter::KmersTransformResplitter;
@@ -270,32 +271,43 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
                 F::AssociatedExtraData,
                 F::FLAGS_COUNT,
                 { USE_SECOND_BUCKET },
-                false,
-            >, _>(async_reader_thread.clone(), Vec::new(), |read_info| {
-                let bucket = if has_single_addr {
-                    0
-                } else {
-                    remappings[preprocessor.get_sequence_bucket(global_extra_data, &read_info)
-                        as usize
-                        % (1 << second_buckets_log_max)]
-                };
+            >, _>(
+                async_reader_thread.clone(),
+                Vec::new(),
+                F::AssociatedExtraData::new_temp_buffer(),
+                |read_info, extra_buffer| {
+                    let bucket = if has_single_addr {
+                        0
+                    } else {
+                        remappings[preprocessor.get_sequence_bucket(global_extra_data, &read_info)
+                            as usize
+                            % (1 << second_buckets_log_max)]
+                    };
 
-                let (flags, _second_bucket, extra_data, read) = read_info;
+                    let (flags, _second_bucket, mut extra_data, read) = read_info;
 
-                let ind_read = CompressedReadIndipendent::from_read(
-                    &read,
-                    &mut self.buffers[bucket].reads_buffer,
-                );
-                self.buffers[bucket]
-                    .reads
-                    .push((flags, extra_data, ind_read));
-                if self.buffers[bucket].reads.len() == self.buffers[bucket].reads.capacity() {
-                    replace_with_or_abort(&mut self.buffers[bucket], |buffer| {
-                        ops.packet_send(self.addresses[bucket].clone(), buffer);
-                        ops.packet_alloc()
-                    });
-                }
-            });
+                    let ind_read = CompressedReadIndipendent::from_read(
+                        &read,
+                        &mut self.buffers[bucket].reads_buffer,
+                    );
+                    self.buffers[bucket]
+                        .reads
+                        .push((flags, extra_data, ind_read));
+                    extra_data = F::AssociatedExtraData::copy_extra_from(
+                        extra_data,
+                        extra_buffer,
+                        &mut self.buffers[bucket].extra_buffer,
+                    );
+
+                    if self.buffers[bucket].reads.len() == self.buffers[bucket].reads.capacity() {
+                        replace_with_or_abort(&mut self.buffers[bucket], |buffer| {
+                            ops.packet_send(self.addresses[bucket].clone(), buffer);
+                            ops.packet_alloc()
+                        });
+                    }
+                    F::AssociatedExtraData::clear_temp_buffer(extra_buffer);
+                },
+            );
         for (packet, address) in self.buffers.drain(..).zip(self.addresses.drain(..)) {
             if packet.reads.len() > 0 {
                 ops.packet_send(address, packet);

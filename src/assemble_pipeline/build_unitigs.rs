@@ -6,6 +6,9 @@ use crate::config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
 use crate::hashes::{HashFunctionFactory, HashableSequence};
 use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
 use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
+use crate::io::concurrent::temp_reads::extra_data::{
+    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+};
 use crate::io::reads_writer::ReadsWriter;
 use crate::io::sequences_reader::FastaSequence;
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
@@ -69,6 +72,7 @@ pub fn write_fasta_entry<
     temp_buffer: &mut Vec<u8>,
     writer: &mut FastaWriterConcurrentBuffer,
     color: color_types::PartialUnitigsColorStructure<MH, CX>,
+    color_buffer: &<color_types::PartialUnitigsColorStructure<MH, CX> as SequenceExtraData>::TempBuffer,
     read: &R,
     index: usize,
     // links_iterator: I,
@@ -77,7 +81,7 @@ pub fn write_fasta_entry<
     temp_buffer.clear();
     write!(temp_buffer, ">{} LN:i:{}", index, read.get_length()).unwrap();
 
-    CX::ColorsMergeManagerType::<MH>::print_color_data(&color, temp_buffer);
+    CX::ColorsMergeManagerType::<MH>::print_color_data(&color, color_buffer, temp_buffer);
 
     let ident_buffer_size = temp_buffer.len();
 
@@ -90,6 +94,13 @@ pub fn write_fasta_entry<
         qual: None,
     });
 }
+
+type CompressedReadsHelperUnitigsBuilding<'a, MH, CX> = CompressedReadsBucketHelper<
+    'a,
+    ReorganizedReadsExtraData<color_types::PartialUnitigsColorStructure<MH, CX>>,
+    typenum::U0,
+    false,
+>;
 
 impl AssemblePipeline {
     pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
@@ -141,9 +152,11 @@ impl AssemblePipeline {
                     let mut unitigs_tmp_vec = Vec::new();
 
                     let mut counter: usize = 0;
-                    while let Some(link) =
-                        UnitigLink::read_from(&mut unitigs_map_stream, &mut unitigs_tmp_vec)
-                    {
+                    while let Some(link) = UnitigLink::read_from(
+                        &mut unitigs_map_stream,
+                        &mut unitigs_tmp_vec,
+                        &mut (),
+                    ) {
                         let start_unitig = UnitigIndex::new(
                             bucket_index,
                             link.entry as usize,
@@ -203,6 +216,12 @@ impl AssemblePipeline {
                     let mut temp_storage = Vec::new();
                     final_sequences.resize(counter, None);
 
+                    let mut color_extra_buffer = ReorganizedReadsExtraData::<
+                        color_types::PartialUnitigsColorStructure<MH, CX>,
+                    >::new_temp_buffer();
+                    let mut final_color_extra_buffer =
+                        color_types::PartialUnitigsColorStructure::<MH, CX>::new_temp_buffer();
+
                     CompressedBinaryReader::new(
                         read_file,
                         RemoveFileMode::Remove {
@@ -210,16 +229,10 @@ impl AssemblePipeline {
                         },
                         DEFAULT_PREFETCH_AMOUNT,
                     )
-                    .decode_all_bucket_items::<CompressedReadsBucketHelper<
-                        ReorganizedReadsExtraData<
-                            color_types::PartialUnitigsColorStructure<MH, CX>,
-                        >,
-                        typenum::U0,
-                        false,
-                        true,
-                    >, _>(
+                    .decode_all_bucket_items::<CompressedReadsHelperUnitigsBuilding<MH, CX>, _>(
                         Vec::new(),
-                        |(_, _, index, seq)| {
+                        &mut color_extra_buffer,
+                        |(_, _, index, seq), _color_extra_buffer| {
                             let &(findex, unitig_info) =
                                 unitigs_hashmap.get(&index.unitig).unwrap();
                             final_sequences[findex] = Some((
@@ -269,6 +282,7 @@ impl AssemblePipeline {
                                     CX::ColorsMergeManagerType::<MH>::join_structures::<true>(
                                         &mut final_unitig_color,
                                         color,
+                                        &color_extra_buffer.0,
                                         0,
                                     );
                                 } else {
@@ -276,6 +290,7 @@ impl AssemblePipeline {
                                     CX::ColorsMergeManagerType::<MH>::join_structures::<false>(
                                         &mut final_unitig_color,
                                         color,
+                                        &color_extra_buffer.0,
                                         0,
                                     );
                                 }
@@ -291,6 +306,7 @@ impl AssemblePipeline {
                                     CX::ColorsMergeManagerType::<MH>::join_structures::<true>(
                                         &mut final_unitig_color,
                                         color,
+                                        &color_extra_buffer.0,
                                         1,
                                     );
                                 } else {
@@ -303,6 +319,7 @@ impl AssemblePipeline {
                                     CX::ColorsMergeManagerType::<MH>::join_structures::<false>(
                                         &mut final_unitig_color,
                                         color,
+                                        &color_extra_buffer.0,
                                         1,
                                     );
                                 }
@@ -318,19 +335,24 @@ impl AssemblePipeline {
                         let writable_color =
                             CX::ColorsMergeManagerType::<MH>::encode_part_unitigs_colors(
                                 &mut final_unitig_color,
+                                &mut final_color_extra_buffer,
                             );
 
                         write_fasta_entry::<MH, CX, _>(
                             &mut ident_buffer,
                             &mut tmp_final_unitigs_buffer,
                             writable_color,
+                            &final_color_extra_buffer,
                             temp_sequence.as_slice(),
                             links_manager.get_unitig_index(bucket_index, unitig_index),
                         );
                         unitig_index += 1;
                     }
 
-                    CX::ColorsMergeManagerType::<MH>::clear_deserialized_unitigs_colors();
+                    // ReorganizedReadsExtraData::<
+                    //     color_types::PartialUnitigsColorStructure<MH, CX>,
+                    // >::clear_temp_buffer(&mut color_extra_buffer);
+
                     tmp_final_unitigs_buffer.finalize();
                 });
         });

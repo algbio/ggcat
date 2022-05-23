@@ -6,7 +6,7 @@ use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
 };
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
-use crate::io::varint::{decode_varint, encode_varint};
+use crate::io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::vec_slice::VecSlice;
 use crate::utils::{get_memory_mode, Utils};
@@ -37,10 +37,16 @@ pub struct LinkMapping {
 impl BucketItem for LinkMapping {
     type ExtraData = ();
     type ReadBuffer = ();
+    type ExtraDataBuffer = ();
     type ReadType<'a> = Self;
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData) {
+    fn write_to(
+        &self,
+        bucket: &mut Vec<u8>,
+        _extra_data: &Self::ExtraData,
+        _: &Self::ExtraDataBuffer,
+    ) {
         encode_varint(|b| bucket.write_all(b), self.bucket as u64).unwrap();
         encode_varint(|b| bucket.write_all(b), self.entry).unwrap();
     }
@@ -48,6 +54,7 @@ impl BucketItem for LinkMapping {
     fn read_from<'a, S: Read>(
         mut stream: S,
         _read_buffer: &'a mut Self::ReadBuffer,
+        _: &mut Self::ExtraDataBuffer,
     ) -> Option<Self::ReadType<'a>> {
         let bucket = decode_varint(|| stream.read_u8().ok())?;
         let entry = decode_varint(|| stream.read_u8().ok())?;
@@ -59,7 +66,7 @@ impl BucketItem for LinkMapping {
 
     #[inline(always)]
     fn get_size(&self, _: &()) -> usize {
-        16
+        VARINT_MAX_SIZE * 2
     }
 }
 
@@ -124,7 +131,9 @@ impl AssemblePipeline {
             let mut current_unitigs_vec = Vec::new();
             let mut final_unitigs_vec = Vec::new();
 
-            while let Some(entry) = UnitigLink::read_from(&mut stream, &mut last_unitigs_vec) {
+            while let Some(entry) =
+                UnitigLink::read_from(&mut stream, &mut last_unitigs_vec, &mut ())
+            {
                 vec.push(entry);
             }
 
