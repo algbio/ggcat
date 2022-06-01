@@ -1,3 +1,4 @@
+use crate::RunLengthColorsSerializer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeCheckpointSize;
 use parallel_processor::memory_data_size::MemoryDataSize;
@@ -6,6 +7,7 @@ use std::time::Duration;
 
 pub type BucketIndexType = u16;
 pub type MinimizerType = u32;
+pub type DefaultColorsSerializer = RunLengthColorsSerializer;
 
 pub const READ_INTERMEDIATE_CHUNKS_SIZE: usize = 1024 * 512 * 1;
 pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(4);

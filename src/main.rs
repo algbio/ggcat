@@ -87,7 +87,7 @@ arg_enum! {
 }
 
 use crate::colors::non_colored::NonColoredManager;
-use crate::config::FLUSH_QUEUE_FACTOR;
+use crate::config::{DefaultColorsSerializer, FLUSH_QUEUE_FACTOR};
 use crate::utils::{compute_best_m, DEBUG_LEVEL};
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -310,7 +310,7 @@ fn main() {
         }
         CliArgs::Matches(args) => {
             let colors_file = args.input_file.with_extension("colors.dat");
-            let colors = ColorsSerializer::<RunLengthColorsSerializer>::read_color(
+            let colors = ColorsSerializer::<DefaultColorsSerializer>::read_color(
                 colors_file,
                 args.match_color,
             );

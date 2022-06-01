@@ -16,6 +16,9 @@ struct AsyncBuffer<T, P: ChunksWriter<TargetData = T>> {
     reference: *const AsyncSliceQueue<T, P>,
 }
 
+unsafe impl<T, P: ChunksWriter<TargetData = T>> Sync for AsyncBuffer<T, P> {}
+unsafe impl<T, P: ChunksWriter<TargetData = T>> Send for AsyncBuffer<T, P> {}
+
 impl<T, P: ChunksWriter<TargetData = T>> AsyncBuffer<T, P> {
     #[allow(clippy::mut_from_ref)]
     fn get_buffer(&self) -> &mut [T] {

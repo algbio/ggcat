@@ -1,7 +1,7 @@
 use crate::assemble_pipeline::parallel_kmers_merge::structs::MapEntry;
 use crate::colors::colors_manager::ColorsMergeManager;
 use crate::colors::colors_memmap::ColorsMemMap;
-use crate::colors::storage::roaring::RoaringColorsSerializer;
+use crate::config::DefaultColorsSerializer;
 use crate::hashes::HashFunctionFactory;
 use crate::io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
@@ -24,7 +24,7 @@ pub struct MultipleColorsManager<H: HashFunctionFactory> {
 
 impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> {
     type SingleKmerColorDataType = ColorIndexType;
-    type GlobalColorsTable = ColorsMemMap<RoaringColorsSerializer>;
+    type GlobalColorsTable = ColorsMemMap<DefaultColorsSerializer>;
 
     fn create_colors_table(
         path: impl AsRef<Path>,
@@ -74,7 +74,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
     }
 
     fn process_colors(
-        global_colors_table: &ColorsMemMap<RoaringColorsSerializer>,
+        global_colors_table: &Self::GlobalColorsTable,
         data: &mut Self::ColorsBufferTempStructure,
         map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
         min_multiplicity: usize,
@@ -127,15 +127,6 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
                             entry.color_index.color_index = global_colors_table.get_id(partition);
                             last_color = entry.color_index.color_index;
                             last_partition = (slice_start, slice_end);
-                        }
-
-                        if partition.len() > 390 {
-                            println!(
-                                "Unique colors: {:?} with index: {:x}/{}",
-                                partition,
-                                entry.color_index.color_index,
-                                entry.color_index.color_index
-                            );
                         }
                     }
                 }
