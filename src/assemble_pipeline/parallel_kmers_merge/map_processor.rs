@@ -168,6 +168,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                     &mut map_packet.temp_colors,
                     &kmer_color,
                     (idx, hash.to_unextendable()),
+                    entry,
                 );
 
                 if entry.get_counter() == global_data.min_multiplicity {

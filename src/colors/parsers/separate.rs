@@ -1,5 +1,5 @@
 use crate::colors::colors_manager::{ColorsParser, MinimizerBucketingSeqColorData};
-use crate::colors::default_colors_manager::SingleSequenceInfo;
+use crate::colors::parsers::SingleSequenceInfo;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use crate::ColorIndexType;

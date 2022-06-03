@@ -1,12 +1,14 @@
-use crate::colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
+use crate::colors::colors_manager::color_types::{
+    MinimizerBucketingSeqColorDataType, SingleKmerColorDataType,
+};
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_SUBBUCKET_KMERS_COUNT,
     RESPLITTING_MAX_K_M_DIFFERENCE,
 };
-use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
 use crate::hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
+use crate::hashes::{HashFunction, HashableSequence};
 use crate::io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
@@ -64,8 +66,9 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataTempBufferManagement<(
     #[inline(always)]
     fn copy_extra_from(extra: Self, src: &(CX::TempBuffer,), dst: &mut (CX::TempBuffer,)) -> Self {
         match extra {
-            QueryKmersReferenceData::Graph(color) =>
-            QueryKmersReferenceData::Graph(CX::copy_extra_from(color, &src.0, &mut dst.0)),
+            QueryKmersReferenceData::Graph(color) => {
+                QueryKmersReferenceData::Graph(CX::copy_extra_from(color, &src.0, &mut dst.0))
+            }
             QueryKmersReferenceData::Query(index) => QueryKmersReferenceData::Query(index),
         }
     }
@@ -141,14 +144,19 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     }
 
     fn new_preprocessor(_global_data: &Arc<Self::GlobalExtraData>) -> Self::PreprocessorType {
-        todo!()
+        Self::PreprocessorType {
+            _phantom: PhantomData,
+        }
     }
 
     fn new_map_processor(
         _global_data: &Arc<Self::GlobalExtraData>,
         _mem_tracker: MemoryTracker<KmersTransformProcessor<Self>>,
     ) -> Self::MapProcessorType {
-        todo!()
+        Self::MapProcessorType {
+            map_packet: None,
+            _phantom: PhantomData,
+        }
     }
 
     fn new_final_executor(global_data: &Arc<Self::GlobalExtraData>) -> Self::FinalExecutorType {
@@ -182,36 +190,49 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 {
     fn get_sequence_bucket<C>(
         &self,
-        _global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
-        _seq_data: &(u8, u8, C, CompressedRead),
+        global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+        seq_data: &(u8, u8, C, CompressedRead),
     ) -> BucketIndexType {
-        todo!()
+        let read = &seq_data.3;
+
+        let hashes = H::new(read.sub_slice(0..global_data.k), global_data.m);
+
+        let minimizer = hashes
+            .iter()
+            .min_by_key(|k| H::get_full_minimizer(k.to_unextendable()))
+            .unwrap();
+
+        H::get_second_bucket(minimizer.to_unextendable())
     }
 }
 
-struct ParallelKmersQueryMapPacket<MH: HashFunctionFactory> {
-    phset: hashbrown::HashSet<MH::HashTypeUnextendable>,
+struct ParallelKmersQueryMapPacket<MH: HashFunctionFactory, CX: Sync + Send + 'static> {
+    phmap: HashMap<MH::HashTypeUnextendable, CX>,
     query_reads: Vec<(u64, MH::HashTypeUnextendable)>,
 }
 
-impl<MH: HashFunctionFactory> PoolObjectTrait for ParallelKmersQueryMapPacket<MH> {
+impl<MH: HashFunctionFactory, CX: Sync + Send + 'static> PoolObjectTrait
+    for ParallelKmersQueryMapPacket<MH, CX>
+{
     type InitData = ();
 
     fn allocate_new(_init_data: &Self::InitData) -> Self {
         Self {
-            phset: hashbrown::HashSet::new(),
+            phmap: HashMap::new(),
             query_reads: Vec::new(),
         }
     }
 
     fn reset(&mut self) {
-        self.phset.clear();
+        self.phmap.clear();
         self.query_reads.clear();
     }
 }
-impl<MH: HashFunctionFactory> PacketTrait for ParallelKmersQueryMapPacket<MH> {
+impl<MH: HashFunctionFactory, CX: Sync + Send + 'static> PacketTrait
+    for ParallelKmersQueryMapPacket<MH, CX>
+{
     fn get_size(&self) -> usize {
-        (self.phset.len() + self.query_reads.len()) * 16 // TODO: Compute correct values
+        (self.phmap.len() + self.query_reads.len()) * 16 // TODO: Compute correct values
     }
 }
 
@@ -220,7 +241,7 @@ struct ParallelKmersQueryMapProcessor<
     MH: HashFunctionFactory,
     CX: ColorsManager,
 > {
-    map_packet: Option<Packet<ParallelKmersQueryMapPacket<MH>>>,
+    map_packet: Option<Packet<ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>>>,
     _phantom: PhantomData<(H, CX)>,
 }
 
@@ -228,7 +249,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     KmersTransformMapProcessor<ParallelKmersQueryFactory<H, MH, CX>>
     for ParallelKmersQueryMapProcessor<H, MH, CX>
 {
-    type MapStruct = ParallelKmersQueryMapPacket<MH>;
+    type MapStruct = ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>;
 
     fn process_group_start(
         &mut self,
@@ -246,7 +267,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>,
             CompressedReadIndipendent,
         )>,
-        _extra_data_buffer: &<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraData>::TempBuffer,
+        extra_data_buffer: &<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraData>::TempBuffer,
         ref_sequences: &Vec<u8>,
     ) {
         let k = global_data.k;
@@ -256,9 +277,12 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             let hashes = MH::new(read.as_reference(ref_sequences), k);
 
             match sequence_type {
-                QueryKmersReferenceData::Graph(_col_info) => {
-                    for hash in hashes.iter() {
-                        map_packet.phset.insert(hash.to_unextendable());
+                QueryKmersReferenceData::Graph(col_info) => {
+                    for (hash, color) in hashes
+                        .iter()
+                        .zip(col_info.get_iterator(&extra_data_buffer.0))
+                    {
+                        map_packet.phmap.insert(hash.to_unextendable(), color);
                     }
                 }
                 QueryKmersReferenceData::Query(index) => {
@@ -286,7 +310,7 @@ struct ParallelKmersQueryFinalExecutor<
     CX: ColorsManager,
 > {
     counters_tmp: BucketsThreadDispatcher<LockFreeBinaryWriter>,
-    query_map: hashbrown::HashMap<u64, u64>,
+    query_map: HashMap<(u64, SingleKmerColorDataType<CX>), u64>,
     _phantom: PhantomData<(H, MH, CX)>,
 }
 
@@ -294,7 +318,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     KmersTransformFinalExecutor<ParallelKmersQueryFactory<H, MH, CX>>
     for ParallelKmersQueryFinalExecutor<H, MH, CX>
 {
-    type MapStruct = ParallelKmersQueryMapPacket<MH>;
+    type MapStruct = ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>;
 
     fn process_map(
         &mut self,
@@ -304,18 +328,22 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         let map_struct = map_struct.deref();
 
         for (query_index, kmer_hash) in &map_struct.query_reads {
-            if map_struct.phset.contains(kmer_hash) {
-                *self.query_map.entry(*query_index).or_insert(0) += 1;
+            if let Some(entry_color) = map_struct.phmap.get(&kmer_hash) {
+                *self
+                    .query_map
+                    .entry((*query_index, entry_color.clone()))
+                    .or_insert(0) += 1;
             }
         }
 
-        for (query_index, counter) in self.query_map.drain() {
+        for ((query_index, color_index), counter) in self.query_map.drain() {
             self.counters_tmp.add_element(
                 (query_index % 0xFF) as BucketIndexType,
-                &(),
+                &color_index,
                 &CounterEntry {
                     query_index,
                     counter,
+                    _phantom: PhantomData,
                 },
             )
         }
@@ -331,7 +359,7 @@ impl QueryPipeline {
         H: MinimizerHashFunctionFactory,
         MH: HashFunctionFactory,
         CX: ColorsManager,
-        P: AsRef<Path> + std::marker::Sync,
+        P: AsRef<Path> + Sync,
     >(
         file_inputs: Vec<PathBuf>,
         buckets_counters_path: PathBuf,

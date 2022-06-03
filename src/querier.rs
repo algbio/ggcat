@@ -9,7 +9,7 @@ use std::path::PathBuf;
 pub fn run_query<
     BucketingHash: MinimizerHashFunctionFactory,
     MergingHash: HashFunctionFactory,
-    AssemblerColorsManager: ColorsManager,
+    QuerierColorsManager: ColorsManager,
 >(
     k: usize,
     m: usize,
@@ -23,7 +23,7 @@ pub fn run_query<
 ) {
     PHASES_TIMES_MONITOR.write().init();
 
-    // let global_colors_table = AssemblerColorsManager::create_colors_table(
+    // let global_colors_table = QuerierColorsManager::create_colors_table(
     //     output_file.with_extension("colors.dat"),
     //     color_names,
     // );
@@ -33,7 +33,7 @@ pub fn run_query<
     let buckets_count = 1 << buckets_count_log;
 
     let (buckets, counters) = if step <= QuerierStartingStep::MinimizerBucketing {
-        QueryPipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
+        QueryPipeline::minimizer_bucketing::<BucketingHash, QuerierColorsManager>(
             graph_input,
             query_input.clone(),
             temp_dir.as_path(),
@@ -50,12 +50,7 @@ pub fn run_query<
     };
 
     let counters_buckets = if step <= QuerierStartingStep::KmersCounting {
-        QueryPipeline::parallel_kmers_counting::<
-            BucketingHash,
-            MergingHash,
-            AssemblerColorsManager,
-            _,
-        >(
+        QueryPipeline::parallel_kmers_counting::<BucketingHash, MergingHash, QuerierColorsManager, _>(
             buckets,
             counters,
             buckets_count,
@@ -68,7 +63,12 @@ pub fn run_query<
         Utils::generate_bucket_names(temp_dir.join("counters"), buckets_count, Some("tmp"))
     };
 
-    QueryPipeline::counters_sorting(k, query_input, counters_buckets, output_file.clone());
+    QueryPipeline::counters_sorting::<QuerierColorsManager>(
+        k,
+        query_input,
+        counters_buckets,
+        output_file.clone(),
+    );
 
     PHASES_TIMES_MONITOR
         .write()

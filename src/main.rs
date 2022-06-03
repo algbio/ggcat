@@ -35,7 +35,7 @@ use std::cmp::max;
 
 use crate::assembler_generic_dispatcher::dispatch_assembler_hash_type;
 use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
-use crate::colors::default_colors_manager::DefaultColorsManager;
+use crate::colors::bundles::multifile_building::ColorBundleMultifileBuilding;
 use crate::colors::storage::run_length::RunLengthColorsSerializer;
 use crate::colors::storage::serializer::ColorsSerializer;
 use crate::colors::ColorIndexType;
@@ -86,6 +86,7 @@ arg_enum! {
     }
 }
 
+use crate::colors::bundles::graph_querying::ColorBundleGraphQuerying;
 use crate::colors::non_colored::NonColoredManager;
 use crate::config::{DefaultColorsSerializer, FLUSH_QUEUE_FACTOR};
 use crate::utils::{compute_best_m, DEBUG_LEVEL};
@@ -303,7 +304,7 @@ fn main() {
         CliArgs::Build(args) => {
             initialize(&args.common_args, &args.output_file);
             if args.colors {
-                dispatch_assembler_hash_type::<DefaultColorsManager>(args);
+                dispatch_assembler_hash_type::<ColorBundleMultifileBuilding>(args);
             } else {
                 dispatch_assembler_hash_type::<NonColoredManager>(args);
             }
@@ -322,7 +323,7 @@ fn main() {
         CliArgs::Query(args) => {
             initialize(&args.common_args, &args.output_file);
             if args.colors {
-                dispatch_querier_hash_type::<DefaultColorsManager>(args);
+                dispatch_querier_hash_type::<ColorBundleGraphQuerying>(args);
             } else {
                 dispatch_querier_hash_type::<NonColoredManager>(args);
             }

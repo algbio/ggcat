@@ -1,3 +1,5 @@
+use crate::colors::colors_manager::color_types::SingleKmerColorDataType;
+use crate::colors::colors_manager::ColorsManager;
 use crate::config::DEFAULT_PREFETCH_AMOUNT;
 use crate::io::concurrent::temp_reads::extra_data::{SequenceExtraData, SequenceExtraDataOwned};
 use crate::io::sequences_reader::SequencesReader;
@@ -13,65 +15,62 @@ use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use std::io::{Read, Write};
+use std::io::Read;
+use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone)]
-pub struct CounterEntry {
+pub struct CounterEntry<CX: SequenceExtraData<TempBuffer = ()>> {
     pub query_index: u64,
     pub counter: u64,
+    pub _phantom: PhantomData<CX>,
 }
 
-impl SequenceExtraData for CounterEntry {
-    type TempBuffer = ();
-
-    fn decode_extended(_: &mut (), reader: &mut impl Read) -> Option<Self> {
-        let query_index = decode_varint(|| reader.read_u8().ok())?;
-        let counter = decode_varint(|| reader.read_u8().ok())?;
-        Some(Self {
-            query_index,
-            counter,
-        })
-    }
-
-    fn encode_extended(&self, _: &(), writer: &mut impl Write) {
-        encode_varint(|b| writer.write_all(b).ok(), self.query_index);
-        encode_varint(|b| writer.write_all(b).ok(), self.counter);
-    }
-
-    fn max_size(&self) -> usize {
-        VARINT_MAX_SIZE * 2
-    }
-}
-
-impl BucketItem for CounterEntry {
-    type ExtraData = ();
+impl<CX: SequenceExtraData<TempBuffer = ()>> BucketItem for CounterEntry<CX> {
+    type ExtraData = CX;
     type ExtraDataBuffer = ();
     type ReadBuffer = ();
-    type ReadType<'a> = Self;
+    type ReadType<'a> = (Self, CX);
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData, _: &()) {
-        self.encode(bucket);
+    fn write_to(
+        &self,
+        bucket: &mut Vec<u8>,
+        extra_data: &Self::ExtraData,
+        _: &Self::ExtraDataBuffer,
+    ) {
+        encode_varint(|b| bucket.extend_from_slice(b), self.query_index);
+        encode_varint(|b| bucket.extend_from_slice(b), self.counter);
+        extra_data.encode(bucket);
     }
 
     fn read_from<'a, S: Read>(
         mut stream: S,
         _read_buffer: &'a mut Self::ReadBuffer,
-        _: &mut (),
+        _: &mut Self::ExtraDataBuffer,
     ) -> Option<Self::ReadType<'a>> {
-        Self::decode(&mut stream)
+        let query_index = decode_varint(|| stream.read_u8().ok())?;
+        let counter = decode_varint(|| stream.read_u8().ok())?;
+        let color = CX::decode(&mut stream)?;
+        Some((
+            Self {
+                query_index,
+                counter,
+                _phantom: PhantomData,
+            },
+            color,
+        ))
     }
 
     #[inline(always)]
-    fn get_size(&self, _: &()) -> usize {
-        self.max_size()
+    fn get_size(&self, data: &Self::ExtraData) -> usize {
+        VARINT_MAX_SIZE * 2 + data.max_size()
     }
 }
 
 impl QueryPipeline {
-    pub fn counters_sorting(
+    pub fn counters_sorting<CX: ColorsManager>(
         k: usize,
         query_input: PathBuf,
         file_counters_inputs: Vec<PathBuf>,
@@ -95,7 +94,10 @@ impl QueryPipeline {
         final_counters.extend((0..sequences_info.len()).map(|_| AtomicU64::new(0)));
 
         file_counters_inputs.par_iter().for_each(|input| {
-            let mut counters_vec: Vec<CounterEntry> = Vec::new();
+            let mut counters_vec: Vec<(
+                CounterEntry<SingleKmerColorDataType<CX>>,
+                SingleKmerColorDataType<CX>,
+            )> = Vec::new();
             LockFreeBinaryReader::new(
                 input,
                 RemoveFileMode::Remove {
@@ -103,17 +105,40 @@ impl QueryPipeline {
                 },
                 DEFAULT_PREFETCH_AMOUNT,
             )
-            .decode_all_bucket_items::<CounterEntry, _>((), &mut (), |h, _| {
-                counters_vec.push(h);
-            });
+            .decode_all_bucket_items::<CounterEntry<SingleKmerColorDataType<CX>>, _>(
+                (),
+                &mut (),
+                |h, _| {
+                    counters_vec.push(h);
+                },
+            );
 
-            crate::make_comparer!(Compare, CounterEntry, query_index: u64);
-            fast_smart_radix_sort::<_, Compare, false>(&mut counters_vec[..]);
+            struct CountersCompare;
+            impl<CX: SequenceExtraData<TempBuffer=()>> SortKey<(CounterEntry<CX>, CX)> for CountersCompare {
+                type KeyType = u64;
+                const KEY_BITS: usize = std::mem::size_of::<u64>() * 8;
 
-            for x in counters_vec.group_by(|a, b| a.query_index == b.query_index) {
-                let query_index = x[0].query_index;
+                fn compare(
+                    left: &(CounterEntry<CX>, CX),
+                    right: &(CounterEntry<CX>, CX),
+                ) -> std::cmp::Ordering {
+                    left.0.query_index.cmp(&right.0.query_index)
+                }
+
+                fn get_shifted(value: &(CounterEntry<CX>, CX), rhs: u8) -> u8 {
+                    (value.0.query_index >> rhs) as u8
+                }
+            }
+
+            fast_smart_radix_sort::<_, CountersCompare, false>(&mut counters_vec[..]);
+
+            for x in counters_vec.group_by_mut(|a, b| a.0.query_index == b.0.query_index) {
+                x.sort_unstable_by(|x, y| x.1.cmp(&y.1));
+                let query_index = x[0].0.query_index;
+
+                // TODO: Save colors here
                 final_counters[query_index as usize - 1]
-                    .store(x.iter().map(|e| e.counter).sum(), Ordering::Relaxed);
+                    .store(x.iter().map(|e| e.0.counter).sum(), Ordering::Relaxed);
             }
         });
 

@@ -4,15 +4,10 @@ use crate::colors::parsers::separate::SeparateColorsParser;
 use crate::colors::ColorIndexType;
 use crate::hashes::HashFunctionFactory;
 
-pub struct SingleSequenceInfo<'a> {
-    pub file_index: usize,
-    pub sequence_ident: &'a [u8],
-}
-
 #[derive(Copy, Clone)]
-pub struct DefaultColorsManager;
+pub struct ColorBundleMultifileBuilding;
 
-impl ColorsManager for DefaultColorsManager {
+impl ColorsManager for ColorBundleMultifileBuilding {
     const COLORS_ENABLED: bool = true;
     type SingleKmerColorDataType = ColorIndexType;
 

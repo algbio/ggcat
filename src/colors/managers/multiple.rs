@@ -57,6 +57,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
         data: &mut Self::ColorsBufferTempStructure,
         kmer_color: &ColorIndexType,
         el: (usize, H::HashTypeUnextendable),
+        _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
     ) {
         if data.flags.last().map(|l| &l.2) != Some(kmer_color) {
             if let Some(last) = data.flags.last_mut() {

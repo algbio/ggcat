@@ -2,7 +2,7 @@ use crate::assemble_pipeline::parallel_kmers_merge::{READ_FLAG_INCL_BEGIN, READ_
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::colors::default_colors_manager::SingleSequenceInfo;
+use crate::colors::parsers::SingleSequenceInfo;
 use crate::config::BucketIndexType;
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;

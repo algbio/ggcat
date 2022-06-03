@@ -2,7 +2,7 @@ use crate::assemble_pipeline::parallel_kmers_merge::structs::MapEntry;
 use crate::colors::colors_manager::{
     ColorsManager, ColorsMergeManager, ColorsParser, MinimizerBucketingSeqColorData,
 };
-use crate::colors::default_colors_manager::SingleSequenceInfo;
+use crate::colors::parsers::SingleSequenceInfo;
 use crate::hashes::HashFunctionFactory;
 use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use hashbrown::HashMap;
@@ -10,7 +10,7 @@ use std::io::{Read, Write};
 use std::ops::Range;
 use std::path::Path;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Default)]
 pub struct NonColoredManager;
 
 /// Dummy colors manager
@@ -100,6 +100,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for NonColoredManager {
         _data: &mut Self::ColorsBufferTempStructure,
         _kmer_color: &Self::SingleKmerColorDataType,
         _el: (usize, <H as HashFunctionFactory>::HashTypeUnextendable),
+        _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
     ) {
     }
 

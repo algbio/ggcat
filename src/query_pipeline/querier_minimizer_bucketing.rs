@@ -1,6 +1,6 @@
 use crate::colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::colors::default_colors_manager::SingleSequenceInfo;
+use crate::colors::parsers::SingleSequenceInfo;
 use crate::config::BucketIndexType;
 use crate::hashes::ExtendableHashTraitType;
 use crate::hashes::HashFunction;
@@ -111,7 +111,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecu
         global_data: &Arc<MinimizerBucketingCommonData<Self::GlobalData>>,
     ) -> Self::ExecutorType {
         Self::ExecutorType {
-            minimizer_queue: RollingMinQueue::new(global_data.k - global_data.m),
+            minimizer_queue: RollingMinQueue::new(global_data.k - global_data.m + 1),
             global_data: global_data.clone(),
             _phantom: PhantomData,
         }
