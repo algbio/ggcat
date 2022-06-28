@@ -16,6 +16,3 @@ counter-stats = { git = "https://github.com/Guilucand/counter-stats.git" }
 [[bin]]
 name = "gzipd"
 path = "src/bin/gzipd.rs"
-
-[profile.release]
-debug = true

@@ -1,4 +1,4 @@
-use crate::colors::storage::serializer::{ColorsFlushProcessing, ColorsIndexEntry};
+use crate::colors::storage::serializer::ColorsFlushProcessing;
 use crate::colors::storage::ColorsSerializerTrait;
 use crate::colors::ColorIndexType;
 use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;

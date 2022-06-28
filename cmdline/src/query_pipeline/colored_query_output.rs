@@ -1,6 +1,4 @@
 use crate::colors::colors_manager::ColorsManager;
-use crate::config::DEFAULT_PREFETCH_AMOUNT;
-use crate::query_pipeline::counters_sorting::CounterEntry;
 use crate::query_pipeline::QueryPipeline;
 use crate::{ColorIndexType, ColorsDeserializer, DefaultColorsSerializer, KEEP_FILES};
 use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;

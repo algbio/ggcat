@@ -1,8 +1,6 @@
 use libdeflate_rs::decompress_gzip::libdeflate_gzip_decompress;
 use libdeflate_rs::streams::deflate_chunked_buffer_input::DeflateChunkedBufferInput;
 use libdeflate_rs::streams::deflate_chunked_buffer_output::DeflateChunkedBufferOutput;
-use libdeflate_rs::streams::deflate_filebuffer_input::DeflateFileBufferInput;
-use libdeflate_rs::streams::deflate_membuffer_output::DeflateMemBufferOutput;
 use libdeflate_rs::*;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -25,7 +23,7 @@ fn main() {
         DeflateChunkedBufferInput::new(|f| read_file.read(f).unwrap_or(0), 1024 * 512);
 
     let mut out_stream = if params.simulate {
-        DeflateChunkedBufferOutput::new(move |data| Ok(()), 1024 * 512)
+        DeflateChunkedBufferOutput::new(move |_data| Ok(()), 1024 * 512)
     } else {
         let mut write_file = File::create(&params.input.with_extension("")).unwrap();
         DeflateChunkedBufferOutput::new(
