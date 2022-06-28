@@ -2,7 +2,7 @@ use crate::colors::colors_manager::ColorsManager;
 use crate::hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use crate::query_pipeline::QueryPipeline;
 use crate::utils::Utils;
-use crate::QuerierStartingStep;
+use crate::{DefaultColorsSerializer, QuerierStartingStep};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::path::PathBuf;
 
@@ -23,10 +23,6 @@ pub fn run_query<
 ) {
     PHASES_TIMES_MONITOR.write().init();
 
-    // let global_colors_table = QuerierColorsManager::create_colors_table(
-    //     output_file.with_extension("colors.dat"),
-    //     color_names,
-    // );
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| {
         Utils::compute_buckets_log_from_input_files(&[graph_input.clone(), query_input.clone()])
     });
@@ -34,7 +30,7 @@ pub fn run_query<
 
     let (buckets, counters) = if step <= QuerierStartingStep::MinimizerBucketing {
         QueryPipeline::minimizer_bucketing::<BucketingHash, QuerierColorsManager>(
-            graph_input,
+            graph_input.clone(),
             query_input.clone(),
             temp_dir.as_path(),
             buckets_count,
@@ -63,16 +59,34 @@ pub fn run_query<
         Utils::generate_bucket_names(temp_dir.join("counters"), buckets_count, Some("tmp"))
     };
 
-    QueryPipeline::counters_sorting::<QuerierColorsManager>(
+    let colored_buckets_prefix = temp_dir.join("color_counters");
+
+    let colored_buckets = QueryPipeline::counters_sorting::<QuerierColorsManager>(
         k,
-        query_input,
+        query_input.clone(),
         counters_buckets,
+        colored_buckets_prefix,
         output_file.clone(),
     );
 
+    if QuerierColorsManager::COLORS_ENABLED {
+        let colormap_file = graph_input.with_extension("colors.dat");
+        let remapped_query_color_buckets = QueryPipeline::colormap_reading::<DefaultColorsSerializer>(
+            colormap_file,
+            colored_buckets,
+            temp_dir,
+        );
+
+        QueryPipeline::colored_query_output::<QuerierColorsManager>(
+            query_input,
+            remapped_query_color_buckets,
+            output_file.clone(),
+        );
+    }
+
     PHASES_TIMES_MONITOR
         .write()
-        .print_stats("Compacted De Brujin graph construction completed.".to_string());
+        .print_stats("Query completed.".to_string());
 
     println!("Final output saved to: {}", output_file.display());
 }

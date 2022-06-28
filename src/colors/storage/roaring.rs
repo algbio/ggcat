@@ -1,5 +1,5 @@
-use crate::colors::storage::serializer::{ColorsFlushProcessing, ColorsIndexEntry};
-use crate::colors::storage::ColorsSerializerImpl;
+use crate::colors::storage::serializer::ColorsFlushProcessing;
+use crate::colors::storage::ColorsSerializerTrait;
 use crate::colors::ColorIndexType;
 use crate::io::chunks_writer::ChunksWriter;
 use parking_lot::Mutex;
@@ -83,13 +83,11 @@ pub struct RoaringColorsSerializer {
     colors_index: AtomicU32,
 }
 
-impl ColorsSerializerImpl for RoaringColorsSerializer {
+impl ColorsSerializerTrait for RoaringColorsSerializer {
+    const MAGIC: [u8; 16] = *b"GGCAT_CMAP_ROARG";
+
     // FIXME: Implement!
-    fn decode_color(
-        _reader: impl Read,
-        _entry_info: ColorsIndexEntry,
-        _color: ColorIndexType,
-    ) -> Vec<u32> {
+    fn decode_color(_reader: impl Read, _out_vec: Option<&mut Vec<u32>>) {
         todo!()
     }
 

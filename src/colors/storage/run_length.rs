@@ -1,5 +1,5 @@
 use crate::colors::storage::serializer::{ColorsFlushProcessing, ColorsIndexEntry};
-use crate::colors::storage::ColorsSerializerImpl;
+use crate::colors::storage::ColorsSerializerTrait;
 use crate::colors::ColorIndexType;
 use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::io::varint::{decode_varint, encode_varint};
@@ -102,22 +102,18 @@ pub struct RunLengthColorsSerializer {
 #[thread_local]
 static mut TEMP_COLOR_BUFFER: Vec<u8> = Vec::new();
 
-impl ColorsSerializerImpl for RunLengthColorsSerializer {
-    fn decode_color(
-        mut reader: impl Read,
-        entry_info: ColorsIndexEntry,
-        color: ColorIndexType,
-    ) -> Vec<ColorIndexType> {
-        let color_off = entry_info.start_index;
+impl ColorsSerializerTrait for RunLengthColorsSerializer {
+    const MAGIC: [u8; 16] = *b"GGCAT_CMAP_RNLEN";
 
-        for _skip in color_off..color {
-            ColorIndexSerializer::deserialize_colors_diffs(&mut reader, |_| {});
+    fn decode_color(mut reader: impl Read, out_vec: Option<&mut Vec<u32>>) {
+        match out_vec {
+            None => {
+                ColorIndexSerializer::deserialize_colors_diffs(&mut reader, |_| {});
+            }
+            Some(out_vec) => {
+                ColorIndexSerializer::deserialize_colors(&mut reader, out_vec);
+            }
         }
-
-        let mut colors = Vec::new();
-        ColorIndexSerializer::deserialize_colors(&mut reader, &mut colors);
-
-        colors
     }
 
     fn new(writer: ColorsFlushProcessing, checkpoint_distance: usize, _colors_count: u64) -> Self {

@@ -29,6 +29,7 @@ mod querier;
 mod querier_generic_dispatcher;
 mod query_pipeline;
 mod rolling;
+mod structs;
 
 use backtrace::Backtrace;
 use std::cmp::max;
@@ -37,7 +38,6 @@ use crate::assembler_generic_dispatcher::dispatch_assembler_hash_type;
 use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
 use crate::colors::bundles::multifile_building::ColorBundleMultifileBuilding;
 use crate::colors::storage::run_length::RunLengthColorsSerializer;
-use crate::colors::storage::serializer::ColorsSerializer;
 use crate::colors::ColorIndexType;
 use crate::io::sequences_reader::FastaSequence;
 use crate::querier_generic_dispatcher::dispatch_querier_hash_type;
@@ -88,6 +88,7 @@ arg_enum! {
 
 use crate::colors::bundles::graph_querying::ColorBundleGraphQuerying;
 use crate::colors::non_colored::NonColoredManager;
+use crate::colors::storage::deserializer::ColorsDeserializer;
 use crate::config::{DefaultColorsSerializer, FLUSH_QUEUE_FACTOR};
 use crate::utils::{compute_best_m, DEBUG_LEVEL};
 use parallel_processor::memory_fs::MemoryFs;
@@ -311,12 +312,15 @@ fn main() {
         }
         CliArgs::Matches(args) => {
             let colors_file = args.input_file.with_extension("colors.dat");
-            let colors = ColorsSerializer::<DefaultColorsSerializer>::read_color(
-                colors_file,
-                args.match_color,
-            );
+            let mut colors_deserializer =
+                ColorsDeserializer::<DefaultColorsSerializer>::new(colors_file);
+
+            let mut colors = Vec::new();
+
+            colors_deserializer.get_color_mappings(args.match_color, &mut colors);
+
             for color in colors {
-                println!("MATCH: {}", color);
+                println!("MATCHES: {}", color);
             }
             return; // Skip final memory deallocation
         }

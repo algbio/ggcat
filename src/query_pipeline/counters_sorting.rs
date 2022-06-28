@@ -1,24 +1,33 @@
 use crate::colors::colors_manager::color_types::SingleKmerColorDataType;
 use crate::colors::colors_manager::ColorsManager;
-use crate::config::DEFAULT_PREFETCH_AMOUNT;
+use crate::config::{
+    SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
+    DEFAULT_PREFETCH_AMOUNT, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+};
 use crate::io::concurrent::temp_reads::extra_data::{SequenceExtraData, SequenceExtraDataOwned};
 use crate::io::sequences_reader::SequencesReader;
 use crate::io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use crate::query_pipeline::QueryPipeline;
+use crate::utils::get_memory_mode;
 use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
 use parallel_processor::buckets::bucket_writer::BucketItem;
+use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::io::Read;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct CounterEntry<CX: SequenceExtraData<TempBuffer = ()>> {
@@ -74,13 +83,16 @@ impl QueryPipeline {
         k: usize,
         query_input: PathBuf,
         file_counters_inputs: Vec<PathBuf>,
+        colored_buckets_path: PathBuf,
         output_file: PathBuf,
-    ) {
+    ) -> Vec<PathBuf> {
         PHASES_TIMES_MONITOR
             .write()
             .start_phase("phase: counters sorting".to_string());
 
         let mut sequences_info = vec![];
+
+        let buckets_count = file_counters_inputs.len();
 
         SequencesReader::process_file_extended(
             query_input,
@@ -90,10 +102,41 @@ impl QueryPipeline {
             false,
         );
 
-        let mut final_counters = Vec::with_capacity(sequences_info.len());
-        final_counters.extend((0..sequences_info.len()).map(|_| AtomicU64::new(0)));
+        let final_counters = if CX::COLORS_ENABLED {
+            vec![]
+        } else {
+            let mut counters = Vec::with_capacity(sequences_info.len());
+            counters.extend((0..sequences_info.len()).map(|_| AtomicU64::new(0)));
+            counters
+        };
+
+        let color_buckets = if CX::COLORS_ENABLED {
+            Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
+                buckets_count,
+                colored_buckets_path,
+                &(
+                    get_memory_mode(SwapPriority::MinimizerBuckets),
+                    MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+                    DEFAULT_LZ4_COMPRESSION_LEVEL,
+                ),
+            ))
+        } else {
+            Arc::new(MultiThreadBuckets::EMPTY)
+        };
+
+        let thread_buffers = ScopedThreadLocal::new(move || {
+            if CX::COLORS_ENABLED {
+                BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
+            } else {
+                BucketsThreadBuffer::EMPTY
+            }
+        });
 
         file_counters_inputs.par_iter().for_each(|input| {
+
+            let mut thread_buffer = thread_buffers.get();
+            let mut colored_buckets_writer = BucketsThreadDispatcher::new(&color_buckets, thread_buffer.take());
+
             let mut counters_vec: Vec<(
                 CounterEntry<SingleKmerColorDataType<CX>>,
                 SingleKmerColorDataType<CX>,
@@ -132,14 +175,26 @@ impl QueryPipeline {
 
             fast_smart_radix_sort::<_, CountersCompare, false>(&mut counters_vec[..]);
 
-            for x in counters_vec.group_by_mut(|a, b| a.0.query_index == b.0.query_index) {
-                x.sort_unstable_by(|x, y| x.1.cmp(&y.1));
-                let query_index = x[0].0.query_index;
+            for query_results in counters_vec.group_by_mut(|a, b| a.0.query_index == b.0.query_index) {
+                query_results.sort_unstable_by(|x, y| x.1.cmp(&y.1));
+                let query_index = query_results[0].0.query_index;
 
-                // TODO: Save colors here
-                final_counters[query_index as usize - 1]
-                    .store(x.iter().map(|e| e.0.counter).sum(), Ordering::Relaxed);
+                if CX::COLORS_ENABLED {
+                    for entry in query_results.group_by(|a, b| a.1 == b.1) {
+                        let color = entry[0].1.clone();
+                        colored_buckets_writer.add_element(0, &color, &CounterEntry {
+                            query_index,
+                            counter: entry.iter().map(|e| e.0.counter).sum(),
+                            _phantom: PhantomData
+                        });
+                    }
+                } else {
+                    final_counters[query_index as usize - 1]
+                        .store(query_results.iter().map(|e| e.0.counter).sum(), Ordering::Relaxed);
+                }
             }
+
+            thread_buffer.put_back(colored_buckets_writer.finalize().0);
         });
 
         let mut writer = csv::Writer::from_path(output_file).unwrap();
@@ -152,5 +207,7 @@ impl QueryPipeline {
                 ])
                 .unwrap();
         }
+
+        color_buckets.finalize()
     }
 }

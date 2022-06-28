@@ -9,6 +9,8 @@ pub struct BucketsThreadBuffer {
 }
 
 impl BucketsThreadBuffer {
+    pub const EMPTY: Self = Self { buffers: vec![] };
+
     pub fn new(max_buffer_size: MemoryDataSize, buckets_count: usize) -> Self {
         let mut buffers = Vec::with_capacity(buckets_count);
         let capacity = max_buffer_size.as_bytes();

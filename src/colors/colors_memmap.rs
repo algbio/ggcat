@@ -1,6 +1,6 @@
 // use crate::colors::storage::roaring::ColorsStorage;
 use crate::colors::storage::serializer::ColorsSerializer;
-use crate::colors::storage::ColorsSerializerImpl;
+use crate::colors::storage::ColorsSerializerTrait;
 use crate::colors::ColorIndexType;
 use crate::hashes::dummy_hasher::DummyHasherBuilder;
 use dashmap::DashMap;
@@ -9,13 +9,13 @@ use siphasher::sip128::{Hasher128, SipHasher13};
 use std::hash::Hash;
 use std::path::Path;
 
-pub struct ColorsMemMap<C: ColorsSerializerImpl> {
+pub struct ColorsMemMap<C: ColorsSerializerTrait> {
     colors: DashMap<u128, ColorIndexType, DummyHasherBuilder>,
     colors_storage: ColorsSerializer<C>,
     hash_keys: (u64, u64),
 }
 
-impl<C: ColorsSerializerImpl> ColorsMemMap<C> {
+impl<C: ColorsSerializerTrait> ColorsMemMap<C> {
     pub fn new(file: impl AsRef<Path>, color_names: Vec<String>) -> Self {
         let mut rng = thread_rng();
         Self {

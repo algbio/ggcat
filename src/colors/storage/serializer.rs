@@ -1,4 +1,4 @@
-use crate::colors::storage::ColorsSerializerImpl;
+use crate::colors::storage::ColorsSerializerTrait;
 use crate::colors::ColorIndexType;
 use crate::config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crate::io::chunks_writer::ChunksWriter;
@@ -6,102 +6,44 @@ use desse::{Desse, DesseSized};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const MAGIC_STRING: [u8; 16] = *b"BILOKI_COLORMAPS";
 const STORAGE_VERSION: u64 = 1;
-
 const CHECKPOINT_DISTANCE: usize = 20000;
 
 #[derive(Debug, Desse, DesseSized, Default)]
-struct ColorsFileHeader {
-    magic: [u8; 16],
-    version: u64,
-    index_offset: u64,
-    colors_count: u64,
-    subsets_count: u64,
-    total_size: u64,
-    total_uncompressed_size: u64,
+pub(crate) struct ColorsFileHeader {
+    pub magic: [u8; 16],
+    pub version: u64,
+    pub index_offset: u64,
+    pub colors_count: u64,
+    pub subsets_count: u64,
+    pub total_size: u64,
+    pub total_uncompressed_size: u64,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
 pub struct ColorsIndexEntry {
     pub start_index: ColorIndexType,
     pub stride: ColorIndexType,
-    file_offset: u64,
+    pub file_offset: u64,
 }
 
 #[derive(Serialize, Deserialize)]
-struct ColorsIndexMap {
-    pairs: Vec<ColorsIndexEntry>,
+pub(crate) struct ColorsIndexMap {
+    pub pairs: Vec<ColorsIndexEntry>,
 }
 
-pub struct ColorsSerializer<SI: ColorsSerializerImpl> {
+pub struct ColorsSerializer<SI: ColorsSerializerTrait> {
     colors_count: u64,
     serializer_impl: ManuallyDrop<SI>,
 }
 
-impl<SI: ColorsSerializerImpl> ColorsSerializer<SI> {
-    pub fn read_color(file: impl AsRef<Path>, color_index: ColorIndexType) -> Vec<String> {
-        let mut result = Vec::new();
-
-        let mut file = File::open(file).unwrap();
-
-        let mut header_buffer = [0; ColorsFileHeader::SIZE];
-        file.read_exact(&mut header_buffer).unwrap();
-
-        let header: ColorsFileHeader = ColorsFileHeader::deserialize_from(&header_buffer);
-        assert_eq!(header.magic, MAGIC_STRING);
-
-        println!("Colors header: {:#?}", &header);
-
-        let color_names = {
-            let mut compressed_stream = lz4::Decoder::new(BufReader::new(file)).unwrap();
-
-            let color_names: Vec<String> =
-                bincode::deserialize_from(&mut compressed_stream).unwrap();
-            file = compressed_stream.finish().0.into_inner();
-            color_names
-        };
-
-        let mut color_entry = ColorsIndexEntry {
-            start_index: 0,
-            stride: 0,
-            file_offset: 0,
-        };
-
-        {
-            file.seek(SeekFrom::Start(header.index_offset)).unwrap();
-            let colors_index: ColorsIndexMap = bincode::deserialize_from(&mut file).unwrap();
-
-            for entry in colors_index.pairs.iter() {
-                if entry.start_index <= color_index {
-                    color_entry = *entry;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        {
-            assert_ne!(color_entry.file_offset, 0);
-            file.seek(SeekFrom::Start(color_entry.file_offset)).unwrap();
-            let compressed_stream = lz4::Decoder::new(BufReader::new(file)).unwrap();
-
-            let colors = SI::decode_color(compressed_stream, color_entry, color_index);
-
-            for color in colors {
-                result.push(color_names[color as usize].clone());
-            }
-        }
-
-        result
-    }
-
+impl<SI: ColorsSerializerTrait> ColorsSerializer<SI> {
     pub fn new(file: impl AsRef<Path>, color_names: Vec<String>) -> Self {
         let mut colormap_file = File::create(file).unwrap();
 
@@ -157,7 +99,7 @@ fn bincode_serialize_ref<S: Write, D: Serialize>(ser: &mut S, data: &D) {
     bincode::serialize_into(ser, data).unwrap();
 }
 
-impl<SI: ColorsSerializerImpl> Drop for ColorsSerializer<SI> {
+impl<SI: ColorsSerializerTrait> Drop for ColorsSerializer<SI> {
     fn drop(&mut self) {
         let subsets_count = self.serializer_impl.get_subsets_count();
 
@@ -181,7 +123,7 @@ impl<SI: ColorsSerializerImpl> Drop for ColorsSerializer<SI> {
         colors_file
             .write_all(
                 &ColorsFileHeader {
-                    magic: MAGIC_STRING,
+                    magic: SI::MAGIC,
                     version: STORAGE_VERSION,
                     index_offset: index_position,
                     colors_count: self.colors_count,

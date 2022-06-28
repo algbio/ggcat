@@ -1,4 +1,3 @@
-use crate::assemble_pipeline::links_compaction::LinkMapping;
 use crate::assemble_pipeline::AssemblePipeline;
 use crate::colors::colors_manager::{color_types, ColorsManager};
 use crate::config::{
@@ -16,6 +15,7 @@ use crate::io::concurrent::temp_reads::extra_data::{
 };
 use crate::io::reads_writer::ReadsWriter;
 use crate::io::structs::unitig_link::UnitigIndex;
+use crate::structs::link_mapping::LinkMapping;
 use crate::utils::{get_memory_mode, Utils};
 use crate::KEEP_FILES;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};

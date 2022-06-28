@@ -2,16 +2,13 @@ use crate::assemble_pipeline::unitig_links_manager::{
     ThreadUnitigsLinkManager, UnitigLinksManager,
 };
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::config::{
-    BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
-};
+use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
 use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
-use crate::io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use crate::structs::link_mapping::LinkMapping;
 use crate::utils::fast_rand_bool::FastRandBool;
 use crate::utils::vec_slice::VecSlice;
 use crate::utils::{get_memory_mode, Utils};
 use crate::KEEP_FILES;
-use byteorder::ReadBytesExt;
 use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
@@ -23,52 +20,9 @@ use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-
-#[derive(Clone, Debug)]
-pub struct LinkMapping {
-    pub bucket: BucketIndexType,
-    pub entry: u64,
-}
-
-impl BucketItem for LinkMapping {
-    type ExtraData = ();
-    type ReadBuffer = ();
-    type ExtraDataBuffer = ();
-    type ReadType<'a> = Self;
-
-    #[inline(always)]
-    fn write_to(
-        &self,
-        bucket: &mut Vec<u8>,
-        _extra_data: &Self::ExtraData,
-        _: &Self::ExtraDataBuffer,
-    ) {
-        encode_varint(|b| bucket.write_all(b), self.bucket as u64).unwrap();
-        encode_varint(|b| bucket.write_all(b), self.entry).unwrap();
-    }
-
-    fn read_from<'a, S: Read>(
-        mut stream: S,
-        _read_buffer: &'a mut Self::ReadBuffer,
-        _: &mut Self::ExtraDataBuffer,
-    ) -> Option<Self::ReadType<'a>> {
-        let bucket = decode_varint(|| stream.read_u8().ok())?;
-        let entry = decode_varint(|| stream.read_u8().ok())?;
-        Some(Self {
-            bucket: bucket as BucketIndexType,
-            entry,
-        })
-    }
-
-    #[inline(always)]
-    fn get_size(&self, _: &()) -> usize {
-        VARINT_MAX_SIZE * 2
-    }
-}
 
 impl AssemblePipeline {
     pub fn links_compaction(

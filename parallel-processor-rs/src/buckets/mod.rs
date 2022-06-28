@@ -21,6 +21,8 @@ pub struct MultiThreadBuckets<B: LockFreeBucket> {
 }
 
 impl<B: LockFreeBucket> MultiThreadBuckets<B> {
+    pub const EMPTY: Self = Self { buckets: vec![] };
+
     pub fn new(size: usize, path: PathBuf, init_data: &B::InitData) -> MultiThreadBuckets<B> {
         let mut buckets = Vec::with_capacity(size);
 

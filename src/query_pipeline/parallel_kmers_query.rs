@@ -6,9 +6,9 @@ use crate::config::{
     BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_SUBBUCKET_KMERS_COUNT,
     RESPLITTING_MAX_K_M_DIFFERENCE,
 };
+use crate::hashes::HashFunction;
 use crate::hashes::HashFunctionFactory;
 use crate::hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
-use crate::hashes::{HashFunction, HashableSequence};
 use crate::io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };

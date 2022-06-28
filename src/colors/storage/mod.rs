@@ -1,17 +1,16 @@
-use crate::colors::storage::serializer::{ColorsFlushProcessing, ColorsIndexEntry};
+use crate::colors::storage::serializer::ColorsFlushProcessing;
 use crate::colors::ColorIndexType;
 use std::io::Read;
 
+pub mod deserializer;
 pub mod roaring;
 pub mod run_length;
 pub mod serializer;
 
-pub trait ColorsSerializerImpl {
-    fn decode_color(
-        reader: impl Read,
-        entry_info: ColorsIndexEntry,
-        color: ColorIndexType,
-    ) -> Vec<ColorIndexType>;
+pub trait ColorsSerializerTrait {
+    const MAGIC: [u8; 16];
+
+    fn decode_color(reader: impl Read, out_vec: Option<&mut Vec<ColorIndexType>>);
     // fn decode_colors(reader: impl Read) -> ;
 
     fn new(writer: ColorsFlushProcessing, checkpoint_distance: usize, colors_count: u64) -> Self;
