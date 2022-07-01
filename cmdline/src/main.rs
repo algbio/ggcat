@@ -15,20 +15,15 @@ extern crate test;
 
 mod assemble_pipeline;
 mod benchmarks;
-mod config;
-mod hashes;
+
 #[macro_use]
 mod utils;
 mod assembler;
 mod assembler_generic_dispatcher;
 mod cmd_utils;
-mod colors;
-mod io;
-mod pipeline_common;
 mod querier;
 mod querier_generic_dispatcher;
 mod query_pipeline;
-mod rolling;
 mod structs;
 
 use backtrace::Backtrace;
@@ -36,13 +31,11 @@ use std::cmp::max;
 
 use crate::assembler_generic_dispatcher::dispatch_assembler_hash_type;
 use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
-use crate::colors::bundles::multifile_building::ColorBundleMultifileBuilding;
-use crate::colors::storage::run_length::RunLengthColorsSerializer;
-use crate::colors::ColorIndexType;
-use crate::io::sequences_reader::FastaSequence;
 use crate::querier_generic_dispatcher::dispatch_querier_hash_type;
-use crate::utils::compressed_read::CompressedRead;
 use clap::arg_enum;
+use colors::bundles::multifile_building::ColorBundleMultifileBuilding;
+use io::compressed_read::CompressedRead;
+use io::sequences_reader::FastaSequence;
 use parallel_processor::enable_counters_logging;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use rayon::ThreadPoolBuilder;
@@ -51,7 +44,7 @@ use std::io::Write;
 use std::panic;
 use std::path::PathBuf;
 use std::process::exit;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use structopt::StructOpt;
 
@@ -86,11 +79,12 @@ arg_enum! {
     }
 }
 
-use crate::colors::bundles::graph_querying::ColorBundleGraphQuerying;
-use crate::colors::non_colored::NonColoredManager;
-use crate::colors::storage::deserializer::ColorsDeserializer;
-use crate::config::{DefaultColorsSerializer, FLUSH_QUEUE_FACTOR};
-use crate::utils::{compute_best_m, DEBUG_LEVEL};
+use ::utils::{compute_best_m, DEBUG_LEVEL};
+use colors::bundles::graph_querying::ColorBundleGraphQuerying;
+use colors::non_colored::NonColoredManager;
+use colors::storage::deserializer::ColorsDeserializer;
+use colors::DefaultColorsSerializer;
+use config::{ColorIndexType, FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 
@@ -214,9 +208,6 @@ struct QueryArgs {
     #[structopt(flatten)]
     pub common_args: CommonArgs,
 }
-
-static KEEP_FILES: AtomicBool = AtomicBool::new(false);
-static PREFER_MEMORY: AtomicBool = AtomicBool::new(false);
 
 // #[cfg(feature = "mem-analysis")]
 // use parallel_processor::debug_allocator::{debug_print_allocations, DebugAllocator};

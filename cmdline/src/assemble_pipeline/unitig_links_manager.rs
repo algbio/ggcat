@@ -1,4 +1,4 @@
-use crate::config::BucketIndexType;
+use config::BucketIndexType;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Counters {

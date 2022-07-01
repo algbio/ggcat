@@ -24,8 +24,6 @@ libc = "0.2.94"
 filebuffer = "0.4.0"
 crossbeam = "0.8.0"
 clap = "2.33.3"
-parallel-processor = { path = "../libs/parallel-processor-rs" }
-libdeflate-rs = { path = "../libs/libdeflate-rs" }
 fdlimit = "0.2.1"
 parking_lot = { version = "0.12.0" }
 pcg_rand = "0.13.0"
@@ -40,9 +38,29 @@ backtrace = "0.3.63"
 csv = "1.1.6"
 flate2 = { default-features = false, features = ["cloudflare_zlib"], version = "1.0.22" }
 typenum = "1.15.0"
-nightly-quirks = { path = "../libs/nightly-quirks" }
 fs_extra = "1.2.0"
 atoi = "1.0.0"
+
+# Config
+config = { path = "../config" }
+utils = { path = "../utils" }
+
+# Common libraries
+parallel-processor = { path = "../libs/parallel-processor-rs" }
+libdeflate-rs = { path = "../libs/libdeflate-rs" }
+nightly-quirks = { path = "../libs/nightly-quirks" }
+
+# TODO
+hashes = { path = "../pipeline/common/hashes" }
+io = { path = "../pipeline/common/io" }
+colors = { path = "../pipeline/common/colors" }
+minimizer_bucketing = { path = "../pipeline/common/minimizer_bucketing" }
+kmers_transform = { path = "../pipeline/common/kmers_transform" }
+structs = { path = "../pipeline/common/structs" }
+
+assembler_minimizer_bucketing = { path = "../pipeline/assembler/assembler_minimizer_bucketing" }
+kmers_merge = { path = "../pipeline/assembler/kmers_merge" }
+
 
 [features]
 mem-analysis = ["parallel-processor/track-usage"]

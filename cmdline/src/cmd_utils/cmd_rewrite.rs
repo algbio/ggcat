@@ -1,5 +1,5 @@
-use crate::io::reads_writer::ReadsWriter;
-use crate::io::sequences_reader::SequencesReader;
+use io::reads_writer::ReadsWriter;
+use io::sequences_reader::SequencesReader;
 use rayon::prelude::*;
 use std::fs::File;
 use std::io::{BufRead, BufReader};

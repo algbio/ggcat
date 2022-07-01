@@ -1,23 +1,23 @@
-use crate::colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
-use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::colors::parsers::SingleSequenceInfo;
-use crate::config::BucketIndexType;
-use crate::hashes::ExtendableHashTraitType;
-use crate::hashes::HashFunction;
-use crate::hashes::MinimizerHashFunctionFactory;
-use crate::io::concurrent::temp_reads::extra_data::{
+use crate::query_pipeline::parallel_kmers_query::QueryKmersReferenceData;
+use crate::query_pipeline::QueryPipeline;
+use crate::FastaSequence;
+use byteorder::ReadBytesExt;
+use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
+use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
+use colors::parsers::SingleSequenceInfo;
+use config::BucketIndexType;
+use hashes::rolling::minqueue::RollingMinQueue;
+use hashes::ExtendableHashTraitType;
+use hashes::HashFunction;
+use hashes::MinimizerHashFunctionFactory;
+use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
-use crate::io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
-use crate::pipeline_common::minimizer_bucketing::{
+use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
 };
-use crate::query_pipeline::parallel_kmers_query::QueryKmersReferenceData;
-use crate::query_pipeline::QueryPipeline;
-use crate::rolling::minqueue::RollingMinQueue;
-use crate::FastaSequence;
-use byteorder::ReadBytesExt;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::io::{Read, Write};
 use std::marker::PhantomData;

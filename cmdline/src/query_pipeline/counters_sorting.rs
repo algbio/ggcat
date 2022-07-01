@@ -1,16 +1,14 @@
-use crate::colors::colors_manager::color_types::SingleKmerColorDataType;
-use crate::colors::colors_manager::ColorsManager;
-use crate::config::{
-    SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-};
-use crate::io::concurrent::temp_reads::extra_data::{SequenceExtraData, SequenceExtraDataOwned};
-use crate::io::sequences_reader::SequencesReader;
-use crate::io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use crate::query_pipeline::QueryPipeline;
-use crate::utils::get_memory_mode;
-use crate::KEEP_FILES;
 use byteorder::ReadBytesExt;
+use colors::colors_manager::color_types::SingleKmerColorDataType;
+use colors::colors_manager::ColorsManager;
+use config::{
+    get_memory_mode, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
+    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+};
+use io::concurrent::temp_reads::extra_data::{SequenceExtraData, SequenceExtraDataOwned};
+use io::sequences_reader::SequencesReader;
+use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;

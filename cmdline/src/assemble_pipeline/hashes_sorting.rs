@@ -3,14 +3,12 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
-use crate::hashes::HashFunctionFactory;
-use crate::io::structs::hash_entry::{Direction, HashCompare, HashEntry};
-use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
-use crate::utils::fast_rand_bool::FastRandBool;
-use crate::utils::get_memory_mode;
-use crate::utils::vec_slice::VecSlice;
-use crate::KEEP_FILES;
+use config::{
+    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+};
+use hashes::HashFunctionFactory;
+use io::structs::hash_entry::{Direction, HashCompare, HashEntry};
+use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
@@ -22,6 +20,8 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
+use utils::fast_rand_bool::FastRandBool;
+use utils::vec_slice::VecSlice;
 
 impl AssemblePipeline {
     pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(

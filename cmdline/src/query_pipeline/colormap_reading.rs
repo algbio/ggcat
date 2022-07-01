@@ -1,15 +1,12 @@
-use crate::colors::colors_manager::color_types::SingleKmerColorDataType;
-use crate::colors::storage::ColorsSerializerTrait;
-use crate::config::{
-    BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-};
-use crate::io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use crate::query_pipeline::counters_sorting::CounterEntry;
 use crate::query_pipeline::QueryPipeline;
-use crate::structs::query_colored_counters::QueryColoredCounters;
-use crate::utils::get_memory_mode;
-use crate::{ColorIndexType, ColorsDeserializer, KEEP_FILES};
+use colors::storage::deserializer::ColorsDeserializer;
+use colors::storage::ColorsSerializerTrait;
+use config::{
+    get_memory_mode, ColorIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
+    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;

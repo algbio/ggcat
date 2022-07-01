@@ -1,6 +1,6 @@
-use crate::config::BucketIndexType;
-use crate::io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use byteorder::ReadBytesExt;
+use config::BucketIndexType;
+use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use parallel_processor::buckets::bucket_writer::BucketItem;
 use std::io::{Read, Write};
 

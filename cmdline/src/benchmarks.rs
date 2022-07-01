@@ -1,23 +1,17 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::hashes::fw_nthash::{ForwardNtHashIterator, ForwardNtHashIteratorFactory};
-    use crate::hashes::fw_seqhash::u64::{ForwardSeqHashFactory, ForwardSeqHashIterator};
-    use crate::hashes::{HashFunction, HashFunctionFactory};
-    use crate::io::varint::{encode_varint, encode_varint_flags};
-    use crate::rolling::minqueue::RollingMinQueue;
-    use crate::utils::compressed_read::CompressedRead;
-    use crate::utils::Utils;
-    use bincode::DefaultOptions;
-    use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+    use byteorder::ReadBytesExt;
+    use hashes::fw_nthash::ForwardNtHashIterator;
+    use hashes::HashFunction;
+    use io::compressed_read::CompressedRead;
     use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
     use rand::{thread_rng, RngCore};
-    use serde::{Deserialize, Serialize};
     use std::fs::File;
-    use std::io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write};
+    use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
     use std::ops::Deref;
     use std::time::Instant;
     use test::Bencher;
+    use utils::Utils;
 
     const TEST_SIZE: usize = 10000000;
 
@@ -110,7 +104,7 @@ mod tests {
 
         let mut rng = thread_rng();
 
-        for i in 0..ARRAY_SIZE {
+        for _i in 0..ARRAY_SIZE {
             vec.push((rng.next_u32()) as u16);
         }
 
@@ -170,8 +164,8 @@ mod tests {
         b.iter(|| {
             sum = 0;
             vec.clear();
-            file.seek(SeekFrom::Start(0));
-            file.read_to_end(&mut vec);
+            file.seek(SeekFrom::Start(0)).unwrap();
+            file.read_to_end(&mut vec).unwrap();
             for &byte in vec.iter() {
                 sum += byte as usize;
             }
@@ -192,8 +186,8 @@ mod tests {
         b.iter(|| {
             sum = 0;
             vec.clear();
-            file.seek(SeekFrom::Start(0));
-            file.read_to_end(&mut vec);
+            file.seek(SeekFrom::Start(0)).unwrap();
+            file.read_to_end(&mut vec).unwrap();
             let mut cursor = Cursor::new(&vec);
             while let Ok(byte) = cursor.read_u8() {
                 sum += byte as usize;
@@ -215,9 +209,9 @@ mod tests {
         b.iter(|| {
             sum = 0;
             vec.clear();
-            file.seek(SeekFrom::Start(0));
-            file.read_to_end(&mut vec);
-            let mut cursor = Cursor::new(vec.as_slice());
+            file.seek(SeekFrom::Start(0)).unwrap();
+            file.read_to_end(&mut vec).unwrap();
+            let cursor = Cursor::new(vec.as_slice());
             for byte in cursor.bytes() {
                 sum += byte.unwrap() as usize;
             }
@@ -238,9 +232,9 @@ mod tests {
         b.iter(|| {
             sum = 0;
             vec.clear();
-            file.seek(SeekFrom::Start(0));
-            file.read_to_end(&mut vec);
-            let mut cursor = Cursor::new(vec.as_slice());
+            file.seek(SeekFrom::Start(0)).unwrap();
+            file.read_to_end(&mut vec).unwrap();
+            let cursor = Cursor::new(vec.as_slice());
             for byte in cursor.bytes() {
                 sum += byte.unwrap() as usize;
             }
@@ -257,7 +251,7 @@ mod tests {
 
         b.iter(|| {
             sum = 0;
-            file.seek(SeekFrom::Start(0));
+            file.seek(SeekFrom::Start(0)).unwrap();
             let mut buffer = BufReader::with_capacity(TEST_SIZE, &mut file);
             while let Ok(byte) = buffer.read_u8() {
                 sum += byte as usize;
@@ -275,7 +269,7 @@ mod tests {
 
         b.iter(|| {
             sum = 0;
-            file.seek(SeekFrom::Start(0));
+            file.seek(SeekFrom::Start(0)).unwrap();
             let mut buffer = BufReader::with_capacity(TEST_SIZE, &mut file);
 
             let mut data = [0; TEST_SIZE / 10];
@@ -291,13 +285,13 @@ mod tests {
 
     #[bench]
     fn bench_file_read_fast_cursor_bytes_mmap(b: &mut Bencher) {
-        let mut file = filebuffer::FileBuffer::open("/tmp/test").unwrap();
+        let file = filebuffer::FileBuffer::open("/tmp/test").unwrap();
 
         let mut sum = 0;
 
         b.iter(|| {
             sum = 0;
-            let mut cursor = Cursor::new(&file);
+            let cursor = Cursor::new(&file);
             for byte in cursor.bytes() {
                 sum += byte.unwrap() as usize;
             }
@@ -308,7 +302,7 @@ mod tests {
 
     #[bench]
     fn bench_file_read_fast_cursor_bytes_mmap_slice(b: &mut Bencher) {
-        let mut file = filebuffer::FileBuffer::open("/tmp/test").unwrap();
+        let file = filebuffer::FileBuffer::open("/tmp/test").unwrap();
 
         let mut sum = 0;
 
@@ -325,7 +319,7 @@ mod tests {
 
     #[bench]
     fn bench_file_read_fast_mmap(b: &mut Bencher) {
-        let mut file = filebuffer::FileBuffer::open("/tmp/test").unwrap();
+        let file = filebuffer::FileBuffer::open("/tmp/test").unwrap();
 
         let mut sum = 0;
 
@@ -342,9 +336,9 @@ mod tests {
 
     // #[derive(Serialize, Deserialize)]
     // struct Test {
-    //     #[serde(with = "crate::io::varint")]
+    //     #[serde(with = "io::varint")]
     //     x: u64,
-    //     #[serde(with = "crate::io::varint")]
+    //     #[serde(with = "io::varint")]
     //     y: u64,
     // }
     //
@@ -478,8 +472,6 @@ mod tests {
         let str0 = b"TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
         let str1 = b"TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAT";
 
-        let h = 6116442737687281716u64;
-
         let hash = ForwardNtHashIterator::new(&str0[..], 15).unwrap();
         println!("{:?}", hash.iter().collect::<Vec<_>>());
         let hash1 = ForwardNtHashIterator::new(&str1[..], 15).unwrap();
@@ -510,7 +502,7 @@ mod tests {
             .iter()
             .map(|x| Utils::compress_base(*x))
             .collect();
-        let b: Vec<_> = (&b"CACCCACCCATTCACCTATCCATCCATCCAACCGTCCATCTGTTCATTC"[..])
+        let _b: Vec<_> = (&b"CACCCACCCATTCACCTATCCATCCATCCAACCGTCCATCTGTTCATTC"[..])
             .iter()
             .map(|x| Utils::compress_base(*x))
             .collect();
@@ -526,16 +518,6 @@ mod tests {
         println!("X {:?}", ha);
         // println!("Y {:?}", hb);
         // println!("{:b}", hc);
-    }
-
-    #[test]
-    fn test_minqueue() {
-        let vec = vec![0x23, 0x47, 0xFA, 0x7D, 0x59, 0xFF, 0xA1, 0x84];
-
-        // let hashes = ::new(&seq[..], context.m);
-        // let mut minimizer_queue = RollingMinQueue::<NtHashIteratorFactory>::new(32 - 15);
-
-        // let mut rolling_iter = minimizer_queue.make_iter(hashes.iter());
     }
 
     #[test]

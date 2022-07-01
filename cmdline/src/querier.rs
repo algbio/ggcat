@@ -1,8 +1,9 @@
-use crate::colors::colors_manager::ColorsManager;
-use crate::hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use crate::query_pipeline::QueryPipeline;
-use crate::utils::Utils;
-use crate::{DefaultColorsSerializer, QuerierStartingStep};
+use crate::QuerierStartingStep;
+use colors::colors_manager::ColorsManager;
+use colors::DefaultColorsSerializer;
+use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use io::{compute_buckets_log_from_input_files, generate_bucket_names};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::path::PathBuf;
 
@@ -24,7 +25,7 @@ pub fn run_query<
     PHASES_TIMES_MONITOR.write().init();
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| {
-        Utils::compute_buckets_log_from_input_files(&[graph_input.clone(), query_input.clone()])
+        compute_buckets_log_from_input_files(&[graph_input.clone(), query_input.clone()])
     });
     let buckets_count = 1 << buckets_count_log;
 
@@ -40,7 +41,7 @@ pub fn run_query<
         )
     } else {
         (
-            Utils::generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
+            generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
             temp_dir.join("buckets-counters.dat"),
         )
     };
@@ -56,7 +57,7 @@ pub fn run_query<
             threads_count,
         )
     } else {
-        Utils::generate_bucket_names(temp_dir.join("counters"), buckets_count, Some("tmp"))
+        generate_bucket_names(temp_dir.join("counters"), buckets_count, Some("tmp"))
     };
 
     let colored_buckets_prefix = temp_dir.join("color_counters");

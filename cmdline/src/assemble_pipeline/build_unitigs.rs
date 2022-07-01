@@ -1,21 +1,21 @@
 use crate::assemble_pipeline::reorganize_reads::ReorganizedReadsExtraData;
 use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
-use crate::config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
-use crate::hashes::{HashFunctionFactory, HashableSequence};
-use crate::io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
-use crate::io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
-use crate::io::concurrent::temp_reads::extra_data::{
+use colors::colors_manager::ColorsMergeManager;
+use colors::colors_manager::{color_types, ColorsManager};
+use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
+use hashbrown::HashMap;
+use hashes::{HashFunctionFactory, HashableSequence};
+use io::compressed_read::CompressedReadIndipendent;
+use io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
+use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
+use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
-use crate::io::reads_writer::ReadsWriter;
-use crate::io::sequences_reader::FastaSequence;
-use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
-use crate::utils::compressed_read::CompressedReadIndipendent;
-use crate::utils::Utils;
-use crate::KEEP_FILES;
-use hashbrown::HashMap;
+use io::get_bucket_index;
+use io::reads_writer::ReadsWriter;
+use io::sequences_reader::FastaSequence;
+use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
@@ -132,11 +132,11 @@ impl AssemblePipeline {
                         FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_OUTPUT_BUFFER_SIZE);
 
                     assert_eq!(
-                        Utils::get_bucket_index(read_file),
-                        Utils::get_bucket_index(unitigs_map_file)
+                        get_bucket_index(read_file),
+                        get_bucket_index(unitigs_map_file)
                     );
 
-                    let bucket_index = Utils::get_bucket_index(read_file);
+                    let bucket_index = get_bucket_index(read_file);
 
                     let mut unitigs_map_reader = LockFreeBinaryReader::new(
                         &unitigs_map_file,

@@ -2,13 +2,12 @@ use crate::assemble_pipeline::unitig_links_manager::{
     ThreadUnitigsLinkManager, UnitigLinksManager,
 };
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
-use crate::io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use crate::structs::link_mapping::LinkMapping;
-use crate::utils::fast_rand_bool::FastRandBool;
-use crate::utils::vec_slice::VecSlice;
-use crate::utils::{get_memory_mode, Utils};
-use crate::KEEP_FILES;
+use config::{
+    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+};
+use io::get_bucket_index;
+use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
@@ -23,6 +22,8 @@ use rayon::iter::ParallelIterator;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use utils::fast_rand_bool::FastRandBool;
+use utils::vec_slice::VecSlice;
 
 impl AssemblePipeline {
     pub fn links_compaction(
@@ -51,7 +52,7 @@ impl AssemblePipeline {
         ));
 
         links_inputs.par_iter().for_each(|input| {
-            let bucket_index = Utils::get_bucket_index(input);
+            let bucket_index = get_bucket_index(input);
 
             let mut link_buffers = link_thread_buffers.get();
             let mut links_tmp = BucketsThreadDispatcher::new(&links_buckets, link_buffers.take());

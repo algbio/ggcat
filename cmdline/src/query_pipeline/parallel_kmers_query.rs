@@ -1,34 +1,31 @@
-use crate::colors::colors_manager::color_types::{
-    MinimizerBucketingSeqColorDataType, SingleKmerColorDataType,
-};
-use crate::colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use crate::config::{
-    BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_SUBBUCKET_KMERS_COUNT,
-    RESPLITTING_MAX_K_M_DIFFERENCE,
-};
-use crate::hashes::HashFunction;
-use crate::hashes::HashFunctionFactory;
-use crate::hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
-use crate::io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
-};
-use crate::io::varint::{decode_varint, encode_varint};
-use crate::pipeline_common::kmers_transform::processor::KmersTransformProcessor;
-use crate::pipeline_common::kmers_transform::{
-    KmersTransform, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
-    KmersTransformMapProcessor, KmersTransformPreprocessor,
-};
-use crate::pipeline_common::minimizer_bucketing::{
-    MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory,
-};
 use crate::query_pipeline::counters_sorting::CounterEntry;
 use crate::query_pipeline::querier_minimizer_bucketing::QuerierMinimizerBucketingExecutorFactory;
 use crate::query_pipeline::QueryPipeline;
-use crate::utils::compressed_read::CompressedReadIndipendent;
-use crate::utils::get_memory_mode;
 use crate::CompressedRead;
 use byteorder::{ReadBytesExt, WriteBytesExt};
+use colors::colors_manager::color_types::{
+    MinimizerBucketingSeqColorDataType, SingleKmerColorDataType,
+};
+use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
+use config::{
+    get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
+    MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
+};
 use hashbrown::HashMap;
+use hashes::HashFunction;
+use hashes::HashFunctionFactory;
+use hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
+use io::compressed_read::CompressedReadIndipendent;
+use io::concurrent::temp_reads::extra_data::{
+    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+};
+use io::varint::{decode_varint, encode_varint};
+use kmers_transform::processor::KmersTransformProcessor;
+use kmers_transform::{
+    KmersTransform, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
+    KmersTransformMapProcessor, KmersTransformPreprocessor,
+};
+use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
@@ -407,7 +404,6 @@ impl QueryPipeline {
             global_data.clone(),
             threads_count,
             k,
-            m,
             (MINIMUM_SUBBUCKET_KMERS_COUNT / k) as u64,
         )
         .parallel_kmers_transform();

@@ -1,0 +1,25 @@
+[package]
+name = "hashes"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "hashes"
+crate-type = ["rlib"]
+
+[dependencies]
+serde = "1.0.137"
+ahash = "0.7.6"
+
+# Config
+config = { path = "../../../config" }
+
+
+[dev-dependencies]
+pcg_rand = "0.13.0"
+rand = "0.8.5"
+utils = { path = "../../../utils" }
+
+

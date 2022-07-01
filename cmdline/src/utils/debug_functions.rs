@@ -1,8 +1,7 @@
 #![allow(dead_code)]
 
-use crate::config::BucketIndexType;
-use crate::hashes::HashFunction;
-use crate::hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
+use config::BucketIndexType;
+use hashes::{ExtendableHashTraitType, HashFunction, MinimizerHashFunctionFactory};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub static KCOUNTER: AtomicU64 = AtomicU64::new(0);

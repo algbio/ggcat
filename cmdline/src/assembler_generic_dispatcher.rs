@@ -1,14 +1,14 @@
 use crate::assembler::run_assembler;
-use crate::colors::colors_manager::ColorsManager;
-use crate::hashes::cn_nthash::CanonicalNtHashIteratorFactory;
-use crate::hashes::fw_nthash::ForwardNtHashIteratorFactory;
-use crate::hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
-use crate::utils::compute_best_m;
 use crate::{AssemblerArgs, HashType};
+use colors::colors_manager::ColorsManager;
+use hashes::cn_nthash::CanonicalNtHashIteratorFactory;
+use hashes::fw_nthash::ForwardNtHashIteratorFactory;
+use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::exit;
+use utils::compute_best_m;
 
 fn run_assembler_from_args<
     BucketingHash: MinimizerHashFunctionFactory,
@@ -61,7 +61,7 @@ pub(crate) fn dispatch_assembler_hash_type<ColorsImpl: ColorsManager>(args: Asse
         x => x,
     };
 
-    use crate::hashes::*;
+    use hashes::*;
 
     match hash_type {
         HashType::SeqHash => {

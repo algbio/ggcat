@@ -1,12 +1,15 @@
-use crate::assemble_pipeline::parallel_kmers_merge::structs::RetType;
 use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
 use crate::assemble_pipeline::AssemblePipeline;
-use crate::colors::colors_manager::{ColorsManager, ColorsMergeManager};
-use crate::config::{SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_LOG_DELTA_TIME};
-use crate::hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
-use crate::io::reads_writer::ReadsWriter;
-use crate::utils::{get_memory_mode, Utils};
-use crate::{AssemblerStartingStep, KEEP_FILES};
+use crate::AssemblerStartingStep;
+use colors::colors_manager::ColorsManager;
+use colors::colors_manager::ColorsMergeManager;
+use config::{
+    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, KEEP_FILES, MINIMUM_LOG_DELTA_TIME,
+};
+use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use io::reads_writer::ReadsWriter;
+use io::{compute_buckets_log_from_input_files, generate_bucket_names};
+use kmers_merge::structs::RetType;
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
@@ -41,7 +44,7 @@ pub fn run_assembler<
     PHASES_TIMES_MONITOR.write().init();
 
     let buckets_count_log =
-        buckets_count_log.unwrap_or_else(|| Utils::compute_buckets_log_from_input_files(&input));
+        buckets_count_log.unwrap_or_else(|| compute_buckets_log_from_input_files(&input));
     let buckets_count = 1 << buckets_count_log;
 
     let color_names: Vec<_> = input
@@ -57,7 +60,7 @@ pub fn run_assembler<
     );
 
     let (buckets, counters) = if step <= AssemblerStartingStep::MinimizerBucketing {
-        AssemblePipeline::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
+        assembler_minimizer_bucketing::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
             input,
             temp_dir.as_path(),
             buckets_count,
@@ -67,7 +70,7 @@ pub fn run_assembler<
         )
     } else {
         (
-            Utils::generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
+            generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
             temp_dir.join("buckets-counters.dat"),
         )
     };
@@ -85,12 +88,7 @@ pub fn run_assembler<
     }
 
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
-        AssemblePipeline::parallel_kmers_merge::<
-            BucketingHash,
-            MergingHash,
-            AssemblerColorsManager,
-            _,
-        >(
+        kmers_merge::kmers_merge::<BucketingHash, MergingHash, AssemblerColorsManager, _>(
             buckets,
             counters,
             global_colors_table.clone(),
@@ -103,12 +101,8 @@ pub fn run_assembler<
         )
     } else {
         RetType {
-            sequences: Utils::generate_bucket_names(
-                temp_dir.join("result"),
-                buckets_count,
-                Some("tmp"),
-            ),
-            hashes: Utils::generate_bucket_names(temp_dir.join("hashes"), buckets_count, None),
+            sequences: generate_bucket_names(temp_dir.join("result"), buckets_count, Some("tmp")),
+            hashes: generate_bucket_names(temp_dir.join("hashes"), buckets_count, None),
         }
     };
     if last_step <= AssemblerStartingStep::KmersMerge {
@@ -129,7 +123,7 @@ pub fn run_assembler<
             buckets_count,
         )
     } else {
-        Utils::generate_bucket_names(temp_dir.join("links"), buckets_count, None)
+        generate_bucket_names(temp_dir.join("links"), buckets_count, None)
     };
     if last_step <= AssemblerStartingStep::HashesSorting {
         PHASES_TIMES_MONITOR
@@ -140,8 +134,8 @@ pub fn run_assembler<
 
     let mut loop_iteration = loopit_number.unwrap_or(0);
 
-    let unames = Utils::generate_bucket_names(temp_dir.join("unitigs_map"), buckets_count, None);
-    let rnames = Utils::generate_bucket_names(temp_dir.join("results_map"), buckets_count, None);
+    let unames = generate_bucket_names(temp_dir.join("unitigs_map"), buckets_count, None);
+    let rnames = generate_bucket_names(temp_dir.join("results_map"), buckets_count, None);
 
     let mut links_manager = UnitigLinksManager::new(buckets_count);
 
@@ -173,7 +167,7 @@ pub fn run_assembler<
         ));
 
         if loop_iteration != 0 {
-            links = Utils::generate_bucket_names(
+            links = generate_bucket_names(
                 temp_dir.join(format!("linksi{}", loop_iteration - 1)),
                 buckets_count,
                 None,
@@ -265,25 +259,24 @@ pub fn run_assembler<
         None => ReadsWriter::new_plain(&output_file),
     });
 
-    let (reorganized_reads, _final_unitigs_bucket) = if step
-        <= AssemblerStartingStep::ReorganizeReads
-    {
-        AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
-            sequences,
-            reads_map,
-            temp_dir.as_path(),
-            &final_unitigs_file,
-            buckets_count,
-        )
-    } else {
-        (
-            Utils::generate_bucket_names(temp_dir.join("reads_bucket"), buckets_count, Some("tmp")),
-            (Utils::generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
-                .into_iter()
-                .next()
-                .unwrap()),
-        )
-    };
+    let (reorganized_reads, _final_unitigs_bucket) =
+        if step <= AssemblerStartingStep::ReorganizeReads {
+            AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
+                sequences,
+                reads_map,
+                temp_dir.as_path(),
+                &final_unitigs_file,
+                buckets_count,
+            )
+        } else {
+            (
+                generate_bucket_names(temp_dir.join("reads_bucket"), buckets_count, Some("tmp")),
+                (generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
+                    .into_iter()
+                    .next()
+                    .unwrap()),
+            )
+        };
 
     if last_step <= AssemblerStartingStep::ReorganizeReads {
         PHASES_TIMES_MONITOR

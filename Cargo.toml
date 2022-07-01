@@ -8,8 +8,25 @@ members = [
     # Common libraries
     "libs/libdeflate-rs",
     "libs/parallel-processor-rs",
-    "libs/nightly-quirks"
+    "libs/nightly-quirks",
 
+    # Global config constants
+    "config",
+
+    # Global utilities
+    "utils",
+
+    # Common pipeline crates
+    "pipeline/common/hashes",
+    "pipeline/common/io",
+    "pipeline/common/minimizer_bucketing",
+    "pipeline/common/kmers_transform",
+    "pipeline/common/colors",
+    "pipeline/common/structs",
+
+    # Assembler pipeling
+    "pipeline/assembler/assembler_minimizer_bucketing",
+    "pipeline/assembler/kmers_merge"
 ]
 
 

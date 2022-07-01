@@ -1,0 +1,26 @@
+[package]
+name = "assembler_minimizer_bucketing"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+# Config
+config = { path = "../../../config" }
+
+# Common libraries
+parallel-processor = { path = "../../../libs/parallel-processor-rs" }
+libdeflate-rs = { path = "../../../libs/libdeflate-rs" }
+nightly-quirks = { path = "../../../libs/nightly-quirks" }
+
+# Common pipeline libraries
+hashes = { path = "../../common/hashes" }
+io = { path = "../../common/io" }
+colors = { path = "../../common/colors" }
+structs = { path = "../../common/structs" }
+minimizer_bucketing = { path = "../../common/minimizer_bucketing" }
+
+# Other libraries
+typenum = "1.15.0"
