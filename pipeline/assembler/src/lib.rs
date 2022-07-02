@@ -1,6 +1,12 @@
-use crate::assemble_pipeline::unitig_links_manager::UnitigLinksManager;
-use crate::assemble_pipeline::AssemblePipeline;
-use crate::AssemblerStartingStep;
+#![feature(generic_associated_types)]
+#![feature(slice_group_by)]
+
+use crate::pipeline::build_unitigs::build_unitigs;
+use crate::pipeline::hashes_sorting::hashes_sorting;
+use crate::pipeline::links_compaction::links_compaction;
+use crate::pipeline::reorganize_reads::reorganize_reads;
+use crate::pipeline::unitig_links_manager::UnitigLinksManager;
+use ::static_dispatch::static_dispatch;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
 use config::{
@@ -24,6 +30,43 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
+mod pipeline;
+mod structs;
+
+extern crate parallel_processor;
+
+#[derive(PartialEq, PartialOrd)]
+pub enum AssemblerStartingStep {
+    MinimizerBucketing = 0,
+    KmersMerge = 1,
+    HashesSorting = 2,
+    LinksCompaction = 3,
+    ReorganizeReads = 4,
+    BuildUnitigs = 5,
+}
+
+#[static_dispatch(BucketingHash = [
+    hashes::cn_nthash::CanonicalNtHashIteratorFactory,
+    // hashes::fw_nthash::ForwardNtHashIteratorFactory
+], MergingHash = [
+    // hashes::fw_seqhash::u16::ForwardSeqHashFactory,
+    // hashes::fw_seqhash::u32::ForwardSeqHashFactory,
+    // hashes::fw_seqhash::u64::ForwardSeqHashFactory,
+    // hashes::fw_seqhash::u128::ForwardSeqHashFactory,
+    // hashes::fw_rkhash::u32::ForwardRabinKarpHashFactory,
+    // hashes::fw_rkhash::u64::ForwardRabinKarpHashFactory,
+    // hashes::fw_rkhash::u128::ForwardRabinKarpHashFactory,
+    // hashes::cn_seqhash::u16::CanonicalSeqHashFactory,
+    // hashes::cn_seqhash::u32::CanonicalSeqHashFactory,
+    // hashes::cn_seqhash::u64::CanonicalSeqHashFactory,
+    hashes::cn_seqhash::u128::CanonicalSeqHashFactory,
+    // hashes::cn_rkhash::u32::CanonicalRabinKarpHashFactory,
+    // hashes::cn_rkhash::u64::CanonicalRabinKarpHashFactory,
+    // hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
+], AssemblerColorsManager = [
+    // colors::bundles::multifile_building::ColorBundleMultifileBuilding,
+    colors::non_colored::NonColoredManager,
+])]
 pub fn run_assembler<
     BucketingHash: MinimizerHashFunctionFactory,
     MergingHash: HashFunctionFactory,
@@ -60,7 +103,10 @@ pub fn run_assembler<
     );
 
     let (buckets, counters) = if step <= AssemblerStartingStep::MinimizerBucketing {
-        assembler_minimizer_bucketing::minimizer_bucketing::<BucketingHash, AssemblerColorsManager>(
+        assembler_minimizer_bucketing::static_dispatch::minimizer_bucketing::<
+            BucketingHash,
+            AssemblerColorsManager,
+        >(
             input,
             temp_dir.as_path(),
             buckets_count,
@@ -117,11 +163,7 @@ pub fn run_assembler<
     drop(global_colors_table);
 
     let mut links = if step <= AssemblerStartingStep::HashesSorting {
-        AssemblePipeline::hashes_sorting::<MergingHash, _>(
-            hashes,
-            temp_dir.as_path(),
-            buckets_count,
-        )
+        hashes_sorting::<MergingHash, _>(hashes, temp_dir.as_path(), buckets_count)
     } else {
         generate_bucket_names(temp_dir.join("links"), buckets_count, None)
     };
@@ -199,7 +241,7 @@ pub fn run_assembler<
                 println!("Iteration: {}", loop_iteration);
             }
 
-            let (new_links, remaining) = AssemblePipeline::links_compaction(
+            let (new_links, remaining) = links_compaction(
                 links,
                 temp_dir.as_path(),
                 buckets_count,
@@ -261,7 +303,7 @@ pub fn run_assembler<
 
     let (reorganized_reads, _final_unitigs_bucket) =
         if step <= AssemblerStartingStep::ReorganizeReads {
-            AssemblePipeline::reorganize_reads::<MergingHash, AssemblerColorsManager>(
+            reorganize_reads::<MergingHash, AssemblerColorsManager>(
                 sequences,
                 reads_map,
                 temp_dir.as_path(),
@@ -288,7 +330,7 @@ pub fn run_assembler<
     links_manager.compute_id_offsets();
 
     if step <= AssemblerStartingStep::BuildUnitigs {
-        AssemblePipeline::build_unitigs::<MergingHash, AssemblerColorsManager>(
+        build_unitigs::<MergingHash, AssemblerColorsManager>(
             reorganized_reads,
             unitigs_map,
             temp_dir.as_path(),

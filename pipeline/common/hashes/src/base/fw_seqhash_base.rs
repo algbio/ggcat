@@ -1,5 +1,6 @@
 use crate::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use config::BucketIndexType;
+use static_dispatch::static_dispatch;
 use std::mem::size_of;
 
 pub struct ForwardSeqHashIterator<N: HashableSequence> {
@@ -87,6 +88,7 @@ impl ExtendableHashTraitType for ExtForwardSeqHash {
     }
 }
 
+#[static_dispatch]
 impl HashFunctionFactory for ForwardSeqHashFactory {
     type HashTypeUnextendable = HashIntegerType;
     type HashTypeExtendable = ExtForwardSeqHash;

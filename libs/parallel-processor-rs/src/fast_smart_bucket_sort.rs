@@ -63,6 +63,25 @@ pub trait SortKey<T> {
     fn get_shifted(value: &T, rhs: u8) -> u8;
 }
 
+#[macro_export]
+macro_rules! make_comparer {
+    ($Name:ident, $type_name:ty, $key:ident: $key_type:ty) => {
+        struct $Name;
+        impl SortKey<$type_name> for $Name {
+            type KeyType = $key_type;
+            const KEY_BITS: usize = std::mem::size_of::<$key_type>() * 8;
+
+            fn compare(left: &$type_name, right: &$type_name) -> std::cmp::Ordering {
+                left.$key.cmp(&right.$key)
+            }
+
+            fn get_shifted(value: &$type_name, rhs: u8) -> u8 {
+                (value.$key >> rhs) as u8
+            }
+        }
+    };
+}
+
 const RADIX_SIZE_LOG: u8 = 8;
 const RADIX_SIZE: usize = 1 << 8;
 

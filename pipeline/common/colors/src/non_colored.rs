@@ -5,6 +5,7 @@ use crate::parsers::SingleSequenceInfo;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use static_dispatch::static_dispatch;
 use std::io::{Read, Write};
 use std::ops::Range;
 use std::path::Path;
@@ -14,6 +15,7 @@ use structs::map_entry::MapEntry;
 pub struct NonColoredManager;
 
 /// Dummy colors manager
+#[static_dispatch]
 impl ColorsManager for NonColoredManager {
     const COLORS_ENABLED: bool = false;
     type SingleKmerColorDataType = NonColoredManager;

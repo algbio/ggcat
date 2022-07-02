@@ -1,5 +1,3 @@
-pub struct QueryPipeline;
-
 pub mod colored_query_output;
 pub mod colormap_reading;
 pub mod counters_sorting;

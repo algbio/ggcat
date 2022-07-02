@@ -1,4 +1,6 @@
 
+cargo-features = ["profile-rustflags"]
+
 [workspace]
 
 members = [
@@ -9,6 +11,8 @@ members = [
     "libs/libdeflate-rs",
     "libs/parallel-processor-rs",
     "libs/nightly-quirks",
+    "libs/static-dispatch",
+    "libs/static-dispatch/static-dispatch-proc-macro",
 
     # Global config constants
     "config",
@@ -24,12 +28,20 @@ members = [
     "pipeline/common/colors",
     "pipeline/common/structs",
 
-    # Assembler pipeling
+    # Assembler pipeline
     "pipeline/assembler/assembler_minimizer_bucketing",
-    "pipeline/assembler/kmers_merge"
+    "pipeline/assembler/kmers_merge",
+    "pipeline/assembler",
+
+    # Querier pipeline
+    "pipeline/querier"
+
 ]
+
+default-members = ["cmdline"]
 
 
 [profile.release]
 debug = true
-lto = "fat"
+lto = "thin"
+#rustflags = ["-C", "link-arg=-fuse-ld=mold"]

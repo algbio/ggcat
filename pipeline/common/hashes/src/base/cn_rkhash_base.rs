@@ -3,6 +3,7 @@ use crate::{
     RMMULT_CACHE_SIZE,
 };
 use config::BucketIndexType;
+use static_dispatch::static_dispatch;
 use std::cmp::min;
 
 const FWD_LOOKUP: [HashIntegerType; 256] = {
@@ -152,6 +153,7 @@ fn get_rmmult(k: usize) -> u128 {
     unsafe { RMMULT_CACHE[k % RMMULT_CACHE_SIZE] }
 }
 
+#[static_dispatch]
 impl HashFunctionFactory for CanonicalRabinKarpHashFactory {
     type HashTypeUnextendable = HashIntegerType;
     type HashTypeExtendable = ExtCanonicalRabinKarpHash;

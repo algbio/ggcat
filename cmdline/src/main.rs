@@ -13,34 +13,25 @@
 extern crate alloc;
 extern crate test;
 
-mod assemble_pipeline;
 mod benchmarks;
 
 #[macro_use]
 mod utils;
-mod assembler;
-mod assembler_generic_dispatcher;
 mod cmd_utils;
-mod querier;
-mod querier_generic_dispatcher;
-mod query_pipeline;
-mod structs;
 
 use backtrace::Backtrace;
 use std::cmp::max;
 
-use crate::assembler_generic_dispatcher::dispatch_assembler_hash_type;
 use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
-use crate::querier_generic_dispatcher::dispatch_querier_hash_type;
 use clap::arg_enum;
 use colors::bundles::multifile_building::ColorBundleMultifileBuilding;
-use io::compressed_read::CompressedRead;
-use io::sequences_reader::FastaSequence;
+use colors::colors_manager::ColorsManager;
+use hashes::MinimizerHashFunctionFactory;
 use parallel_processor::enable_counters_logging;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use rayon::ThreadPoolBuilder;
-use std::fs::create_dir_all;
-use std::io::Write;
+use std::fs::{create_dir_all, File};
+use std::io::{BufReader, Write};
 use std::panic;
 use std::path::PathBuf;
 use std::process::exit;
@@ -85,8 +76,12 @@ use colors::non_colored::NonColoredManager;
 use colors::storage::deserializer::ColorsDeserializer;
 use colors::DefaultColorsSerializer;
 use config::{ColorIndexType, FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
+use hashes::cn_nthash::CanonicalNtHashIteratorFactory;
+use hashes::fw_nthash::ForwardNtHashIteratorFactory;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use static_dispatch::StaticDispatch;
+use std::io::BufRead;
 
 #[derive(StructOpt, Debug)]
 enum CliArgs {
@@ -261,6 +256,134 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) {
     // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
 }
 
+fn get_hash_static_id(hash_type: HashType, k: usize, forward_only: bool) -> StaticDispatch<()> {
+    let hash_type = match hash_type {
+        HashType::Auto => {
+            if k <= 64 {
+                HashType::SeqHash
+            } else {
+                HashType::RabinKarp128
+            }
+        }
+        x => x,
+    };
+
+    use hashes::*;
+
+    match hash_type {
+        HashType::SeqHash => {
+            if k <= 8 {
+                if forward_only {
+                    fw_seqhash::u16::ForwardSeqHashFactory::STATIC_DISPATCH_ID
+                } else {
+                    cn_seqhash::u16::CanonicalSeqHashFactory::STATIC_DISPATCH_ID
+                }
+            } else if k <= 16 {
+                if forward_only {
+                    fw_seqhash::u32::ForwardSeqHashFactory::STATIC_DISPATCH_ID
+                } else {
+                    cn_seqhash::u32::CanonicalSeqHashFactory::STATIC_DISPATCH_ID
+                }
+            } else if k <= 32 {
+                if forward_only {
+                    fw_seqhash::u64::ForwardSeqHashFactory::STATIC_DISPATCH_ID
+                } else {
+                    cn_seqhash::u64::CanonicalSeqHashFactory::STATIC_DISPATCH_ID
+                }
+            } else if k <= 64 {
+                if forward_only {
+                    fw_seqhash::u128::ForwardSeqHashFactory::STATIC_DISPATCH_ID
+                } else {
+                    cn_seqhash::u128::CanonicalSeqHashFactory::STATIC_DISPATCH_ID
+                }
+            } else {
+                panic!("Cannot use sequence hash for k > 64!");
+            }
+        }
+        HashType::RabinKarp32 => {
+            if forward_only {
+                fw_rkhash::u32::ForwardRabinKarpHashFactory::STATIC_DISPATCH_ID
+            } else {
+                cn_rkhash::u32::CanonicalRabinKarpHashFactory::STATIC_DISPATCH_ID
+            }
+        }
+        HashType::RabinKarp64 => {
+            if forward_only {
+                fw_rkhash::u64::ForwardRabinKarpHashFactory::STATIC_DISPATCH_ID
+            } else {
+                cn_rkhash::u64::CanonicalRabinKarpHashFactory::STATIC_DISPATCH_ID
+            }
+        }
+        HashType::RabinKarp128 => {
+            if forward_only {
+                fw_rkhash::u128::ForwardRabinKarpHashFactory::STATIC_DISPATCH_ID
+            } else {
+                cn_rkhash::u128::CanonicalRabinKarpHashFactory::STATIC_DISPATCH_ID
+            }
+        }
+        HashType::Auto => {
+            unreachable!()
+        }
+    }
+}
+
+fn run_assembler_from_args(
+    generics: (StaticDispatch<()>, StaticDispatch<()>, StaticDispatch<()>),
+    args: AssemblerArgs,
+) {
+    let mut inputs = args.input.clone();
+
+    for list in args.input_lists {
+        for input in BufReader::new(File::open(list).unwrap()).lines() {
+            if let Ok(input) = input {
+                inputs.push(PathBuf::from(input));
+            }
+        }
+    }
+
+    if inputs.is_empty() {
+        println!("ERROR: No input files specified!");
+        exit(1);
+    }
+
+    assembler::dynamic_dispatch::run_assembler(
+        generics,
+        args.common_args.klen,
+        args.common_args
+            .mlen
+            .unwrap_or(compute_best_m(args.common_args.klen)),
+        assembler::AssemblerStartingStep::MinimizerBucketing,
+        assembler::AssemblerStartingStep::BuildUnitigs,
+        inputs,
+        args.output_file,
+        args.common_args.temp_dir,
+        args.common_args.threads_count,
+        args.min_multiplicity,
+        args.common_args.buckets_count_log,
+        Some(args.number),
+    );
+}
+
+fn run_querier_from_args(
+    generics: (StaticDispatch<()>, StaticDispatch<()>, StaticDispatch<()>),
+    args: QueryArgs,
+) {
+    querier::dynamic_dispatch::run_query(
+        generics,
+        args.common_args.klen,
+        args.common_args
+            .mlen
+            .unwrap_or(compute_best_m(args.common_args.klen)),
+        querier::QuerierStartingStep::MinimizerBucketing,
+        args.input_graph,
+        args.input_query,
+        args.output_file,
+        args.common_args.temp_dir,
+        args.common_args.buckets_count_log,
+        args.common_args.threads_count,
+    );
+}
+
 fn main() {
     let args: CliArgs = CliArgs::from_args();
 
@@ -295,11 +418,29 @@ fn main() {
     match args {
         CliArgs::Build(args) => {
             initialize(&args.common_args, &args.output_file);
-            if args.colors {
-                dispatch_assembler_hash_type::<ColorBundleMultifileBuilding>(args);
+
+            let bucketing_hash = if args.common_args.forward_only {
+                <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::STATIC_DISPATCH_ID
             } else {
-                dispatch_assembler_hash_type::<NonColoredManager>(args);
-            }
+                <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::STATIC_DISPATCH_ID
+            };
+
+            run_assembler_from_args(
+                (
+                    bucketing_hash,
+                    get_hash_static_id(
+                        args.common_args.hash_type,
+                        args.common_args.klen,
+                        args.common_args.forward_only,
+                    ),
+                    if args.colors {
+                        ColorBundleMultifileBuilding::STATIC_DISPATCH_ID
+                    } else {
+                        NonColoredManager::STATIC_DISPATCH_ID
+                    },
+                ),
+                args,
+            )
         }
         CliArgs::Matches(args) => {
             let colors_file = args.input_file.with_extension("colors.dat");
@@ -317,11 +458,29 @@ fn main() {
         }
         CliArgs::Query(args) => {
             initialize(&args.common_args, &args.output_file);
-            if args.colors {
-                dispatch_querier_hash_type::<ColorBundleGraphQuerying>(args);
+
+            let bucketing_hash = if args.common_args.forward_only {
+                <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::STATIC_DISPATCH_ID
             } else {
-                dispatch_querier_hash_type::<NonColoredManager>(args);
-            }
+                <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::STATIC_DISPATCH_ID
+            };
+
+            run_querier_from_args(
+                (
+                    bucketing_hash,
+                    get_hash_static_id(
+                        args.common_args.hash_type,
+                        args.common_args.klen,
+                        args.common_args.forward_only,
+                    ),
+                    if args.colors {
+                        ColorBundleGraphQuerying::STATIC_DISPATCH_ID
+                    } else {
+                        NonColoredManager::STATIC_DISPATCH_ID
+                    },
+                ),
+                args,
+            )
         }
         CliArgs::Utils(args) => {
             process_cmdutils(args);

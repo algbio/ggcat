@@ -45,21 +45,25 @@ atoi = "1.0.0"
 config = { path = "../config" }
 utils = { path = "../utils" }
 
+# Static dispatch
+static-dispatch = { path = "../libs/static-dispatch" }
+
+
 # Common libraries
 parallel-processor = { path = "../libs/parallel-processor-rs" }
-libdeflate-rs = { path = "../libs/libdeflate-rs" }
-nightly-quirks = { path = "../libs/nightly-quirks" }
+#libdeflate-rs = { path = "../libs/libdeflate-rs" }
+#nightly-quirks = { path = "../libs/nightly-quirks" }
 
 # TODO
 hashes = { path = "../pipeline/common/hashes" }
 io = { path = "../pipeline/common/io" }
 colors = { path = "../pipeline/common/colors" }
-minimizer_bucketing = { path = "../pipeline/common/minimizer_bucketing" }
-kmers_transform = { path = "../pipeline/common/kmers_transform" }
-structs = { path = "../pipeline/common/structs" }
+#minimizer_bucketing = { path = "../pipeline/common/minimizer_bucketing" }
+#kmers_transform = { path = "../pipeline/common/kmers_transform" }
+#structs = { path = "../pipeline/common/structs" }
 
-assembler_minimizer_bucketing = { path = "../pipeline/assembler/assembler_minimizer_bucketing" }
-kmers_merge = { path = "../pipeline/assembler/kmers_merge" }
+assembler = { path = "../pipeline/assembler" }
+querier = { path = "../pipeline/querier" }
 
 
 [features]

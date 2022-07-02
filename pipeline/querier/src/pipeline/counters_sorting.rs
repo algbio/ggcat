@@ -1,4 +1,3 @@
-use crate::query_pipeline::QueryPipeline;
 use byteorder::ReadBytesExt;
 use colors::colors_manager::color_types::SingleKmerColorDataType;
 use colors::colors_manager::ColorsManager;
@@ -76,61 +75,60 @@ impl<CX: SequenceExtraData<TempBuffer = ()>> BucketItem for CounterEntry<CX> {
     }
 }
 
-impl QueryPipeline {
-    pub fn counters_sorting<CX: ColorsManager>(
-        k: usize,
-        query_input: PathBuf,
-        file_counters_inputs: Vec<PathBuf>,
-        colored_buckets_path: PathBuf,
-        output_file: PathBuf,
-    ) -> Vec<PathBuf> {
-        PHASES_TIMES_MONITOR
-            .write()
-            .start_phase("phase: counters sorting".to_string());
+pub fn counters_sorting<CX: ColorsManager>(
+    k: usize,
+    query_input: PathBuf,
+    file_counters_inputs: Vec<PathBuf>,
+    colored_buckets_path: PathBuf,
+    output_file: PathBuf,
+) -> Vec<PathBuf> {
+    PHASES_TIMES_MONITOR
+        .write()
+        .start_phase("phase: counters sorting".to_string());
 
-        let mut sequences_info = vec![];
+    let mut sequences_info = vec![];
 
-        let buckets_count = file_counters_inputs.len();
+    let buckets_count = file_counters_inputs.len();
 
-        SequencesReader::process_file_extended(
-            query_input,
-            |seq| {
-                sequences_info.push((seq.seq.len() - k + 1) as u64);
-            },
-            false,
-        );
+    SequencesReader::process_file_extended(
+        query_input,
+        |seq| {
+            sequences_info.push((seq.seq.len() - k + 1) as u64);
+        },
+        false,
+    );
 
-        let final_counters = if CX::COLORS_ENABLED {
-            vec![]
+    let final_counters = if CX::COLORS_ENABLED {
+        vec![]
+    } else {
+        let mut counters = Vec::with_capacity(sequences_info.len());
+        counters.extend((0..sequences_info.len()).map(|_| AtomicU64::new(0)));
+        counters
+    };
+
+    let color_buckets = if CX::COLORS_ENABLED {
+        Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
+            buckets_count,
+            colored_buckets_path,
+            &(
+                get_memory_mode(SwapPriority::MinimizerBuckets),
+                MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+                DEFAULT_LZ4_COMPRESSION_LEVEL,
+            ),
+        ))
+    } else {
+        Arc::new(MultiThreadBuckets::EMPTY)
+    };
+
+    let thread_buffers = ScopedThreadLocal::new(move || {
+        if CX::COLORS_ENABLED {
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
         } else {
-            let mut counters = Vec::with_capacity(sequences_info.len());
-            counters.extend((0..sequences_info.len()).map(|_| AtomicU64::new(0)));
-            counters
-        };
+            BucketsThreadBuffer::EMPTY
+        }
+    });
 
-        let color_buckets = if CX::COLORS_ENABLED {
-            Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
-                buckets_count,
-                colored_buckets_path,
-                &(
-                    get_memory_mode(SwapPriority::MinimizerBuckets),
-                    MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-                    DEFAULT_LZ4_COMPRESSION_LEVEL,
-                ),
-            ))
-        } else {
-            Arc::new(MultiThreadBuckets::EMPTY)
-        };
-
-        let thread_buffers = ScopedThreadLocal::new(move || {
-            if CX::COLORS_ENABLED {
-                BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
-            } else {
-                BucketsThreadBuffer::EMPTY
-            }
-        });
-
-        file_counters_inputs.par_iter().for_each(|input| {
+    file_counters_inputs.par_iter().for_each(|input| {
 
             let mut thread_buffer = thread_buffers.get();
             let mut colored_buckets_writer = BucketsThreadDispatcher::new(&color_buckets, thread_buffer.take());
@@ -195,17 +193,16 @@ impl QueryPipeline {
             thread_buffer.put_back(colored_buckets_writer.finalize().0);
         });
 
-        let mut writer = csv::Writer::from_path(output_file).unwrap();
+    let mut writer = csv::Writer::from_path(output_file).unwrap();
 
-        for (info, counter) in sequences_info.iter().zip(final_counters.iter()) {
-            writer
-                .write_record(&[
-                    info.to_string(),
-                    counter.load(Ordering::Relaxed).to_string(),
-                ])
-                .unwrap();
-        }
-
-        color_buckets.finalize()
+    for (info, counter) in sequences_info.iter().zip(final_counters.iter()) {
+        writer
+            .write_record(&[
+                info.to_string(),
+                counter.load(Ordering::Relaxed).to_string(),
+            ])
+            .unwrap();
     }
+
+    color_buckets.finalize()
 }

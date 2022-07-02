@@ -1,6 +1,9 @@
 #![feature(generic_associated_types)]
 #![feature(type_alias_impl_trait)]
 #![feature(trait_alias)]
+#![feature(const_type_id)]
+
+use static_dispatch::static_dispatch;
 
 pub mod cn_nthash;
 pub mod cn_seqhash;
@@ -41,7 +44,8 @@ pub trait ExtendableHashTraitType: Copy + Clone + Debug + Eq + Ord + Send + Sync
     fn is_forward(&self) -> bool;
 }
 
-pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + Send + Sync + 'static {
+#[static_dispatch]
+pub trait HashFunctionFactory: Sized + Clone + Debug + Send + Sync + 'static {
     type HashTypeUnextendable: UnextendableHashTraitType;
     type HashTypeExtendable: ExtendableHashTraitType<
         HashTypeUnextendable = Self::HashTypeUnextendable,
@@ -93,6 +97,7 @@ pub trait HashFunctionFactory: Ord + Sized + Clone + Debug + Send + Sync + 'stat
     ) -> Self::HashTypeExtendable;
 }
 
+#[static_dispatch]
 pub trait MinimizerHashFunctionFactory: HashFunctionFactory {
     /// Gets the first buckets count, used in MinimizerBucketing phase
     fn get_second_bucket(

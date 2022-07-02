@@ -10,6 +10,9 @@ edition = "2021"
 # Config
 config = { path = "../../../config" }
 
+# Static dispatch
+static-dispatch = { path = "../../../libs/static-dispatch" }
+
 # Common libraries
 parallel-processor = { path = "../../../libs/parallel-processor-rs" }
 libdeflate-rs = { path = "../../../libs/libdeflate-rs" }

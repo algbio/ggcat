@@ -1,7 +1,5 @@
-use crate::query_pipeline::counters_sorting::CounterEntry;
-use crate::query_pipeline::querier_minimizer_bucketing::QuerierMinimizerBucketingExecutorFactory;
-use crate::query_pipeline::QueryPipeline;
-use crate::CompressedRead;
+use crate::pipeline::counters_sorting::CounterEntry;
+use crate::pipeline::querier_minimizer_bucketing::QuerierMinimizerBucketingExecutorFactory;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use colors::colors_manager::color_types::{
     MinimizerBucketingSeqColorDataType, SingleKmerColorDataType,
@@ -15,6 +13,7 @@ use hashbrown::HashMap;
 use hashes::HashFunction;
 use hashes::HashFunctionFactory;
 use hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
+use io::compressed_read::CompressedRead;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
@@ -351,65 +350,63 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     }
 }
 
-impl QueryPipeline {
-    pub fn parallel_kmers_counting<
-        H: MinimizerHashFunctionFactory,
-        MH: HashFunctionFactory,
-        CX: ColorsManager,
-        P: AsRef<Path> + Sync,
-    >(
-        file_inputs: Vec<PathBuf>,
-        buckets_counters_path: PathBuf,
-        buckets_count: usize,
-        out_directory: P,
-        k: usize,
-        m: usize,
-        threads_count: usize,
-    ) -> Vec<PathBuf> {
-        PHASES_TIMES_MONITOR
-            .write()
-            .start_phase("phase: kmers counting".to_string());
+pub fn parallel_kmers_counting<
+    H: MinimizerHashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+    P: AsRef<Path> + Sync,
+>(
+    file_inputs: Vec<PathBuf>,
+    buckets_counters_path: PathBuf,
+    buckets_count: usize,
+    out_directory: P,
+    k: usize,
+    m: usize,
+    threads_count: usize,
+) -> Vec<PathBuf> {
+    PHASES_TIMES_MONITOR
+        .write()
+        .start_phase("phase: kmers counting".to_string());
 
-        let counters_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
-            buckets_count,
-            out_directory.as_ref().join("counters"),
-            &(
-                get_memory_mode(SwapPriority::QueryCounters),
-                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-            ),
-        ));
+    let counters_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+        buckets_count,
+        out_directory.as_ref().join("counters"),
+        &(
+            get_memory_mode(SwapPriority::QueryCounters),
+            LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
+        ),
+    ));
 
-        let global_data = Arc::new(GlobalQueryMergeData {
+    let global_data = Arc::new(GlobalQueryMergeData {
+        k,
+        m,
+        counters_buckets,
+        global_resplit_data: Arc::new(MinimizerBucketingCommonData::new(
             k,
-            m,
-            counters_buckets,
-            global_resplit_data: Arc::new(MinimizerBucketingCommonData::new(
-                k,
-                if k > RESPLITTING_MAX_K_M_DIFFERENCE + 1 {
-                    k - RESPLITTING_MAX_K_M_DIFFERENCE
-                } else {
-                    min(m, 2)
-                }, // m
-                buckets_count,
-                1,
-                (),
-            )),
-        });
-
-        KmersTransform::<ParallelKmersQueryFactory<H, MH, CX>>::new(
-            file_inputs,
-            out_directory.as_ref(),
-            buckets_counters_path,
+            if k > RESPLITTING_MAX_K_M_DIFFERENCE + 1 {
+                k - RESPLITTING_MAX_K_M_DIFFERENCE
+            } else {
+                min(m, 2)
+            }, // m
             buckets_count,
-            global_data.clone(),
-            threads_count,
-            k,
-            (MINIMUM_SUBBUCKET_KMERS_COUNT / k) as u64,
-        )
-        .parallel_kmers_transform();
+            1,
+            (),
+        )),
+    });
 
-        let global_data =
-            Arc::try_unwrap(global_data).unwrap_or_else(|_| panic!("Cannot unwrap global data!"));
-        global_data.counters_buckets.finalize()
-    }
+    KmersTransform::<ParallelKmersQueryFactory<H, MH, CX>>::new(
+        file_inputs,
+        out_directory.as_ref(),
+        buckets_counters_path,
+        buckets_count,
+        global_data.clone(),
+        threads_count,
+        k,
+        (MINIMUM_SUBBUCKET_KMERS_COUNT / k) as u64,
+    )
+    .parallel_kmers_transform();
+
+    let global_data =
+        Arc::try_unwrap(global_data).unwrap_or_else(|_| panic!("Cannot unwrap global data!"));
+    global_data.counters_buckets.finalize()
 }

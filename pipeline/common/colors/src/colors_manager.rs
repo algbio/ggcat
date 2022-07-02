@@ -2,6 +2,7 @@ use crate::parsers::SingleSequenceInfo;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use static_dispatch::static_dispatch;
 use std::hash::Hash;
 use std::io::Write;
 use std::ops::Range;
@@ -160,6 +161,7 @@ pub trait ColorsMergeManager<H: HashFunctionFactory>: Sized {
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]);
 }
 
+#[static_dispatch]
 pub trait ColorsManager: 'static + Sync + Send + Sized {
     const COLORS_ENABLED: bool;
 

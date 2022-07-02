@@ -1,6 +1,4 @@
-use crate::query_pipeline::parallel_kmers_query::QueryKmersReferenceData;
-use crate::query_pipeline::QueryPipeline;
-use crate::FastaSequence;
+use crate::pipeline::parallel_kmers_query::QueryKmersReferenceData;
 use byteorder::ReadBytesExt;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
@@ -13,6 +11,7 @@ use hashes::MinimizerHashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
+use io::sequences_reader::FastaSequence;
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
@@ -220,30 +219,28 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
     }
 }
 
-impl QueryPipeline {
-    pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
-        graph_file: PathBuf,
-        query_file: PathBuf,
-        output_path: &Path,
-        buckets_count: usize,
-        threads_count: usize,
-        k: usize,
-        m: usize,
-    ) -> (Vec<PathBuf>, PathBuf) {
-        PHASES_TIMES_MONITOR
-            .write()
-            .start_phase("phase: graph + query bucketing".to_string());
+pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
+    graph_file: PathBuf,
+    query_file: PathBuf,
+    output_path: &Path,
+    buckets_count: usize,
+    threads_count: usize,
+    k: usize,
+    m: usize,
+) -> (Vec<PathBuf>, PathBuf) {
+    PHASES_TIMES_MONITOR
+        .write()
+        .start_phase("phase: graph + query bucketing".to_string());
 
-        let input_files = vec![(graph_file, FileType::Graph), (query_file, FileType::Query)];
+    let input_files = vec![(graph_file, FileType::Graph), (query_file, FileType::Query)];
 
-        GenericMinimizerBucketing::do_bucketing::<QuerierMinimizerBucketingExecutorFactory<H, CX>>(
-            input_files,
-            output_path,
-            buckets_count,
-            threads_count,
-            k,
-            m,
-            (),
-        )
-    }
+    GenericMinimizerBucketing::do_bucketing::<QuerierMinimizerBucketingExecutorFactory<H, CX>>(
+        input_files,
+        output_path,
+        buckets_count,
+        threads_count,
+        k,
+        m,
+        (),
+    )
 }

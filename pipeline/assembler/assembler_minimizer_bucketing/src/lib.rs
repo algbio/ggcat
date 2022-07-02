@@ -1,3 +1,4 @@
+use ::static_dispatch::static_dispatch;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::SingleSequenceInfo;
@@ -196,6 +197,13 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
     }
 }
 
+#[static_dispatch(H = [
+    hashes::cn_nthash::CanonicalNtHashIteratorFactory,
+    // hashes::fw_nthash::ForwardNtHashIteratorFactory
+], CX = [
+    // colors::bundles::multifile_building::ColorBundleMultifileBuilding,
+    colors::non_colored::NonColoredManager,
+])]
 pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
     input_files: Vec<PathBuf>,
     output_path: &Path,

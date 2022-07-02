@@ -1,0 +1,43 @@
+[package]
+name = "assembler"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+# Config
+config = { path = "../../config" }
+
+# Utils
+utils = { path = "../../utils" }
+
+
+# Static dispatch
+static-dispatch = { path = "../../libs/static-dispatch" }
+
+# Common libraries
+parallel-processor = { path = "../../libs/parallel-processor-rs" }
+libdeflate-rs = { path = "../../libs/libdeflate-rs" }
+nightly-quirks = { path = "../../libs/nightly-quirks" }
+
+# Pipeline crates
+assembler_minimizer_bucketing = { path = "assembler_minimizer_bucketing" }
+kmers_merge = { path = "kmers_merge" }
+
+
+# Common pipeline libraries
+hashes = { path = "../common/hashes" }
+io = { path = "../common/io" }
+colors = { path = "../common/colors" }
+structs = { path = "../common/structs" }
+
+# Other libraries
+typenum = "1.15.0"
+parking_lot = "0.12.1"
+fs_extra = "1.2.0"
+rayon = "1.5.3"
+hashbrown = "0.12.1"
+itertools = "0.10.3"
+byteorder = "1.4.3"

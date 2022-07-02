@@ -15,6 +15,9 @@ parallel-processor = { path = "../../../libs/parallel-processor-rs" }
 libdeflate-rs = { path = "../../../libs/libdeflate-rs" }
 nightly-quirks = { path = "../../../libs/nightly-quirks" }
 
+# Static dispatch
+static-dispatch = { path = "../../../libs/static-dispatch" }
+
 # Common pipeline libraries
 hashes = { path = "../../common/hashes" }
 io = { path = "../../common/io" }

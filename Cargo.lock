@@ -29,6 +29,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aho-corasick"
+version = "0.7.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e37cfd5e7657ada45f742d6e99ca5788580b5c529dc78faf11ece6dc702656f"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "ansi_term"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -50,6 +59,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "assembler"
+version = "0.1.0"
+dependencies = [
+ "assembler_minimizer_bucketing",
+ "byteorder",
+ "colors",
+ "config",
+ "fs_extra",
+ "hashbrown 0.12.1",
+ "hashes",
+ "io",
+ "itertools",
+ "kmers_merge",
+ "libdeflate-rs",
+ "nightly-quirks",
+ "parallel-processor",
+ "parking_lot",
+ "rayon",
+ "static-dispatch",
+ "structs",
+ "typenum",
+ "utils",
+]
+
+[[package]]
 name = "assembler_minimizer_bucketing"
 version = "0.1.0"
 dependencies = [
@@ -61,6 +95,7 @@ dependencies = [
  "minimizer_bucketing",
  "nightly-quirks",
  "parallel-processor",
+ "static-dispatch",
  "structs",
  "typenum",
 ]
@@ -232,6 +267,7 @@ dependencies = [
  "roaring 0.9.0",
  "serde",
  "siphasher",
+ "static-dispatch",
  "structs",
  "typenum",
 ]
@@ -499,7 +535,7 @@ name = "ggcat"
 version = "0.1.0"
 dependencies = [
  "ahash",
- "assembler_minimizer_bucketing",
+ "assembler",
  "atoi",
  "backtrace",
  "bincode",
@@ -521,20 +557,16 @@ dependencies = [
  "hashes",
  "io",
  "itertools",
- "kmers_merge",
- "kmers_transform",
  "lazy_static",
  "libc",
- "libdeflate-rs",
  "lz4",
  "make-cmd",
- "minimizer_bucketing",
- "nightly-quirks",
  "nix 0.15.0",
  "parallel-processor",
  "parking_lot",
  "pcg_rand",
  "postcard",
+ "querier",
  "rand 0.8.5",
  "rayon",
  "replace_with",
@@ -542,9 +574,9 @@ dependencies = [
  "serde",
  "serde_json",
  "siphasher",
+ "static-dispatch",
  "stopwatch",
  "structopt",
- "structs",
  "typenum",
  "utils",
 ]
@@ -591,6 +623,7 @@ dependencies = [
  "pcg_rand",
  "rand 0.8.5",
  "serde",
+ "static-dispatch",
  "utils",
 ]
 
@@ -1102,6 +1135,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "querier"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "colors",
+ "config",
+ "csv",
+ "hashbrown 0.12.1",
+ "hashes",
+ "io",
+ "kmers_transform",
+ "libdeflate-rs",
+ "minimizer_bucketing",
+ "nightly-quirks",
+ "parallel-processor",
+ "rayon",
+ "static-dispatch",
+ "structs",
+ "typenum",
+ "utils",
+]
+
+[[package]]
 name = "quote"
 version = "0.6.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1220,10 +1276,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex"
+version = "1.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d83f127d94bdbcda4c8cc2e50f6f84f4b611f69c902699ca385a39c3a75f9ff1"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-syntax",
+]
+
+[[package]]
 name = "regex-automata"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c230d73fb8d8c1b9c0b3135c5142a8acee3a0558fb8db5cf1cb65f8d7862132"
+
+[[package]]
+name = "regex-syntax"
+version = "0.6.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49b3de9ec5dc0a3417da371aab17d729997c15010e7fd24ff707773a33bddb64"
 
 [[package]]
 name = "replace_with"
@@ -1342,6 +1415,24 @@ name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
+
+[[package]]
+name = "static-dispatch"
+version = "0.1.0"
+dependencies = [
+ "static-dispatch-proc-macro",
+]
+
+[[package]]
+name = "static-dispatch-proc-macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro-error",
+ "proc-macro2 1.0.40",
+ "quote 1.0.20",
+ "regex",
+ "syn 1.0.98",
+]
 
 [[package]]
 name = "static_assertions"

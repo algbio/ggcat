@@ -6,28 +6,6 @@ use hashes::fw_nthash::ForwardNtHashIteratorFactory;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use utils::compute_best_m;
 
-fn run_querier_from_args<
-    BucketingHash: MinimizerHashFunctionFactory,
-    MergingHash: HashFunctionFactory,
-    ColorsImpl: ColorsManager,
->(
-    args: QueryArgs,
-) {
-    run_query::<BucketingHash, MergingHash, ColorsImpl>(
-        args.common_args.klen,
-        args.common_args
-            .mlen
-            .unwrap_or(compute_best_m(args.common_args.klen)),
-        args.step,
-        args.input_graph,
-        args.input_query,
-        args.output_file,
-        args.common_args.temp_dir,
-        args.common_args.buckets_count_log,
-        args.common_args.threads_count,
-    );
-}
-
 pub(crate) fn dispatch_querier_hash_type<ColorsImpl: ColorsManager>(args: QueryArgs) {
     let hash_type = match args.common_args.hash_type {
         HashType::Auto => {
