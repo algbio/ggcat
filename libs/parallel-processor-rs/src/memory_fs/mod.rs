@@ -232,9 +232,11 @@ mod tests {
                 file.write(data.as_slice());
             }
             drop(file);
-            let mut file2 =
-                FileReader::open(format!("/home/andrea/genome-assembly/test1234/{}.tmp", i))
-                    .unwrap();
+            let mut file2 = FileReader::open(
+                format!("/home/andrea/genome-assembly/test1234/{}.tmp", i),
+                None,
+            )
+            .unwrap();
 
             file2.seek(SeekFrom::Start(17 + 3337 * 12374));
             let mut buffer = [0; 4];
@@ -247,9 +249,11 @@ mod tests {
         (0..400).into_par_iter().for_each(|i: u32| {
             println!("Reading file {}", i);
             let mut datar = vec![0; 3337];
-            let mut file =
-                FileReader::open(format!("/home/andrea/genome-assembly/test1234/{}.tmp", i))
-                    .unwrap();
+            let mut file = FileReader::open(
+                format!("/home/andrea/genome-assembly/test1234/{}.tmp", i),
+                None,
+            )
+            .unwrap();
             for _ in 0..(1024 * 64) {
                 file.read_exact(datar.as_mut_slice()).unwrap();
                 assert_eq!(datar, data);

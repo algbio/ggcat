@@ -199,9 +199,9 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
 
 #[static_dispatch(H = [
     hashes::cn_nthash::CanonicalNtHashIteratorFactory,
-    // hashes::fw_nthash::ForwardNtHashIteratorFactory
+    #[cfg(feature = "full")] hashes::fw_nthash::ForwardNtHashIteratorFactory
 ], CX = [
-    // colors::bundles::multifile_building::ColorBundleMultifileBuilding,
+    #[cfg(feature = "full")] colors::bundles::multifile_building::ColorBundleMultifileBuilding,
     colors::non_colored::NonColoredManager,
 ])]
 pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(

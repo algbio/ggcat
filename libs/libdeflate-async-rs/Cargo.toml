@@ -1,5 +1,5 @@
 [package]
-name = "libdeflate-rs"
+name = "libdeflate-async-rs"
 version = "0.1.0"
 edition = "2021"
 
@@ -12,10 +12,12 @@ static_assertions = "1.1.0"
 structopt = "0.3.25"
 nightly-quirks = { path = "../nightly-quirks" }
 counter-stats = { git = "https://github.com/Guilucand/counter-stats.git" }
+tokio = { version = "1.19.2", features = ["io-util", "macros", "rt-multi-thread", "fs"] }
 
 [[bin]]
 name = "gzipd"
 path = "src/bin/gzipd.rs"
 
 [dev-dependencies]
-rayon = "1.5.3"
+tokio-scoped = "0.2.0"
+tokio-uring = "0.3.0"

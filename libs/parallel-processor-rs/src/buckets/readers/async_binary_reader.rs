@@ -265,23 +265,34 @@ impl AsyncBinaryReader {
         }
     }
 
-    pub fn decode_all_bucket_items<
-        E: BucketItem,
-        F: for<'a> FnMut(E::ReadType<'a>, &mut E::ExtraDataBuffer),
-    >(
+    pub fn get_items_stream<E: BucketItem>(
         &self,
         read_thread: Arc<AsyncReaderThread>,
-        mut buffer: E::ReadBuffer,
-        mut extra_buffer: E::ExtraDataBuffer,
-        mut func: F,
-    ) {
-        let mut stream = read_thread.read_bucket(self.opened_file.clone());
-        while let Some(el) = E::read_from(&mut stream, &mut buffer, &mut extra_buffer) {
-            func(el, &mut extra_buffer);
+        buffer: E::ReadBuffer,
+        extra_buffer: E::ExtraDataBuffer,
+    ) -> AsyncBinaryReaderItemsIterator<E> {
+        let stream = read_thread.read_bucket(self.opened_file.clone());
+        AsyncBinaryReaderItemsIterator {
+            buffer,
+            extra_buffer,
+            stream,
         }
     }
 
     pub fn get_name(&self) -> PathBuf {
         self.path.clone()
+    }
+}
+
+pub struct AsyncBinaryReaderItemsIterator<E: BucketItem> {
+    buffer: E::ReadBuffer,
+    extra_buffer: E::ExtraDataBuffer,
+    stream: AsyncStreamThreadReader,
+}
+
+impl<E: BucketItem> AsyncBinaryReaderItemsIterator<E> {
+    pub fn next(&mut self) -> Option<(E::ReadType<'_>, &mut E::ExtraDataBuffer)> {
+        let item = E::read_from(&mut self.stream, &mut self.buffer, &mut self.extra_buffer)?;
+        Some((item, &mut self.extra_buffer))
     }
 }

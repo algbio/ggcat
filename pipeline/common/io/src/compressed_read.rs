@@ -16,6 +16,9 @@ pub struct CompressedRead<'a> {
     _phantom: PhantomData<&'a ()>,
 }
 
+unsafe impl<'a> Sync for CompressedRead<'a> {}
+unsafe impl<'a> Send for CompressedRead<'a> {}
+
 impl<'a> Debug for CompressedRead<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.write_str(&self.to_string())

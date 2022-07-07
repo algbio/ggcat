@@ -8,13 +8,13 @@ use std::collections::HashMap;
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{
-    parse_macro_input, parse_quote, Expr, ExprArray, GenericParam, ItemFn, ItemImpl, ItemTrait,
-    Token, Type, TypeParamBound,
+    parse_macro_input, parse_quote, Expr, ExprArray, ExprPath, GenericParam, ItemFn, ItemImpl,
+    ItemTrait, Token, Type, TypeParamBound,
 };
 use syn::{FnArg, Item};
 
 struct FunctionSpecializations {
-    specs: Vec<(String, ExprArray)>,
+    specs: Vec<(String, Vec<ExprPath>)>,
 }
 
 impl Parse for FunctionSpecializations {
@@ -24,8 +24,21 @@ impl Parse for FunctionSpecializations {
         while !input.is_empty() {
             let name: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
-            let array = input.parse()?;
-            specs.push((name.to_string(), array));
+            let array: ExprArray = input.parse()?;
+
+            let elems: Vec<_> = array
+                .elems
+                .iter()
+                .map(|x| {
+                    if let Expr::Path(path) = x {
+                        path.clone()
+                    } else {
+                        abort!(x.span(), "Expected path.");
+                    }
+                })
+                .collect();
+
+            specs.push((name.to_string(), elems));
             if input.is_empty() {
                 break;
             }
@@ -74,7 +87,7 @@ fn static_dispatch_fn(args: FunctionSpecializations, function: ItemFn) -> TokenS
                     name
                 );
             }
-            Some(names) => names.elems.clone().into_iter().collect(),
+            Some(names) => names.clone().into_iter().collect(),
         };
 
         generics_list.push((name, names, const_type, param.clone(), first_bound));
@@ -190,7 +203,7 @@ fn static_dispatch_fn(args: FunctionSpecializations, function: ItemFn) -> TokenS
         gen_args: TokenStream,
         generics_list: &Vec<(
             String,
-            Vec<Expr>,
+            Vec<ExprPath>,
             Option<Type>,
             GenericParam,
             Option<TokenStream>,
@@ -206,10 +219,13 @@ fn static_dispatch_fn(args: FunctionSpecializations, function: ItemFn) -> TokenS
             let is_const = generics_list[index].2.is_some();
 
             for (idx, ty) in generics_list[index].1.iter().enumerate() {
+                let attrs = &ty.attrs;
+                let path = &ty.path;
+
                 let gen_args = if index == 0 {
-                    quote! { #ty }
+                    quote! { #path }
                 } else {
-                    quote! { #gen_args, #ty }
+                    quote! { #gen_args, #path }
                 };
 
                 let nested = recursive_dispatch_builder(
@@ -222,13 +238,15 @@ fn static_dispatch_fn(args: FunctionSpecializations, function: ItemFn) -> TokenS
 
                 if is_const {
                     quote! {
+                        #(#attrs)*
                         #idx => #nested,
                     }
                 } else {
                     let first_bound = generics_list[index].4.as_ref().unwrap();
 
                     quote! {
-                        <#ty as #first_bound>::STATIC_DISPATCH_ID => #nested,
+                        #(#attrs)*
+                        <#path as #first_bound>::STATIC_DISPATCH_ID => #nested,
                     }
                 }
                 .to_tokens(&mut output_dispatcher);

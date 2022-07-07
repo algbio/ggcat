@@ -31,12 +31,17 @@ const SEQ_LETTERS_MAPPING: [u8; 256] = {
     lookup
 };
 
-pub struct SequencesReader;
+pub struct SequencesReader {}
+
 impl SequencesReader {
     fn normalize_sequence(seq: &mut [u8]) {
         for el in seq.iter_mut() {
             *el = SEQ_LETTERS_MAPPING[*el as usize];
         }
+    }
+
+    pub fn new() -> Self {
+        Self {}
     }
 
     pub fn process_file_extended<F: FnMut(FastaSequence)>(

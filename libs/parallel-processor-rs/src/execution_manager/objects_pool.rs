@@ -1,3 +1,4 @@
+use crate::execution_manager::async_channel::AsyncChannel;
 use parking_lot::{Condvar, Mutex};
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
@@ -22,83 +23,87 @@ impl<T: PoolObjectTrait> PoolObjectTrait for Box<T> {
     }
 }
 
-pub struct ObjectsPool<T> {
-    queue: Arc<Mutex<Vec<T>>>,
-    pub(crate) returner: Arc<(Arc<Mutex<Vec<T>>>, Condvar, AtomicU64)>,
+pub struct ObjectsPool<T: Sync + Send + 'static> {
+    queue: AsyncChannel<T>,
+    pub(crate) returner: Arc<(AsyncChannel<T>, AtomicU64)>,
     allocate_fn: Box<dyn (Fn() -> T) + Sync + Send>,
     max_count: u64,
-    max_count_extended: AtomicU64,
 }
 
 pub trait PoolReturner<T: Send + Sync>: Send + Sync {
     fn return_element(&self, el: T);
 }
 
-impl<T: PoolObjectTrait> PoolReturner<T> for (Arc<Mutex<Vec<T>>>, Condvar, AtomicU64) {
+impl<T: PoolObjectTrait> PoolReturner<T> for (AsyncChannel<T>, AtomicU64) {
     fn return_element(&self, mut el: T) {
-        self.2.fetch_sub(1, Ordering::Relaxed);
+        self.1.fetch_sub(1, Ordering::Relaxed);
         el.reset();
-        let mut vec_lock = self.0.lock();
-        if vec_lock.len() < vec_lock.capacity() {
-            vec_lock.push(el);
-            self.1.notify_one();
-        }
+        self.0.send(el, true);
     }
 }
 
 impl<T: PoolObjectTrait> ObjectsPool<T> {
     pub fn new(cap: usize, init_data: T::InitData) -> Self {
-        let channel = Arc::new(Mutex::new(Vec::with_capacity(cap)));
+        let channel = AsyncChannel::new(cap);
 
         Self {
             queue: channel.clone(),
-            returner: Arc::new((channel, Condvar::new(), AtomicU64::new(0))),
+            returner: Arc::new((channel, AtomicU64::new(0))),
             allocate_fn: Box::new(move || T::allocate_new(&init_data)),
             max_count: cap as u64,
-            max_count_extended: AtomicU64::new(cap as u64),
         }
     }
 
-    pub fn reset_max_count(&self) {
-        self.max_count_extended
-            .store(self.max_count, Ordering::Relaxed);
+    #[inline(always)]
+    async fn alloc_wait(&self) -> Result<T, ()> {
+        self.queue.recv().await
     }
 
-    pub fn set_max_count_ratio(&self, ratio: u64) {
-        self.max_count_extended
-            .store(self.max_count * ratio, Ordering::Relaxed);
+    #[inline(always)]
+    fn alloc_wait_blocking(&self) -> Result<T, ()> {
+        self.queue.recv_blocking()
     }
 
-    fn alloc_wait(&self) -> T {
-        let mut queue = self.queue.lock();
-        loop {
-            match queue.pop() {
-                Some(x) => return x,
-                None => self.returner.1.wait(&mut queue),
-            }
+    pub async fn alloc_object(&self) -> PoolObject<T> {
+        let el_count = self.returner.1.fetch_add(1, Ordering::Relaxed);
+
+        if el_count >= self.max_count {
+            return PoolObject::from_element(self.alloc_wait().await.unwrap(), self);
+        }
+
+        match self.queue.try_recv() {
+            Some(el) => PoolObject::from_element(el, self),
+            None => PoolObject::from_element((self.allocate_fn)(), self),
         }
     }
 
-    pub fn alloc_object(&self, blocking: bool) -> PoolObject<T> {
-        let el_count = self.returner.2.fetch_add(1, Ordering::Relaxed);
+    pub fn alloc_object_blocking(&self) -> PoolObject<T> {
+        let el_count = self.returner.1.fetch_add(1, Ordering::Relaxed);
 
-        if blocking && el_count >= self.max_count_extended.load(Ordering::Relaxed) {
-            return PoolObject::from_element(self.alloc_wait(), self);
+        if el_count >= self.max_count {
+            return PoolObject::from_element(self.alloc_wait_blocking().unwrap(), self);
         }
 
-        match self.queue.lock().pop() {
+        match self.queue.try_recv() {
+            Some(el) => PoolObject::from_element(el, self),
+            None => PoolObject::from_element((self.allocate_fn)(), self),
+        }
+    }
+
+    pub fn alloc_object_force(&self) -> PoolObject<T> {
+        self.returner.1.fetch_add(1, Ordering::Relaxed);
+        match self.queue.try_recv() {
             Some(el) => PoolObject::from_element(el, self),
             None => PoolObject::from_element((self.allocate_fn)(), self),
         }
     }
 
     pub fn get_available_items(&self) -> i64 {
-        (self.max_count_extended.load(Ordering::Relaxed) as i64)
-            - (self.returner.2.load(Ordering::Relaxed) as i64)
+        (self.max_count as i64) - (self.returner.1.load(Ordering::Relaxed) as i64)
     }
 
     pub fn get_allocated_items(&self) -> i64 {
-        self.returner.2.load(Ordering::Relaxed) as i64
+        self.returner.1.load(Ordering::Relaxed) as i64
     }
 
     // pub fn wait_for_item_timeout(&self, timeout: Duration) {

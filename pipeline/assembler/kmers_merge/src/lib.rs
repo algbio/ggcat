@@ -122,7 +122,7 @@ pub fn kmers_merge<
     H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
-    P: AsRef<Path> + std::marker::Sync,
+    P: AsRef<Path> + Sync,
 >(
     file_inputs: Vec<PathBuf>,
     buckets_counters_path: PathBuf,
@@ -209,5 +209,109 @@ pub fn kmers_merge<
     RetType {
         sequences,
         hashes: hashes_buckets.finalize(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use colors::colors_manager::{ColorsManager, ColorsMergeManager};
+    use colors::non_colored::NonColoredManager;
+    use config::{FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
+    use io::generate_bucket_names;
+    use parallel_processor::memory_data_size::MemoryDataSize;
+    use parallel_processor::memory_fs::MemoryFs;
+    use rayon::ThreadPoolBuilder;
+    use std::cmp::max;
+    use std::path::Path;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use utils::DEBUG_LEVEL;
+
+    #[ignore]
+    #[test]
+    fn test_single_bucket_processing() {
+        const TEMP_DIR: &str = "../../../../temp-gut-test-new";
+
+        let buckets_count = 1024;
+
+        let mut buckets =
+            generate_bucket_names(Path::new(TEMP_DIR).join("bucket"), buckets_count, None);
+
+        // let mut buckets = vec![buckets[322]];
+
+        // buckets.remove(1009);
+        // buckets.remove(886);
+        // buckets.remove(829);
+        // buckets.remove(806);
+        // buckets.remove(727);
+        // buckets.remove(440);
+        // buckets.remove(113);
+        // buckets.remove(33);
+
+        let counters = Path::new(TEMP_DIR).join("buckets-counters.dat");
+
+        let global_colors_table = Arc::new(
+            <<NonColoredManager as ColorsManager>::ColorsMergeManagerType<
+                hashes::cn_seqhash::u128::CanonicalSeqHashFactory,
+            > as ColorsMergeManager<hashes::cn_seqhash::u128::CanonicalSeqHashFactory>>::create_colors_table("", Vec::new()),
+        );
+
+        let k = 63;
+        let m = 12;
+        let threads_count = 16;
+        let min_multiplicity = 1;
+
+        // Increase the maximum allowed number of open files
+        fdlimit::raise_fd_limit();
+
+        KEEP_FILES.store(true, Ordering::Relaxed);
+
+        PREFER_MEMORY.store(false, Ordering::Relaxed);
+
+        DEBUG_LEVEL.store(0, Ordering::Relaxed);
+
+        ThreadPoolBuilder::new()
+            .num_threads(threads_count)
+            .thread_name(|i| format!("rayon-thread-{}", i))
+            .build_global()
+            .unwrap();
+
+        // enable_counters_logging(
+        //     out_file.with_extension("stats.log"),
+        //     Duration::from_millis(1000),
+        //     |val| {
+        //         val["phase"] = PHASES_TIMES_MONITOR.read().get_phase_desc().into();
+        //     },
+        // );
+
+        MemoryFs::init(
+            parallel_processor::memory_data_size::MemoryDataSize::from_bytes(
+                (8.0 * (MemoryDataSize::OCTET_GIBIOCTET_FACTOR as f64)) as usize,
+            ),
+            FLUSH_QUEUE_FACTOR * threads_count,
+            max(1, threads_count / 4),
+            32768,
+        );
+
+        println!("Using m: {} with k: {}", m, k);
+
+        // #[cfg(feature = "mem-analysis")]
+        // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
+        crate::kmers_merge::<
+            hashes::cn_nthash::CanonicalNtHashIteratorFactory,
+            hashes::cn_seqhash::u128::CanonicalSeqHashFactory,
+            NonColoredManager,
+            _,
+        >(
+            buckets,
+            counters,
+            global_colors_table.clone(),
+            buckets_count,
+            min_multiplicity,
+            Path::new(TEMP_DIR),
+            k,
+            m,
+            threads_count,
+        );
     }
 }

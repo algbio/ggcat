@@ -1,4 +1,4 @@
-use crate::execution_manager::work_scheduler::ExecutorDropper;
+use crate::execution_manager::execution_context::ExecutorDropper;
 use std::any::TypeId;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -14,7 +14,6 @@ unsafe impl Send for ExecutorAddress {}
 unsafe impl Sync for ExecutorAddress {}
 
 impl ExecutorAddress {
-
     pub fn is_of_type<T: 'static>(&self) -> bool {
         self.executor_type_id == TypeId::of::<T>()
     }

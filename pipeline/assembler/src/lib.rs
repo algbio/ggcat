@@ -47,24 +47,24 @@ pub enum AssemblerStartingStep {
 
 #[static_dispatch(BucketingHash = [
     hashes::cn_nthash::CanonicalNtHashIteratorFactory,
-    // hashes::fw_nthash::ForwardNtHashIteratorFactory
+    #[cfg(feature = "full")] hashes::fw_nthash::ForwardNtHashIteratorFactory
 ], MergingHash = [
-    // hashes::fw_seqhash::u16::ForwardSeqHashFactory,
-    // hashes::fw_seqhash::u32::ForwardSeqHashFactory,
-    // hashes::fw_seqhash::u64::ForwardSeqHashFactory,
-    // hashes::fw_seqhash::u128::ForwardSeqHashFactory,
-    // hashes::fw_rkhash::u32::ForwardRabinKarpHashFactory,
-    // hashes::fw_rkhash::u64::ForwardRabinKarpHashFactory,
-    // hashes::fw_rkhash::u128::ForwardRabinKarpHashFactory,
-    // hashes::cn_seqhash::u16::CanonicalSeqHashFactory,
-    // hashes::cn_seqhash::u32::CanonicalSeqHashFactory,
-    // hashes::cn_seqhash::u64::CanonicalSeqHashFactory,
+    #[cfg(feature = "full")] hashes::fw_seqhash::u16::ForwardSeqHashFactory,
+    #[cfg(feature = "full")] hashes::fw_seqhash::u32::ForwardSeqHashFactory,
+    #[cfg(feature = "full")] hashes::fw_seqhash::u64::ForwardSeqHashFactory,
+    #[cfg(feature = "full")] hashes::fw_seqhash::u128::ForwardSeqHashFactory,
+    #[cfg(feature = "full")] hashes::fw_rkhash::u32::ForwardRabinKarpHashFactory,
+    #[cfg(feature = "full")] hashes::fw_rkhash::u64::ForwardRabinKarpHashFactory,
+    #[cfg(feature = "full")] hashes::fw_rkhash::u128::ForwardRabinKarpHashFactory,
+    #[cfg(feature = "full")] hashes::cn_seqhash::u16::CanonicalSeqHashFactory,
+    #[cfg(feature = "full")] hashes::cn_seqhash::u32::CanonicalSeqHashFactory,
+    #[cfg(feature = "full")] hashes::cn_seqhash::u64::CanonicalSeqHashFactory,
     hashes::cn_seqhash::u128::CanonicalSeqHashFactory,
-    // hashes::cn_rkhash::u32::CanonicalRabinKarpHashFactory,
-    // hashes::cn_rkhash::u64::CanonicalRabinKarpHashFactory,
-    // hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
+    #[cfg(feature = "full")] hashes::cn_rkhash::u32::CanonicalRabinKarpHashFactory,
+    #[cfg(feature = "full")] hashes::cn_rkhash::u64::CanonicalRabinKarpHashFactory,
+    #[cfg(feature = "full")] hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
 ], AssemblerColorsManager = [
-    // colors::bundles::multifile_building::ColorBundleMultifileBuilding,
+    #[cfg(feature = "full")] colors::bundles::multifile_building::ColorBundleMultifileBuilding,
     colors::non_colored::NonColoredManager,
 ])]
 pub fn run_assembler<
@@ -346,7 +346,7 @@ pub fn run_assembler<
 
     PHASES_TIMES_MONITOR
         .write()
-        .print_stats("Compacted De Brujin graph construction completed.".to_string());
+        .print_stats("Compacted De Bruijn graph construction completed.".to_string());
 
     println!("Final output saved to: {}", output_file.display());
 }

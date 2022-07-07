@@ -1,6 +1,7 @@
 use crate::memory_data_size::MemoryDataSize;
 
 pub mod panic_on_drop;
+pub mod replace_with_async;
 pub mod scoped_thread_local;
 pub(crate) mod vec_reader;
 

@@ -1,4 +1,4 @@
-use crate::execution_manager::executor::Executor;
+use crate::execution_manager::executor::AsyncExecutor;
 use crate::execution_manager::packet::PacketTrait;
 use crate::memory_data_size::MemoryDataSize;
 use dashmap::DashMap;
@@ -23,7 +23,7 @@ impl MemoryTrackerManager {
         }
     }
 
-    pub fn get_executor_instance<E: Executor>(self: &Arc<Self>) -> MemoryTracker<E> {
+    pub fn get_executor_instance<E: AsyncExecutor>(self: &Arc<Self>) -> MemoryTracker<E> {
         MemoryTracker::new(self.clone())
     }
 
@@ -110,13 +110,13 @@ impl MemoryTrackerManager {
     }
 }
 
-pub struct MemoryTracker<E: Executor> {
+pub struct MemoryTracker<E: AsyncExecutor> {
     manager: Arc<MemoryTrackerManager>,
     last_memory_usage: usize,
-    _phantom: PhantomData<&'static E>,
+    _phantom: PhantomData<E>,
 }
 
-impl<E: Executor> Clone for MemoryTracker<E> {
+impl<E: AsyncExecutor> Clone for MemoryTracker<E> {
     fn clone(&self) -> Self {
         self.manager
             .executors_sizes
@@ -133,7 +133,7 @@ impl<E: Executor> Clone for MemoryTracker<E> {
     }
 }
 
-impl<E: Executor> MemoryTracker<E> {
+impl<E: AsyncExecutor> MemoryTracker<E> {
     fn new(manager: Arc<MemoryTrackerManager>) -> Self {
         manager
             .executors_sizes
@@ -166,7 +166,7 @@ impl<E: Executor> MemoryTracker<E> {
     }
 }
 
-impl<E: Executor> Drop for MemoryTracker<E> {
+impl<E: AsyncExecutor> Drop for MemoryTracker<E> {
     fn drop(&mut self) {
         let mut entry = self
             .manager

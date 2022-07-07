@@ -3,34 +3,35 @@ use crate::reads_buffer::ReadsBuffer;
 use crate::resplitter::KmersTransformResplitter;
 use crate::{KmersTransformContext, KmersTransformExecutorFactory, KmersTransformPreprocessor};
 use config::{
-    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MIN_BUCKET_CHUNKS_FOR_READING_THREAD, USE_SECOND_BUCKET,
+    DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    MIN_BUCKET_CHUNKS_FOR_READING_THREAD, USE_SECOND_BUCKET,
 };
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
-use parallel_processor::buckets::readers::async_binary_reader::AsyncBinaryReader;
-use parallel_processor::execution_manager::executor::{Executor, ExecutorOperations, ExecutorType};
+use parallel_processor::buckets::readers::async_binary_reader::{
+    AsyncBinaryReader, AsyncReaderThread,
+};
+use parallel_processor::execution_manager::executor::{
+    AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
+};
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::memory_fs::RemoveFileMode;
+use parallel_processor::utils::replace_with_async::replace_with_async;
 use replace_with::replace_with_or_abort;
 use std::cmp::{max, min, Reverse};
 use std::collections::{BinaryHeap, VecDeque};
+use std::future::Future;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub struct KmersTransformReader<F: KmersTransformExecutorFactory> {
-    context: Arc<KmersTransformContext<F>>,
-    _mem_tracker: MemoryTracker<Self>,
-    buffers: Vec<Packet<ReadsBuffer<F::AssociatedExtraData>>>,
-    addresses: Vec<ExecutorAddress>,
-    preprocessor: F::PreprocessorType,
-    async_reader: Option<AsyncBinaryReader>,
     _phantom: PhantomData<F>,
 }
 
@@ -62,53 +63,41 @@ impl PacketTrait for InputBucketDesc {
     }
 }
 
-impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformReader<F> {
-    type InitData = (Arc<KmersTransformContext<F>>, MemoryTracker<Self>);
-
-    fn allocate_new((context, memory_tracker): &Self::InitData) -> Self {
-        Self {
-            context: context.clone(),
-            _mem_tracker: memory_tracker.clone(),
-            buffers: vec![],
-            addresses: vec![],
-            preprocessor: F::new_preprocessor(&context.global_extra_data),
-            async_reader: None,
-            _phantom: Default::default(),
-        }
-    }
-
-    fn reset(&mut self) {
-        self.buffers.clear();
-        self.addresses.clear();
-        self.async_reader.take();
-    }
+// impl<F: KmersTransformExecutorFactory> PoolObjectTrait for KmersTransformReader<F> {
+//     type InitData = (Arc<KmersTransformContext<F>>, MemoryTracker<Self>);
+//
+//     fn allocate_new((context, memory_tracker): &Self::InitData) -> Self {
+//         Self {
+//             context: context.clone(),
+//             _mem_tracker: memory_tracker.clone(),
+//             buffers: vec![],
+//             addresses: vec![],
+//             preprocessor: F::new_preprocessor(&context.global_extra_data),
+//             async_reader: None,
+//             _phantom: Default::default(),
+//         }
+//     }
+//
+//     fn reset(&mut self) {
+//         buffers.clear();
+//         bucket_info.addresses.clear();
+//         self.async_reader.take();
+//     }
+// }
+struct BucketsInfo {
+    reader: AsyncBinaryReader,
+    concurrency: usize,
+    addresses: Vec<ExecutorAddress>,
+    buckets_remapping: Vec<usize>,
+    second_buckets_log_max: usize,
 }
 
-impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
-    const EXECUTOR_TYPE: ExecutorType = ExecutorType::NeedsInitPacket;
-
-    const MEMORY_FIELDS_COUNT: usize = 0;
-    const MEMORY_FIELDS: &'static [&'static str] = &[];
-
-    const BASE_PRIORITY: u64 = 0;
-    const PACKET_PRIORITY_MULTIPLIER: u64 = 0;
-    const STRICT_POOL_ALLOC: bool = true;
-
-    type InputPacket = InputBucketDesc;
-    type OutputPacket = ReadsBuffer<F::AssociatedExtraData>;
-    type GlobalParams = KmersTransformContext<F>;
-    type MemoryParams = ();
-    type BuildParams = (AsyncBinaryReader, usize, Vec<usize>, Vec<ExecutorAddress>);
-
-    fn allocate_new_group<E: ExecutorOperations<Self>>(
-        global_params: Arc<Self::GlobalParams>,
-        _memory_params: Option<Self::MemoryParams>,
-        common_packet: Option<Packet<Self::InputPacket>>,
-        mut ops: E,
-    ) -> (Self::BuildParams, usize) {
-        let file = common_packet.unwrap();
-
-        let second_buckets_log_max = global_params.max_second_buckets_count_log2;
+impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
+    fn compute_buckets(
+        global_context: &KmersTransformContext<F>,
+        file: Packet<InputBucketDesc>,
+    ) -> BucketsInfo {
+        let second_buckets_log_max = global_context.max_second_buckets_count_log2;
 
         let reader = AsyncBinaryReader::new(
             &file.path,
@@ -128,27 +117,20 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
 
         let mut sequences_count = 0;
 
-        let mut bucket_sizes: VecDeque<_> = (0..(1 << second_buckets_log_max))
+        let mut bucket_sizes: VecDeque<_> = (0..min(
+            file.sub_bucket_counters.len(),
+            (1 << second_buckets_log_max),
+        ))
             .map(|i| {
-                if !file.resplitted && i < file.sub_bucket_counters.len() {
-                    sequences_count += file.sub_bucket_counters[i].count;
-                    (file.sub_bucket_counters[i].clone(), i)
-                } else {
-                    (
-                        BucketCounter {
-                            count: 1,
-                            is_outlier: false,
-                        },
-                        i,
-                    )
-                }
+                sequences_count += file.sub_bucket_counters[i].count;
+                (file.sub_bucket_counters[i].clone(), i)
             })
             .collect();
 
         let file_size = reader.get_file_size();
 
         let sequences_size_ratio =
-            file_size as f64 / (sequences_count * global_params.k as u64) as f64 * 2.67;
+            file_size as f64 / (sequences_count * global_context.k as u64) as f64 * 2.67;
 
         bucket_sizes.make_contiguous().sort();
 
@@ -166,7 +148,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
             // Alloc a new bucket
             if (smallest_bucket.2 == biggest_sub_bucket.0.is_outlier)
                 && smallest_bucket.0 .0 > 0
-                && smallest_bucket.0 .0 + uniq_estimate_count > global_params.min_bucket_size
+                && smallest_bucket.0 .0 + uniq_estimate_count > global_context.min_bucket_size
             {
                 // Restore the sub bucket
                 bucket_sizes.push_back(biggest_sub_bucket);
@@ -202,7 +184,7 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
         let addresses: Vec<_> = addresses.into_iter().map(|a| a.unwrap()).collect();
 
         let threads_ratio =
-            global_params.compute_threads_count as f64 / global_params.read_threads_count as f64;
+            global_context.compute_threads_count as f64 / global_context.read_threads_count as f64;
 
         let addr_concurrency = max(1, (addresses.len() as f64 / threads_ratio + 0.5) as usize);
         let chunks_concurrency = max(
@@ -210,126 +192,193 @@ impl<F: KmersTransformExecutorFactory> Executor for KmersTransformReader<F> {
             reader.get_chunks_count() / MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
         );
 
-        let max_concurrency = min(
-            min(4, global_params.read_threads_count),
+        let concurrency = min(
+            min(4, global_context.read_threads_count),
             min(addr_concurrency, chunks_concurrency),
         );
 
         println!(
-            "Chunks {} concurrency: {} REMAPPINGS: {:?} // {:?} // {:?} RATIO: {:.2}",
+            "File:{}\nChunks {} concurrency: {} REMAPPINGS: {:?} // {:?} // {:?} RATIO: {:.2} ADDR_COUNT: {}",
+            file.path.display(),
             reader.get_chunks_count(),
-            max_concurrency,
+            concurrency,
             &buckets_remapping,
             dbg_counters,
             file.sub_bucket_counters
                 .iter()
                 .map(|x| x.count)
                 .collect::<Vec<_>>(),
-            sequences_size_ratio
+            sequences_size_ratio,
+            addresses.len()
         );
 
-        ops.declare_addresses(addresses.clone());
-
-        (
-            (reader, second_buckets_log_max, buckets_remapping, addresses),
-            max_concurrency,
-        )
+        BucketsInfo {
+            reader,
+            concurrency,
+            addresses,
+            buckets_remapping,
+            second_buckets_log_max,
+        }
     }
 
-    fn required_pool_items(&self) -> u64 {
-        1
-    }
-
-    fn pre_execute<E: ExecutorOperations<Self>>(
-        &mut self,
-        (async_binary_reader, second_buckets_log_max, remappings, addresses): Self::BuildParams,
-        mut ops: E,
+    async fn read_bucket(
+        global_context: &KmersTransformContext<F>,
+        ops: &ExecutorAddressOperations<'_, Self>,
+        bucket_info: &BucketsInfo,
+        buffers: &mut Vec<Packet<ReadsBuffer<F::AssociatedExtraData>>>,
+        async_reader_thread: Arc<AsyncReaderThread>,
     ) {
-        if async_binary_reader.is_finished() {
+        if bucket_info.reader.is_finished() {
             return;
         }
 
-        self.buffers
-            .extend((0..addresses.len()).map(|_| ops.packet_alloc_force()));
+        let preprocessor = F::new_preprocessor(&global_context.global_extra_data);
 
-        self.addresses = addresses;
-        self.async_reader = Some(async_binary_reader);
+        let global_extra_data = &global_context.global_extra_data;
 
-        let async_reader_thread = self.context.async_readers.get();
-        let preprocessor = &mut self.preprocessor;
-        let global_extra_data = &self.context.global_extra_data;
+        let has_single_addr = bucket_info.addresses.len() == 1;
 
-        let has_single_addr = self.addresses.len() == 1;
-
-        self.async_reader
-            .as_ref()
-            .unwrap()
-            .decode_all_bucket_items::<CompressedReadsBucketHelper<
+        let mut items_iterator = bucket_info
+            .reader
+            .get_items_stream::<CompressedReadsBucketHelper<
                 F::AssociatedExtraData,
                 F::FLAGS_COUNT,
                 { USE_SECOND_BUCKET },
-            >, _>(
+            >>(
                 async_reader_thread.clone(),
                 Vec::new(),
                 F::AssociatedExtraData::new_temp_buffer(),
-                |read_info, extra_buffer| {
-                    let bucket = if has_single_addr {
-                        0
-                    } else {
-                        remappings[preprocessor.get_sequence_bucket(global_extra_data, &read_info)
-                            as usize
-                            % (1 << second_buckets_log_max)]
-                    };
-
-                    let (flags, _second_bucket, mut extra_data, read) = read_info;
-
-                    let ind_read = CompressedReadIndipendent::from_read(
-                        &read,
-                        &mut self.buffers[bucket].reads_buffer,
-                    );
-                    extra_data = F::AssociatedExtraData::copy_extra_from(
-                        extra_data,
-                        extra_buffer,
-                        &mut self.buffers[bucket].extra_buffer,
-                    );
-
-                    self.buffers[bucket]
-                        .reads
-                        .push((flags, extra_data, ind_read));
-
-                    if self.buffers[bucket].reads.len() == self.buffers[bucket].reads.capacity() {
-                        replace_with_or_abort(&mut self.buffers[bucket], |buffer| {
-                            ops.packet_send(self.addresses[bucket].clone(), buffer);
-                            ops.packet_alloc()
-                        });
-                    }
-                    F::AssociatedExtraData::clear_temp_buffer(extra_buffer);
-                },
             );
-        for (packet, address) in self.buffers.drain(..).zip(self.addresses.drain(..)) {
+
+        while let Some((read_info, extra_buffer)) = items_iterator.next() {
+            let bucket = if has_single_addr {
+                0
+            } else {
+                bucket_info.buckets_remapping[preprocessor
+                    .get_sequence_bucket(global_extra_data, &read_info)
+                    as usize
+                    % (1 << bucket_info.second_buckets_log_max)]
+            };
+
+            let (flags, _second_bucket, mut extra_data, read) = read_info;
+
+            let ind_read =
+                CompressedReadIndipendent::from_read(&read, &mut buffers[bucket].reads_buffer);
+            extra_data = F::AssociatedExtraData::copy_extra_from(
+                extra_data,
+                extra_buffer,
+                &mut buffers[bucket].extra_buffer,
+            );
+
+            buffers[bucket].reads.push((flags, extra_data, ind_read));
+
+            if buffers[bucket].reads.len() == buffers[bucket].reads.capacity() {
+                replace_with_async(&mut buffers[bucket], |buffer| async move {
+                    ops.packet_send(bucket_info.addresses[bucket].clone(), buffer);
+                    ops.packet_alloc().await
+                })
+                .await;
+            }
+            F::AssociatedExtraData::clear_temp_buffer(extra_buffer);
+        }
+
+        for (packet, address) in buffers.drain(..).zip(bucket_info.addresses.iter()) {
             if packet.reads.len() > 0 {
-                ops.packet_send(address, packet);
+                ops.packet_send(address.clone(), packet);
             }
         }
     }
+}
 
-    fn execute<E: ExecutorOperations<Self>>(
-        &mut self,
-        _input_packet: Packet<Self::InputPacket>,
-        _ops: E,
-    ) {
-        panic!("Multiple packet processing not supported!");
+impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F> {
+    type InputPacket = InputBucketDesc;
+    type OutputPacket = ReadsBuffer<F::AssociatedExtraData>;
+    type GlobalParams = KmersTransformContext<F>;
+    type AsyncExecutorFuture<'a> = impl Future<Output = ()> + 'a;
+
+    fn new() -> Self {
+        Self {
+            _phantom: Default::default(),
+        }
     }
 
-    fn finalize<E: ExecutorOperations<Self>>(&mut self, _ops: E) {
-        assert_eq!(self.buffers.len(), 0);
-    }
+    fn async_executor_main<'a>(
+        &'a mut self,
+        global_context: &'a KmersTransformContext<F>,
+        mut receiver: ExecutorReceiver<Self>,
+        memory_tracker: MemoryTracker<Self>,
+    ) -> Self::AsyncExecutorFuture<'a> {
+        async move {
+            let mut async_threads = Vec::new();
 
-    fn is_finished(&self) -> bool {
-        self.async_reader.is_some()
-    }
+            while let Ok(address) = receiver.obtain_address().await {
+                let file = address.receive_packet().await.unwrap();
+                let buckets_info = Self::compute_buckets(global_context, file);
 
-    fn get_current_memory_params(&self) -> Self::MemoryParams {
-        ()
+                address.declare_addresses(buckets_info.addresses.clone());
+
+                // FIXME: Better threads management
+                while async_threads.len() < buckets_info.concurrency {
+                    async_threads.push(AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE / 2, 4));
+                }
+
+                let mut spawner = address.make_spawner();
+
+                for ex_idx in 0..buckets_info.concurrency {
+                    let mut buffers = Vec::with_capacity(global_context.buckets_count);
+                    for i in 0..global_context.buckets_count {
+                        buffers.push(address.packet_alloc().await);
+                    }
+
+                    let async_thread = async_threads[ex_idx].clone();
+
+                    let address = &address;
+                    let buckets_info = &buckets_info;
+
+                    spawner.spawn_executor(async move {
+                        Self::read_bucket(
+                            global_context,
+                            address,
+                            buckets_info,
+                            &mut buffers,
+                            async_thread,
+                        )
+                        .await;
+                    });
+                }
+
+                spawner.executors_await().await;
+                assert!(address.receive_packet().await.is_none());
+            }
+        }
     }
 }
+
+//
+//     const MEMORY_FIELDS_COUNT: usize = 0;
+//     const MEMORY_FIELDS: &'static [&'static str] = &[];
+//
+//     type BuildParams = (AsyncBinaryReader, usize, Vec<usize>, Vec<ExecutorAddress>);
+
+//     fn allocate_new_group<E: ExecutorOperations<Self>>(
+//         global_params: Arc<KmersTransformContext<F>>,
+//         _memory_params: Option<Self::MemoryParams>,
+//         packet: Option<Packet<InputBucketDesc>>,
+//         mut ops: E,
+//     ) -> (Self::BuildParams, usize) {
+//     }
+//
+//     fn required_pool_items(&self) -> u64 {
+//         1
+//     }
+//
+//     fn pre_execute<E: ExecutorOperations<Self>>(
+//         &mut self,
+//         (reader, second_buckets_log_max, remappings, addresses): Self::BuildParams,
+//         mut ops: E,
+//     ) {
+//     }
+//
+//     fn finalize<E: ExecutorOperations<Self>>(&mut self, _ops: E) {
+//         assert_eq!(buffers.len(), 0);
+//     }

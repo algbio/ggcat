@@ -1,7 +1,7 @@
-use crate::execution_manager::executor::Executor;
-use crate::execution_manager::executors_list::ExecOutputMode;
+use crate::execution_manager::execution_context::ExecutionContext;
+use crate::execution_manager::executor::AsyncExecutor;
 use crate::execution_manager::packet::Packet;
-use crate::execution_manager::thread_pool::{ExecThreadPool, ExecThreadPoolDataAddTrait};
+use crate::execution_manager::thread_pool::ExecThreadPool;
 use std::sync::Arc;
 
 pub enum ExecutorInputAddressMode {
@@ -24,10 +24,9 @@ impl<T, I: Iterator<Item = T>> ExecutorInput<T, I> {
 }
 
 impl<T: Send + Sync + 'static, I: Iterator<Item = T>> ExecutorInput<T, I> {
-    pub fn set_output_pool<E: Executor>(
+    pub fn set_output_executor<E: AsyncExecutor<InputPacket = T>>(
         &mut self,
-        output_pool: &Arc<ExecThreadPool>,
-        _output_mode: ExecOutputMode,
+        context: &Arc<ExecutionContext>,
     ) {
         let mut address = E::generate_new_address();
         let mut addresses = vec![];
@@ -46,10 +45,10 @@ impl<T: Send + Sync + 'static, I: Iterator<Item = T>> ExecutorInput<T, I> {
             addresses.push(address);
         }
 
-        output_pool.add_executors_batch(addresses);
+        context.register_executors_batch(addresses);
 
         for (addr, packet) in data {
-            output_pool.add_data(addr.to_weak(), packet);
+            context.add_input_packet(addr, packet);
         }
     }
 }

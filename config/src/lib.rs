@@ -46,8 +46,10 @@ pub const USE_SECOND_BUCKET: bool = false;
 
 pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 5;
 
-pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 1024 * 4;
-pub const SECOND_BUCKETS_COUNT: usize = 16;
+pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1; //1024 * 1024 * 4;
+pub const SECOND_BUCKETS_COUNT: usize = 256;
+
+pub const MIN_OUTLIER_SIZE: u64 = 100000;
 
 // Assembler include flags
 pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;

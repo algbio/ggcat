@@ -1,141 +1,105 @@
-use crate::execution_manager::executor::Executor;
+use crate::execution_manager::execution_context::{ExecutionContext, PoolAllocMode};
+use crate::execution_manager::executor::{AsyncExecutor, ExecutorReceiver};
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
-use crate::execution_manager::executors_list::ExecutorsList;
-use crate::execution_manager::manager::ExecutionStatus;
-use crate::execution_manager::packet::PacketAny;
-use crate::execution_manager::work_scheduler::WorkScheduler;
+use crate::execution_manager::objects_pool::PoolObjectTrait;
+use crate::execution_manager::packet::{PacketAny, PacketTrait};
 use parking_lot::Mutex;
 use std::any::TypeId;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
+use tokio::runtime::{Builder, Runtime};
 
-pub trait ExecThreadPoolDataAddTrait: Send + Sync {
-    fn add_data(&self, addr: WeakExecutorAddress, packet: PacketAny);
-    fn add_executors_batch(&self, executors: Vec<ExecutorAddress>);
-}
-
-pub struct ExecThreadPoolBuilder {
-    pub(crate) work_scheduler: WorkScheduler,
+pub struct ExecThreadPool {
+    context: Arc<ExecutionContext>,
+    executors: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    runtime: Runtime,
     threads_count: usize,
 }
 
-impl ExecThreadPoolBuilder {
-    pub fn new(threads_count: usize) -> Self {
+pub struct ExecutorsHandle<E: AsyncExecutor>(PhantomData<E>);
+impl<E: AsyncExecutor> Clone for ExecutorsHandle<E> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<E: AsyncExecutor> Copy for ExecutorsHandle<E> {}
+
+impl ExecThreadPool {
+    pub fn new(context: &Arc<ExecutionContext>, threads_count: usize, name: &str) -> Self {
         Self {
-            work_scheduler: WorkScheduler::new(threads_count * 2),
+            context: context.clone(),
+            executors: Mutex::new(Vec::new()),
+            runtime: Builder::new_multi_thread()
+                .thread_name(name)
+                .worker_threads(threads_count)
+                .build()
+                .unwrap(),
             threads_count,
         }
     }
 
-    pub fn build(self) -> Arc<ExecThreadPool> {
-        Arc::new(ExecThreadPool {
-            work_scheduler: Arc::new(self.work_scheduler),
-            is_joining: AtomicBool::new(false),
-            threads_count: self.threads_count,
-            thread_handles: Mutex::new(Vec::new()),
-        })
+    pub fn register_executors<E: AsyncExecutor>(
+        &self,
+        count: usize,
+        pool_alloc_mode: PoolAllocMode,
+        pool_init_data: <E::OutputPacket as PoolObjectTrait>::InitData,
+        global_params: &Arc<E::GlobalParams>,
+    ) -> ExecutorsHandle<E> {
+        self.context
+            .register_executor_type::<E>(count, pool_alloc_mode, pool_init_data);
+
+        let addresses_channel = self
+            .context
+            .waiting_addresses
+            .lock()
+            .get(&TypeId::of::<E>())
+            .unwrap()
+            .clone();
+
+        let mut executors = self.executors.lock();
+
+        for _ in 0..count {
+            let context = self.context.clone();
+            let addresses_channel = addresses_channel.clone();
+            let global_params = global_params.clone();
+
+            executors.push(self.runtime.spawn(async move {
+                let mut executor = E::new();
+                context.start_semaphore.acquire().await;
+                let memory_tracker = context.memory_tracker.get_executor_instance();
+                executor
+                    .async_executor_main(
+                        &global_params,
+                        ExecutorReceiver {
+                            context,
+                            addresses_channel,
+                            _phantom: PhantomData,
+                        },
+                        memory_tracker,
+                    )
+                    .await;
+            }));
+        }
+        ExecutorsHandle(PhantomData)
     }
-}
 
-pub struct ExecThreadPool {
-    work_scheduler: Arc<WorkScheduler>,
-    is_joining: AtomicBool,
-    threads_count: usize,
-    thread_handles: Mutex<Vec<JoinHandle<()>>>,
-}
+    async fn join(&self) {
+        let mut executors = self.executors.lock();
 
-impl ExecThreadPool {
-    pub fn start(self: &Arc<Self>, name: &'static str) {
-        let mut handles = self.thread_handles.lock();
-        assert_eq!(handles.len(), 0);
-        for _ in 0..self.threads_count {
-            let self_ = self.clone();
-            handles.push(
-                std::thread::Builder::new()
-                    .name(name.to_string())
-                    .spawn(move || {
-                        self_.thread();
-                    })
-                    .unwrap(),
-            );
+        for executor in executors.drain(..) {
+            executor.await.unwrap()
         }
     }
 
-    fn thread(&self) {
-        let mut executor = None;
-        let mut last_status = (false, false);
-
-        while !self.is_joining.load(Ordering::Relaxed) {
-            loop {
-                self.work_scheduler.maybe_change_work(&mut executor);
-                if let Some(executor) = &mut executor {
-                    let return_status = executor.execute(last_status.0 && last_status.1);
-                    last_status = (
-                        return_status == ExecutionStatus::OutputPoolFull,
-                        last_status.0,
-                    );
-
-                    let should_wait = last_status.0 && last_status.1;
-
-                    if should_wait || (return_status == ExecutionStatus::NoMorePacketsNoProgress) {
-                        self.work_scheduler.wait_for_progress();
-                    }
-                } else {
-                    self.work_scheduler.wait_for_progress();
-                    break;
-                }
-            }
-        }
-    }
-
-    pub fn debug_print_memory(&self) {
-        self.work_scheduler.print_debug_memory()
-    }
-
-    pub fn debug_print_queue(&self) {
-        self.work_scheduler.print_debug_executors()
-    }
-
-    pub fn get_pending_executors_count<E: Executor>(&self, _: &ExecutorsList<E>) -> u64 {
-        self.work_scheduler
-            .get_allocated_executors(&TypeId::of::<E>())
-    }
-
-    pub fn wait_for_executors<E: Executor>(&self, _: &ExecutorsList<E>) {
-        while self
-            .work_scheduler
-            .get_allocated_executors(&TypeId::of::<E>())
-            > 0
-        {
-            std::thread::sleep(Duration::from_millis(300));
-        }
-    }
-
-    pub fn join(&self) {
-        if !self.is_joining.swap(true, Ordering::Relaxed) {
-            let mut handles = self.thread_handles.lock();
-            for handle in handles.drain(..) {
-                handle.join().unwrap();
-            }
-            self.work_scheduler.finalize()
-        }
-    }
-}
-
-impl ExecThreadPoolDataAddTrait for ExecThreadPool {
-    fn add_data(&self, addr: WeakExecutorAddress, packet: PacketAny) {
-        self.work_scheduler.add_input_packet(addr, packet);
-    }
-
-    fn add_executors_batch(&self, executors: Vec<ExecutorAddress>) {
-        self.work_scheduler.register_executors_batch(executors);
-    }
-}
-
-impl Drop for ExecThreadPool {
-    fn drop(&mut self) {
-        self.join();
-    }
+    // pub fn debug_print_memory(&self) {
+    //     self.work_scheduler.print_debug_memory()
+    // }
+    //
+    // pub fn debug_print_queue(&self) {
+    //     self.work_scheduler.print_debug_executors()
+    // }
+    //
 }

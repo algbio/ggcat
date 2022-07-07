@@ -327,6 +327,19 @@ fn get_hash_static_id(hash_type: HashType, k: usize, forward_only: bool) -> Stat
     }
 }
 
+fn convert_assembler_step(step: AssemblerStartingStep) -> assembler::AssemblerStartingStep {
+    match step {
+        AssemblerStartingStep::MinimizerBucketing => {
+            assembler::AssemblerStartingStep::MinimizerBucketing
+        }
+        AssemblerStartingStep::KmersMerge => assembler::AssemblerStartingStep::KmersMerge,
+        AssemblerStartingStep::HashesSorting => assembler::AssemblerStartingStep::HashesSorting,
+        AssemblerStartingStep::LinksCompaction => assembler::AssemblerStartingStep::LinksCompaction,
+        AssemblerStartingStep::ReorganizeReads => assembler::AssemblerStartingStep::ReorganizeReads,
+        AssemblerStartingStep::BuildUnitigs => assembler::AssemblerStartingStep::BuildUnitigs,
+    }
+}
+
 fn run_assembler_from_args(
     generics: (StaticDispatch<()>, StaticDispatch<()>, StaticDispatch<()>),
     args: AssemblerArgs,
@@ -352,8 +365,8 @@ fn run_assembler_from_args(
         args.common_args
             .mlen
             .unwrap_or(compute_best_m(args.common_args.klen)),
-        assembler::AssemblerStartingStep::MinimizerBucketing,
-        assembler::AssemblerStartingStep::BuildUnitigs,
+        convert_assembler_step(args.step),
+        convert_assembler_step(args.last_step),
         inputs,
         args.output_file,
         args.common_args.temp_dir,
@@ -364,25 +377,32 @@ fn run_assembler_from_args(
     );
 }
 
-fn run_querier_from_args(
-    generics: (StaticDispatch<()>, StaticDispatch<()>, StaticDispatch<()>),
-    args: QueryArgs,
-) {
-    querier::dynamic_dispatch::run_query(
-        generics,
-        args.common_args.klen,
-        args.common_args
-            .mlen
-            .unwrap_or(compute_best_m(args.common_args.klen)),
-        querier::QuerierStartingStep::MinimizerBucketing,
-        args.input_graph,
-        args.input_query,
-        args.output_file,
-        args.common_args.temp_dir,
-        args.common_args.buckets_count_log,
-        args.common_args.threads_count,
-    );
-}
+// fn convert_querier_step(step: QuerierStartingStep) -> querier::QuerierStartingStep {
+//     match step {
+//         QuerierStartingStep::MinimizerBucketing => querier::QuerierStartingStep::MinimizerBucketing,
+//         QuerierStartingStep::KmersCounting => querier::QuerierStartingStep::KmersCounting,
+//     }
+// }
+//
+// fn run_querier_from_args(
+//     generics: (StaticDispatch<()>, StaticDispatch<()>, StaticDispatch<()>),
+//     args: QueryArgs,
+// ) {
+//     querier::dynamic_dispatch::run_query(
+//         generics,
+//         args.common_args.klen,
+//         args.common_args
+//             .mlen
+//             .unwrap_or(compute_best_m(args.common_args.klen)),
+//         convert_querier_step(args.step),
+//         args.input_graph,
+//         args.input_query,
+//         args.output_file,
+//         args.common_args.temp_dir,
+//         args.common_args.buckets_count_log,
+//         args.common_args.threads_count,
+//     );
+// }
 
 fn main() {
     let args: CliArgs = CliArgs::from_args();
@@ -465,22 +485,22 @@ fn main() {
                 <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::STATIC_DISPATCH_ID
             };
 
-            run_querier_from_args(
-                (
-                    bucketing_hash,
-                    get_hash_static_id(
-                        args.common_args.hash_type,
-                        args.common_args.klen,
-                        args.common_args.forward_only,
-                    ),
-                    if args.colors {
-                        ColorBundleGraphQuerying::STATIC_DISPATCH_ID
-                    } else {
-                        NonColoredManager::STATIC_DISPATCH_ID
-                    },
-                ),
-                args,
-            )
+            // run_querier_from_args(
+            //     (
+            //         bucketing_hash,
+            //         get_hash_static_id(
+            //             args.common_args.hash_type,
+            //             args.common_args.klen,
+            //             args.common_args.forward_only,
+            //         ),
+            //         if args.colors {
+            //             ColorBundleGraphQuerying::STATIC_DISPATCH_ID
+            //         } else {
+            //             NonColoredManager::STATIC_DISPATCH_ID
+            //         },
+            //     ),
+            //     args,
+            // )
         }
         CliArgs::Utils(args) => {
             process_cmdutils(args);

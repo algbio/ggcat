@@ -9,6 +9,7 @@ members = [
 
     # Common libraries
     "libs/libdeflate-rs",
+    "libs/libdeflate-async-rs",
     "libs/parallel-processor-rs",
     "libs/nightly-quirks",
     "libs/static-dispatch",

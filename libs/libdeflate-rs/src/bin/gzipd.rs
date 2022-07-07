@@ -17,22 +17,16 @@ struct GzipParams {
 fn main() {
     let params: GzipParams = GzipParams::from_args();
 
-    let mut read_file = File::open(&params.input).unwrap();
-
-    let mut in_stream =
-        DeflateChunkedBufferInput::new(|f| read_file.read(f).unwrap_or(0), 1024 * 512);
-
-    let mut out_stream = if params.simulate {
-        DeflateChunkedBufferOutput::new(move |_data| Ok(()), 1024 * 512)
+    if params.simulate {
+        decompress_file_buffered(params.input, move |data| Ok(()), 1024 * 512).unwrap();
     } else {
         let mut write_file = File::create(&params.input.with_extension("")).unwrap();
-        DeflateChunkedBufferOutput::new(
+
+        decompress_file_buffered(
+            params.input,
             move |data| write_file.write_all(data).map_err(|_| ()),
-            1024 * 512,
+            1024 * 512 * 1024,
         )
+        .unwrap();
     };
-
-    let mut decompressor = libdeflate_alloc_decompressor();
-
-    libdeflate_gzip_decompress(&mut decompressor, &mut in_stream, &mut out_stream).unwrap();
 }

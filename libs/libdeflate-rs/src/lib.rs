@@ -142,3 +142,54 @@ pub fn decompress_file_buffered(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::decompress_file_buffered;
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    #[test]
+    fn decompression_speed() {
+        let context = Arc::new(AtomicUsize::new(0));
+
+        const PATH: &str = "/home/andrea/genome-assembly/data/salmonella-strains/strains-test";
+
+        let paths = std::fs::read_dir(PATH).unwrap();
+        let mut paths_vec = Vec::new();
+
+        for path in paths {
+            paths_vec.push(path.unwrap().path());
+        }
+
+        paths_vec.sort();
+        paths_vec.truncate(10000);
+        let start = Instant::now();
+
+        paths_vec.into_par_iter().for_each(|file| {
+            let context = context.clone();
+
+            match decompress_file_buffered(
+                &file,
+                |data| {
+                    let mut rem = 0;
+                    for d in data {
+                        rem += *d as usize;
+                    }
+                    context.fetch_add(rem, Ordering::Relaxed);
+                    Ok(())
+                },
+                1024 * 512,
+            ) {
+                Ok(_) => {}
+                Err(_error) => {
+                    println!("Error: {}", file.display());
+                }
+            }
+        });
+
+        println!("Bench duration: {:.2}", start.elapsed().as_secs_f32());
+    }
+}

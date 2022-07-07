@@ -63,7 +63,7 @@ colors = { path = "../pipeline/common/colors" }
 #structs = { path = "../pipeline/common/structs" }
 
 assembler = { path = "../pipeline/assembler" }
-querier = { path = "../pipeline/querier" }
+#querier = { path = "../pipeline/querier" }
 
 
 [features]

@@ -1,3 +1,4 @@
+use crate::execution_manager::async_channel::AsyncChannel;
 use crate::execution_manager::memory_tracker::MemoryTrackerManager;
 use crate::execution_manager::objects_pool::{ObjectsPool, PoolObjectTrait};
 use parking_lot::{Condvar, Mutex};
@@ -17,20 +18,16 @@ trait PacketPoolReturnerTrait: Send + Sync {
 
 impl<T: Send + Sync + PacketTrait + 'static> PacketPoolReturnerTrait
     for (
-        Arc<(Arc<Mutex<Vec<Box<T>>>>, Condvar, AtomicU64)>,
+        Arc<(AsyncChannel<Box<T>>, AtomicU64)>,
         Arc<MemoryTrackerManager>,
     )
 {
     fn send_any(&self, packet: Box<dyn Any>) {
-        self.0 .2.fetch_sub(1, Ordering::Relaxed);
+        self.0 .1.fetch_sub(1, Ordering::Relaxed);
         let mut packet = packet.downcast::<T>().unwrap();
         self.1.remove_queue_packet(packet.deref());
         packet.reset();
-        let mut vec_lock = self.0 .0.lock();
-        if vec_lock.len() < vec_lock.capacity() {
-            vec_lock.push(packet);
-            self.0 .1.notify_one();
-        }
+        let _ = self.0 .0.send(packet, true);
     }
 }
 
@@ -44,10 +41,10 @@ pub struct PacketAny {
     returner: Option<Arc<dyn PacketPoolReturnerTrait>>,
 }
 
-pub struct PacketsPool<T> {
+pub struct PacketsPool<T: Sync + Send + 'static> {
     objects_pool: ObjectsPool<Box<T>>,
     returner: Arc<(
-        Arc<(Arc<Mutex<Vec<Box<T>>>>, Condvar, AtomicU64)>,
+        Arc<(AsyncChannel<Box<T>>, AtomicU64)>,
         Arc<MemoryTrackerManager>,
     )>,
 }
@@ -60,9 +57,7 @@ impl<T: PacketTrait> PoolObjectTrait for PacketsPool<T> {
         Self::new(*cap, init_data.clone(), mem_tracker)
     }
 
-    fn reset(&mut self) {
-        self.objects_pool.reset_max_count();
-    }
+    fn reset(&mut self) {}
 }
 
 impl<T: PacketTrait> PacketsPool<T> {
@@ -79,8 +74,24 @@ impl<T: PacketTrait> PacketsPool<T> {
         }
     }
 
-    pub fn alloc_packet(&self, blocking: bool) -> Packet<T> {
-        let mut object = self.objects_pool.alloc_object(blocking);
+    pub async fn alloc_packet(&self) -> Packet<T> {
+        let mut object = self.objects_pool.alloc_object().await;
+
+        let packet = Packet {
+            object: ManuallyDrop::new(unsafe { ManuallyDrop::take(&mut object.value) }),
+            returner: Some(self.returner.clone()),
+        };
+
+        unsafe {
+            std::ptr::drop_in_place(&mut object.returner);
+            std::mem::forget(object);
+        }
+
+        packet
+    }
+
+    pub fn alloc_packet_blocking(&self) -> Packet<T> {
+        let mut object = self.objects_pool.alloc_object_blocking();
 
         let packet = Packet {
             object: ManuallyDrop::new(unsafe { ManuallyDrop::take(&mut object.value) }),
@@ -99,9 +110,6 @@ impl<T: PacketTrait> PacketsPool<T> {
         self.objects_pool.get_available_items()
     }
 
-    pub fn set_max_count_ratio(&self, ratio: u64) {
-        self.objects_pool.set_max_count_ratio(ratio);
-    }
     // pub fn wait_for_item_timeout(&self, timeout: Duration) {
     //     self.objects_pool.wait_for_item_timeout(timeout)
     // }
@@ -177,7 +185,7 @@ impl<T: 'static> Drop for Packet<T> {
 
 impl Drop for PacketAny {
     fn drop(&mut self) {
-        panic!("Cannot drop packet any!");
+        // panic!("Cannot drop packet any!");
     }
 }
 

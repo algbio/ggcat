@@ -1,4 +1,4 @@
-use config::BucketIndexType;
+use config::{BucketIndexType, MIN_OUTLIER_SIZE};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
@@ -49,7 +49,7 @@ impl CountersAnalyzer {
         };
 
         for (count, bucket, second_bucket) in sorted_counters {
-            if count > median * 300 {
+            if count > median * 300 && count > MIN_OUTLIER_SIZE {
                 counters[bucket][second_bucket].is_outlier = true;
             }
         }
@@ -87,7 +87,18 @@ impl CountersAnalyzer {
 
     pub fn load_from_file(path: impl AsRef<Path>, remove: bool) -> Self {
         let file = BufReader::new(File::open(&path).unwrap());
-        let rval = bincode::deserialize_from(file).unwrap();
+        let mut rval: CountersAnalyzer = bincode::deserialize_from(file).unwrap();
+
+        // FIXME!
+        rval.counters.iter_mut().enumerate().for_each(|(bn, x)| {
+            x.iter_mut().enumerate().for_each(|(sbn, y)| {
+                if y.is_outlier {
+                    println!("Found outlier: vec{}.{}", bn, sbn);
+                    // y.is_outlier = false
+                }
+            })
+        });
+
         if remove {
             let _ = std::fs::remove_file(path);
         }
