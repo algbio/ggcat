@@ -1,0 +1,8 @@
+[package]
+name = "papi"
+version = "0.3.0"
+authors = ["Eric Holk <eric.holk@gmail.com>"]
+
+[dependencies]
+libc = "^0.1.8"
+rand = "^0.3.8"

@@ -1,0 +1,8 @@
+.rust
+bin
+build
+lib
+*~
+doc
+target
+Cargo.lock

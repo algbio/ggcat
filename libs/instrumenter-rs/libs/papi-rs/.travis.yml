@@ -1,0 +1,17 @@
+before_install:
+  - yes | sudo add-apt-repository ppa:hansjorg/rust
+  - sudo apt-get update
+install:
+  - sudo apt-get install rust-nightly
+  - ./.travis/install-papi.sh
+
+script:
+  - make check
+  - make docs
+
+env:
+  global:
+    - secure: fMUh4cmJhaBECm0BZV8MJy17Vk3qvotjKRgq7HN+5hQi6vSLHJK5yQOPIsZuZGkksGObhLRQ/ImdH6xvxppdEPwz/O75bEruTKPdD6V8JphljRKAgsHN6LOtKFcq1IqKVFJ9RV/st7FuC55FWyS4Vbgrdamoqg/bq1wctwcOmsQ=
+
+after_script:
+  - curl http://www.rust-ci.org/artifacts/put?t=$RUSTCI_TOKEN | sh
