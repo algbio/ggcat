@@ -198,7 +198,12 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                 new_address
             } else {
                 if !has_outliers
-                    && (file.rewritten || jit_executors < MAXIMUM_JIT_PROCESSED_BUCKETS)
+                    && (file.rewritten
+                        || jit_executors
+                            < max(
+                                global_context.compute_threads_count,
+                                MAXIMUM_JIT_PROCESSED_BUCKETS,
+                            ))
                 {
                     jit_executors += 1;
                     let new_address = KmersTransformProcessor::<F>::generate_new_address(
