@@ -404,6 +404,8 @@ fn run_assembler_from_args(
 //     );
 // }
 
+instrumenter::setup_allocator!();
+
 fn main() {
     let args: CliArgs = CliArgs::from_args();
 
@@ -437,6 +439,11 @@ fn main() {
 
     match args {
         CliArgs::Build(args) => {
+            let _guard = instrumenter::initialize_tracing(
+                args.output_file.with_extension("tracing.json"),
+                &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
+            );
+
             initialize(&args.common_args, &args.output_file);
 
             let bucketing_hash = if args.common_args.forward_only {

@@ -23,3 +23,8 @@ io = { path = "../io" }
 parking_lot = "0.12.1"
 typenum = "1.15.0"
 replace_with = "0.1.7"
+tokio = "1.19.2"
+
+
+# Tracing
+instrumenter = { path = "../../../libs/instrumenter-rs" }

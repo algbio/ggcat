@@ -27,8 +27,10 @@ impl<T: Send + Sync + 'static, I: Iterator<Item = T>> ExecutorInput<T, I> {
     pub fn set_output_executor<E: AsyncExecutor<InputPacket = T>>(
         &mut self,
         context: &Arc<ExecutionContext>,
+        init_data: E::InitData,
+        priority: usize,
     ) {
-        let mut address = E::generate_new_address();
+        let mut address = E::generate_new_address(init_data.clone());
         let mut addresses = vec![];
 
         let mut data = vec![];
@@ -37,7 +39,7 @@ impl<T: Send + Sync + 'static, I: Iterator<Item = T>> ExecutorInput<T, I> {
             data.push((address.clone(), Packet::new_simple(value).upcast()));
             if let ExecutorInputAddressMode::Multiple = &self.addr_mode {
                 addresses.push(address.clone());
-                address = E::generate_new_address();
+                address = E::generate_new_address(init_data.clone());
             }
         }
 
@@ -45,7 +47,7 @@ impl<T: Send + Sync + 'static, I: Iterator<Item = T>> ExecutorInput<T, I> {
             addresses.push(address);
         }
 
-        context.register_executors_batch(addresses);
+        context.register_executors_batch(addresses, priority);
 
         for (addr, packet) in data {
             context.add_input_packet(addr, packet);

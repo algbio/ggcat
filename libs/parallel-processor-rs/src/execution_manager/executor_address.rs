@@ -1,5 +1,5 @@
 use crate::execution_manager::execution_context::ExecutorDropper;
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -7,6 +7,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct ExecutorAddress {
     pub(crate) executor_keeper: Arc<ExecutorDropper>,
+    pub(crate) init_data: Arc<dyn Any + Sync + Send + 'static>,
     pub(crate) executor_type_id: TypeId,
     pub(crate) executor_internal_id: u64,
 }

@@ -1,0 +1,26 @@
+[package]
+name = "instrumenter"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+
+[[bin]]
+name = "analyzer"
+path = "bin/analyzer.rs"
+
+[dependencies]
+dashmap = "5.3.4"
+human_format = "1.0.3"
+instrumenter-derive = { path = "instrumenter-derive-rs" }
+libc = "0.2.126"
+papi = { path = "libs/papi-rs" }
+parking_lot = "0.12.1"
+plotters = "0.3.2"
+serde = { version = "1.0.138", features = ["serde_derive"] }
+serde_json = "1.0.82"
+structopt = "0.3.26"
+thread_local = "1.1.4"
+tracing = "0.1.35"

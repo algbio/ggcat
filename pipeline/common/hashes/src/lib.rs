@@ -56,12 +56,19 @@ pub trait HashFunctionFactory: Sized + Clone + Debug + Send + Sync + 'static {
     fn get_random_state() -> Self::PreferredRandomState;
 
     const NULL_BASE: u8;
+    const USABLE_HASH_BITS: usize;
 
     fn initialize(k: usize);
     fn new<N: HashableSequence>(seq: N, k: usize) -> Self::HashIterator<N>;
 
+    fn can_get_bucket(used_bits: usize, requested_bits: usize) -> bool {
+        Self::USABLE_HASH_BITS >= (used_bits + requested_bits)
+    }
+
     /// Gets the first buckets count, used in MinimizerBucketing phase and to sort hashes
-    fn get_first_bucket(
+    fn get_bucket(
+        used_bits: usize,
+        requested_bits: usize,
         hash: <Self as HashFunctionFactory>::HashTypeUnextendable,
     ) -> BucketIndexType;
 
@@ -99,11 +106,6 @@ pub trait HashFunctionFactory: Sized + Clone + Debug + Send + Sync + 'static {
 
 #[static_dispatch]
 pub trait MinimizerHashFunctionFactory: HashFunctionFactory {
-    /// Gets the first buckets count, used in MinimizerBucketing phase
-    fn get_second_bucket(
-        hash: <Self as HashFunctionFactory>::HashTypeUnextendable,
-    ) -> BucketIndexType;
-
     /// Gets the full minimizer
     fn get_full_minimizer(
         hash: <Self as HashFunctionFactory>::HashTypeUnextendable,

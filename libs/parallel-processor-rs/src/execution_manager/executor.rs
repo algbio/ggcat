@@ -1,13 +1,16 @@
-use crate::execution_manager::async_channel::AsyncChannel;
+use crate::execution_manager::async_channel::{AsyncChannel, DoublePriorityAsyncChannel};
 use crate::execution_manager::execution_context::{
-    ExecutionContext, ExecutorDropper, PacketsChannel,
+    ExecutionContext, ExecutorDropper, PacketsChannel, PacketsPoolStrategy,
 };
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
 use crate::execution_manager::memory_tracker::MemoryTracker;
 use crate::execution_manager::objects_pool::{PoolObject, PoolObjectTrait};
 use crate::execution_manager::packet::{Packet, PacketAny};
 use crate::execution_manager::packet::{PacketTrait, PacketsPool};
+use flame::{FlameLibrary, FLAME_LIBRARY};
 use parking_lot::Mutex;
+use std::any::Any;
+use std::cell::RefCell;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -21,12 +24,14 @@ pub trait AsyncExecutor: Sized + Send + Sync + 'static {
     type InputPacket: Send + Sync + 'static;
     type OutputPacket: PacketTrait + Send + Sync + 'static;
     type GlobalParams: Send + Sync + 'static;
+    type InitData: Send + Sync + Clone + 'static;
 
     type AsyncExecutorFuture<'a>: Future<Output = ()> + Send + 'a;
 
-    fn generate_new_address() -> ExecutorAddress {
+    fn generate_new_address(data: Self::InitData) -> ExecutorAddress {
         let exec = ExecutorAddress {
             executor_keeper: Arc::new(ExecutorDropper::new()),
+            init_data: Arc::new(data),
             executor_type_id: std::any::TypeId::of::<Self>(),
             executor_internal_id: EXECUTOR_GLOBAL_ID.fetch_add(1, Ordering::Relaxed),
         };
@@ -45,27 +50,40 @@ pub trait AsyncExecutor: Sized + Send + Sync + 'static {
 
 pub struct ExecutorReceiver<E: AsyncExecutor> {
     pub(crate) context: Arc<ExecutionContext>,
-    pub(crate) addresses_channel: AsyncChannel<(
+    pub(crate) addresses_channel: DoublePriorityAsyncChannel<(
         WeakExecutorAddress,
         Arc<AtomicU64>,
         Arc<PoolObject<PacketsChannel>>,
+        Arc<dyn Any + Sync + Send + 'static>,
     )>,
     pub(crate) _phantom: PhantomData<E>,
 }
 
 impl<E: AsyncExecutor> ExecutorReceiver<E> {
-    pub async fn obtain_address(&mut self) -> Result<ExecutorAddressOperations<E>, ()> {
-        let (addr, counter, channel) = self.addresses_channel.recv().await?;
+    pub async fn obtain_address(
+        &mut self,
+    ) -> Result<(ExecutorAddressOperations<E>, Arc<E::InitData>), ()> {
+        self.obtain_address_with_priority(0).await
+    }
 
-        Ok(ExecutorAddressOperations {
-            addr,
-            counter,
-            channel,
-            context: self.context.clone(),
-            packets_pool: self.context.allocate_pool::<E>(),
-            is_finished: AtomicBool::new(false),
-            _phantom: PhantomData,
-        })
+    pub async fn obtain_address_with_priority(
+        &mut self,
+        priority: usize,
+    ) -> Result<(ExecutorAddressOperations<E>, Arc<E::InitData>), ()> {
+        let (addr, counter, channel, init_data) =
+            self.addresses_channel.recv_offset(priority).await?;
+
+        Ok((
+            ExecutorAddressOperations {
+                addr,
+                counter,
+                channel,
+                context: self.context.clone(),
+                is_finished: AtomicBool::new(false),
+                _phantom: PhantomData,
+            },
+            init_data.downcast().unwrap(),
+        ))
     }
 }
 
@@ -74,7 +92,6 @@ pub struct ExecutorAddressOperations<'a, E: AsyncExecutor> {
     counter: Arc<AtomicU64>,
     channel: Arc<PoolObject<PacketsChannel>>,
     context: Arc<ExecutionContext>,
-    packets_pool: Option<Arc<PoolObject<PacketsPool<E::OutputPacket>>>>,
     is_finished: AtomicBool,
     _phantom: PhantomData<&'a E>,
 }
@@ -92,14 +109,11 @@ impl<'a, E: AsyncExecutor> ExecutorAddressOperations<'a, E> {
             }
         }
     }
-    pub fn declare_addresses(&self, addresses: Vec<ExecutorAddress>) {
-        self.context.register_executors_batch(addresses);
+    pub fn declare_addresses(&self, addresses: Vec<ExecutorAddress>, priority: usize) {
+        self.context.register_executors_batch(addresses, priority);
     }
-    pub async fn packet_alloc(&self) -> Packet<E::OutputPacket> {
-        self.packets_pool.as_ref().unwrap().alloc_packet().await
-    }
-    pub fn packet_alloc_blocking(&self) -> Packet<E::OutputPacket> {
-        self.packets_pool.as_ref().unwrap().alloc_packet_blocking()
+    pub async fn pool_alloc_await(&self) -> Arc<PoolObject<PacketsPool<E::OutputPacket>>> {
+        self.context.allocate_pool::<E>(false).await.unwrap()
     }
     pub fn packet_send(&self, address: ExecutorAddress, packet: Packet<E::OutputPacket>) {
         self.context.send_packet(address, packet);
@@ -134,7 +148,11 @@ impl<'a> ExecutorsSpawner<'a> {
                 Box::pin(executor) as Pin<Box<dyn Future<Output = ()>>>
             )
         };
-        self.handles.push(current_runtime.spawn(executor));
+        self.handles.push(current_runtime.spawn(async move {
+            FLAME_LIBRARY
+                .scope(RefCell::new(FlameLibrary::new()), executor)
+                .await
+        }));
     }
 
     pub async fn executors_await(&mut self) {

@@ -12,6 +12,15 @@ pub fn debug_print() {
     println!("COUNTER: {:?}", KCOUNTER.load(Ordering::Relaxed));
 }
 
+#[macro_export]
+macro_rules! track {
+    ($code:expr, $tracker:ident) => {{
+        use parallel_processor::counter_stats::counter::AtomicCounterGuardSum;
+        let guard = AtomicCounterGuardSum::new(&$tracker, 1);
+        $code
+    }};
+}
+
 // pub fn debug_minimizers<H: HashFunctionFactory, R: MinimizerInputSequence>(
 //     read: R,
 //     m: usize,

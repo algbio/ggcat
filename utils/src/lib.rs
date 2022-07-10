@@ -1,3 +1,4 @@
+#[macro_use]
 pub mod debug_functions;
 pub mod fast_rand_bool;
 pub mod owned_drop;

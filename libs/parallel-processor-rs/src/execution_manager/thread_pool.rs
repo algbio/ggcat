@@ -3,8 +3,10 @@ use crate::execution_manager::executor::{AsyncExecutor, ExecutorReceiver};
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
 use crate::execution_manager::objects_pool::PoolObjectTrait;
 use crate::execution_manager::packet::{PacketAny, PacketTrait};
+use flame::{FlameLibrary, FLAME_LIBRARY};
 use parking_lot::Mutex;
 use std::any::TypeId;
+use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -67,19 +69,27 @@ impl ExecThreadPool {
             let global_params = global_params.clone();
 
             executors.push(self.runtime.spawn(async move {
-                let mut executor = E::new();
-                context.start_semaphore.acquire().await;
-                let memory_tracker = context.memory_tracker.get_executor_instance();
-                executor
-                    .async_executor_main(
-                        &global_params,
-                        ExecutorReceiver {
-                            context,
-                            addresses_channel,
-                            _phantom: PhantomData,
-                        },
-                        memory_tracker,
-                    )
+                FLAME_LIBRARY
+                    .scope(RefCell::new(FlameLibrary::new()), async {
+                        let context_ = context.clone();
+                        let mut executor = E::new();
+                        let sem_lock = context_.start_semaphore.acquire().await;
+                        let memory_tracker = context.memory_tracker.get_executor_instance();
+                        executor
+                            .async_executor_main(
+                                &global_params,
+                                ExecutorReceiver {
+                                    context,
+                                    addresses_channel,
+                                    _phantom: PhantomData,
+                                },
+                                memory_tracker,
+                            )
+                            .await;
+
+                        drop(sem_lock);
+                        context_.wait_condvar.notify_all();
+                    })
                     .await;
             }));
         }

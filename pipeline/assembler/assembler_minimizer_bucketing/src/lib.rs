@@ -138,6 +138,9 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
         sequence: S,
         _range: Range<usize>,
+        used_bits: usize,
+        first_bits: usize,
+        second_bits: usize,
         mut push_sequence: F,
     ){
         let hashes = H::new(sequence, self.global_data.m);
@@ -167,8 +170,8 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                 && (preprocess_info.include_last || end_index != index)
             {
                 push_sequence(
-                    H::get_first_bucket(last_hash) & self.global_data.buckets_count_mask,
-                    H::get_second_bucket(last_hash) & self.global_data.buckets_count_mask,
+                    H::get_bucket(used_bits, first_bits, last_hash),
+                    H::get_bucket(used_bits + first_bits, second_bits, last_hash),
                     sequence.get_subslice((max(1, last_index) - 1)..(index + self.global_data.k)),
                     include_first as u8,
                     preprocess_info
@@ -185,8 +188,8 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         let start_index = max(1, last_index) - 1;
         let include_last = preprocess_info.include_last; // Always include the last element of the sequence in the last entry
         push_sequence(
-            H::get_first_bucket(last_hash) & self.global_data.buckets_count_mask,
-            H::get_second_bucket(last_hash) & self.global_data.buckets_count_mask,
+            H::get_bucket(used_bits, first_bits, last_hash),
+            H::get_bucket(used_bits + first_bits, second_bits, last_hash),
             sequence.get_subslice(start_index..sequence.seq_len()),
             include_first as u8 | ((include_last as u8) << 1),
             preprocess_info

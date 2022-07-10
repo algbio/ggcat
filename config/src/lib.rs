@@ -10,6 +10,12 @@ pub type BucketIndexType = u16;
 pub type MinimizerType = u32;
 pub type ColorIndexType = u32;
 
+pub const PACKETS_PRIORITY_DEFAULT: usize = 0;
+pub const PACKETS_PRIORITY_REWRITTEN: usize = 0;
+pub const PACKETS_PRIORITY_DONE_RESPLIT: usize = 0;
+pub const PACKETS_PRIORITY_FILES: usize = 1;
+// pub const PACKETS_PRIORITY_PENDING_RESPLIT: usize = 3;
+
 // pub type DefaultColorsSerializer = RunLengthColorsSerializer;
 
 pub const READ_INTERMEDIATE_CHUNKS_SIZE: usize = 1024 * 512 * 1;
@@ -22,8 +28,8 @@ pub const DEFAULT_PREFETCH_AMOUNT: Option<usize> = Some(1024 * 1024 * 2);
 
 pub const FLUSH_QUEUE_FACTOR: usize = 1;
 
-pub const PARTIAL_VECS_CHECKPOINT_SIZE: LockFreeCheckpointSize =
-    LockFreeCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(2));
+pub const PARTIAL_VECS_CHECKPOINT_SIZE: CompressedCheckpointSize =
+    CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(2));
 
 pub const MINIMIZER_BUCKETS_CHECKPOINT_SIZE: CompressedCheckpointSize =
     CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(8));
@@ -39,15 +45,17 @@ pub const DEFAULT_LZ4_COMPRESSION_LEVEL: u32 = 0;
 pub const MAX_BUCKET_SIZE: u64 = 192 * 1024 * 1024;
 pub const MIN_BUCKETS_COUNT_LOG: usize = 10;
 pub const MAX_BUCKETS_COUNT_LOG: usize = 13;
+pub const MAX_RESPLIT_BUCKETS_COUNT_LOG: usize = 9;
 
 pub const MIN_BUCKET_CHUNKS_FOR_READING_THREAD: usize = 2;
 
 pub const USE_SECOND_BUCKET: bool = false;
 
-pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 5;
+pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 10;
 
-pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1; //1024 * 1024 * 4;
-pub const SECOND_BUCKETS_COUNT: usize = 256;
+pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 512;
+pub const MAXIMUM_SECOND_BUCKETS_COUNT: usize = 256;
+pub const MAXIMUM_JIT_PROCESSED_BUCKETS: usize = 16;
 
 pub const MIN_OUTLIER_SIZE: u64 = 100000;
 

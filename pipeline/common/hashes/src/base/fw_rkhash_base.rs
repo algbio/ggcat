@@ -4,6 +4,7 @@ use crate::{
 };
 use config::BucketIndexType;
 use static_dispatch::static_dispatch;
+use std::mem::size_of;
 
 const FWD_LOOKUP: [HashIntegerType; 256] = {
     let mut lookup = [1; 256];
@@ -131,6 +132,7 @@ impl HashFunctionFactory for ForwardRabinKarpHashFactory {
     }
 
     const NULL_BASE: u8 = 0;
+    const USABLE_HASH_BITS: usize = size_of::<Self::HashTypeUnextendable>() * 8 - 1; // -1 because the hash is always odd
 
     fn initialize(k: usize) {
         unsafe {
@@ -142,8 +144,13 @@ impl HashFunctionFactory for ForwardRabinKarpHashFactory {
         ForwardRabinKarpHashIterator::new(seq, k).unwrap()
     }
 
-    fn get_first_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType {
-        hash as BucketIndexType
+    #[inline(always)]
+    fn get_bucket(
+        used_bits: usize,
+        requested_bits: usize,
+        hash: Self::HashTypeUnextendable,
+    ) -> BucketIndexType {
+        ((hash >> (used_bits + 1)) % (1 << requested_bits)) as BucketIndexType
     }
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8 {

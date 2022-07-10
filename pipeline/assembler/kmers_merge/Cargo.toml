@@ -33,6 +33,9 @@ hashbrown = "0.12.1"
 typenum = "1.15.0"
 crossbeam = "0.8.1"
 
+# Profiler
+instrumenter = { path = "../../../libs/instrumenter-rs" }
+
 [dev-dependencies]
 fdlimit = "0.2.1"
 rayon = "1.5.3"

@@ -8,8 +8,10 @@ use hashes::ExtendableHashTraitType;
 use hashes::HashFunction;
 use hashes::HashableSequence;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use instrumenter::private__ as tracing;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use io::varint::encode_varint;
 use kmers_transform::processor::KmersTransformProcessor;
 use kmers_transform::{KmersTransformExecutorFactory, KmersTransformMapProcessor};
 use parallel_processor::counter_stats::counter::{AtomicCounter, AvgMode, MaxMode};
@@ -17,25 +19,31 @@ use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
+use std::cmp::{max, min};
 use std::mem::size_of;
 use std::ops::DerefMut;
+use std::sync::atomic::Ordering;
 use structs::map_entry::MapEntry;
 
 pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManager> {
     pub rhash_map:
         HashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>,
     pub saved_reads: Vec<u8>,
-    pub rcorrect_reads: Vec<usize>,
+    pub encoded_saved_reads_indexes: Vec<u8>,
     pub temp_colors: color_types::ColorsBufferTempStructure<MH, CX>,
+    average_hasmap_size: u64,
+    average_sequences_size: u64,
 }
 
 #[inline]
-fn clear_hashmap<K, V>(hashmap: &mut HashMap<K, V>) {
-    if hashmap.capacity() < 8192 {
+fn clear_hashmap<K, V>(hashmap: &mut HashMap<K, V>, suggested_size: usize) {
+    let suggested_capacity = (suggested_size / 2).next_power_of_two();
+
+    if hashmap.capacity() < suggested_capacity {
         hashmap.clear();
     } else {
         // Reset the hashmap if it gets too big
-        *hashmap = HashMap::with_capacity(4096);
+        *hashmap = HashMap::with_capacity(suggested_capacity);
     }
 }
 
@@ -48,16 +56,34 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
         Self {
             rhash_map: HashMap::with_capacity(4096),
             saved_reads: vec![],
-            rcorrect_reads: Vec::new(),
+            encoded_saved_reads_indexes: vec![],
             temp_colors: CX::ColorsMergeManagerType::<MH>::allocate_temp_buffer_structure(),
+            average_hasmap_size: 0,
+            average_sequences_size: 0,
         }
     }
 
     fn reset(&mut self) {
-        clear_hashmap(&mut self.rhash_map);
-        self.saved_reads.clear();
+        clear_hashmap(
+            &mut self.rhash_map,
+            max(8192, self.average_hasmap_size as usize),
+        );
+
+        let saved_reads_suggested_size = (self.average_sequences_size).next_power_of_two() as usize;
+
+        if self.saved_reads.capacity() < saved_reads_suggested_size {
+            self.saved_reads.clear();
+        } else {
+            self.saved_reads = Vec::with_capacity(saved_reads_suggested_size)
+        }
+
+        if self.encoded_saved_reads_indexes.capacity() < saved_reads_suggested_size {
+            self.encoded_saved_reads_indexes.clear();
+        } else {
+            self.encoded_saved_reads_indexes = Vec::with_capacity(saved_reads_suggested_size)
+        }
+
         CX::ColorsMergeManagerType::<MH>::reinit_temp_buffer_structure(&mut self.temp_colors);
-        self.rcorrect_reads.clear();
     }
 }
 
@@ -71,7 +97,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PacketTrait
                 MapEntry<color_types::HashMapTempColorIndex<MH, CX>>,
             )>() + 1)
             + self.saved_reads.len()
-        // + self.rcorrect_reads.len() * size_of::<usize>()
     }
 }
 
@@ -85,6 +110,7 @@ pub struct ParallelKmersMergeMapProcessor<
             <Self as KmersTransformMapProcessor<ParallelKmersMergeFactory<H, MH, CX>>>::MapStruct,
         >,
     >,
+    last_saved_len: usize,
     mem_tracker: MemoryTracker<KmersTransformProcessor<ParallelKmersMergeFactory<H, MH, CX>>>,
 }
 
@@ -96,6 +122,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     ) -> Self {
         Self {
             map_packet: None,
+            last_saved_len: 0,
             mem_tracker,
         }
     }
@@ -113,8 +140,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         _global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) {
         self.map_packet = Some(map_struct);
+        self.last_saved_len = 0;
     }
 
+    #[instrumenter::track]
     fn process_group_batch_sequences(
         &mut self,
         global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
@@ -136,7 +165,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             let hashes = MH::new(read, k);
 
             let last_hash_pos = read.bases_count() - k;
-            let mut saved_read_offset = None;
+            let mut min_idx = usize::MAX;
+            let mut max_idx = 0;
 
             for ((idx, hash), kmer_color) in hashes
                 .iter_enumerate()
@@ -169,42 +199,61 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 );
 
                 if entry.get_counter() == global_data.min_multiplicity {
-                    if saved_read_offset.is_none() {
-                        saved_read_offset = Some(map_packet.saved_reads.len());
-                        map_packet
-                            .saved_reads
-                            .extend_from_slice(read.get_packed_slice())
-                    }
-                    map_packet
-                        .rcorrect_reads
-                        .push(saved_read_offset.unwrap() * 4 + idx);
+                    min_idx = min(min_idx, idx / 4);
+                    max_idx = max(max_idx, idx);
                 }
+            }
+
+            if min_idx != usize::MAX {
+                encode_varint(
+                    |b| {
+                        map_packet.encoded_saved_reads_indexes.extend_from_slice(b);
+                    },
+                    (map_packet.saved_reads.len() - self.last_saved_len) as u64,
+                );
+                self.last_saved_len = map_packet.saved_reads.len();
+                map_packet
+                    .saved_reads
+                    .extend_from_slice(&read.get_packed_slice()[min_idx..((max_idx + k + 3) / 4)]);
             }
         }
         self.mem_tracker
             .update_memory_usage(&[map_packet.get_size(), 0])
     }
 
+    #[instrumenter::track]
     fn process_group_finalize(
         &mut self,
-        _global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) -> Packet<Self::MapStruct> {
         static COUNTER_KMERS_MAX: AtomicCounter<MaxMode> =
             declare_counter_i64!("kmers_cardinality_max", MaxMode, false);
-        static COUNTER_READS_MAX: AtomicCounter<MaxMode> =
-            declare_counter_i64!("correct_reads_max", MaxMode, false);
-        static COUNTER_READS_MAX_LAST: AtomicCounter<MaxMode> =
-            declare_counter_i64!("correct_reads_max_last", MaxMode, true);
         static COUNTER_READS_AVG: AtomicCounter<AvgMode> =
             declare_avg_counter_i64!("correct_reads_avg", false);
 
-        let map_packet = self.map_packet.take().unwrap();
+        let mut map_packet = self.map_packet.take().unwrap();
 
-        let len = map_packet.rcorrect_reads.len() as i64;
-        COUNTER_KMERS_MAX.max(map_packet.rhash_map.len() as i64);
-        COUNTER_READS_MAX.max(len);
-        COUNTER_READS_MAX_LAST.max(len);
-        COUNTER_READS_AVG.add_value(len);
+        let sequences_sizes = map_packet.saved_reads.len() as u64;
+        let all_kmers = map_packet.rhash_map.len() as u64;
+
+        let kmers_total = global_data
+            .hasnmap_kmers_total
+            .fetch_add(all_kmers, Ordering::Relaxed)
+            + all_kmers;
+        let sequences_size_total = global_data
+            .sequences_size_total
+            .fetch_add(sequences_sizes, Ordering::Relaxed)
+            + sequences_sizes;
+        let batches_count = global_data
+            .kmer_batches_count
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+
+        map_packet.average_hasmap_size = kmers_total / batches_count;
+        map_packet.average_sequences_size = sequences_size_total / batches_count;
+
+        COUNTER_KMERS_MAX.max(all_kmers as i64);
+        COUNTER_READS_AVG.add_value(all_kmers as i64);
         self.mem_tracker.update_memory_usage(&[0, 0]);
 
         map_packet

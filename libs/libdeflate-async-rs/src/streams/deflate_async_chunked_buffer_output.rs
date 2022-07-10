@@ -39,7 +39,7 @@ static COUNTER_THREADS_BUSY_READING: AtomicCounter<SumMode> =
     declare_counter_i64!("libdeflate_reading_threads", SumMode, false);
 
 static COUNTER_THREADS_PROCESSING_READS: AtomicCounter<SumMode> =
-    declare_counter_i64!("libdeflate_processing_threads", SumMode, false);
+    `declare_counter_i64!("libdeflate_processing_threads", SumMode, false)`;
 
 impl DeflateAsyncChunkedBufferOutput {
     pub fn new(buf_size: usize) -> Self {

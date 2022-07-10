@@ -109,6 +109,7 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
     }
 
     const NULL_BASE: u8 = 0;
+    const USABLE_HASH_BITS: usize = size_of::<Self::HashTypeUnextendable>() * 8;
 
     fn initialize(_k: usize) {}
 
@@ -116,8 +117,13 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
         CanonicalSeqHashIterator::new(seq, k).unwrap()
     }
 
-    fn get_first_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType {
-        hash as BucketIndexType
+    #[inline(always)]
+    fn get_bucket(
+        used_bits: usize,
+        requested_bits: usize,
+        hash: Self::HashTypeUnextendable,
+    ) -> BucketIndexType {
+        ((hash >> used_bits) % (1 << requested_bits)) as BucketIndexType
     }
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8 {

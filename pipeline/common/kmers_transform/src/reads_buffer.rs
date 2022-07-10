@@ -6,6 +6,7 @@ use std::mem::size_of;
 
 pub struct ReadsBuffer<E: SequenceExtraData + 'static> {
     pub reads: Vec<(u8, E, CompressedReadIndipendent)>,
+    pub sub_bucket: usize,
     pub extra_buffer: E::TempBuffer,
     pub reads_buffer: Vec<u8>,
 }
@@ -22,6 +23,7 @@ impl<E: SequenceExtraData + 'static> PoolObjectTrait for ReadsBuffer<E> {
     fn allocate_new(init_data: &Self::InitData) -> Self {
         Self {
             reads: Vec::with_capacity(*init_data),
+            sub_bucket: 0,
             extra_buffer: E::new_temp_buffer(),
             reads_buffer: vec![],
         }

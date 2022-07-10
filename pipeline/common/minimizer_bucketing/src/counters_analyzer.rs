@@ -57,23 +57,23 @@ impl CountersAnalyzer {
         Self { counters, median }
     }
 
-    pub fn get_counters_for_bucket(&self, bucket: BucketIndexType) -> Vec<BucketCounter> {
-        self.counters[bucket as usize].clone()
+    pub fn get_counters_for_bucket(&self, bucket: BucketIndexType) -> &Vec<BucketCounter> {
+        &self.counters[bucket as usize]
     }
 
     pub fn print_debug(&self) {
         println!("************** BUCKETS DEBUG: **************");
-        for (i, cnt_bucket) in self.counters.iter().enumerate() {
-            let mut buffer = String::new();
-            for cnt_sub_bucket in cnt_bucket.iter() {
-                buffer.push_str(&format!(
-                    "{}{} ",
-                    cnt_sub_bucket.count,
-                    if cnt_sub_bucket.is_outlier { "*" } else { "" },
-                ));
-            }
-            println!("{} SIZES: {}", i, buffer);
-        }
+        // for (i, cnt_bucket) in self.counters.iter().enumerate() {
+        //     let mut buffer = String::new();
+        //     for cnt_sub_bucket in cnt_bucket.iter() {
+        //         buffer.push_str(&format!(
+        //             "{}{} ",
+        //             cnt_sub_bucket.count,
+        //             if cnt_sub_bucket.is_outlier { "*" } else { "" },
+        //         ));
+        //     }
+        //     println!("{} SIZES: {}", i, buffer);
+        // }
         println!("Sub-bucket median: {}", self.median);
         println!(
             "Sub-bucket maximum: {}",
@@ -98,6 +98,8 @@ impl CountersAnalyzer {
                 }
             })
         });
+
+        rval.print_debug();
 
         if remove {
             let _ = std::fs::remove_file(path);

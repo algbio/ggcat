@@ -1,4 +1,4 @@
-use crate::execution_manager::async_channel::AsyncChannel;
+use crate::execution_manager::async_channel::{AsyncChannel, DoublePriorityAsyncChannel};
 use crate::execution_manager::executor::AsyncExecutor;
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
 use crate::execution_manager::memory_tracker::MemoryTrackerManager;
@@ -79,10 +79,11 @@ pub struct ExecutionContext {
     pub(crate) waiting_addresses: Mutex<
         HashMap<
             TypeId,
-            AsyncChannel<(
+            DoublePriorityAsyncChannel<(
                 WeakExecutorAddress,
                 Arc<AtomicU64>,
                 Arc<PoolObject<PacketsChannel>>,
+                Arc<dyn Any + Sync + Send + 'static>,
             )>,
         >,
     >,
@@ -94,6 +95,8 @@ pub struct ExecutionContext {
     wait_mutex: Mutex<()>,
     pub(crate) wait_condvar: Condvar,
 }
+
+const MAX_SEMAPHORE_PERMITS: u32 = u32::MAX >> 3;
 
 impl ExecutionContext {
     pub fn new() -> Arc<Self> {
@@ -120,7 +123,7 @@ impl ExecutionContext {
             .insert(TypeId::of::<E>(), Arc::new(AtomicU64::new(0)));
         self.waiting_addresses
             .lock()
-            .insert(TypeId::of::<E>(), AsyncChannel::new(0));
+            .insert(TypeId::of::<E>(), DoublePriorityAsyncChannel::new(0));
         self.packet_pools.insert(
             TypeId::of::<E>(),
             Box::new(match pool_alloc_mode {
@@ -132,7 +135,7 @@ impl ExecutionContext {
                 }
                 PoolAllocMode::Distinct { capacity } => PacketsPoolStrategy::<E>::Distinct {
                     pools_allocator: ObjectsPool::new(
-                        executors_max_count * 2,
+                        executors_max_count,
                         (capacity, pool_init_data, self.memory_tracker.clone()),
                     ),
                 },
@@ -147,7 +150,11 @@ impl ExecutionContext {
             .load(Ordering::SeqCst)
     }
 
-    pub fn register_executors_batch(self: &Arc<Self>, executors: Vec<ExecutorAddress>) {
+    pub fn register_executors_batch(
+        self: &Arc<Self>,
+        executors: Vec<ExecutorAddress>,
+        priority: usize,
+    ) {
         let mut waiting_addresses = self.waiting_addresses.lock();
 
         for executor in executors {
@@ -172,7 +179,11 @@ impl ExecutionContext {
             waiting_addresses
                 .get_mut(&executor.executor_type_id)
                 .unwrap()
-                .send((executor.to_weak(), counter, queue), false);
+                .send_with_priority(
+                    (executor.to_weak(), counter, queue, executor.init_data),
+                    priority,
+                    false,
+                );
         }
     }
 
@@ -191,8 +202,9 @@ impl ExecutionContext {
             .send(packet.upcast(), false);
     }
 
-    pub(crate) fn allocate_pool<E: AsyncExecutor>(
+    pub(crate) async fn allocate_pool<E: AsyncExecutor>(
         &self,
+        force: bool,
     ) -> Option<Arc<PoolObject<PacketsPool<E::OutputPacket>>>> {
         match self
             .packet_pools
@@ -204,9 +216,11 @@ impl ExecutionContext {
         {
             PacketsPoolStrategy::None => None,
             PacketsPoolStrategy::Shared(pool) => Some(pool.clone()),
-            PacketsPoolStrategy::Distinct { pools_allocator } => {
-                Some(Arc::new(pools_allocator.alloc_object_force()))
-            }
+            PacketsPoolStrategy::Distinct { pools_allocator } => Some(Arc::new(if force {
+                pools_allocator.alloc_object_force()
+            } else {
+                pools_allocator.alloc_object().await
+            })),
         }
     }
 
@@ -216,7 +230,8 @@ impl ExecutionContext {
     }
 
     pub fn start(&self) {
-        self.start_semaphore.add_permits(usize::MAX >> 3);
+        self.start_semaphore
+            .add_permits(MAX_SEMAPHORE_PERMITS as usize);
     }
 
     pub fn wait_for_completion<E: AsyncExecutor>(&self, _handle: ExecutorsHandle<E>) {
@@ -246,5 +261,24 @@ impl ExecutionContext {
         _handle: ExecutorsHandle<E>,
     ) -> u64 {
         self.get_allocated_executors(&TypeId::of::<E>())
+    }
+
+    pub fn join_all(&self) {
+        let addresses = self.waiting_addresses.lock();
+        addresses.iter().for_each(|addr| addr.1.release());
+        drop(addresses);
+
+        let mut wait_mutex = self.wait_mutex.lock();
+        loop {
+            self.wait_condvar
+                .wait_for(&mut wait_mutex, Duration::from_millis(100));
+            if self
+                .start_semaphore
+                .try_acquire_many(MAX_SEMAPHORE_PERMITS)
+                .is_ok()
+            {
+                break;
+            }
+        }
     }
 }

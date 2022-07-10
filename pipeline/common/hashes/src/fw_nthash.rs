@@ -100,6 +100,7 @@ impl HashFunctionFactory for ForwardNtHashIteratorFactory {
 
     // Corresponds to 'N' hash (zero)
     const NULL_BASE: u8 = 4;
+    const USABLE_HASH_BITS: usize = size_of::<Self::HashTypeUnextendable>() * 8;
 
     fn initialize(_k: usize) {}
 
@@ -109,8 +110,12 @@ impl HashFunctionFactory for ForwardNtHashIteratorFactory {
     }
 
     #[inline(always)]
-    fn get_first_bucket(hash: Self::HashTypeUnextendable) -> BucketIndexType {
-        hash as BucketIndexType
+    fn get_bucket(
+        used_bits: usize,
+        requested_bits: usize,
+        hash: Self::HashTypeUnextendable,
+    ) -> BucketIndexType {
+        ((hash >> used_bits) % (1 << requested_bits)) as BucketIndexType
     }
 
     fn get_shifted(hash: Self::HashTypeUnextendable, shift: u8) -> u8 {
@@ -171,13 +176,6 @@ impl HashFunctionFactory for ForwardNtHashIteratorFactory {
 
 #[static_dispatch]
 impl crate::MinimizerHashFunctionFactory for ForwardNtHashIteratorFactory {
-    #[inline(always)]
-    fn get_second_bucket(
-        hash: <Self as HashFunctionFactory>::HashTypeUnextendable,
-    ) -> BucketIndexType {
-        (hash >> size_of::<BucketIndexType>()) as BucketIndexType
-    }
-
     #[inline(always)]
     fn get_full_minimizer(
         hash: <Self as HashFunctionFactory>::HashTypeUnextendable,

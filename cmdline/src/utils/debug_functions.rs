@@ -58,8 +58,8 @@ fn assert_reads<H: MinimizerHashFunctionFactory>(read: &[u8], bucket: BucketInde
             .unwrap();
 
         assert!(
-            H::get_first_bucket(minimizer.to_unextendable()) % 512 == bucket
-                || H::get_first_bucket(minimizer1.to_unextendable()) % 512 == bucket
+            H::get_bucket(0, 9, minimizer.to_unextendable()) == bucket
+                || H::get_bucket(0, 9, minimizer1.to_unextendable()) == bucket
         );
         println!(
             "{} / {}",
@@ -82,10 +82,7 @@ fn assert_reads<H: MinimizerHashFunctionFactory>(read: &[u8], bucket: BucketInde
         .min_by_key(|x| H::get_full_minimizer(x.to_unextendable()))
         .unwrap();
 
-    assert_eq!(
-        H::get_first_bucket(minimizer.to_unextendable()) % 512,
-        bucket
-    );
+    assert_eq!(H::get_bucket(0, 9, minimizer.to_unextendable()), bucket);
 
     if x.len() > K {
         let hashes2 = H::new(&x[..], M);

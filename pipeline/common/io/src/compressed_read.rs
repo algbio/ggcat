@@ -11,7 +11,7 @@ use utils::Utils;
 #[derive(Copy, Clone)]
 pub struct CompressedRead<'a> {
     pub(crate) size: usize,
-    start: u8,
+    pub start: u8,
     data: *const u8,
     _phantom: PhantomData<&'a ()>,
 }

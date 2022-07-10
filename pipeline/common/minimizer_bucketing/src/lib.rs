@@ -13,10 +13,10 @@ use crate::reader::MinimizerBucketingFilesReader;
 use crate::sequences_splitter::SequencesSplitter;
 use config::{
     get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
-    DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, READ_INTERMEDIATE_CHUNKS_SIZE,
-    READ_INTERMEDIATE_QUEUE_MULTIPLIER,
+    DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DEFAULT,
+    READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
 };
-use config::{SECOND_BUCKETS_COUNT, USE_SECOND_BUCKET};
+use config::{MAXIMUM_SECOND_BUCKETS_COUNT, USE_SECOND_BUCKET};
 use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -131,6 +131,9 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
         preprocess_info: &Factory::PreprocessInfo,
         sequence: S,
         range: Range<usize>,
+        used_bits: usize,
+        first_bits: usize,
+        second_bits: usize,
         push_sequence: F,
     );
 }
@@ -139,9 +142,9 @@ pub struct MinimizerBucketingCommonData<GlobalData> {
     pub k: usize,
     pub m: usize,
     pub buckets_count: usize,
-    pub buckets_count_mask: BucketIndexType,
-    pub second_buckets_count: usize,
-    pub second_buckets_count_mask: BucketIndexType,
+    pub buckets_count_bits: usize,
+    pub max_second_buckets_count: usize,
+    pub max_second_buckets_count_bits: usize,
     pub global_counters: Vec<Vec<AtomicU64>>,
     pub global_data: GlobalData,
 }
@@ -151,20 +154,20 @@ impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
         k: usize,
         m: usize,
         buckets_count: usize,
-        second_buckets_count: usize,
+        max_second_buckets_count: usize,
         global_data: GlobalData,
     ) -> Self {
         Self {
             k,
             m,
             buckets_count,
-            buckets_count_mask: (buckets_count - 1) as BucketIndexType,
-            second_buckets_count,
-            second_buckets_count_mask: (second_buckets_count - 1) as BucketIndexType,
+            buckets_count_bits: buckets_count.log2() as usize,
+            max_second_buckets_count,
+            max_second_buckets_count_bits: max_second_buckets_count.log2() as usize,
             global_counters: (0..buckets_count)
                 .into_iter()
                 .map(|_| {
-                    (0..second_buckets_count)
+                    (0..max_second_buckets_count)
                         .into_iter()
                         .map(|_| AtomicU64::new(0))
                         .collect()
@@ -203,9 +206,9 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
         context: &MinimizerBucketingExecutionContext<E::GlobalData>,
         ops: &ExecutorAddressOperations<'_, Self>,
     ) {
-        let counters_log = context.common.second_buckets_count.log2();
+        let counters_log = context.common.max_second_buckets_count.log2();
         let mut counters: Vec<u8> =
-            vec![0; context.common.second_buckets_count * context.common.buckets_count];
+            vec![0; context.common.max_second_buckets_count * context.common.buckets_count];
 
         let mut tmp_reads_buffer = BucketsThreadDispatcher::new(
             &context.buckets,
@@ -215,11 +218,9 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
         // self.mem_tracker.update_memory_usage(&[
         //     DEFAULT_PER_CPU_BUFFER_SIZE.octets as usize * context.buckets.count()
         // ]);
+        let global_counters = &context.common.global_counters;
 
         while let Some(input_packet) = ops.receive_packet().await {
-            let global_counters = &context.common.global_counters;
-            let second_buckets_count_mask = context.common.second_buckets_count_mask;
-
             let mut total_bases = 0;
             let mut sequences_splitter = SequencesSplitter::new(context.common.k);
             let mut buckets_processor = E::new(&context.common);
@@ -243,14 +244,16 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                         &preprocess_info,
                         sequence,
                         range,
-                        |bucket, second_bucket, seq, flags, extra, extra_buffer| {
-                            let counter = &mut counters[((bucket as usize) << counters_log)
-                                + (second_bucket & second_buckets_count_mask) as usize];
+                        0,
+                        context.common.buckets_count_bits,
+                        context.common.max_second_buckets_count_bits,
+                        |bucket, next_bucket, seq, flags, extra, extra_buffer| {
+                            let counter = &mut counters
+                                [((bucket as usize) << counters_log) + (next_bucket as usize)];
 
                             *counter = counter.wrapping_add(1);
                             if *counter == 0 {
-                                global_counters[bucket as usize]
-                                    [(second_bucket & second_buckets_count_mask) as usize]
+                                global_counters[bucket as usize][next_bucket as usize]
                                     .fetch_add(256, Ordering::Relaxed);
                             }
 
@@ -263,7 +266,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                                     E::FLAGS_COUNT,
                                     { USE_SECOND_BUCKET },
                                 >::new(
-                                    seq, flags, second_bucket as u8
+                                    seq, flags, next_bucket as u8
                                 ),
                             );
                         },
@@ -312,6 +315,15 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
             }
         }
 
+        for bucket in 0..global_counters.len() {
+            for next_bucket in 0..global_counters[0].len() {
+                let counter =
+                    counters[((bucket as usize) << counters_log) + (next_bucket as usize)];
+                global_counters[bucket as usize][next_bucket as usize]
+                    .fetch_add(counter as u64, Ordering::Relaxed);
+            }
+        }
+
         tmp_reads_buffer.finalize();
     }
 }
@@ -322,12 +334,12 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
     type InputPacket = MinimizerBucketingQueueData<E::FileInfo>;
     type OutputPacket = ();
     type GlobalParams = MinimizerBucketingExecutionContext<E::GlobalData>;
+    type InitData = ();
 
     type AsyncExecutorFuture<'a> = impl Future<Output = ()> + Sync + Send + 'a;
 
     fn new() -> Self {
         Self {
-            //         mem_tracker: mem_tracker.clone(),
             _phantom: PhantomData,
         }
     }
@@ -339,7 +351,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
         memory_tracker: MemoryTracker<Self>,
     ) -> Self::AsyncExecutorFuture<'a> {
         async move {
-            while let Ok(address) = receiver.obtain_address().await {
+            while let Ok((address, _)) = receiver.obtain_address().await {
                 let max_concurrency = global_params.threads_count;
 
                 let mut spawner = address.make_spawner();
@@ -407,13 +419,16 @@ impl GenericMinimizerBucketing {
         });
         input_files.reverse();
 
-        let second_buckets_count = max(SECOND_BUCKETS_COUNT, threads_count.next_power_of_two());
+        let second_buckets_count = max(
+            MAXIMUM_SECOND_BUCKETS_COUNT,
+            threads_count.next_power_of_two(),
+        );
 
         let global_context = Arc::new(MinimizerBucketingExecutionContext {
             buckets,
             current_file: AtomicUsize::new(0),
             executor_group_address: RwLock::new(Some(
-                MinimizerBucketingExecWriter::<E>::generate_new_address(),
+                MinimizerBucketingExecWriter::<E>::generate_new_address(()),
             )),
             processed_files: AtomicUsize::new(0),
             total_files: input_files.len(),
@@ -466,14 +481,19 @@ impl GenericMinimizerBucketing {
             input_files
                 .set_output_executor::<MinimizerBucketingFilesReader<E::GlobalData, E::FileInfo>>(
                     &execution_context,
+                    (),
+                    PACKETS_PRIORITY_DEFAULT,
                 );
 
-            execution_context.register_executors_batch(vec![global_context
-                .executor_group_address
-                .read()
-                .as_ref()
-                .unwrap()
-                .clone()]);
+            execution_context.register_executors_batch(
+                vec![global_context
+                    .executor_group_address
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .clone()],
+                PACKETS_PRIORITY_DEFAULT,
+            );
 
             execution_context.start();
             execution_context.wait_for_completion(reader_executors);
@@ -481,6 +501,8 @@ impl GenericMinimizerBucketing {
             global_context.executor_group_address.write().take();
 
             execution_context.wait_for_completion(writer_executors);
+
+            execution_context.join_all();
         }
 
         let global_context = Arc::try_unwrap(global_context)

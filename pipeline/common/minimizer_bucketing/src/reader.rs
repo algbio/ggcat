@@ -34,9 +34,10 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         context: &MinimizerBucketingExecutionContext<GlobalData>,
         ops: &ExecutorAddressOperations<'_, Self>,
     ) {
-        // println!("Executing thing {}!", input_packet.0.display());
+        let packets_pool = ops.pool_alloc_await().await;
+
         while let Some(input_packet) = ops.receive_packet().await {
-            let mut data_packet = ops.packet_alloc().await;
+            let mut data_packet = packets_pool.alloc_packet().await;
             let file_info = input_packet.1.clone();
 
             let data = data_packet.deref_mut();
@@ -79,7 +80,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
                                     .clone(),
                                 packet,
                             );
-                            ops.packet_alloc_blocking()
+                            packets_pool.alloc_packet_blocking()
                         });
 
                         // mem_tracker.update_memory_usage(&[max_len]);
@@ -120,6 +121,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
     type InputPacket = (PathBuf, FileInfo);
     type OutputPacket = MinimizerBucketingQueueData<FileInfo>;
     type GlobalParams = MinimizerBucketingExecutionContext<GlobalData>;
+    type InitData = ();
 
     type AsyncExecutorFuture<'a> = impl Future<Output = ()> + Sync + Send + 'a;
 
@@ -136,7 +138,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         memory_tracker: MemoryTracker<Self>,
     ) -> Self::AsyncExecutorFuture<'a> {
         async move {
-            while let Ok(address) = receiver.obtain_address().await {
+            while let Ok((address, _)) = receiver.obtain_address().await {
                 let read_threads_count = global_params.read_threads_count;
 
                 let mut spawner = address.make_spawner();

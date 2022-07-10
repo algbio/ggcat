@@ -1,3 +1,5 @@
+#![feature(int_log)]
+
 use crate::final_executor::ParallelKmersMergeFinalExecutor;
 use crate::map_processor::ParallelKmersMergeMapProcessor;
 use crate::preprocessor::ParallelKmersMergePreprocessor;
@@ -28,6 +30,7 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::Arc;
 use utils::owned_drop::OwnedDrop;
 
@@ -46,6 +49,10 @@ pub struct GlobalMergeData<MH: HashFunctionFactory, CX: ColorsManager> {
         ArrayQueue<ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>>,
     hashes_buckets: Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
     global_resplit_data: Arc<MinimizerBucketingCommonData<()>>,
+    correct_kmers_total: AtomicU64,
+    sequences_size_total: AtomicU64,
+    hasnmap_kmers_total: AtomicU64,
+    kmer_batches_count: AtomicU64,
 }
 
 pub struct ParallelKmersMergeFactory<
@@ -101,11 +108,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         entry: u64,
         do_merge: bool,
         direction: Direction,
-        buckets_count_mask: BucketIndexType,
+        buckets_count_bits: usize,
     ) {
         if do_merge {
             hashes_tmp.add_element(
-                MH::get_first_bucket(hash) & buckets_count_mask,
+                MH::get_bucket(0, buckets_count_bits, hash),
                 &(),
                 &HashEntry {
                     hash,
@@ -192,6 +199,10 @@ pub fn kmers_merge<
             1,
             (),
         )),
+        correct_kmers_total: AtomicU64::new(0),
+        sequences_size_total: AtomicU64::new(0),
+        hasnmap_kmers_total: AtomicU64::new(0),
+        kmer_batches_count: AtomicU64::new(0),
     });
 
     KmersTransform::<ParallelKmersMergeFactory<H, MH, CX>>::new(

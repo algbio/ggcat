@@ -35,6 +35,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         &self,
         global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
         seq_data: &(u8, u8, C, CompressedRead),
+        used_hash_bits: usize,
+        bucket_bits_count: usize,
     ) -> BucketIndexType {
         let read = &seq_data.3;
         let flags = seq_data.0;
@@ -51,6 +53,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             .min_by_key(|k| H::get_full_minimizer(k.to_unextendable()))
             .unwrap();
 
-        H::get_second_bucket(minimizer.to_unextendable())
+        H::get_bucket(
+            used_hash_bits,
+            bucket_bits_count,
+            minimizer.to_unextendable(),
+        )
     }
 }
