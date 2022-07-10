@@ -133,7 +133,7 @@ mod enabled {
 mod not_enabled {
     use std::path::Path;
 
-    pub fn initialize_tracing(dest_file: impl AsRef<Path>, hw_counter_names: &[&str]) -> () {}
+    pub fn initialize_tracing(_dest_file: impl AsRef<Path>, _hw_counter_names: &[&str]) -> () {}
 
     #[macro_export]
     macro_rules! use_instrumenter {

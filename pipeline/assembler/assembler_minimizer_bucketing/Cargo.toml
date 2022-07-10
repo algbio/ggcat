@@ -27,3 +27,6 @@ minimizer_bucketing = { path = "../../common/minimizer_bucketing" }
 
 # Other libraries
 typenum = "1.15.0"
+
+[features]
+devel-build = []

@@ -41,3 +41,6 @@ rayon = "1.5.3"
 hashbrown = "0.12.1"
 itertools = "0.10.3"
 byteorder = "1.4.3"
+
+[features]
+devel-build = ["assembler_minimizer_bucketing/devel-build"]

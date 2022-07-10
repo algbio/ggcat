@@ -1,3 +1,4 @@
+#![allow(warnings)] // FIXME: Remove
 #![feature(generic_associated_types)]
 #![feature(slice_group_by)]
 
@@ -25,24 +26,24 @@ pub enum QuerierStartingStep {
 
 #[static_dispatch(BucketingHash = [
     hashes::cn_nthash::CanonicalNtHashIteratorFactory,
-    #[cfg(feature = "full")]  hashes::fw_nthash::ForwardNtHashIteratorFactory
+    #[cfg(not(feature = "devel-build"))]  hashes::fw_nthash::ForwardNtHashIteratorFactory
 ], MergingHash = [
-    #[cfg(feature = "full")] hashes::fw_seqhash::u16::ForwardSeqHashFactory,
-    #[cfg(feature = "full")] hashes::fw_seqhash::u32::ForwardSeqHashFactory,
-    #[cfg(feature = "full")] hashes::fw_seqhash::u64::ForwardSeqHashFactory,
-    #[cfg(feature = "full")] hashes::fw_seqhash::u128::ForwardSeqHashFactory,
-    #[cfg(feature = "full")] hashes::fw_rkhash::u32::ForwardRabinKarpHashFactory,
-    #[cfg(feature = "full")] hashes::fw_rkhash::u64::ForwardRabinKarpHashFactory,
-    #[cfg(feature = "full")] hashes::fw_rkhash::u128::ForwardRabinKarpHashFactory,
-    #[cfg(feature = "full")] hashes::cn_seqhash::u16::CanonicalSeqHashFactory,
-    #[cfg(feature = "full")] hashes::cn_seqhash::u32::CanonicalSeqHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u16::ForwardSeqHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u32::ForwardSeqHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u64::ForwardSeqHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u128::ForwardSeqHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::fw_rkhash::u32::ForwardRabinKarpHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::fw_rkhash::u64::ForwardRabinKarpHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::fw_rkhash::u128::ForwardRabinKarpHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::cn_seqhash::u16::CanonicalSeqHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::cn_seqhash::u32::CanonicalSeqHashFactory,
     hashes::cn_seqhash::u64::CanonicalSeqHashFactory,
-    #[cfg(feature = "full")] hashes::cn_seqhash::u128::CanonicalSeqHashFactory,
-    #[cfg(feature = "full")] hashes::cn_rkhash::u32::CanonicalRabinKarpHashFactory,
-    #[cfg(feature = "full")] hashes::cn_rkhash::u64::CanonicalRabinKarpHashFactory,
-    #[cfg(feature = "full")] hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::cn_seqhash::u128::CanonicalSeqHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::cn_rkhash::u32::CanonicalRabinKarpHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::cn_rkhash::u64::CanonicalRabinKarpHashFactory,
+    #[cfg(not(feature = "devel-build"))] hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
 ], QuerierColorsManager = [
-    #[cfg(feature = "full")] colors::bundles::graph_querying::ColorBundleGraphQuerying,
+    #[cfg(not(feature = "devel-build"))] colors::bundles::graph_querying::ColorBundleGraphQuerying,
     colors::non_colored::NonColoredManager,
 ])]
 pub fn run_query<
