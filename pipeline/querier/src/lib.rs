@@ -15,6 +15,7 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::path::PathBuf;
 
 mod pipeline;
+mod structs;
 
 #[derive(Debug, PartialOrd, PartialEq)]
 pub enum QuerierStartingStep {

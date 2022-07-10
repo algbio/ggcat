@@ -188,6 +188,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         &self,
         global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
         seq_data: &(u8, u8, C, CompressedRead),
+        used_hash_bits: usize,
+        bucket_bits_count: usize,
     ) -> BucketIndexType {
         let read = &seq_data.3;
 
@@ -198,7 +200,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             .min_by_key(|k| H::get_full_minimizer(k.to_unextendable()))
             .unwrap();
 
-        H::get_second_bucket(minimizer.to_unextendable())
+        H::get_bucket(
+            used_hash_bits,
+            bucket_bits_count,
+            minimizer.to_unextendable(),
+        )
     }
 }
 
@@ -320,11 +326,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         &mut self,
         _global_data: &GlobalQueryMergeData,
         map_struct: Packet<Self::MapStruct>,
-    ) {
-        let map_struct = map_struct.deref();
+    ) -> Packet<ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>> {
+        let map_struct_ref = map_struct.deref();
 
-        for (query_index, kmer_hash) in &map_struct.query_reads {
-            if let Some(entry_color) = map_struct.phmap.get(&kmer_hash) {
+        for (query_index, kmer_hash) in &map_struct_ref.query_reads {
+            if let Some(entry_color) = map_struct_ref.phmap.get(&kmer_hash) {
                 *self
                     .query_map
                     .entry((*query_index, entry_color.clone()))
@@ -343,6 +349,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 },
             )
         }
+
+        map_struct
     }
 
     fn finalize(self, _global_data: &GlobalQueryMergeData) {

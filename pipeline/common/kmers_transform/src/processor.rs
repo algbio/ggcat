@@ -12,9 +12,7 @@ use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use std::future::Future;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::AtomicUsize;
 use utils::track;
 
 pub struct KmersTransformProcessor<F: KmersTransformExecutorFactory>(PhantomData<F>);
@@ -24,9 +22,6 @@ static ADDR_WAITING_COUNTER: AtomicCounter<SumMode> =
 
 static PACKET_WAITING_COUNTER: AtomicCounter<SumMode> =
     declare_counter_i64!("kt_packet_wait_processor", SumMode, false);
-
-static PACKET_ALLOC_COUNTER: AtomicCounter<SumMode> =
-    declare_counter_i64!("kt_packet_alloc_processor", SumMode, false);
 
 #[derive(Clone)]
 pub struct KmersProcessorInitData {

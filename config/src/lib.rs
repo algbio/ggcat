@@ -1,6 +1,5 @@
 // use crate::RunLengthColorsSerializer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
-use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeCheckpointSize;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

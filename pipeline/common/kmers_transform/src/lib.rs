@@ -10,29 +10,23 @@ use crate::reader::{InputBucketDesc, KmersTransformReader};
 use crate::resplitter::KmersTransformResplitter;
 use crate::rewriter::KmersTransformRewriter;
 use config::{
-    BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, KEEP_FILES, KMERS_TRANSFORM_READS_CHUNKS_SIZE,
-    MAXIMUM_JIT_PROCESSED_BUCKETS, MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME,
-    PACKETS_PRIORITY_FILES,
+    BucketIndexType, KEEP_FILES, KMERS_TRANSFORM_READS_CHUNKS_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS,
+    MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME, PACKETS_PRIORITY_FILES,
 };
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use io::get_bucket_index;
 use minimizer_bucketing::counters_analyzer::CountersAnalyzer;
 use minimizer_bucketing::MinimizerBucketingExecutorFactory;
-use parallel_processor::buckets::readers::async_binary_reader::AsyncReaderThread;
 use parallel_processor::execution_manager::execution_context::{ExecutionContext, PoolAllocMode};
-use parallel_processor::execution_manager::executor::AsyncExecutor;
-use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
 use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInputAddressMode};
-use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use std::cmp::max;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -241,8 +235,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
         let read_threads_count = max(1, threads_count / 4 * 3);
 
-        let max_allowed_oversize_processing = max(1, read_threads_count / 8);
-
         let execution_context = Arc::new(KmersTransformContext {
             k,
             min_bucket_size,
@@ -282,9 +274,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
         let execution_context = ExecutionContext::new();
 
-        let mut disk_thread_pool =
+        let disk_thread_pool =
             ExecThreadPool::new(&execution_context, read_threads_count, "km_disk");
-        let mut compute_thread_pool =
+        let compute_thread_pool =
             ExecThreadPool::new(&execution_context, compute_threads_count, "km_comp");
 
         let mut normal_input_buckets = ExecutorInput::from_iter(
@@ -297,7 +289,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         //     ExecutorInputAddressMode::Multiple,
         // );
 
-        let mut bucket_readers = disk_thread_pool.register_executors::<KmersTransformReader<F>>(
+        let bucket_readers = disk_thread_pool.register_executors::<KmersTransformReader<F>>(
             read_threads_count,
             PoolAllocMode::Distinct {
                 capacity: (1 << self.global_context.max_second_buckets_count_log2)
@@ -307,17 +299,16 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             &self.global_context,
         );
 
-        let mut buckets_rewriters = disk_thread_pool
-            .register_executors::<KmersTransformRewriter<F>>(
-                read_threads_count,
-                PoolAllocMode::None,
-                (),
-                &self.global_context,
-            );
+        let buckets_rewriters = disk_thread_pool.register_executors::<KmersTransformRewriter<F>>(
+            read_threads_count,
+            PoolAllocMode::None,
+            (),
+            &self.global_context,
+        );
 
         let min_maps_count = max(MAXIMUM_JIT_PROCESSED_BUCKETS, compute_threads_count);
 
-        let mut bucket_sequences_processors = compute_thread_pool
+        let bucket_sequences_processors = compute_thread_pool
             .register_executors::<KmersTransformProcessor<F>>(
                 min_maps_count + 2,
                 PoolAllocMode::Shared {
@@ -327,7 +318,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 &self.global_context,
             );
 
-        let mut bucket_resplitters = compute_thread_pool
+        let bucket_resplitters = compute_thread_pool
             .register_executors::<KmersTransformResplitter<F>>(
                 compute_threads_count,
                 PoolAllocMode::None,
@@ -413,8 +404,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 .global_context
                 .rewritten_buckets_count
                 .load(Ordering::Relaxed);
-
-            let total_buckets_count = buckets_count; // + extra_buckets_count;
 
             let processed_count = max(
                 1,

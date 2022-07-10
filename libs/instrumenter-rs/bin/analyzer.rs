@@ -9,8 +9,7 @@ use histogram::histogram;
 use instrumenter::instr_span::InstrSpan;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::path::Path;
 use structopt::StructOpt;
 
 #[derive(StructOpt)]

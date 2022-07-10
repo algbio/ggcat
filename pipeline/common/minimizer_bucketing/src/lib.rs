@@ -31,8 +31,6 @@ use parallel_processor::execution_manager::executor::{
 };
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
-use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
-use parallel_processor::execution_manager::packet::Packet;
 use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
 use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInputAddressMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -45,7 +43,6 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 pub trait MinimizerInputSequence: HashableSequence + Copy {
     fn get_subslice(&self, range: Range<usize>) -> Self;
@@ -348,7 +345,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
         &'a mut self,
         global_params: &'a Self::GlobalParams,
         mut receiver: ExecutorReceiver<Self>,
-        memory_tracker: MemoryTracker<Self>,
+        _memory_tracker: MemoryTracker<Self>,
     ) -> Self::AsyncExecutorFuture<'a> {
         async move {
             while let Ok((address, _)) = receiver.obtain_address().await {
@@ -400,7 +397,7 @@ impl GenericMinimizerBucketing {
         global_data: E::GlobalData,
     ) -> (Vec<PathBuf>, PathBuf) {
         let read_threads_count = max(1, threads_count / 2);
-        let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count / 2));
+        let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count / 4));
 
         let buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
@@ -449,12 +446,12 @@ impl GenericMinimizerBucketing {
 
             let execution_context = ExecutionContext::new();
 
-            let mut disk_thread_pool = ExecThreadPool::new(
+            let disk_thread_pool = ExecThreadPool::new(
                 &execution_context,
                 global_context.read_threads_count,
                 "mm_disk",
             );
-            let mut compute_thread_pool =
+            let compute_thread_pool =
                 ExecThreadPool::new(&execution_context, compute_threads_count, "mm_comp");
 
             let mut input_files =

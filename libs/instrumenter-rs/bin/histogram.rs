@@ -3,7 +3,7 @@ use plotters::backend::SVGBackend;
 use plotters::prelude::*;
 use plotters::style::full_palette::{LIGHTBLUE, LIGHTGREEN, ORANGE};
 use std::cmp::{max, min};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 use structopt::StructOpt;
@@ -29,7 +29,7 @@ fn draw_chart(
 
     let root_area = root_area.titled("Image Title", ("sans-serif", 60))?;
 
-    let (upper, lower) = root_area.split_vertically(512);
+    let (upper, _lower) = root_area.split_vertically(512);
 
     let mut cc = ChartBuilder::on(&upper)
         .margin(5)
@@ -155,5 +155,6 @@ pub fn histogram(args: HistogramArgs) {
         },
         time.as_secs_f32(),
         args.output,
-    );
+    )
+    .unwrap();
 }

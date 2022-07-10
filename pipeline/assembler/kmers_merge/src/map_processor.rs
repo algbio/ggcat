@@ -8,7 +8,6 @@ use hashes::ExtendableHashTraitType;
 use hashes::HashFunction;
 use hashes::HashableSequence;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
-use instrumenter::private__ as tracing;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use io::varint::encode_varint;
@@ -24,6 +23,8 @@ use std::mem::size_of;
 use std::ops::DerefMut;
 use std::sync::atomic::Ordering;
 use structs::map_entry::MapEntry;
+
+instrumenter::use_instrumenter!();
 
 pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManager> {
     pub rhash_map:

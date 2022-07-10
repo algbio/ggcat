@@ -1,6 +1,5 @@
-use crate::get_subscriber;
+use crate::enabled::get_subscriber;
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct TrackingAllocator;

@@ -1,5 +1,5 @@
-use crate::instr_span::InstrMetadata;
-use crate::{InstrSpan, EVENTS_LIST, EVENTS_SET, SPANS_LIST};
+use crate::enabled::{EVENTS_LIST, EVENTS_SET, SPANS_LIST};
+use crate::instr_span::{InstrMetadata, InstrSpan};
 use dashmap::DashMap;
 use libc::{clockid_t, timespec};
 use papi::events_set::EventsSet;
@@ -131,7 +131,7 @@ impl Visit for Visitor {
         self.parameters.push((field.to_string(), value as i128));
     }
 
-    fn record_debug(&mut self, field: &Field, value: &dyn Debug) {
+    fn record_debug(&mut self, _field: &Field, _value: &dyn Debug) {
         panic!("Not supported!")
     }
 }

@@ -2,12 +2,11 @@ use crate::map_processor::ParallelKmersMergeMapPacket;
 use crate::{GlobalMergeData, ParallelKmersMergeFactory, ResultsBucket};
 use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::{color_types, ColorsManager};
-use config::{BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE};
+use config::DEFAULT_PER_CPU_BUFFER_SIZE;
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use core::slice::from_raw_parts;
 use hashes::HashFunction;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory, MinimizerHashFunctionFactory};
-use instrumenter::private__ as tracing;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
@@ -17,7 +16,6 @@ use kmers_transform::{KmersTransformExecutorFactory, KmersTransformFinalExecutor
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::execution_manager::packet::Packet;
-use std::io::Cursor;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use structs::map_entry::MapEntry;
@@ -164,7 +162,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 let reads_slice = unsafe {
                     from_raw_parts(
                         map_struct.saved_reads.as_ptr().add(read_bases_start),
-                        ((k + reads_offset + 3) / 4),
+                        (k + reads_offset + 3) / 4,
                     )
                 };
 

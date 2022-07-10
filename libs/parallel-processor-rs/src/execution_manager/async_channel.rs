@@ -1,4 +1,5 @@
-use crate::execution_manager::objects_pool::PoolObjectTrait;
+#![allow(dead_code)]
+
 use crossbeam::queue::SegQueue;
 use parking_lot::{Condvar, Mutex};
 use std::future::Future;
@@ -143,8 +144,7 @@ impl<T: Sync + Send + 'static, const CHANNELS_COUNT: usize>
     }
 
     pub fn release(&self) {
-        self.internal.stream_index.fetch_add(1, Ordering::SeqCst) + 1;
-
+        self.internal.stream_index.fetch_add(1, Ordering::SeqCst);
         while let Some(waker) = self.internal.waiting_list.pop() {
             waker.wake();
         }

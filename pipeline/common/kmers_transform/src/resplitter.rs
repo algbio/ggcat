@@ -3,12 +3,10 @@ use crate::reads_buffer::ReadsBuffer;
 use crate::{KmersTransformContext, KmersTransformExecutorFactory};
 use config::{
     get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
-    DEFAULT_PER_CPU_BUFFER_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_BUCKETS_COUNT_LOG,
-    MAX_RESPLIT_BUCKETS_COUNT_LOG, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-    PACKETS_PRIORITY_DONE_RESPLIT,
+    DEFAULT_PER_CPU_BUFFER_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_RESPLIT_BUCKETS_COUNT_LOG,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DONE_RESPLIT,
 };
 use hashes::HashableSequence;
-use instrumenter::private__ as tracing;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
 use minimizer_bucketing::{MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory};
@@ -22,7 +20,6 @@ use parallel_processor::execution_manager::executor::{
 };
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
-use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
 use std::cmp::{max, min};
 use std::future::Future;
@@ -49,9 +46,6 @@ static ADDR_WAITING_COUNTER: AtomicCounter<SumMode> =
 
 static PACKET_WAITING_COUNTER: AtomicCounter<SumMode> =
     declare_counter_i64!("kt_packet_wait_resplitter", SumMode, false);
-
-static PACKET_ALLOC_COUNTER: AtomicCounter<SumMode> =
-    declare_counter_i64!("kt_packet_alloc_resplitter", SumMode, false);
 
 impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
     fn init_processing(
@@ -140,7 +134,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                             0, resplit_info.subsplit_buckets_count_log, 0,
                             |bucket, _next_bucket, seq, flags, extra, extra_buffer| {
 
-                                let bucket = (bucket as usize);
+                                let bucket = bucket as usize;
 
                                 let counter = &mut local_counters[bucket];
 
@@ -193,7 +187,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
         &'a mut self,
         global_context: &'a Self::GlobalParams,
         mut receiver: ExecutorReceiver<Self>,
-        memory_tracker: MemoryTracker<Self>,
+        _memory_tracker: MemoryTracker<Self>,
     ) -> Self::AsyncExecutorFuture<'a> {
         async move {
             while let Ok((address, init_data)) =

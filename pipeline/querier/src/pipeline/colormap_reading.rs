@@ -16,7 +16,6 @@ use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::prelude::*;
-use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -52,7 +51,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
         let mut temp_colors_buffer = Vec::new();
 
         let mut thread_buffer = thread_buffers.get();
-        let mut colored_buckets_writer =
+        let colored_buckets_writer =
             BucketsThreadDispatcher::new(&correct_color_buckets, thread_buffer.take());
 
         let mut counters_vec: Vec<(CounterEntry<ColorIndexType>, ColorIndexType)> = Vec::new();

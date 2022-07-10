@@ -377,34 +377,34 @@ fn run_assembler_from_args(
     );
 }
 
-// fn convert_querier_step(step: QuerierStartingStep) -> querier::QuerierStartingStep {
-//     match step {
-//         QuerierStartingStep::MinimizerBucketing => querier::QuerierStartingStep::MinimizerBucketing,
-//         QuerierStartingStep::KmersCounting => querier::QuerierStartingStep::KmersCounting,
-//     }
-// }
-//
-// fn run_querier_from_args(
-//     generics: (StaticDispatch<()>, StaticDispatch<()>, StaticDispatch<()>),
-//     args: QueryArgs,
-// ) {
-//     querier::dynamic_dispatch::run_query(
-//         generics,
-//         args.common_args.klen,
-//         args.common_args
-//             .mlen
-//             .unwrap_or(compute_best_m(args.common_args.klen)),
-//         convert_querier_step(args.step),
-//         args.input_graph,
-//         args.input_query,
-//         args.output_file,
-//         args.common_args.temp_dir,
-//         args.common_args.buckets_count_log,
-//         args.common_args.threads_count,
-//     );
-// }
+fn convert_querier_step(step: QuerierStartingStep) -> querier::QuerierStartingStep {
+    match step {
+        QuerierStartingStep::MinimizerBucketing => querier::QuerierStartingStep::MinimizerBucketing,
+        QuerierStartingStep::KmersCounting => querier::QuerierStartingStep::KmersCounting,
+    }
+}
 
-instrumenter::setup_allocator!();
+fn run_querier_from_args(
+    generics: (StaticDispatch<()>, StaticDispatch<()>, StaticDispatch<()>),
+    args: QueryArgs,
+) {
+    querier::dynamic_dispatch::run_query(
+        generics,
+        args.common_args.klen,
+        args.common_args
+            .mlen
+            .unwrap_or(compute_best_m(args.common_args.klen)),
+        convert_querier_step(args.step),
+        args.input_graph,
+        args.input_query,
+        args.output_file,
+        args.common_args.temp_dir,
+        args.common_args.buckets_count_log,
+        args.common_args.threads_count,
+    );
+}
+
+instrumenter::global_setup_instrumenter!();
 
 fn main() {
     let args: CliArgs = CliArgs::from_args();
@@ -492,22 +492,22 @@ fn main() {
                 <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::STATIC_DISPATCH_ID
             };
 
-            // run_querier_from_args(
-            //     (
-            //         bucketing_hash,
-            //         get_hash_static_id(
-            //             args.common_args.hash_type,
-            //             args.common_args.klen,
-            //             args.common_args.forward_only,
-            //         ),
-            //         if args.colors {
-            //             ColorBundleGraphQuerying::STATIC_DISPATCH_ID
-            //         } else {
-            //             NonColoredManager::STATIC_DISPATCH_ID
-            //         },
-            //     ),
-            //     args,
-            // )
+            run_querier_from_args(
+                (
+                    bucketing_hash,
+                    get_hash_static_id(
+                        args.common_args.hash_type,
+                        args.common_args.klen,
+                        args.common_args.forward_only,
+                    ),
+                    if args.colors {
+                        ColorBundleGraphQuerying::STATIC_DISPATCH_ID
+                    } else {
+                        NonColoredManager::STATIC_DISPATCH_ID
+                    },
+                ),
+                args,
+            )
         }
         CliArgs::Utils(args) => {
             process_cmdutils(args);

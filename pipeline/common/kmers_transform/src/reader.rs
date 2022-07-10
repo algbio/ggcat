@@ -5,14 +5,11 @@ use crate::rewriter::{KmersTransformRewriter, RewriterInitData};
 use crate::{KmersTransformContext, KmersTransformExecutorFactory, KmersTransformPreprocessor};
 use config::{
     DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAXIMUM_JIT_PROCESSED_BUCKETS,
-    MIN_BUCKET_CHUNKS_FOR_READING_THREAD, PACKETS_PRIORITY_DEFAULT, PACKETS_PRIORITY_DONE_RESPLIT,
-    USE_SECOND_BUCKET,
+    MIN_BUCKET_CHUNKS_FOR_READING_THREAD, PACKETS_PRIORITY_DEFAULT, USE_SECOND_BUCKET,
 };
-use instrumenter::private__ as tracing;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
-use io::get_bucket_index;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
 use parallel_processor::buckets::readers::async_binary_reader::{
     AsyncBinaryReader, AsyncReaderThread,
@@ -28,13 +25,12 @@ use parallel_processor::execution_manager::objects_pool::{PoolObject, PoolObject
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait, PacketsPool};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::utils::replace_with_async::replace_with_async;
-use replace_with::replace_with_or_abort;
 use std::cmp::{max, min, Reverse};
 use std::collections::{BinaryHeap, VecDeque};
 use std::future::Future;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use utils::track;
 
@@ -139,7 +135,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
         bucket_sizes.make_contiguous().sort();
 
-        let unique_estimator_factor = (sequences_size_ratio * sequences_size_ratio * 10.0).min(1.0);
+        let unique_estimator_factor = (sequences_size_ratio * sequences_size_ratio * 3.0).min(1.0);
 
         let mut has_outliers = false;
 
@@ -380,7 +376,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
         &'a mut self,
         global_context: &'a KmersTransformContext<F>,
         mut receiver: ExecutorReceiver<Self>,
-        memory_tracker: MemoryTracker<Self>,
+        _memory_tracker: MemoryTracker<Self>,
     ) -> Self::AsyncExecutorFuture<'a> {
         async move {
             let mut async_threads = Vec::new();

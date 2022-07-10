@@ -11,6 +11,7 @@ use std::path::Path;
 
 pub struct ColorsDeserializer<DS: ColorsSerializerTrait> {
     colormap_file: lz4::Decoder<BufReader<File>>,
+    #[allow(dead_code)]
     color_names: Vec<String>,
     colors_index: ColorsIndexMap,
     current_chunk: ColorsIndexEntry,

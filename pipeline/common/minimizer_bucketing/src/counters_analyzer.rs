@@ -87,19 +87,18 @@ impl CountersAnalyzer {
 
     pub fn load_from_file(path: impl AsRef<Path>, remove: bool) -> Self {
         let file = BufReader::new(File::open(&path).unwrap());
-        let mut rval: CountersAnalyzer = bincode::deserialize_from(file).unwrap();
+        let rval: CountersAnalyzer = bincode::deserialize_from(file).unwrap();
 
-        // FIXME!
-        rval.counters.iter_mut().enumerate().for_each(|(bn, x)| {
-            x.iter_mut().enumerate().for_each(|(sbn, y)| {
-                if y.is_outlier {
-                    println!("Found outlier: vec{}.{}", bn, sbn);
-                    // y.is_outlier = false
-                }
-            })
-        });
+        // rval.counters.iter_mut().enumerate().for_each(|(bn, x)| {
+        //     x.iter_mut().enumerate().for_each(|(sbn, y)| {
+        //         if y.is_outlier {
+        //             println!("Found outlier: vec{}.{}", bn, sbn);
+        //             // y.is_outlier = false
+        //         }
+        //     })
+        // });
 
-        rval.print_debug();
+        // rval.print_debug();
 
         if remove {
             let _ = std::fs::remove_file(path);

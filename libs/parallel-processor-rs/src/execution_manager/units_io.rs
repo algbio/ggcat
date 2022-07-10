@@ -1,7 +1,6 @@
 use crate::execution_manager::execution_context::ExecutionContext;
 use crate::execution_manager::executor::AsyncExecutor;
 use crate::execution_manager::packet::Packet;
-use crate::execution_manager::thread_pool::ExecThreadPool;
 use std::sync::Arc;
 
 pub enum ExecutorInputAddressMode {

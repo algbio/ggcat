@@ -1,16 +1,12 @@
-use crate::execution_manager::async_channel::{AsyncChannel, DoublePriorityAsyncChannel};
+use crate::execution_manager::async_channel::DoublePriorityAsyncChannel;
 use crate::execution_manager::execution_context::{
-    ExecutionContext, ExecutorDropper, PacketsChannel, PacketsPoolStrategy,
+    ExecutionContext, ExecutorDropper, PacketsChannel,
 };
 use crate::execution_manager::executor_address::{ExecutorAddress, WeakExecutorAddress};
 use crate::execution_manager::memory_tracker::MemoryTracker;
-use crate::execution_manager::objects_pool::{PoolObject, PoolObjectTrait};
-use crate::execution_manager::packet::{Packet, PacketAny};
-use crate::execution_manager::packet::{PacketTrait, PacketsPool};
-use flame::{FlameLibrary, FLAME_LIBRARY};
-use parking_lot::Mutex;
+use crate::execution_manager::objects_pool::PoolObject;
+use crate::execution_manager::packet::{Packet, PacketTrait, PacketsPool};
 use std::any::Any;
-use std::cell::RefCell;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -125,6 +121,10 @@ impl<'a, E: AsyncExecutor> ExecutorAddressOperations<'a, E> {
             _phantom: PhantomData,
         }
     }
+
+    pub fn get_address(&self) -> WeakExecutorAddress {
+        self.addr
+    }
 }
 
 impl<'a, E: AsyncExecutor> Drop for ExecutorAddressOperations<'a, E> {
@@ -148,16 +148,12 @@ impl<'a> ExecutorsSpawner<'a> {
                 Box::pin(executor) as Pin<Box<dyn Future<Output = ()>>>
             )
         };
-        self.handles.push(current_runtime.spawn(async move {
-            FLAME_LIBRARY
-                .scope(RefCell::new(FlameLibrary::new()), executor)
-                .await
-        }));
+        self.handles.push(current_runtime.spawn(executor));
     }
 
     pub async fn executors_await(&mut self) {
         for handle in self.handles.drain(..) {
-            handle.await;
+            handle.await.unwrap();
         }
     }
 }
@@ -169,76 +165,3 @@ impl<'a> Drop for ExecutorsSpawner<'a> {
         }
     }
 }
-
-//
-// pub trait Executor:
-//     Sized + PoolObjectTrait<InitData = (Arc<Self::GlobalParams>, MemoryTracker<Self>)> + Sync + Send
-// {
-//     const EXECUTOR_TYPE: ExecutorType;
-//
-//     const MEMORY_FIELDS_COUNT: usize;
-//     const MEMORY_FIELDS: &'static [&'static str];
-//
-//     const BASE_PRIORITY: u64;
-//     const PACKET_PRIORITY_MULTIPLIER: u64;
-//     const STRICT_POOL_ALLOC: bool;
-//
-//     type InputPacket: Send + Sync;
-//     type OutputPacket: Send + Sync + PacketTrait;
-//     type GlobalParams: Send + Sync;
-//     type MemoryParams: Send + Sync;
-//     type BuildParams: Send + Sync + Clone;
-//
-//
-//     fn allocate_new_group<E: ExecutorOperations<Self>>(
-//         global_params: Arc<Self::GlobalParams>,
-//         memory_params: Option<Self::MemoryParams>,
-//         common_packet: Option<Packet<Self::InputPacket>>,
-//         ops: E,
-//     ) -> (Self::BuildParams, usize);
-//
-//     fn required_pool_items(&self) -> u64;
-//
-//     fn pre_execute<E: ExecutorOperations<Self>>(
-//         &mut self,
-//         reinit_params: Self::BuildParams,
-//         ops: E,
-//     );
-//     fn execute<E: ExecutorOperations<Self>>(
-//         &mut self,
-//         input_packet: Packet<Self::InputPacket>,
-//         ops: E,
-//     );
-//     fn finalize<E: ExecutorOperations<Self>>(&mut self, ops: E);
-//
-//     fn is_finished(&self) -> bool;
-//
-//     fn get_current_memory_params(&self) -> Self::MemoryParams;
-// }
-
-// impl AsyncExecutor {
-//     type PacketType;
-//
-//     fn executor_main(receiver: ExecutorReceiver) {
-//         while let Ok(address) = receiver.get_address().await {
-//             allocate_new_group();
-//
-//             receiver.spawn_tasks(|s| {
-//                 for _ in 0..max_concurrency {
-//                     s.spawn(|| {
-//                         // DO_WORK
-//
-//                         while address.get_packet() {
-//                             // Process packet
-//
-//                             receiver.update_memory_params();
-//                         }
-//                         address.send_packet(packet);
-//
-//                         finalize();
-//                     })
-//                 }
-//             });
-//         }
-//     }
-// }

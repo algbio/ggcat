@@ -30,7 +30,7 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use utils::owned_drop::OwnedDrop;
 
@@ -49,7 +49,6 @@ pub struct GlobalMergeData<MH: HashFunctionFactory, CX: ColorsManager> {
         ArrayQueue<ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>>,
     hashes_buckets: Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
     global_resplit_data: Arc<MinimizerBucketingCommonData<()>>,
-    correct_kmers_total: AtomicU64,
     sequences_size_total: AtomicU64,
     hasnmap_kmers_total: AtomicU64,
     kmer_batches_count: AtomicU64,
@@ -199,7 +198,6 @@ pub fn kmers_merge<
             1,
             (),
         )),
-        correct_kmers_total: AtomicU64::new(0),
         sequences_size_total: AtomicU64::new(0),
         hasnmap_kmers_total: AtomicU64::new(0),
         kmer_batches_count: AtomicU64::new(0),

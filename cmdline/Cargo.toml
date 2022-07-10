@@ -64,13 +64,14 @@ colors = { path = "../pipeline/common/colors" }
 
 assembler = { path = "../pipeline/assembler" }
 instrumenter = { version = "0.1.0", path = "../libs/instrumenter-rs" }
-#querier = { path = "../pipeline/querier" }
+querier = { path = "../pipeline/querier" }
 
 
 [features]
 mem-analysis = ["parallel-processor/track-usage"]
 no-stats = ["parallel-processor/no-stats"]
 process-stats = ["parallel-processor/process-stats"]
+tracing = ["instrumenter/enabled"]
 
 [build-dependencies]
 make-cmd = "0.1.0"

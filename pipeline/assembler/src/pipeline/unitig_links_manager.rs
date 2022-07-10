@@ -41,11 +41,11 @@ impl UnitigLinksManager {
         self.prefix_indexes[bucket as usize] + index
     }
 
-    #[inline(always)]
-    #[track_caller]
-    pub fn get_final_unitig_index(&self, index: usize) -> usize {
-        self.final_unitig_indexes_offset + index
-    }
+    // #[inline(always)]
+    // #[track_caller]
+    // pub fn get_final_unitig_index(&self, index: usize) -> usize {
+    //     self.final_unitig_indexes_offset + index
+    // }
 }
 
 pub struct ThreadUnitigsLinkManager<'a> {

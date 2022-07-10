@@ -2,16 +2,12 @@ use crate::reader::{InputBucketDesc, KmersTransformReader};
 use crate::reads_buffer::ReadsBuffer;
 use crate::{KmersTransformContext, KmersTransformExecutorFactory};
 use config::{
-    get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
-    DEFAULT_PER_CPU_BUFFER_SIZE, MAXIMUM_SECOND_BUCKETS_COUNT, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    get_memory_mode, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
     PACKETS_PRIORITY_REWRITTEN, PARTIAL_VECS_CHECKPOINT_SIZE,
 };
-use hashes::HashableSequence;
-use instrumenter::private__ as tracing;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
-use minimizer_bucketing::{MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory};
-use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
+use minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use parallel_processor::buckets::single::SingleBucketThreadDispatcher;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
@@ -20,14 +16,12 @@ use parallel_processor::counter_stats::declare_counter_i64;
 use parallel_processor::execution_manager::executor::{
     AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
 };
-use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
-use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::Packet;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use utils::track;
 
@@ -38,19 +32,6 @@ static ADDR_WAITING_COUNTER: AtomicCounter<SumMode> =
 
 static PACKET_WAITING_COUNTER: AtomicCounter<SumMode> =
     declare_counter_i64!("kt_packet_wait_rewriter", SumMode, false);
-
-static PACKET_ALLOC_COUNTER: AtomicCounter<SumMode> =
-    declare_counter_i64!("kt_packet_alloc_rewriter", SumMode, false);
-
-static BUCKET_RESPLIT_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-struct BucketsResplitInfo {
-    buckets: Arc<MultiThreadBuckets<CompressedBinaryWriter>>,
-    subsplit_buckets_count_log: usize,
-    output_addresses: Vec<ExecutorAddress>,
-    executors_count: usize,
-    global_counters: Vec<AtomicU64>,
-}
 
 static SUBSPLIT_INDEX: AtomicU64 = AtomicU64::new(0);
 
@@ -147,7 +128,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformRewriter<
         &'a mut self,
         global_context: &'a Self::GlobalParams,
         mut receiver: ExecutorReceiver<Self>,
-        memory_tracker: MemoryTracker<Self>,
+        _memory_tracker: MemoryTracker<Self>,
     ) -> Self::AsyncExecutorFuture<'a> {
         async move {
             while let Ok((address, init_data)) =

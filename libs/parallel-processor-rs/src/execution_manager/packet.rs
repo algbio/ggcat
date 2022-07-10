@@ -1,7 +1,6 @@
 use crate::execution_manager::async_channel::AsyncChannel;
 use crate::execution_manager::memory_tracker::MemoryTrackerManager;
 use crate::execution_manager::objects_pool::{ObjectsPool, PoolObjectTrait};
-use parking_lot::{Condvar, Mutex};
 use std::any::Any;
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};

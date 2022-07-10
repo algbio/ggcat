@@ -1,9 +1,7 @@
 use colors::colors_manager::ColorsManager;
-use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 
 pub fn colored_query_output<CX: ColorsManager>(
     query_input: PathBuf,

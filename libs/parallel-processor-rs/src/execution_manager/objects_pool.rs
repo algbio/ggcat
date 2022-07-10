@@ -1,5 +1,4 @@
 use crate::execution_manager::async_channel::AsyncChannel;
-use parking_lot::{Condvar, Mutex};
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};

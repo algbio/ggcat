@@ -168,7 +168,7 @@ version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba3569f383e8f1598449f1a423e72e99569137b47740b1da11ef19af3d5c3223"
 dependencies = [
- "lazy_static 1.4.0",
+ "lazy_static",
  "memchr",
  "regex-automata",
  "serde",
@@ -378,7 +378,7 @@ source = "git+https://github.com/Guilucand/counter-stats.git#cf030095ca28f5e76aa
 dependencies = [
  "bytesize",
  "json",
- "lazy_static 1.4.0",
+ "lazy_static",
  "parking_lot",
 ]
 
@@ -580,7 +580,7 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439a1c2ba5611ad3ed731280541d36d2e9c4ac5e7fb818a27b604bdc5a6aa65b"
 dependencies = [
- "lazy_static 1.4.0",
+ "lazy_static",
  "libc 0.2.126",
  "winapi",
  "wio",
@@ -609,18 +609,6 @@ checksum = "1b41bfe1d74263ea9d084be951077614b3b98b4e59a9dafab1467645a9e52305"
 dependencies = [
  "libc 0.2.126",
  "winapi",
-]
-
-[[package]]
-name = "flame"
-version = "0.2.2"
-dependencies = [
- "lazy_static 0.2.11",
- "serde",
- "serde_derive",
- "serde_json",
- "thread-id",
- "tokio",
 ]
 
 [[package]]
@@ -655,7 +643,7 @@ dependencies = [
  "dwrote",
  "float-ord",
  "freetype",
- "lazy_static 1.4.0",
+ "lazy_static",
  "libc 0.2.126",
  "log",
  "pathfinder_geometry",
@@ -786,7 +774,7 @@ dependencies = [
  "instrumenter",
  "io",
  "itertools",
- "lazy_static 1.4.0",
+ "lazy_static",
  "libc 0.2.126",
  "lz4",
  "make-cmd",
@@ -795,6 +783,7 @@ dependencies = [
  "parking_lot",
  "pcg_rand",
  "postcard",
+ "querier",
  "rand 0.8.5",
  "rayon",
  "replace_with",
@@ -1066,12 +1055,6 @@ dependencies = [
  "typenum",
  "utils",
 ]
-
-[[package]]
-name = "lazy_static"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76f033c7ad61445c5b347c7382dd1237847eb1bce590fe50365dcb33d546be73"
 
 [[package]]
 name = "lazy_static"
@@ -1392,8 +1375,7 @@ dependencies = [
  "dashmap 5.3.4",
  "desse",
  "filebuffer",
- "flame",
- "lazy_static 1.4.0",
+ "lazy_static",
  "libc 0.2.126",
  "lz4",
  "nightly-quirks",
@@ -1428,7 +1410,7 @@ checksum = "09a279cbf25cb0757810394fbc1e359949b59e348145c643a939a525692e6929"
 dependencies = [
  "cfg-if 1.0.0",
  "libc 0.2.126",
- "redox_syscall 0.2.13",
+ "redox_syscall",
  "smallvec",
  "windows-sys",
 ]
@@ -1494,7 +1476,7 @@ dependencies = [
  "chrono",
  "font-kit",
  "image",
- "lazy_static 1.4.0",
+ "lazy_static",
  "num-traits",
  "pathfinder_geometry",
  "plotters-backend",
@@ -1620,7 +1602,7 @@ dependencies = [
  "chrono",
  "flate2",
  "hex",
- "lazy_static 1.4.0",
+ "lazy_static",
  "libc 0.2.126",
 ]
 
@@ -1768,12 +1750,6 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.1.57"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41cc0f7e4d5d4544e8861606a285bb08d3e70712ccc7d2b84d7c0ccfaf4b05ce"
-
-[[package]]
-name = "redox_syscall"
 version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62f25bc4c7e55e0b0b7a1d43fb893f4fa1361d0abe38b9ce4f323c2adfe6ef42"
@@ -1788,7 +1764,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b033d837a7cf162d7993aded9304e30a83213c648b6e389db233191f891e5c2b"
 dependencies = [
  "getrandom",
- "redox_syscall 0.2.13",
+ "redox_syscall",
  "thiserror",
 ]
 
@@ -2037,7 +2013,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c6b5c64445ba8094a6ab0c3cd2ad323e07171012d9c98b0b15651daf1787a10"
 dependencies = [
  "clap",
- "lazy_static 1.4.0",
+ "lazy_static",
  "structopt-derive",
 ]
 
@@ -2110,17 +2086,6 @@ dependencies = [
  "proc-macro2 1.0.40",
  "quote 1.0.20",
  "syn 1.0.98",
-]
-
-[[package]]
-name = "thread-id"
-version = "3.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7fbf4c9d56b320106cd64fd024dadfa0be7cb4706725fc44a7d7ce952d820c1"
-dependencies = [
- "libc 0.2.126",
- "redox_syscall 0.1.57",
- "winapi",
 ]
 
 [[package]]
@@ -2363,7 +2328,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5491a68ab4500fa6b4d726bd67408630c3dbe9c4fe7bda16d5c82a1fd8c7340a"
 dependencies = [
  "bumpalo",
- "lazy_static 1.4.0",
+ "lazy_static",
  "log",
  "proc-macro2 1.0.40",
  "quote 1.0.20",

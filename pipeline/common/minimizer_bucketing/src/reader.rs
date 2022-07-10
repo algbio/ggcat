@@ -6,9 +6,6 @@ use parallel_processor::execution_manager::executor::{
     AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
 };
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
-use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
-use parallel_processor::execution_manager::packet::Packet;
-use parallel_processor::utils::replace_with_async::replace_with_async;
 use replace_with::replace_with_or_abort;
 use std::cmp::max;
 use std::future::Future;
@@ -16,7 +13,6 @@ use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 pub struct MinimizerBucketingFilesReader<
     GlobalData: Sync + Send + 'static,
@@ -135,7 +131,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         &'a mut self,
         global_params: &'a Self::GlobalParams,
         mut receiver: ExecutorReceiver<Self>,
-        memory_tracker: MemoryTracker<Self>,
+        _memory_tracker: MemoryTracker<Self>,
     ) -> Self::AsyncExecutorFuture<'a> {
         async move {
             while let Ok((address, _)) = receiver.obtain_address().await {
