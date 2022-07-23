@@ -48,7 +48,13 @@ impl<'a, T: Sync + Send + 'static, const CHANNELS_COUNT: usize> Future
                     Poll::Ready(Err(()))
                 } else {
                     self.internal.waiting_list.push(cx.waker().clone());
-                    Poll::Pending
+                    if self.internal.stream_index.load(Ordering::Relaxed) != self.stream_index {
+                        Poll::Ready(Err(()))
+                    } else if let Some(value) = try_get_item(self.internal, self.offset) {
+                        Poll::Ready(Ok(value))
+                    } else {
+                        Poll::Pending
+                    }
                 }
             }
             Some(value) => Poll::Ready(Ok(value)),
