@@ -148,6 +148,12 @@ mod not_enabled {
     }
 
     #[macro_export]
+    macro_rules! trace_block {
+        ($name:ident) => {};
+        ($name:ident, $drop_name:ident) => {};
+    }
+
+    #[macro_export]
     macro_rules! global_setup_instrumenter {
         () => {};
     }

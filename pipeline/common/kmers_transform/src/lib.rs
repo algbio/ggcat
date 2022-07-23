@@ -233,7 +233,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             buckets_list
         };
 
-        let read_threads_count = max(1, threads_count / 4 * 3);
+        let read_threads_count = max(1, threads_count / 3);
 
         let execution_context = Arc::new(KmersTransformContext {
             k,

@@ -178,8 +178,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         let mut register_addresses = Vec::new();
         let mut dbg_counters: Vec<_> = vec![0; queue.len()];
 
-        let mut jit_executors = 0;
-
         let rewriter_address =
             KmersTransformRewriter::<F>::generate_new_address(RewriterInitData {
                 buckets_count: queue.len(),
@@ -188,6 +186,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             });
 
         let mut pushed_rewriter = false;
+
+        let allow_online_processing = !has_outliers && queue.len() <= MAXIMUM_JIT_PROCESSED_BUCKETS;
 
         for (count, index, outlier) in queue.into_iter() {
             dbg_counters[index] = count.0;
@@ -200,15 +200,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                 register_addresses.push(new_address.clone());
                 new_address
             } else {
-                if !has_outliers
-                    && (file.rewritten
-                        || jit_executors
-                            < max(
-                                global_context.compute_threads_count,
-                                MAXIMUM_JIT_PROCESSED_BUCKETS,
-                            ))
-                {
-                    jit_executors += 1;
+                if allow_online_processing {
                     let new_address = KmersTransformProcessor::<F>::generate_new_address(
                         KmersProcessorInitData {
                             sequences_count: count.0 as usize,
