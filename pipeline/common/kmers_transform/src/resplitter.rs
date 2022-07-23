@@ -7,6 +7,7 @@ use config::{
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DONE_RESPLIT,
 };
 use hashes::HashableSequence;
+use instrumenter::local_setup_instrumenter;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
 use minimizer_bucketing::{MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory};
@@ -28,6 +29,8 @@ use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use utils::track;
+
+local_setup_instrumenter!();
 
 pub struct KmersTransformResplitter<F: KmersTransformExecutorFactory>(PhantomData<F>);
 

@@ -32,5 +32,5 @@ plotters = { version = "0.3.2", optional = true }
 
 [features]
 # Enabled triggers
-enabled = ["tracing", "libc", "papi", "serde", "serde_json"]
+enabled = ["tracing", "libc", "papi", "serde", "serde_json", "instrumenter-derive/enabled"]
 analyzer = ["human_format", "structopt", "plotters", "enabled"]

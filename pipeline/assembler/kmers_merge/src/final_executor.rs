@@ -7,6 +7,7 @@ use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use core::slice::from_raw_parts;
 use hashes::HashFunction;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory, MinimizerHashFunctionFactory};
+use instrumenter::local_setup_instrumenter;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
@@ -20,6 +21,8 @@ use std::marker::PhantomData;
 use std::ops::DerefMut;
 use structs::map_entry::MapEntry;
 use utils::Utils;
+
+local_setup_instrumenter!();
 
 pub struct ParallelKmersMergeFinalExecutor<
     H: MinimizerHashFunctionFactory,

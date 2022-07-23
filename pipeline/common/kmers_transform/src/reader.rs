@@ -7,6 +7,7 @@ use config::{
     DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAXIMUM_JIT_PROCESSED_BUCKETS,
     MIN_BUCKET_CHUNKS_FOR_READING_THREAD, PACKETS_PRIORITY_DEFAULT, USE_SECOND_BUCKET,
 };
+use instrumenter::local_setup_instrumenter;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
@@ -33,6 +34,8 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use utils::track;
+
+local_setup_instrumenter!();
 
 pub struct KmersTransformReader<F: KmersTransformExecutorFactory> {
     _phantom: PhantomData<F>,

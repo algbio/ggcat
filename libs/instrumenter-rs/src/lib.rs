@@ -71,6 +71,13 @@ mod enabled {
         };
     }
 
+    #[macro_export]
+    macro_rules! local_setup_instrumenter {
+        () => {
+            use instrumenter::private__ as tracing;
+        };
+    }
+
     pub(crate) fn get_subscriber() -> Option<&'static InstrSubscriber> {
         unsafe { GLOBAL_SUBSCRIBER.as_ref().map(|x| x.deref()) }
     }
@@ -142,6 +149,11 @@ mod not_enabled {
 
     #[macro_export]
     macro_rules! global_setup_instrumenter {
+        () => {};
+    }
+
+    #[macro_export]
+    macro_rules! local_setup_instrumenter {
         () => {};
     }
 }

@@ -5,6 +5,7 @@ use config::{
     get_memory_mode, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
     PACKETS_PRIORITY_REWRITTEN, PARTIAL_VECS_CHECKPOINT_SIZE,
 };
+use instrumenter::local_setup_instrumenter;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
 use minimizer_bucketing::MinimizerBucketingExecutorFactory;
@@ -24,6 +25,8 @@ use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use utils::track;
+
+local_setup_instrumenter!();
 
 pub struct KmersTransformRewriter<F: KmersTransformExecutorFactory>(PhantomData<F>);
 
