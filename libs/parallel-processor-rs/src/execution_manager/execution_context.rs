@@ -192,7 +192,7 @@ impl ExecutionContext {
             .send(packet, false);
     }
 
-    pub(crate) fn send_packet<T: PacketTrait>(&self, addr: ExecutorAddress, packet: Packet<T>) {
+    pub fn send_packet<T: PacketTrait>(&self, addr: ExecutorAddress, packet: Packet<T>) {
         self.memory_tracker.add_queue_packet(packet.deref());
         self.addresses_map
             .get(&addr.to_weak())

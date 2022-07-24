@@ -90,6 +90,10 @@ impl MemoryFs {
         GlobalFlush::flush_to_disk();
     }
 
+    pub fn free_memory() {
+        CHUNKS_ALLOCATOR.giveback_free_memory()
+    }
+
     pub fn terminate() {
         GlobalFlush::terminate();
         CHUNKS_ALLOCATOR.deinitialize();
@@ -124,86 +128,6 @@ impl MemoryFs {
 
         return !GlobalFlush::is_queue_empty();
     }
-
-    // pub fn create_from_joined_files(
-    //     files: Vec<Arc<MemoryFileInternal>>,
-    // ) -> Arc<MemoryFileInternal> {
-    //     let new_file = MemoryFileInternal::new("", MemoryMode::Chunks);
-    //     for file in files.into_iter() {
-    //         // Guaranteed
-    //         if let InternalMemoryMode::Chunks { memory } = unsafe { &mut *(file.data.get()) } {
-    //             memory.write();
-    //         }
-    //     }
-    //
-    //     Arc::new(new_file)
-    // }
-    //
-    // pub fn create_from_owned_memory(
-    //     path: impl AsRef<Path>,
-    //     owned_memory: Vec<AllocatedChunk>,
-    // ) -> Arc<MemoryFileInternal> {
-    //     let mem_file = Arc::new(MemoryFileInternal::new(path.as_ref(), MemoryMode::Chunks));
-    //
-    //     // Guaranteed
-    //     if let InternalMemoryMode::Chunks { memory } = unsafe { &mut *(mem_file.data.get()) } {
-    //         let mut data = memory.write();
-    //         data.clear();
-    //         data.reserve(owned_memory.len());
-    //         for el in owned_memory {
-    //             data.push(el);
-    //         }
-    //     }
-    //
-    //     let mut map = Self::get_map();
-    //     map.insert(path.as_ref().to_path_buf(), mem_file.clone());
-    //
-    //     mem_file
-    // }
-    //
-    // pub fn open(path: impl AsRef<Path>) -> Option<Arc<MemoryFileInternal>> {
-    //     let map = Self::get_map();
-    //     map.get(&PathBuf::from(path.as_ref())).map(|x| x.clone())
-    // }
-    //
-    // pub fn get_and_remove(path: impl AsRef<Path>) -> Option<Arc<MemoryFileInternal>> {
-    //     let mut map = Self::get_map();
-    //     map.remove(&PathBuf::from(path.as_ref()))
-    // }
-    //
-    // pub fn flush_async(&self) {
-    //     match unsafe { &mut *(self.data.get()) } {
-    //         InternalMemoryMode::ChunksFileBuffer {
-    //             current_buffer,
-    //             file,
-    //             ..
-    //         } => {
-    //             let mut current_buffer = current_buffer.write();
-    //             if current_buffer.get_buffer().len() > 0 {
-    //                 self.flush_buffer_and_replace(
-    //                     &mut current_buffer,
-    //                     file.clone(),
-    //                     FlushMode::Append,
-    //                 );
-    //             }
-    //         }
-    //         _ => {}
-    //     }
-    // }
-    //
-    // pub fn extend_with_full_allocated_chunk(&self, chunk: AllocatedChunk) {
-    //     match unsafe { &mut *(self.data.get()) } {
-    //         InternalMemoryMode::Chunks { memory } => {
-    //             let mut write_memory_guard = memory.write();
-    //             write_memory_guard.push(chunk);
-    //         }
-    //         InternalMemoryMode::ChunksFileBuffer { .. } => {
-    //             self.write_all(chunk.get());
-    //         }
-    //     }
-    // }
-    //
-    // }
 }
 
 #[cfg(test)]

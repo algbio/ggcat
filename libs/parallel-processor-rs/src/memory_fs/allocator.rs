@@ -291,7 +291,21 @@ impl ChunksAllocator {
         *self.chunks.lock() = free_chunks;
     }
 
-    pub fn giveback_memory(&self) {
+    pub fn giveback_free_memory(&self) {
+        let chunks = self.chunks.lock();
+        for chunk_start in chunks.iter() {
+            #[cfg(not(target_os = "windows"))]
+            unsafe {
+                libc::madvise(
+                    *chunk_start as *mut libc::c_void,
+                    self.chunk_padded_size.load(Ordering::Relaxed),
+                    libc::MADV_DONTNEED,
+                );
+            }
+        }
+    }
+
+    pub fn giveback_all_memory(&self) {
         MemoryFs::flush_all_to_disk();
 
         loop {

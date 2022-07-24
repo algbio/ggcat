@@ -115,6 +115,10 @@ impl<'a, E: AsyncExecutor> ExecutorAddressOperations<'a, E> {
         self.context.send_packet(address, packet);
     }
 
+    pub fn get_context(&self) -> &ExecutionContext {
+        &self.context
+    }
+
     pub fn make_spawner(&self) -> ExecutorsSpawner<'a> {
         ExecutorsSpawner {
             handles: Vec::new(),

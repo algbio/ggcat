@@ -82,6 +82,8 @@ impl ProcessStats {
 static GLOBAL_STATS: Mutex<ProcessStats> = NightlyUtils::new_mutex(ProcessStats::new());
 #[cfg(feature = "process-stats")]
 static PHASE_STATS: Mutex<ProcessStats> = NightlyUtils::new_mutex(ProcessStats::new());
+#[cfg(feature = "process-stats")]
+static CURRENT_STATS: Mutex<ProcessStats> = NightlyUtils::new_mutex(ProcessStats::new());
 
 impl PhaseTimesMonitor {
     const fn new() -> PhaseTimesMonitor {
@@ -127,6 +129,15 @@ impl PhaseTimesMonitor {
                         current_memory,
                     );
 
+                    let mut current_stats = CURRENT_STATS.lock();
+                    current_stats.reset();
+                    current_stats.update(
+                        elapsed,
+                        user_elapsed_usage,
+                        kernel_elapsed_usage,
+                        current_memory,
+                    );
+
                     last_clock = time_now;
                     last_stats = stats;
                 }
@@ -153,7 +164,11 @@ impl PhaseTimesMonitor {
 
     pub fn start_phase(&mut self, name: String) {
         self.end_phase();
-        println!("Started {}", name);
+        println!(
+            "Started {} prev stats: {}",
+            name,
+            Self::format_process_stats()
+        );
         #[cfg(feature = "process-stats")]
         PHASE_STATS.lock().reset();
         self.phase = Some((name, Instant::now()));
@@ -183,10 +198,16 @@ impl PhaseTimesMonitor {
     fn format_process_stats() -> String {
         #[cfg(feature = "process-stats")]
         {
+            let memory = simple_process_stats::ProcessStats::get()
+                .unwrap()
+                .memory_usage_bytes;
+
             format!(
-                " GL:{} PH:{}",
+                " GL:{} PH:{} CT: {} CM: {:.2}",
                 GLOBAL_STATS.lock().format(),
-                PHASE_STATS.lock().format()
+                PHASE_STATS.lock().format(),
+                CURRENT_STATS.lock().format(),
+                MemoryDataSize::from_bytes(memory as usize),
             )
         }
         #[cfg(not(feature = "process-stats"))]

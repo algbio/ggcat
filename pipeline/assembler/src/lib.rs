@@ -131,6 +131,9 @@ pub fn run_assembler<
             .write()
             .print_stats("Completed minimizer bucketing.".to_string());
         return;
+    } else {
+        MemoryFs::flush_all_to_disk();
+        MemoryFs::free_memory();
     }
 
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
@@ -156,6 +159,9 @@ pub fn run_assembler<
             .write()
             .print_stats("Completed kmers merge.".to_string());
         return;
+    } else {
+        MemoryFs::flush_all_to_disk();
+        MemoryFs::free_memory();
     }
 
     AssemblerColorsManager::ColorsMergeManagerType::print_color_stats(&global_colors_table);
@@ -172,6 +178,9 @@ pub fn run_assembler<
             .write()
             .print_stats("Hashes sorting.".to_string());
         return;
+    } else {
+        MemoryFs::flush_all_to_disk();
+        MemoryFs::free_memory();
     }
 
     let mut loop_iteration = loopit_number.unwrap_or(0);
@@ -290,6 +299,9 @@ pub fn run_assembler<
             .write()
             .print_stats("Links Compaction.".to_string());
         return;
+    } else {
+        MemoryFs::flush_all_to_disk();
+        MemoryFs::free_memory();
     }
 
     let final_unitigs_file = Mutex::new(match output_file.extension() {
@@ -325,6 +337,9 @@ pub fn run_assembler<
             .write()
             .print_stats("Reorganize reads.".to_string());
         return;
+    } else {
+        MemoryFs::flush_all_to_disk();
+        MemoryFs::free_memory();
     }
 
     links_manager.compute_id_offsets();

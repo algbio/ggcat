@@ -49,7 +49,7 @@ impl CountersAnalyzer {
         };
 
         for (count, bucket, second_bucket) in sorted_counters {
-            if count > median * 300 && count > MIN_OUTLIER_SIZE {
+            if count > median * 500 && count > MIN_OUTLIER_SIZE {
                 counters[bucket][second_bucket].is_outlier = true;
             }
         }

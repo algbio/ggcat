@@ -8,7 +8,6 @@ mod reader;
 use crate::processor::KmersTransformProcessor;
 use crate::reader::{InputBucketDesc, KmersTransformReader};
 use crate::resplitter::KmersTransformResplitter;
-use crate::rewriter::KmersTransformRewriter;
 use config::{
     BucketIndexType, KEEP_FILES, KMERS_TRANSFORM_READS_CHUNKS_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS,
     MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME, PACKETS_PRIORITY_FILES,
@@ -37,7 +36,6 @@ use std::time::{Duration, Instant};
 pub mod processor;
 mod reads_buffer;
 mod resplitter;
-mod rewriter;
 mod writer;
 
 pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
@@ -299,13 +297,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             &self.global_context,
         );
 
-        let buckets_rewriters = disk_thread_pool.register_executors::<KmersTransformRewriter<F>>(
-            read_threads_count,
-            PoolAllocMode::None,
-            (),
-            &self.global_context,
-        );
-
         let min_maps_count = max(MAXIMUM_JIT_PROCESSED_BUCKETS, compute_threads_count);
 
         let bucket_sequences_processors = compute_thread_pool
@@ -361,8 +352,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         }
 
         // Wait for the main buckets to be processed
-        execution_context.wait_for_completion(bucket_readers);
-        execution_context.wait_for_completion(buckets_rewriters);
         execution_context.wait_for_completion(bucket_readers);
 
         // Wait for the resplitting to be complete

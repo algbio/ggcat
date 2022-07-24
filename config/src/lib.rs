@@ -56,7 +56,7 @@ pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 512;
 pub const MAXIMUM_SECOND_BUCKETS_COUNT: usize = 256;
 pub const MAXIMUM_JIT_PROCESSED_BUCKETS: usize = 16;
 
-pub const MIN_OUTLIER_SIZE: u64 = 100000;
+pub const MIN_OUTLIER_SIZE: u64 = 200000;
 
 // Assembler include flags
 pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;
