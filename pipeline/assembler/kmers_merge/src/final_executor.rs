@@ -159,6 +159,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 }
                 rhentry.set_used();
 
+                let base_index = read_start * 4 + base_index;
                 let read_bases_start = base_index / 4;
                 let reads_offset = base_index % 4;
 
