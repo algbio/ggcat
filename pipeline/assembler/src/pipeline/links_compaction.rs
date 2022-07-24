@@ -87,21 +87,36 @@ pub fn links_compaction(
 
         drop(file_reader);
 
-        parallel_processor::make_comparer!(Compare, UnitigLink, entry: u64);
+        struct Compare;
+        impl SortKey<UnitigLink> for Compare {
+            type KeyType = u32;
+            const KEY_BITS: usize = std::mem::size_of::<u32>() * 8;
+
+            #[inline(always)]
+            fn compare(left: &UnitigLink, right: &UnitigLink) -> std::cmp::Ordering {
+                left.entry().cmp(&right.entry())
+            }
+
+            #[inline(always)]
+            fn get_shifted(value: &UnitigLink, rhs: u8) -> u8 {
+                (value.entry() >> rhs) as u8
+            }
+        }
+
         fast_smart_radix_sort::<_, Compare, false>(&mut vec[..]);
 
         let mut rem_links = 0;
 
-        for x in vec.group_by_mut(|a, b| a.entry == b.entry) {
+        for x in vec.group_by_mut(|a, b| a.entry() == b.entry()) {
             let (link1, link2) =
                 if x.len() == 2 && x[0].entries.len() != 0 && x[1].entries.len() != 0 {
                     // assert_ne!(x[0].flags.is_forward(), x[1].flags.is_forward());
-                    if x[0].flags.is_forward() == x[1].flags.is_forward() {
+                    if x[0].flags().is_forward() == x[1].flags().is_forward() {
                         // Flip one of the strands
-                        x[1].flags.set_forward(!x[1].flags.is_forward());
+                        x[1].change_flags(|flags| flags.set_forward(!flags.is_forward()));
 
                         // Reverse complement one of the strands
-                        x[1].flags = x[1].flags.reverse_complement();
+                        x[1].change_flags(|flags| *flags = flags.reverse_complement());
                         let strand_slice = x[1].entries.get_slice_mut(&mut last_unitigs_vec);
                         for el in strand_slice {
                             el.change_reverse_complemented();
@@ -110,25 +125,25 @@ pub fn links_compaction(
 
                     // To be joined the entries should have the same reverse_complement flag
                     assert_eq!(
-                        x[0].flags.is_reverse_complemented(),
-                        x[1].flags.is_reverse_complemented()
+                        x[0].flags().is_reverse_complemented(),
+                        x[1].flags().is_reverse_complemented()
                     );
 
-                    let flags = UnitigFlags::combine(x[0].flags, x[1].flags);
+                    let flags = UnitigFlags::combine(x[0].flags(), x[1].flags());
 
-                    assert_eq!(x[0].flags.end_sealed(), flags.end_sealed());
+                    assert_eq!(x[0].flags().end_sealed(), flags.end_sealed());
 
-                    let should_swap = x[1].flags.end_sealed()
-                        || (!x[0].flags.end_sealed() && rand_bool.get_randbool());
+                    let should_swap = x[1].flags().end_sealed()
+                        || (!x[0].flags().end_sealed() && rand_bool.get_randbool());
                     let (fw, bw, mut flags) = if should_swap {
                         (1, 0, flags.flipped())
                     } else {
                         (0, 1, flags)
                     };
 
-                    assert_eq!(x[fw].flags.end_sealed(), flags.end_sealed());
-                    assert_eq!(x[bw].flags.end_sealed(), flags.begin_sealed());
-                    assert!(!x[fw].flags.begin_sealed() && !x[bw].flags.begin_sealed());
+                    assert_eq!(x[fw].flags().end_sealed(), flags.end_sealed());
+                    assert_eq!(x[bw].flags().end_sealed(), flags.begin_sealed());
+                    assert!(!x[fw].flags().begin_sealed() && !x[bw].flags().begin_sealed());
 
                     let fw_slice = x[fw].entries.get_slice(&last_unitigs_vec);
                     let bw_slice = x[bw].entries.get_slice(&last_unitigs_vec);
@@ -147,8 +162,8 @@ pub fn links_compaction(
                             .chain(
                                 [UnitigIndex::new(
                                     bucket_index,
-                                    x[0].entry as usize,
-                                    x[0].flags.is_reverse_complemented(),
+                                    x[0].entry() as usize,
+                                    x[0].flags().is_reverse_complemented(),
                                 )]
                                 .iter(),
                             )
@@ -165,19 +180,15 @@ pub fn links_compaction(
                     (
                         (
                             new_entry.bucket(),
-                            UnitigLink {
-                                entry: new_entry.index() as u64,
-                                flags,
-                                entries: concat_slice,
-                            },
+                            UnitigLink::new(new_entry.index() as u64, flags, concat_slice),
                         ),
                         Some((
                             other_entry.bucket(),
-                            UnitigLink {
-                                entry: other_entry.index() as u64,
-                                flags: UnitigFlags::new_empty(),
-                                entries: VecSlice::EMPTY,
-                            },
+                            UnitigLink::new(
+                                other_entry.index() as u64,
+                                UnitigFlags::new_empty(),
+                                VecSlice::EMPTY,
+                            ),
                         )),
                     )
                 } else {
@@ -189,7 +200,7 @@ pub fn links_compaction(
                         continue;
                     };
 
-                    let mut flags = entry.flags;
+                    let mut flags = entry.flags();
 
                     let is_lonely = x.len() == 1;
 
@@ -210,18 +221,14 @@ pub fn links_compaction(
 
                             final_links_tmp.add_element(
                                 &final_unitigs_vec,
-                                &UnitigLink {
-                                    entry: entry.entry,
-                                    flags,
-                                    entries,
-                                },
+                                &UnitigLink::new(entry.entry(), flags, entries),
                             );
 
                             results_tmp.add_element(
                                 bucket_index,
                                 &(),
                                 &LinkMapping {
-                                    entry: entry.entry as u64,
+                                    entry: entry.entry() as u64,
                                     bucket: bucket_index,
                                 },
                             );
@@ -244,8 +251,8 @@ pub fn links_compaction(
 
                     let first_entry = UnitigIndex::new(
                         bucket_index,
-                        entry.entry as usize,
-                        entry.flags.is_reverse_complemented(),
+                        entry.entry() as usize,
+                        entry.flags().is_reverse_complemented(),
                     );
                     let last_entry = *entries.last().unwrap();
 
@@ -260,11 +267,7 @@ pub fn links_compaction(
 
                         final_links_tmp.add_element(
                             &final_unitigs_vec,
-                            &UnitigLink {
-                                entry: entry.entry,
-                                flags,
-                                entries,
-                            },
+                            &UnitigLink::new(entry.entry(), flags, entries),
                         );
 
                         for link in unitig_entries.iter() {
@@ -313,19 +316,15 @@ pub fn links_compaction(
                     (
                         (
                             new_entry.bucket(),
-                            UnitigLink {
-                                entry: new_entry.index() as u64,
-                                flags,
-                                entries: vec_slice,
-                            },
+                            UnitigLink::new(new_entry.index() as u64, flags, vec_slice),
                         ),
                         Some((
                             oth_entry.bucket(),
-                            UnitigLink {
-                                entry: oth_entry.index() as u64,
-                                flags: UnitigFlags::new_empty(),
-                                entries: VecSlice::EMPTY,
-                            },
+                            UnitigLink::new(
+                                oth_entry.index() as u64,
+                                UnitigFlags::new_empty(),
+                                VecSlice::EMPTY,
+                            ),
                         )),
                     )
                 };

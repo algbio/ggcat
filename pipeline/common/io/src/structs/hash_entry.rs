@@ -12,16 +12,51 @@ use std::mem::size_of;
 #[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize, Debug)]
 #[repr(u8)]
 pub enum Direction {
-    Forward,
     Backward,
+    Forward,
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct HashEntry<H: Copy> {
     pub hash: H,
-    pub bucket: BucketIndexType,
-    pub entry: u64,
-    pub direction: Direction,
+    encoded: u64,
+    // pub bucket: BucketIndexType,
+    // pub entry: u64,
+    // pub direction: Direction,
+}
+
+impl<H: Copy> HashEntry<H> {
+    const ENTRY_OFFSET: usize = (size_of::<BucketIndexType>() * 8) + 1;
+    const BUCKET_OFFSET: usize = 1;
+    const DIRECTION_OFFSET: usize = 0;
+
+    pub fn new(hash: H, bucket: BucketIndexType, entry: u64, direction: Direction) -> Self {
+        Self {
+            hash,
+            encoded: (entry << Self::ENTRY_OFFSET)
+                | ((bucket as u64) << Self::BUCKET_OFFSET)
+                | ((match direction {
+                    Direction::Forward => 1,
+                    Direction::Backward => 0,
+                }) << Self::DIRECTION_OFFSET),
+        }
+    }
+
+    pub fn entry(&self) -> u64 {
+        self.encoded >> Self::ENTRY_OFFSET
+    }
+
+    pub fn bucket(&self) -> BucketIndexType {
+        (self.encoded >> Self::BUCKET_OFFSET) as BucketIndexType
+    }
+
+    pub fn direction(&self) -> Direction {
+        if (self.encoded >> Self::DIRECTION_OFFSET) & 0x1 == 0 {
+            Direction::Backward
+        } else {
+            Direction::Forward
+        }
+    }
 }
 
 impl<H: Serialize + DeserializeOwned + Copy> BucketItem for HashEntry<H> {

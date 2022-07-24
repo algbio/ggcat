@@ -155,8 +155,8 @@ pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
                 {
                     let start_unitig = UnitigIndex::new(
                         bucket_index,
-                        link.entry as usize,
-                        link.flags.is_reverse_complemented(),
+                        link.entry() as usize,
+                        link.flags().is_reverse_complemented(),
                     );
 
                     let is_circular = link
@@ -174,7 +174,7 @@ pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
                             FinalUnitigInfo {
                                 is_start: true,
                                 is_circular,
-                                flags: link.flags,
+                                flags: link.flags(),
                             },
                         ),
                     );

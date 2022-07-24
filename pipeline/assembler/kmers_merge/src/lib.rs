@@ -113,12 +113,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             hashes_tmp.add_element(
                 MH::get_bucket(0, buckets_count_bits, hash),
                 &(),
-                &HashEntry {
-                    hash,
-                    bucket,
-                    entry,
-                    direction,
-                },
+                &HashEntry::new(hash, bucket, entry, direction),
             );
         }
     }

@@ -238,21 +238,45 @@ impl UnitigIndex {
 
 #[derive(Clone, Debug)]
 pub struct UnitigLink {
-    pub entry: u64,
-    pub flags: UnitigFlags,
+    encoded: u64,
     pub entries: VecSlice<UnitigIndex>,
+}
+
+impl UnitigLink {
+    const ENTRY_OFFSET: usize = 8;
+
+    pub fn new(entry: u64, flags: UnitigFlags, entries: VecSlice<UnitigIndex>) -> Self {
+        Self {
+            encoded: (entry << Self::ENTRY_OFFSET) | (flags.0 as u64),
+            entries,
+        }
+    }
+
+    pub fn entry(&self) -> u64 {
+        self.encoded >> Self::ENTRY_OFFSET
+    }
+
+    pub fn flags(&self) -> UnitigFlags {
+        UnitigFlags(self.encoded as u8)
+    }
+
+    pub fn change_flags(&mut self, change_fn: impl FnOnce(&mut UnitigFlags)) {
+        let mut flags = self.flags();
+        change_fn(&mut flags);
+        self.encoded = (self.encoded & !(u8::MAX as u64)) | (flags.0 as u64);
+    }
 }
 
 impl BucketItem for UnitigLink {
     type ExtraData = Vec<UnitigIndex>;
-    type ExtraDataBuffer = ();
     type ReadBuffer = Vec<UnitigIndex>;
+    type ExtraDataBuffer = ();
     type ReadType<'a> = Self;
 
     #[inline(always)]
     fn write_to(&self, bucket: &mut Vec<u8>, extra_data: &Self::ExtraData, _: &()) {
-        encode_varint(|b| bucket.write_all(b), self.entry).unwrap();
-        bucket.write_all(&[self.flags.0]).unwrap();
+        encode_varint(|b| bucket.write_all(b), self.entry()).unwrap();
+        bucket.write_all(&[self.flags().0]).unwrap();
 
         let entries = self.entries.get_slice(extra_data);
         encode_varint(|b| bucket.write_all(b), entries.len() as u64).unwrap();
@@ -284,11 +308,11 @@ impl BucketItem for UnitigLink {
             read_buffer.push(UnitigIndex::new_raw(bucket, index as usize));
         }
 
-        Some(Self {
+        Some(Self::new(
             entry,
-            flags: UnitigFlags(flags),
-            entries: VecSlice::new(start, len),
-        })
+            UnitigFlags(flags),
+            VecSlice::new(start, len),
+        ))
     }
 
     fn get_size(&self, _: &Vec<UnitigIndex>) -> usize {
