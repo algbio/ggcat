@@ -44,14 +44,15 @@ impl<'a, T: Sync + Send + 'static, const CHANNELS_COUNT: usize> Future
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match try_get_item(self.internal, self.offset) {
             None => {
-                if self.internal.stream_index.load(Ordering::Relaxed) != self.stream_index {
-                    Poll::Ready(Err(()))
+                if self.internal.stream_index.load(Ordering::SeqCst) != self.stream_index {
+                    Poll::Ready(try_get_item(self.internal, self.offset).ok_or(()))
                 } else {
                     self.internal.waiting_list.push(cx.waker().clone());
-                    if self.internal.stream_index.load(Ordering::Relaxed) != self.stream_index {
-                        Poll::Ready(Err(()))
-                    } else if let Some(value) = try_get_item(self.internal, self.offset) {
+                    if let Some(value) = try_get_item(self.internal, self.offset) {
                         Poll::Ready(Ok(value))
+                    } else if self.internal.stream_index.load(Ordering::SeqCst) != self.stream_index
+                    {
+                        Poll::Ready(try_get_item(self.internal, self.offset).ok_or(()))
                     } else {
                         Poll::Pending
                     }
@@ -85,7 +86,7 @@ impl<T: Sync + Send + 'static, const CHANNELS_COUNT: usize> Clone
     fn clone(&self) -> Self {
         Self {
             internal: self.internal.clone(),
-            stream_index: AtomicU64::new(self.stream_index.load(Ordering::Relaxed)),
+            stream_index: AtomicU64::new(self.stream_index.load(Ordering::SeqCst)),
         }
     }
 }
@@ -115,7 +116,7 @@ impl<T: Sync + Send + 'static, const CHANNELS_COUNT: usize>
         ReceiverFuture {
             internal: &self.internal,
             offset,
-            stream_index: self.stream_index.load(Ordering::Relaxed),
+            stream_index: self.stream_index.load(Ordering::SeqCst),
         }
     }
 
@@ -126,10 +127,10 @@ impl<T: Sync + Send + 'static, const CHANNELS_COUNT: usize>
     pub fn recv_blocking(&self) -> Result<T, ()> {
         match try_get_item(&self.internal, 0) {
             None => {
-                let stream_index = self.stream_index.load(Ordering::Relaxed);
+                let stream_index = self.stream_index.load(Ordering::SeqCst);
                 let mut lock_mutex = self.internal.blocking_mutex.lock();
                 loop {
-                    if self.internal.stream_index.load(Ordering::Relaxed) != stream_index {
+                    if self.internal.stream_index.load(Ordering::SeqCst) != stream_index {
                         return Err(());
                     }
                     if let Some(packet) = try_get_item(&self.internal, 0) {
@@ -144,8 +145,8 @@ impl<T: Sync + Send + 'static, const CHANNELS_COUNT: usize>
 
     pub fn reopen(&self) {
         self.stream_index.store(
-            self.internal.stream_index.load(Ordering::Relaxed),
-            Ordering::Relaxed,
+            self.internal.stream_index.load(Ordering::SeqCst),
+            Ordering::SeqCst,
         );
     }
 
