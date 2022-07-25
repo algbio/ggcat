@@ -127,8 +127,7 @@ impl<T: Copy, P: ChunksWriter<TargetData = T>> AsyncSliceQueue<T, P> {
                                     self.async_processor
                                         .flush_data(&mut tmp_buffer, current_slice);
                                 }
-                                self.async_processor
-                                    .end_processing(tmp_buffer, color_start, 1);
+                                self.async_processor.end_processing(tmp_buffer, color_start);
                                 self.chunks_buffers_pool.0.send(slice_array).unwrap();
                             }
 
@@ -187,7 +186,7 @@ impl<T: Copy, P: ChunksWriter<TargetData = T>> AsyncSliceQueue<T, P> {
                     .flush_data(&mut tmp_data, current_slice);
             }
 
-            self.async_processor.end_processing(tmp_data, color, 1);
+            self.async_processor.end_processing(tmp_data, color);
         }
         self.async_processor
     }

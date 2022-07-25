@@ -56,6 +56,7 @@ arg_enum! {
     pub enum QuerierStartingStep {
         MinimizerBucketing = 0,
         KmersCounting = 1,
+        ColorMapReading = 2,
     }
 }
 
@@ -381,6 +382,7 @@ fn convert_querier_step(step: QuerierStartingStep) -> querier::QuerierStartingSt
     match step {
         QuerierStartingStep::MinimizerBucketing => querier::QuerierStartingStep::MinimizerBucketing,
         QuerierStartingStep::KmersCounting => querier::QuerierStartingStep::KmersCounting,
+        QuerierStartingStep::ColorMapReading => querier::QuerierStartingStep::ColorMapReading,
     }
 }
 

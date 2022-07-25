@@ -1,6 +1,7 @@
 #![allow(warnings)] // FIXME: Remove
 #![feature(generic_associated_types)]
 #![feature(slice_group_by)]
+#![feature(int_log)]
 
 use crate::pipeline::colored_query_output::colored_query_output;
 use crate::pipeline::colormap_reading::colormap_reading;
@@ -8,7 +9,7 @@ use crate::pipeline::counters_sorting::counters_sorting;
 use crate::pipeline::parallel_kmers_query::parallel_kmers_counting;
 use crate::pipeline::querier_minimizer_bucketing::minimizer_bucketing;
 use ::static_dispatch::static_dispatch;
-use colors::colors_manager::ColorsManager;
+use colors::colors_manager::{ColorMapReader, ColorsManager, ColorsMergeManager};
 use colors::DefaultColorsSerializer;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::{compute_buckets_log_from_input_files, generate_bucket_names};
@@ -22,6 +23,7 @@ mod structs;
 pub enum QuerierStartingStep {
     MinimizerBucketing = 0,
     KmersCounting = 1,
+    ColorMapReading = 2,
 }
 
 #[static_dispatch(BucketingHash = [
@@ -63,6 +65,10 @@ pub fn run_query<
 ) {
     PHASES_TIMES_MONITOR.write().init();
 
+    let color_map = QuerierColorsManager::ColorsMergeManagerType::<MergingHash>::open_colors_table(
+        graph_input.with_extension("colors.dat"),
+    );
+
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| {
         compute_buckets_log_from_input_files(&[graph_input.clone(), query_input.clone()])
     });
@@ -96,7 +102,7 @@ pub fn run_query<
             threads_count,
         )
     } else {
-        generate_bucket_names(temp_dir.join("counters"), buckets_count, Some("tmp"))
+        generate_bucket_names(temp_dir.join("counters"), buckets_count, None)
     };
 
     let colored_buckets_prefix = temp_dir.join("color_counters");
@@ -106,6 +112,7 @@ pub fn run_query<
         query_input.clone(),
         counters_buckets,
         colored_buckets_prefix,
+        color_map.colors_count(),
         output_file.clone(),
     );
 

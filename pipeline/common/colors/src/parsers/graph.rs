@@ -8,6 +8,7 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use std::cmp::{max, min};
 use std::io::{Read, Write};
 use std::ops::Range;
 
@@ -108,12 +109,49 @@ impl SequenceExtraData for MinBkMultipleColors {
     }
 
     fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write) {
-        encode_varint(|b| writer.write_all(b), buffer.len() as u64).unwrap();
+        let mut write_to_buffer = |write_len: Option<usize>| {
+            let mut current_pos = 0;
+            let mut counter_dbg = 0;
+            let mut items_count = 0usize;
 
-        for (pos, color) in buffer[self.colors_slice.clone()].iter() {
-            encode_varint(|b| writer.write_all(b), *pos as u64).unwrap();
-            encode_varint(|b| writer.write_all(b), *color as u64).unwrap();
-        }
+            if let Some(write_len) = write_len {
+                encode_varint(|b| writer.write_all(b), write_len as u64).unwrap();
+            }
+
+            for (pos, color) in buffer.iter() {
+                if current_pos >= self.colors_slice.end {
+                    // No more color needed
+                    break;
+                }
+
+                if current_pos + *pos > self.colors_slice.start {
+                    let interval_start = max(current_pos, self.colors_slice.start);
+                    let interval_end = min(current_pos + *pos, self.colors_slice.end);
+
+                    let partial_pos = interval_end - interval_start;
+                    counter_dbg += partial_pos;
+                    if write_len.is_some() {
+                        encode_varint(|b| writer.write_all(b), partial_pos as u64).unwrap();
+                        encode_varint(|b| writer.write_all(b), *color as u64).unwrap();
+                    }
+                    items_count += 1;
+                }
+                current_pos += *pos;
+            }
+            assert_eq!(
+                counter_dbg,
+                self.colors_slice.len(),
+                "B: {:?} R:{:?} [{} != {}]",
+                &buffer,
+                self.colors_slice.clone(),
+                counter_dbg,
+                self.colors_slice.len()
+            );
+            items_count
+        };
+
+        let elements_count = write_to_buffer(None);
+        write_to_buffer(Some(elements_count));
     }
 
     #[inline(always)]
@@ -124,13 +162,15 @@ impl SequenceExtraData for MinBkMultipleColors {
 
 fn parse_colors(ident: &[u8], colors_buffer: &mut Vec<(usize, ColorIndexType)>) -> Range<usize> {
     let start_pos = colors_buffer.len();
+    let mut colors_count = 0;
     for col_pos in ident.find_iter(b"C:") {
-        let (color_index, next_pos) = ColorIndexType::from_radix_16(&ident[col_pos..]);
-        let position_index = usize::from_radix_10(&ident[(col_pos + next_pos)..]).0;
-        colors_buffer.push((position_index, color_index));
-    }
+        let (color_index, next_pos) = ColorIndexType::from_radix_16(&ident[(col_pos + 2)..]);
 
-    start_pos..colors_buffer.len()
+        let kmers_count = usize::from_radix_10(&ident[(col_pos + next_pos + 3)..]).0;
+        colors_buffer.push((kmers_count, color_index));
+        colors_count += kmers_count
+    }
+    start_pos..colors_count
 }
 
 impl MinimizerBucketingSeqColorData for MinBkMultipleColors {

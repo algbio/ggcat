@@ -7,6 +7,7 @@ use config::{
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
 };
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
+use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
@@ -55,7 +56,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             BucketsThreadDispatcher::new(&correct_color_buckets, thread_buffer.take());
 
         let mut counters_vec: Vec<(CounterEntry<ColorIndexType>, ColorIndexType)> = Vec::new();
-        LockFreeBinaryReader::new(
+        CompressedBinaryReader::new(
             input,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
@@ -68,8 +69,8 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
 
         struct CountersCompare;
         impl SortKey<(CounterEntry<ColorIndexType>, ColorIndexType)> for CountersCompare {
-            type KeyType = u64;
-            const KEY_BITS: usize = std::mem::size_of::<u64>() * 8;
+            type KeyType = u32;
+            const KEY_BITS: usize = std::mem::size_of::<u32>() * 8;
 
             fn compare(
                 left: &(CounterEntry<ColorIndexType>, ColorIndexType),
@@ -104,7 +105,6 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             //     );
             // }
         }
-
         thread_buffer.put_back(colored_buckets_writer.finalize().0);
     });
 

@@ -80,6 +80,7 @@ pub fn counters_sorting<CX: ColorsManager>(
     query_input: PathBuf,
     file_counters_inputs: Vec<PathBuf>,
     colored_buckets_path: PathBuf,
+    colors_count: u64,
     output_file: PathBuf,
 ) -> Vec<PathBuf> {
     PHASES_TIMES_MONITOR
@@ -127,6 +128,8 @@ pub fn counters_sorting<CX: ColorsManager>(
             BucketsThreadBuffer::EMPTY
         }
     });
+
+    let buckets_count_log = buckets_count.log2();
 
     file_counters_inputs.par_iter().for_each(|input| {
 
@@ -178,7 +181,7 @@ pub fn counters_sorting<CX: ColorsManager>(
                 if CX::COLORS_ENABLED {
                     for entry in query_results.group_by(|a, b| a.1 == b.1) {
                         let color = entry[0].1.clone();
-                        colored_buckets_writer.add_element(0, &color, &CounterEntry {
+                        colored_buckets_writer.add_element(CX::get_bucket_from_color(&color, colors_count, buckets_count_log), &color, &CounterEntry {
                             query_index,
                             counter: entry.iter().map(|e| e.0.counter).sum(),
                             _phantom: PhantomData
@@ -195,14 +198,17 @@ pub fn counters_sorting<CX: ColorsManager>(
 
     let mut writer = csv::Writer::from_path(output_file).unwrap();
 
-    for (info, counter) in sequences_info.iter().zip(final_counters.iter()) {
-        writer
-            .write_record(&[
-                info.to_string(),
-                counter.load(Ordering::Relaxed).to_string(),
-            ])
-            .unwrap();
+    if !CX::COLORS_ENABLED {
+        for (info, counter) in sequences_info.iter().zip(final_counters.iter()) {
+            writer
+                .write_record(&[
+                    info.to_string(),
+                    counter.load(Ordering::Relaxed).to_string(),
+                ])
+                .unwrap();
+        }
+        vec![]
+    } else {
+        color_buckets.finalize()
     }
-
-    color_buckets.finalize()
 }

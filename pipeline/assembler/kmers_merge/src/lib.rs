@@ -5,7 +5,9 @@ use crate::map_processor::ParallelKmersMergeMapProcessor;
 use crate::preprocessor::ParallelKmersMergePreprocessor;
 use crate::structs::{ResultsBucket, RetType};
 use assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
-use colors::colors_manager::color_types::{GlobalColorsTable, MinimizerBucketingSeqColorDataType};
+use colors::colors_manager::color_types::{
+    GlobalColorsTableWriter, MinimizerBucketingSeqColorDataType,
+};
 use colors::colors_manager::{color_types, ColorsManager};
 use config::{
     get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
@@ -44,7 +46,7 @@ pub struct GlobalMergeData<MH: HashFunctionFactory, CX: ColorsManager> {
     m: usize,
     buckets_count: usize,
     min_multiplicity: usize,
-    colors_global_table: Arc<GlobalColorsTable<MH, CX>>,
+    colors_global_table: Arc<GlobalColorsTableWriter<MH, CX>>,
     output_results_buckets:
         ArrayQueue<ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>>,
     hashes_buckets: Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
@@ -127,7 +129,7 @@ pub fn kmers_merge<
 >(
     file_inputs: Vec<PathBuf>,
     buckets_counters_path: PathBuf,
-    colors_global_table: Arc<GlobalColorsTable<MH, CX>>,
+    colors_global_table: Arc<GlobalColorsTableWriter<MH, CX>>,
     buckets_count: usize,
     min_multiplicity: usize,
     out_directory: P,

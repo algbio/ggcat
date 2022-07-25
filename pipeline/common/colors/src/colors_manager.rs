@@ -1,4 +1,5 @@
 use crate::parsers::SingleSequenceInfo;
+use config::BucketIndexType;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
@@ -27,7 +28,7 @@ pub mod color_types {
         };
     }
 
-    color_manager_type_alias!(GlobalColorsTable);
+    color_manager_type_alias!(GlobalColorsTableWriter);
     color_manager_type_alias!(ColorsBufferTempStructure);
     color_manager_type_alias!(HashMapTempColorIndex);
     color_manager_type_alias!(PartialUnitigsColorStructure);
@@ -52,6 +53,16 @@ pub trait MinimizerBucketingSeqColorData:
     fn create(file_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self;
     fn get_iterator<'a>(&'a self, buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator<'a>;
     fn get_subslice(&self, range: Range<usize>) -> Self;
+}
+
+pub trait ColorMapReader {
+    fn colors_count(&self) -> u64;
+}
+
+impl ColorMapReader for () {
+    fn colors_count(&self) -> u64 {
+        0
+    }
 }
 
 /// Helper trait to manage colors parsing from different sources (actually 2, color from file or color from annotated dbg graph)
@@ -85,16 +96,20 @@ pub trait ColorsMergeManager<H: HashFunctionFactory>: Sized {
         + Sync
         + Send
         + 'static;
-    type GlobalColorsTable: Sync + Send + 'static;
+    type GlobalColorsTableWriter: Sync + Send + 'static;
+    type GlobalColorsTableReader: ColorMapReader + Sync + Send + 'static;
 
     /// Creates a new colors table at the given path
     fn create_colors_table(
         path: impl AsRef<Path>,
         color_names: Vec<String>,
-    ) -> Self::GlobalColorsTable;
+    ) -> Self::GlobalColorsTableWriter;
+
+    /// Creates a new colors table at the given path
+    fn open_colors_table(path: impl AsRef<Path>) -> Self::GlobalColorsTableReader;
 
     /// Prints to stdout the final stats for the colors table
-    fn print_color_stats(global_colors_table: &Self::GlobalColorsTable);
+    fn print_color_stats(global_colors_table: &Self::GlobalColorsTableWriter);
 
     /// Temporary buffer that holds color values for each kmer while merging them
     type ColorsBufferTempStructure: 'static + Send + Sync;
@@ -113,7 +128,7 @@ pub trait ColorsMergeManager<H: HashFunctionFactory>: Sized {
 
     /// This step finds the color subset indexes for each map entry
     fn process_colors(
-        global_colors_table: &Self::GlobalColorsTable,
+        global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
         map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
         min_multiplicity: usize,
@@ -176,6 +191,12 @@ pub trait ColorsManager: 'static + Sync + Send + Sized {
         + Sync
         + Send
         + 'static;
+
+    fn get_bucket_from_color(
+        color: &Self::SingleKmerColorDataType,
+        colors_count: u64,
+        buckets_count_log: u32,
+    ) -> BucketIndexType;
 
     type ColorsParserType: ColorsParser<SingleKmerColorDataType = Self::SingleKmerColorDataType>;
     type ColorsMergeManagerType<H: HashFunctionFactory>: ColorsMergeManager<

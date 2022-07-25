@@ -1,4 +1,6 @@
 use crate::colors_manager::ColorsMergeManager;
+use crate::storage::deserializer::ColorsDeserializer;
+use crate::DefaultColorsSerializer;
 use byteorder::ReadBytesExt;
 use config::ColorIndexType;
 use hashbrown::HashMap;
@@ -18,16 +20,21 @@ pub struct SingleColorManager<H: HashFunctionFactory>(PhantomData<H>);
 
 impl<H: HashFunctionFactory> ColorsMergeManager<H> for SingleColorManager<H> {
     type SingleKmerColorDataType = ColorIndexType;
-    type GlobalColorsTable = ();
+    type GlobalColorsTableWriter = ();
+    type GlobalColorsTableReader = ColorsDeserializer<DefaultColorsSerializer>;
 
     fn create_colors_table(
         _path: impl AsRef<Path>,
         _color_names: Vec<String>,
-    ) -> Self::GlobalColorsTable {
+    ) -> Self::GlobalColorsTableWriter {
         ()
     }
 
-    fn print_color_stats(_global_colors_table: &Self::GlobalColorsTable) {}
+    fn open_colors_table(path: impl AsRef<Path>) -> Self::GlobalColorsTableReader {
+        ColorsDeserializer::new(path)
+    }
+
+    fn print_color_stats(_global_colors_table: &Self::GlobalColorsTableWriter) {}
 
     type ColorsBufferTempStructure = ();
 
@@ -59,7 +66,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for SingleColorManager<H> {
     }
 
     fn process_colors(
-        _global_colors_table: &Self::GlobalColorsTable,
+        _global_colors_table: &Self::GlobalColorsTableWriter,
         _data: &mut Self::ColorsBufferTempStructure,
         _map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
         _min_multiplicity: usize,

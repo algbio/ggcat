@@ -9,13 +9,13 @@ use siphasher::sip128::{Hasher128, SipHasher13};
 use std::hash::Hash;
 use std::path::Path;
 
-pub struct ColorsMemMap<C: ColorsSerializerTrait> {
+pub struct ColorsMemMapWriter<C: ColorsSerializerTrait> {
     colors: DashMap<u128, ColorIndexType, DummyHasherBuilder>,
     colors_storage: ColorsSerializer<C>,
     hash_keys: (u64, u64),
 }
 
-impl<C: ColorsSerializerTrait> ColorsMemMap<C> {
+impl<C: ColorsSerializerTrait> ColorsMemMapWriter<C> {
     pub fn new(file: impl AsRef<Path>, color_names: Vec<String>) -> Self {
         let mut rng = thread_rng();
         Self {

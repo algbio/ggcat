@@ -71,7 +71,7 @@ impl RoaringBitmapInstance {
         self.bitmap
             .serialize_into(writer.get_stream(&mut pdata))
             .unwrap();
-        writer.end_processing(pdata, self.offset, self.stride);
+        writer.end_processing(pdata, self.offset);
         self.offset += self.last_color;
         self.last_color = 0;
         self.bitmap.clear();

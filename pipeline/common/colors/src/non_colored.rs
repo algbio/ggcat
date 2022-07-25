@@ -2,6 +2,7 @@ use crate::colors_manager::{
     ColorsManager, ColorsMergeManager, ColorsParser, MinimizerBucketingSeqColorData,
 };
 use crate::parsers::SingleSequenceInfo;
+use config::BucketIndexType;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
@@ -19,6 +20,14 @@ pub struct NonColoredManager;
 impl ColorsManager for NonColoredManager {
     const COLORS_ENABLED: bool = false;
     type SingleKmerColorDataType = NonColoredManager;
+
+    fn get_bucket_from_color(
+        _color: &Self::SingleKmerColorDataType,
+        _colors_count: u64,
+        _buckets_count_log: u32,
+    ) -> BucketIndexType {
+        panic!("Cannot get color bucket for non colored manager!");
+    }
 
     type ColorsParserType = NonColoredManager;
     type ColorsMergeManagerType<H: HashFunctionFactory> = NonColoredManager;
@@ -76,16 +85,21 @@ impl ColorsParser for NonColoredManager {
 
 impl<H: HashFunctionFactory> ColorsMergeManager<H> for NonColoredManager {
     type SingleKmerColorDataType = NonColoredManager;
-    type GlobalColorsTable = NonColoredManager;
+    type GlobalColorsTableWriter = ();
+    type GlobalColorsTableReader = ();
 
     fn create_colors_table(
         _path: impl AsRef<Path>,
         _color_names: Vec<String>,
-    ) -> Self::GlobalColorsTable {
-        NonColoredManager
+    ) -> Self::GlobalColorsTableWriter {
+        ()
     }
 
-    fn print_color_stats(_global_colors_table: &Self::GlobalColorsTable) {}
+    fn open_colors_table(_path: impl AsRef<Path>) -> Self::GlobalColorsTableReader {
+        ()
+    }
+
+    fn print_color_stats(_global_colors_table: &Self::GlobalColorsTableWriter) {}
 
     type ColorsBufferTempStructure = NonColoredManager;
 
@@ -115,7 +129,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for NonColoredManager {
 
     #[inline(always)]
     fn process_colors(
-        _global_colors_table: &Self::GlobalColorsTable,
+        _global_colors_table: &Self::GlobalColorsTableWriter,
         _data: &mut Self::ColorsBufferTempStructure,
         _map: &mut HashMap<
             <H as HashFunctionFactory>::HashTypeUnextendable,

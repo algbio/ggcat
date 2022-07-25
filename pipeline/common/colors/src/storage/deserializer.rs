@@ -1,3 +1,4 @@
+use crate::colors_manager::ColorMapReader;
 use crate::storage::serializer::{ColorsFileHeader, ColorsIndexEntry, ColorsIndexMap};
 use crate::storage::ColorsSerializerTrait;
 use config::ColorIndexType;
@@ -15,9 +16,13 @@ pub struct ColorsDeserializer<DS: ColorsSerializerTrait> {
     color_names: Vec<String>,
     colors_index: ColorsIndexMap,
     current_chunk: ColorsIndexEntry,
+    current_chunk_size: ColorIndexType,
     current_index: ColorIndexType,
     _phantom: PhantomData<DS>,
 }
+
+unsafe impl<DS: ColorsSerializerTrait> Sync for ColorsDeserializer<DS> {}
+unsafe impl<DS: ColorsSerializerTrait> Send for ColorsDeserializer<DS> {}
 
 impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
     pub fn new(file: impl AsRef<Path>) -> Self {
@@ -29,7 +34,7 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
         let header: ColorsFileHeader = ColorsFileHeader::deserialize_from(&header_buffer);
         assert_eq!(header.magic, DS::MAGIC);
 
-        println!("Colors header: {:#?}", &header);
+        // println!("Colors header: {:#?}", &header);
 
         let color_names = {
             let mut compressed_stream = lz4::Decoder::new(BufReader::new(file)).unwrap();
@@ -48,11 +53,19 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
         let first_chunk = colors_index.pairs[0];
         file.seek(SeekFrom::Start(first_chunk.file_offset)).unwrap();
 
+        let current_chunk_size = colors_index
+            .pairs
+            .get(1)
+            .map(|p| p.start_index)
+            .unwrap_or(colors_index.subsets_count as ColorIndexType)
+            - first_chunk.start_index;
+
         Self {
             colormap_file: lz4::Decoder::new(BufReader::new(file)).unwrap(),
             color_names,
             colors_index,
             current_chunk: first_chunk,
+            current_chunk_size,
             current_index: first_chunk.start_index,
             _phantom: Default::default(),
         }
@@ -60,7 +73,7 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
 
     fn maybe_change_block(&mut self, target_color: ColorIndexType) {
         if target_color < self.current_index
-            || target_color >= (self.current_chunk.start_index + self.current_chunk.stride)
+            || target_color >= (self.current_chunk.start_index + self.current_chunk_size)
         {
             // Requested color is outside of chunk range, update the current chunk
             let new_chunk_index = self
@@ -70,6 +83,13 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
                 - 1;
 
             self.current_chunk = self.colors_index.pairs[new_chunk_index];
+            self.current_chunk_size = self
+                .colors_index
+                .pairs
+                .get(new_chunk_index + 1)
+                .map(|p| p.start_index)
+                .unwrap_or(self.colors_index.subsets_count as ColorIndexType)
+                - self.current_chunk.start_index;
             self.current_index = self.current_chunk.start_index;
 
             replace_with_or_abort(&mut self.colormap_file, |colormap_file| {
@@ -95,5 +115,11 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
         // Decode the requested color
         DS::decode_color(&mut self.colormap_file, Some(out_vec));
         self.current_index += 1;
+    }
+}
+
+impl<DS: ColorsSerializerTrait> ColorMapReader for ColorsDeserializer<DS> {
+    fn colors_count(&self) -> u64 {
+        self.colors_index.subsets_count as u64
     }
 }

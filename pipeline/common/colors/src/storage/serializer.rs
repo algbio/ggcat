@@ -29,13 +29,13 @@ pub(crate) struct ColorsFileHeader {
 #[derive(Clone, Copy, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
 pub struct ColorsIndexEntry {
     pub start_index: ColorIndexType,
-    pub stride: ColorIndexType,
     pub file_offset: u64,
 }
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct ColorsIndexMap {
     pub pairs: Vec<ColorsIndexEntry>,
+    pub subsets_count: u64,
 }
 
 pub struct ColorsSerializer<SI: ColorsSerializerTrait> {
@@ -68,7 +68,10 @@ impl<SI: ColorsSerializerTrait> ColorsSerializer<SI> {
         let color_processor = ColorsFlushProcessing {
             colormap_file: Mutex::new((
                 BufWriter::new(colormap_file),
-                ColorsIndexMap { pairs: vec![] },
+                ColorsIndexMap {
+                    pairs: vec![],
+                    subsets_count: 0,
+                },
             )),
             offset: AtomicU64::new(file_offset),
             uncompressed_size: AtomicU64::new(0),
@@ -109,6 +112,7 @@ impl<SI: ColorsSerializerTrait> Drop for ColorsSerializer<SI> {
         let mut colors_lock = chunks_writer.colormap_file.lock();
         let (colors_file, index_map) = colors_lock.deref_mut();
         index_map.pairs.sort();
+        index_map.subsets_count = subsets_count;
 
         colors_file.flush().unwrap();
 
@@ -188,12 +192,7 @@ impl ChunksWriter for ColorsFlushProcessing {
         }
     }
 
-    fn end_processing(
-        &self,
-        tmp_data: Self::ProcessingData,
-        start_index: ColorIndexType,
-        stride: ColorIndexType,
-    ) {
+    fn end_processing(&self, tmp_data: Self::ProcessingData, start_index: ColorIndexType) {
         let mut file_lock = self.colormap_file.lock();
 
         self.uncompressed_size
@@ -207,7 +206,6 @@ impl ChunksWriter for ColorsFlushProcessing {
         file_lock.0.write_all(data.as_slice()).unwrap();
         file_lock.1.pairs.push(ColorsIndexEntry {
             start_index,
-            stride,
             file_offset,
         });
     }
