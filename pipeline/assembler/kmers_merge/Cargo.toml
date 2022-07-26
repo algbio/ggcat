@@ -29,9 +29,9 @@ assembler_minimizer_bucketing = { path = "../assembler_minimizer_bucketing" }
 
 
 # Other crates
-hashbrown = "0.12.1"
+hashbrown = "0.12.3"
 typenum = "1.15.0"
-crossbeam = "0.8.1"
+crossbeam = "0.8.2"
 
 # Profiler
 instrumenter = { path = "../../../libs/instrumenter-rs" }

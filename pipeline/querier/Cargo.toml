@@ -32,7 +32,7 @@ kmers_transform = { path = "../common/kmers_transform" }
 typenum = "1.15.0"
 rayon = "1.5.3"
 byteorder = "1.4.3"
-hashbrown = "0.12.1"
+hashbrown = "0.12.3"
 csv = "1.1.6"
 parking_lot = "0.12.1"
 lz4 = "1.23.3"
