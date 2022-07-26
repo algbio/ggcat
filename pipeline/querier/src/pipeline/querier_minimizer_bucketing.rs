@@ -1,7 +1,7 @@
 use crate::pipeline::parallel_kmers_query::QueryKmersReferenceData;
 use byteorder::ReadBytesExt;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
-use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
+use colors::colors_manager::{ColorsManager, ColorsParser, MinimizerBucketingSeqColorData};
 use colors::parsers::SingleSequenceInfo;
 use config::BucketIndexType;
 use hashes::rolling::minqueue::RollingMinQueue;
@@ -23,6 +23,7 @@ use std::marker::PhantomData;
 use std::num::NonZeroU64;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
@@ -82,9 +83,13 @@ impl SequenceExtraData for KmersQueryData {
     }
 }
 
+pub struct QuerierMinimizerBucketingGlobalData {
+    pub queries_count: Arc<AtomicUsize>,
+}
+
 pub struct QuerierMinimizerBucketingExecutor<H: MinimizerHashFunctionFactory, CX: ColorsManager> {
     minimizer_queue: RollingMinQueue<H>,
-    global_data: Arc<MinimizerBucketingCommonData<()>>,
+    global_data: Arc<MinimizerBucketingCommonData<QuerierMinimizerBucketingGlobalData>>,
     _phantom: PhantomData<CX>,
 }
 
@@ -96,7 +101,7 @@ pub struct QuerierMinimizerBucketingExecutorFactory<
 impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutorFactory
     for QuerierMinimizerBucketingExecutorFactory<H, CX>
 {
-    type GlobalData = ();
+    type GlobalData = QuerierMinimizerBucketingGlobalData;
     type ExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
     type PreprocessInfo = ReadTypeBuffered<CX>;
     type FileInfo = FileType;
@@ -132,29 +137,55 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
             &mut preprocess_info.colors_buffer.0,
         );
 
-        let color = MinimizerBucketingSeqColorDataType::<CX>::create(
-            SingleSequenceInfo {
-                file_index: 0, // FIXME: Change this to support querying of raw reads
-                sequence_ident: sequence.ident,
-            },
-            &mut preprocess_info.colors_buffer.0,
-        );
-
         preprocess_info.read_type = match file_info {
-            FileType::Graph => ReadType::Graph { color },
-            FileType::Query => ReadType::Query(NonZeroU64::new(read_index + 1).unwrap()),
+            FileType::Graph => {
+                let color = MinimizerBucketingSeqColorDataType::<CX>::create(
+                    SingleSequenceInfo {
+                        file_index: 0, // FIXME: Change this to support querying of raw reads
+                        sequence_ident: sequence.ident,
+                    },
+                    &mut preprocess_info.colors_buffer.0,
+                );
+
+                if color.debug_count() != sequence.seq.len() - self.global_data.k + 1 {
+                    println!(
+                        "WARN: Sequence does not have enough colors, please check matching k size:\n{}\n{}",
+                        std::str::from_utf8(sequence.ident).unwrap(),
+                        std::str::from_utf8(sequence.seq).unwrap()
+                    );
+                }
+
+                ReadType::Graph { color }
+            }
+            FileType::Query => {
+                self.global_data
+                    .global_data
+                    .queries_count
+                    .fetch_add(1, Ordering::Relaxed);
+                ReadType::Query(NonZeroU64::new(read_index + 1).unwrap())
+            }
         }
     }
 
-    // FIXME: Implement
+    // FIXME: Resolve issues
     fn reprocess_sequence(
         &mut self,
         _flags: u8,
-        _extra_data: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-        _extra_data_buffer: &<<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraData>::TempBuffer,
-        _preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        extra_data: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
+        extra_data_buffer: &<<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraData>::TempBuffer,
+        preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
-        todo!()
+        MinimizerBucketingSeqColorDataType::<CX>::copy_temp_buffer(
+            &mut preprocess_info.colors_buffer.0,
+            &extra_data_buffer.0,
+        );
+
+        preprocess_info.read_type = match extra_data {
+            QueryKmersReferenceData::Graph(color) => ReadType::Graph {
+                color: color.clone(),
+            },
+            QueryKmersReferenceData::Query(query) => ReadType::Query(*query),
+        }
     }
 
     fn process_sequence<
@@ -230,20 +261,27 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
     threads_count: usize,
     k: usize,
     m: usize,
-) -> (Vec<PathBuf>, PathBuf) {
+) -> ((Vec<PathBuf>, PathBuf), u64) {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: graph + query bucketing".to_string());
 
     let input_files = vec![(graph_file, FileType::Graph), (query_file, FileType::Query)];
 
-    GenericMinimizerBucketing::do_bucketing::<QuerierMinimizerBucketingExecutorFactory<H, CX>>(
-        input_files,
-        output_path,
-        buckets_count,
-        threads_count,
-        k,
-        m,
-        (),
+    let queries_count = Arc::new(AtomicUsize::new(0));
+
+    (
+        GenericMinimizerBucketing::do_bucketing::<QuerierMinimizerBucketingExecutorFactory<H, CX>>(
+            input_files,
+            output_path,
+            buckets_count,
+            threads_count,
+            k,
+            m,
+            QuerierMinimizerBucketingGlobalData {
+                queries_count: queries_count.clone(),
+            },
+        ),
+        queries_count.load(Ordering::Relaxed) as u64,
     )
 }

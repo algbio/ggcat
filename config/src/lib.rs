@@ -62,6 +62,8 @@ pub const MIN_OUTLIER_SIZE: u64 = 200000;
 pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;
 pub const READ_FLAG_INCL_END: u8 = 1 << 1;
 
+pub const COLORS_SINGLE_BATCH_SIZE: u64 = 20000;
+
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]
 impl SwapPriority {

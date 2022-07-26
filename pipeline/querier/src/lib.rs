@@ -2,6 +2,7 @@
 #![feature(generic_associated_types)]
 #![feature(slice_group_by)]
 #![feature(int_log)]
+#![feature(int_roundings)]
 
 use crate::pipeline::colored_query_output::colored_query_output;
 use crate::pipeline::colormap_reading::colormap_reading;
@@ -14,16 +15,20 @@ use colors::DefaultColorsSerializer;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::{compute_buckets_log_from_input_files, generate_bucket_names};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 mod pipeline;
+mod sparse_fenwick;
 mod structs;
 
 #[derive(Debug, PartialOrd, PartialEq)]
 pub enum QuerierStartingStep {
     MinimizerBucketing = 0,
     KmersCounting = 1,
-    ColorMapReading = 2,
+    CountersSorting = 2,
+    ColorMapReading = 3,
 }
 
 #[static_dispatch(BucketingHash = [
@@ -74,7 +79,7 @@ pub fn run_query<
     });
     let buckets_count = 1 << buckets_count_log;
 
-    let (buckets, counters) = if step <= QuerierStartingStep::MinimizerBucketing {
+    let ((buckets, counters), queries_count) = if step <= QuerierStartingStep::MinimizerBucketing {
         minimizer_bucketing::<BucketingHash, QuerierColorsManager>(
             graph_input.clone(),
             query_input.clone(),
@@ -86,8 +91,17 @@ pub fn run_query<
         )
     } else {
         (
-            generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
-            temp_dir.join("buckets-counters.dat"),
+            (
+                generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
+                temp_dir.join("buckets-counters.dat"),
+            ),
+            {
+                let queries_count = BufReader::new(File::open(&query_input).unwrap())
+                    .lines()
+                    .count() as u64
+                    / 2;
+                queries_count
+            },
         )
     };
 
@@ -107,19 +121,27 @@ pub fn run_query<
 
     let colored_buckets_prefix = temp_dir.join("color_counters");
 
-    let colored_buckets = counters_sorting::<QuerierColorsManager>(
-        k,
-        query_input.clone(),
-        counters_buckets,
-        colored_buckets_prefix,
-        color_map.colors_count(),
-        output_file.clone(),
-    );
+    let colored_buckets = if step <= QuerierStartingStep::CountersSorting {
+        counters_sorting::<QuerierColorsManager>(
+            k,
+            query_input.clone(),
+            counters_buckets,
+            colored_buckets_prefix,
+            color_map.colors_count(),
+            output_file.clone(),
+        )
+    } else {
+        generate_bucket_names(colored_buckets_prefix, buckets_count, None)
+    };
 
     if QuerierColorsManager::COLORS_ENABLED {
         let colormap_file = graph_input.with_extension("colors.dat");
-        let remapped_query_color_buckets =
-            colormap_reading::<DefaultColorsSerializer>(colormap_file, colored_buckets, temp_dir);
+        let remapped_query_color_buckets = colormap_reading::<DefaultColorsSerializer>(
+            colormap_file,
+            colored_buckets,
+            temp_dir,
+            queries_count,
+        );
 
         colored_query_output::<QuerierColorsManager>(
             query_input,

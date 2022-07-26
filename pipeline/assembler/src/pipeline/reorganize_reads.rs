@@ -66,6 +66,10 @@ impl<CX: SequenceExtraData> SequenceExtraDataTempBufferManagement<ReorganizedRea
         CX::clear_temp_buffer(&mut buffer.0)
     }
 
+    fn copy_temp_buffer(dest: &mut ReorganizedReadsBuffer<CX>, src: &ReorganizedReadsBuffer<CX>) {
+        CX::copy_temp_buffer(&mut dest.0, &src.0)
+    }
+
     #[inline(always)]
     fn copy_extra_from(
         extra: Self,

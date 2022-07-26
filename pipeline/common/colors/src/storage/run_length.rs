@@ -28,7 +28,7 @@ impl ColorIndexSerializer {
 
                 if current_diff == next_diff {
                     if !encode_2order {
-                        // Second order encoding saves space only if there are at least
+                        // Second order encoding saves space only if there are at least 2 consecutive elements
                         if i + 2 < colors.len() && (colors[i + 2] - colors[i + 1] == current_diff) {
                             encode_varint(|b| writer.write_all(b), 1).unwrap();
                             encode_2order_count = 2;
@@ -62,16 +62,16 @@ impl ColorIndexSerializer {
     pub fn deserialize_colors_diffs(
         mut reader: impl Read,
         mut add_color: impl FnMut(ColorIndexType),
-    ) {
-        add_color((decode_varint(|| reader.read_u8().ok()).unwrap() - 2) as ColorIndexType);
+    ) -> Option<()> {
+        add_color((decode_varint(|| reader.read_u8().ok())? - 2) as ColorIndexType);
         loop {
-            let result = decode_varint(|| reader.read_u8().ok()).unwrap() as ColorIndexType;
+            let result = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
             if result == 0 {
                 break;
             } else if result == 1 {
                 // 2nd order encoding
-                let value = decode_varint(|| reader.read_u8().ok()).unwrap() as ColorIndexType;
-                let count = decode_varint(|| reader.read_u8().ok()).unwrap() as ColorIndexType;
+                let value = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
+                let count = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
 
                 for _ in 0..count {
                     add_color(value);
@@ -80,18 +80,20 @@ impl ColorIndexSerializer {
                 add_color(result - 1);
             }
         }
+        Some(())
     }
 
-    pub fn deserialize_colors(reader: impl Read, colors: &mut Vec<ColorIndexType>) {
+    pub fn deserialize_colors(reader: impl Read, colors: &mut Vec<ColorIndexType>) -> Option<()> {
         colors.clear();
 
-        Self::deserialize_colors_diffs(reader, |c| colors.push(c));
+        Self::deserialize_colors_diffs(reader, |c| colors.push(c))?;
 
         let mut last_color = colors[0];
         for i in 1..colors.len() {
             colors[i] += last_color;
             last_color = colors[i];
         }
+        Some(())
     }
 }
 

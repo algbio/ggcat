@@ -1,3 +1,4 @@
+#![allow(warnings)]
 use crate::storage::serializer::ColorsFlushProcessing;
 use crate::storage::ColorsSerializerTrait;
 use config::ColorIndexType;
@@ -23,6 +24,7 @@ impl RoaringBitmapInstance {
         offset: ColorIndexType,
         stride: ColorIndexType,
     ) -> Self {
+        todo!("Fix meaning of 'stride'!");
         Self {
             bitmap: RoaringBitmap::new(),
             offset,
@@ -94,6 +96,7 @@ impl ColorsSerializerTrait for RoaringColorsSerializer {
     }
 
     fn new(writer: ColorsFlushProcessing, checkpoint_distance: usize, colors_count: u64) -> Self {
+        todo!("Fix meaning of 'stride'!");
         let stride = rayon::current_num_threads() as ColorIndexType;
 
         Self {

@@ -34,6 +34,9 @@ rayon = "1.5.3"
 byteorder = "1.4.3"
 hashbrown = "0.12.1"
 csv = "1.1.6"
+parking_lot = "0.12.1"
+lz4 = "1.23.3"
+flate2 = "1.0.24"
 
 [features]
 devel-build = []

@@ -4,6 +4,7 @@ use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use static_dispatch::static_dispatch;
+use std::cmp::min;
 use std::hash::Hash;
 use std::io::Write;
 use std::ops::Range;
@@ -53,6 +54,10 @@ pub trait MinimizerBucketingSeqColorData:
     fn create(file_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self;
     fn get_iterator<'a>(&'a self, buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator<'a>;
     fn get_subslice(&self, range: Range<usize>) -> Self;
+
+    fn debug_count(&self) -> usize {
+        0
+    }
 }
 
 pub trait ColorMapReader {
@@ -191,6 +196,21 @@ pub trait ColorsManager: 'static + Sync + Send + Sized {
         + Sync
         + Send
         + 'static;
+
+    #[inline(always)]
+    fn get_bucket_from_u64_color(
+        color: u64,
+        colors_count: u64,
+        buckets_count_log: u32,
+        stride: u64,
+    ) -> BucketIndexType {
+        let colors_count = colors_count.div_ceil(stride) * stride;
+
+        min(
+            (1 << buckets_count_log) - 1,
+            color * (1 << buckets_count_log) / colors_count,
+        ) as BucketIndexType
+    }
 
     fn get_bucket_from_color(
         color: &Self::SingleKmerColorDataType,

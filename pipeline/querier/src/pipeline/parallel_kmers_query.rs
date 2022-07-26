@@ -1,5 +1,7 @@
 use crate::pipeline::counters_sorting::CounterEntry;
-use crate::pipeline::querier_minimizer_bucketing::QuerierMinimizerBucketingExecutorFactory;
+use crate::pipeline::querier_minimizer_bucketing::{
+    QuerierMinimizerBucketingExecutorFactory, QuerierMinimizerBucketingGlobalData,
+};
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use colors::colors_manager::color_types::{
     MinimizerBucketingSeqColorDataType, SingleKmerColorDataType,
@@ -59,6 +61,10 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataTempBufferManagement<(
         CX::clear_temp_buffer(&mut buffer.0);
     }
 
+    fn copy_temp_buffer(dest: &mut (CX::TempBuffer,), src: &(CX::TempBuffer,)) {
+        CX::copy_temp_buffer(&mut dest.0, &src.0);
+    }
+
     #[inline(always)]
     fn copy_extra_from(extra: Self, src: &(CX::TempBuffer,), dst: &mut (CX::TempBuffer,)) -> Self {
         match extra {
@@ -110,7 +116,7 @@ struct GlobalQueryMergeData {
     k: usize,
     m: usize,
     counters_buckets: Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
-    global_resplit_data: Arc<MinimizerBucketingCommonData<()>>,
+    global_resplit_data: Arc<MinimizerBucketingCommonData<QuerierMinimizerBucketingGlobalData>>,
 }
 
 struct ParallelKmersQueryFactory<
@@ -398,7 +404,9 @@ pub fn parallel_kmers_counting<
             }, // m
             buckets_count,
             1,
-            (),
+            QuerierMinimizerBucketingGlobalData {
+                queries_count: Default::default(),
+            },
         )),
     });
 

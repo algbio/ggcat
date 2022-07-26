@@ -1,10 +1,9 @@
 use crate::colors_manager::ColorsManager;
 use crate::managers::single::SingleColorManager;
 use crate::parsers::graph::GraphColorsParser;
-use config::{BucketIndexType, ColorIndexType};
+use config::{BucketIndexType, ColorIndexType, COLORS_SINGLE_BATCH_SIZE};
 use hashes::HashFunctionFactory;
 use static_dispatch::static_dispatch;
-use std::cmp::min;
 
 #[derive(Copy, Clone)]
 pub struct ColorBundleGraphQuerying;
@@ -20,10 +19,12 @@ impl ColorsManager for ColorBundleGraphQuerying {
         colors_count: u64,
         buckets_count_log: u32,
     ) -> BucketIndexType {
-        min(
-            (1 << buckets_count_log) - 1,
-            *color as u64 * (1 << buckets_count_log) / colors_count,
-        ) as BucketIndexType
+        Self::get_bucket_from_u64_color(
+            *color as u64,
+            colors_count,
+            buckets_count_log,
+            COLORS_SINGLE_BATCH_SIZE,
+        )
     }
 
     type ColorsParserType = GraphColorsParser;

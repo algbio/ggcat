@@ -163,6 +163,11 @@ impl SequenceExtraDataTempBufferManagement<UnitigsSerializerTempBuffer>
         buffer.colors.clear();
     }
 
+    fn copy_temp_buffer(dest: &mut UnitigsSerializerTempBuffer, src: &UnitigsSerializerTempBuffer) {
+        dest.colors.clear();
+        dest.colors.extend_from_slice(&src.colors);
+    }
+
     fn copy_extra_from(
         extra: Self,
         src: &UnitigsSerializerTempBuffer,

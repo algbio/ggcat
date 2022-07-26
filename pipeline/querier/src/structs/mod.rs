@@ -1,1 +1,1 @@
-mod query_colored_counters;
+pub mod query_colored_counters;

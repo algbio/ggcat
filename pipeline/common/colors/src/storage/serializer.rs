@@ -1,6 +1,6 @@
 use crate::storage::ColorsSerializerTrait;
-use config::ColorIndexType;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
+use config::{ColorIndexType, COLORS_SINGLE_BATCH_SIZE};
 use desse::{Desse, DesseSized};
 use io::chunks_writer::ChunksWriter;
 use parking_lot::Mutex;
@@ -13,7 +13,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const STORAGE_VERSION: u64 = 1;
-const CHECKPOINT_DISTANCE: usize = 20000;
 
 #[derive(Debug, Desse, DesseSized, Default)]
 pub(crate) struct ColorsFileHeader {
@@ -83,7 +82,7 @@ impl<SI: ColorsSerializerTrait> ColorsSerializer<SI> {
             colors_count,
             serializer_impl: ManuallyDrop::new(SI::new(
                 color_processor,
-                CHECKPOINT_DISTANCE,
+                COLORS_SINGLE_BATCH_SIZE as usize,
                 colors_count,
             )),
         }

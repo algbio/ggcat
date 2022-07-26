@@ -1,8 +1,9 @@
 use crate::pipeline::counters_sorting::CounterEntry;
+use crate::structs::query_colored_counters::{ColorsRange, QueryColorDesc, QueryColoredCounters};
 use colors::storage::deserializer::ColorsDeserializer;
 use colors::storage::ColorsSerializerTrait;
 use config::{
-    get_memory_mode, ColorIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
+    get_memory_mode, BucketIndexType, ColorIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
     DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
 };
@@ -17,6 +18,8 @@ use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::prelude::*;
+use std::borrow::Cow;
+use std::cmp::min;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -25,6 +28,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
     colormap_file: PathBuf,
     colored_query_buckets: Vec<PathBuf>,
     temp_dir: PathBuf,
+    queries_count: u64,
 ) -> Vec<PathBuf> {
     PHASES_TIMES_MONITOR
         .write()
@@ -50,9 +54,11 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
     colored_query_buckets.par_iter().for_each(|input| {
         let mut colormap_decoder = ColorsDeserializer::<CD>::new(&colormap_file);
         let mut temp_colors_buffer = Vec::new();
+        let mut temp_queries_buffer = Vec::new();
+        let mut temp_encoded_buffer = Vec::new();
 
         let mut thread_buffer = thread_buffers.get();
-        let colored_buckets_writer =
+        let mut colored_buckets_writer =
             BucketsThreadDispatcher::new(&correct_color_buckets, thread_buffer.take());
 
         let mut counters_vec: Vec<(CounterEntry<ColorIndexType>, ColorIndexType)> = Vec::new();
@@ -91,19 +97,66 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             temp_colors_buffer.clear();
             colormap_decoder.get_color_mappings(color, &mut temp_colors_buffer);
 
-            // TODO: Encode colors here!
-            // for entry in queries_by_color {
-            //     colored_buckets_writer.add_element_extended(
-            //         (entry.0.query_index / 10000) as BucketIndexType, // FIXME!
-            //         &color,
-            //         &temp_colors_buffer,
-            //         &QueryColoredCounters {
-            //             // query_index: entry.0.query_index,
-            //             // counter: entry.0.counter,
-            //             // _phantom: PhantomData,
-            //         },
-            //     );
-            // }
+            {
+                temp_encoded_buffer.clear();
+                let mut range_start = ColorIndexType::MAX;
+                let mut range_end = ColorIndexType::MAX;
+
+                for color in temp_colors_buffer.iter().copied() {
+                    // Different range
+                    if color != range_end {
+                        if range_start != ColorIndexType::MAX {
+                            ColorsRange::Range(range_start..range_end)
+                                .write_to_vec(&mut temp_encoded_buffer);
+                        }
+                        range_start = color;
+                    }
+                    range_end = color + 1;
+                }
+                ColorsRange::Range(range_start..range_end).write_to_vec(&mut temp_encoded_buffer);
+            }
+
+            {
+                temp_queries_buffer.clear();
+                temp_queries_buffer.extend(queries_by_color.iter().map(|q| QueryColorDesc {
+                    query_index: q.0.query_index,
+                    count: q.0.counter,
+                }));
+
+                temp_queries_buffer.sort_unstable_by_key(|c| c.query_index);
+            }
+
+            // println!(
+            //     " Queries: {:?} Colors: {:?} Compressed: {:?}",
+            //     queries_by_color.iter().map(|q| &q.0).collect::<Vec<_>>(),
+            //     temp_colors_buffer,
+            //     temp_encoded_buffer
+            // );
+
+            const QUERIES_COUNT_MIN_BATCH: u64 = 1000;
+            let rounded_queries_count =
+                queries_count.div_ceil(QUERIES_COUNT_MIN_BATCH) * QUERIES_COUNT_MIN_BATCH;
+
+            let get_query_bucket = |query_index: u64| {
+                min(
+                    buckets_count as u64 - 1,
+                    query_index * (buckets_count as u64) / rounded_queries_count,
+                ) as BucketIndexType
+            };
+
+            for entries in temp_queries_buffer
+                .group_by(|a, b| get_query_bucket(a.query_index) == get_query_bucket(b.query_index))
+            {
+                let bucket = get_query_bucket(entries[0].query_index);
+                colored_buckets_writer.add_element(
+                    bucket,
+                    &(),
+                    &QueryColoredCounters {
+                        queries: entries,
+                        colors: &temp_encoded_buffer,
+                    },
+                );
+            }
         }
         thread_buffer.put_back(colored_buckets_writer.finalize().0);
     });

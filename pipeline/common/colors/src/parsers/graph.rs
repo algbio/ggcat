@@ -68,6 +68,14 @@ impl SequenceExtraDataTempBufferManagement<Vec<(usize, ColorIndexType)>> for Min
         buffer.clear();
     }
 
+    fn copy_temp_buffer(
+        dest: &mut Vec<(usize, ColorIndexType)>,
+        src: &Vec<(usize, ColorIndexType)>,
+    ) {
+        dest.clear();
+        dest.extend_from_slice(&src);
+    }
+
     fn copy_extra_from(
         extra: Self,
         src: &Vec<(usize, ColorIndexType)>,
@@ -170,6 +178,9 @@ fn parse_colors(ident: &[u8], colors_buffer: &mut Vec<(usize, ColorIndexType)>) 
         colors_buffer.push((kmers_count, color_index));
         colors_count += kmers_count
     }
+    if colors_count == 0 {
+        println!("Warn: 0 colors for {:?}", std::str::from_utf8(ident));
+    }
     start_pos..colors_count
 }
 
@@ -192,12 +203,21 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
     }
 
     fn get_subslice(&self, range: Range<usize>) -> Self {
-        assert!(self.colors_slice.len() >= range.end);
+        assert!(
+            self.colors_slice.len() >= range.end,
+            "{} >= {}",
+            self.colors_slice.len(),
+            range.end
+        );
         let start = self.colors_slice.start + range.start;
         let end = self.colors_slice.start + range.end;
         Self {
             colors_slice: start..end,
         }
+    }
+
+    fn debug_count(&self) -> usize {
+        self.colors_slice.len()
     }
 }
 

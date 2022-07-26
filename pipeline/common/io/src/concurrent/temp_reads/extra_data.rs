@@ -31,6 +31,7 @@ impl Read for PointerDecoder {
 pub trait SequenceExtraDataTempBufferManagement<T> {
     fn new_temp_buffer() -> T;
     fn clear_temp_buffer(buffer: &mut T);
+    fn copy_temp_buffer(dest: &mut T, src: &T);
 
     fn copy_extra_from(extra: Self, src: &T, dst: &mut T) -> Self;
 }
@@ -43,6 +44,8 @@ impl<T: SequenceExtraData<TempBuffer = ()>> SequenceExtraDataTempBufferManagemen
 
     #[inline(always)]
     fn clear_temp_buffer(_buffer: &mut ()) {}
+
+    fn copy_temp_buffer(_dest: &mut (), _src: &()) {}
 
     #[inline(always)]
     fn copy_extra_from(extra: Self, _src: &(), _dst: &mut ()) -> Self {

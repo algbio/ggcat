@@ -75,6 +75,14 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
         if target_color < self.current_index
             || target_color >= (self.current_chunk.start_index + self.current_chunk_size)
         {
+            println!(
+                "Changing chunk {} < {} || {} >= {} + {}!",
+                target_color,
+                self.current_index,
+                target_color,
+                self.current_chunk.start_index,
+                self.current_chunk_size
+            );
             // Requested color is outside of chunk range, update the current chunk
             let new_chunk_index = self
                 .colors_index
