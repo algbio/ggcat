@@ -86,7 +86,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 
         let k = global_data.k;
         let buckets_count = global_data.buckets_count;
-        let buckets_count_bits = buckets_count.log2() as usize;
+        let buckets_count_bits = buckets_count.ilog2() as usize;
 
         let current_bucket = self.current_bucket.as_mut().unwrap();
         let bucket_index = current_bucket.get_bucket_index();

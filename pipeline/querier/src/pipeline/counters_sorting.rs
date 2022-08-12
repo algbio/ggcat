@@ -129,7 +129,7 @@ pub fn counters_sorting<CX: ColorsManager>(
         }
     });
 
-    let buckets_count_log = buckets_count.log2();
+    let buckets_count_log = buckets_count.ilog2();
 
     file_counters_inputs.par_iter().for_each(|input| {
 

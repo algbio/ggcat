@@ -62,7 +62,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                 init_data.bucket_size / (global_context.min_bucket_size as usize),
             )
             .next_power_of_two()
-            .log2() as usize,
+            .ilog2() as usize,
         );
 
         let buckets = Arc::new(MultiThreadBuckets::new(

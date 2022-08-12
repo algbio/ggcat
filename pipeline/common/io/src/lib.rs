@@ -78,7 +78,7 @@ pub fn compute_buckets_log_from_input_files(files: &[PathBuf]) -> usize {
 
     let buckets_count = bases_count / MAX_BUCKET_SIZE;
 
-    let buckets_log = (max(1, buckets_count) - 1).next_power_of_two().log2() as usize;
+    let buckets_log = (max(1, buckets_count) - 1).next_power_of_two().ilog2() as usize;
 
     min(
         MAX_BUCKETS_COUNT_LOG,

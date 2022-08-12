@@ -158,9 +158,9 @@ impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
             k,
             m,
             buckets_count,
-            buckets_count_bits: buckets_count.log2() as usize,
+            buckets_count_bits: buckets_count.ilog2() as usize,
             max_second_buckets_count,
-            max_second_buckets_count_bits: max_second_buckets_count.log2() as usize,
+            max_second_buckets_count_bits: max_second_buckets_count.ilog2() as usize,
             global_counters: (0..buckets_count)
                 .into_iter()
                 .map(|_| {
@@ -203,7 +203,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
         context: &MinimizerBucketingExecutionContext<E::GlobalData>,
         ops: &ExecutorAddressOperations<'_, Self>,
     ) {
-        let counters_log = context.common.max_second_buckets_count.log2();
+        let counters_log = context.common.max_second_buckets_count.ilog2();
         let mut counters: Vec<u8> =
             vec![0; context.common.max_second_buckets_count * context.common.buckets_count];
 

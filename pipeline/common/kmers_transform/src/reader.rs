@@ -118,7 +118,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         file: Packet<InputBucketDesc>,
     ) -> BucketsInfo {
         let second_buckets_log_max = min(
-            file.sub_bucket_counters.len().log2() as usize,
+            file.sub_bucket_counters.len().ilog2() as usize,
             global_context.max_second_buckets_count_log2,
         );
 
@@ -234,7 +234,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                         writer,
                         AtomicU64::new(0),
                         RewriterInitData {
-                            buckets_hash_bits: second_buckets_max.log2() as usize,
+                            buckets_hash_bits: second_buckets_max.ilog2() as usize,
                             used_hash_bits: file.used_hash_bits,
                         },
                     ))

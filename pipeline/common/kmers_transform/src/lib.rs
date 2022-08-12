@@ -225,13 +225,13 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     sub_bucket_counters: counters.get_counters_for_bucket(bucket_index).clone(),
                     resplitted: false,
                     rewritten: false,
-                    used_hash_bits: buckets_count.log2() as usize,
+                    used_hash_bits: buckets_count.ilog2() as usize,
                 })
             }
             buckets_list
         };
 
-        let read_threads_count = max(1, threads_count / 3);
+        let read_threads_count = max(1, threads_count / 4 * 3);
 
         let execution_context = Arc::new(KmersTransformContext {
             k,
@@ -247,7 +247,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             compute_threads_count: max(1, threads_count),
             read_threads_count,
             global_extra_data,
-            max_second_buckets_count_log2: MAXIMUM_SECOND_BUCKETS_COUNT.log2() as usize,
+            max_second_buckets_count_log2: MAXIMUM_SECOND_BUCKETS_COUNT.ilog2() as usize,
             temp_dir: temp_dir.to_path_buf(),
             reader_init_lock: tokio::sync::Mutex::new(()),
         });
