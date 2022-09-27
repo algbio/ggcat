@@ -1,6 +1,5 @@
 #![feature(int_log)]
 #![feature(type_alias_impl_trait)]
-#![feature(generic_associated_types)]
 
 pub mod counters_analyzer;
 mod queue_data;

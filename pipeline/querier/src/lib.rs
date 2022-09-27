@@ -1,5 +1,4 @@
 #![allow(warnings)] // FIXME: Remove
-#![feature(generic_associated_types)]
 #![feature(slice_group_by)]
 #![feature(int_log)]
 #![feature(int_roundings)]

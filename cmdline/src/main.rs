@@ -1,7 +1,6 @@
 #![feature(type_alias_impl_trait)]
 #![feature(is_sorted, thread_local, panic_info_message)]
 #![feature(slice_group_by)]
-#![feature(generic_associated_types)]
 #![feature(trait_alias)]
 #![feature(test)]
 #![feature(slice_partition_dedup)]

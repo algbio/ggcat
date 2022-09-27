@@ -1,6 +1,5 @@
 #![feature(int_log)]
 #![feature(type_alias_impl_trait)]
-#![feature(generic_associated_types)]
 #![feature(drain_filter)]
 
 mod reader;

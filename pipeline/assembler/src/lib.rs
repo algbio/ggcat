@@ -1,4 +1,3 @@
-#![feature(generic_associated_types)]
 #![feature(slice_group_by)]
 
 use crate::pipeline::build_unitigs::build_unitigs;

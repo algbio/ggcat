@@ -1,4 +1,3 @@
-#![feature(generic_associated_types)]
 #![feature(int_log)]
 
 use config::{BucketIndexType, MAX_BUCKETS_COUNT_LOG, MAX_BUCKET_SIZE, MIN_BUCKETS_COUNT_LOG};

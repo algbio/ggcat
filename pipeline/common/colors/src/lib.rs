@@ -1,4 +1,3 @@
-#![feature(generic_associated_types)]
 #![feature(thread_local)]
 #![feature(new_uninit)]
 #![feature(slice_partition_dedup)]

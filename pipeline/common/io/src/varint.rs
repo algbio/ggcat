@@ -6,6 +6,7 @@ pub const VARINT_MAX_SIZE: usize = 9;
 #[inline(always)]
 #[allow(clippy::uninit_assumed_init)]
 pub fn encode_varint<T>(write_bytes: impl FnOnce(&[u8]) -> T, mut value: u64) -> T {
+    #[allow(invalid_value)]
     let mut bytes: [u8; VARINT_MAX_SIZE] = unsafe { MaybeUninit::uninit().assume_init() };
     let mut index = 0;
     while index < bytes.len() {
@@ -28,6 +29,7 @@ pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, FLAGS_COUNT: typenum::Unsig
     mut value: u64,
     flags: u8,
 ) -> T {
+    #[allow(invalid_value)]
     let mut bytes: [u8; VARINT_FLAGS_MAX_SIZE] = unsafe { MaybeUninit::uninit().assume_init() };
 
     let useful_first_bits: usize = 8 - FLAGS_COUNT::to_usize();

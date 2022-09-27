@@ -1,8 +1,8 @@
-#![feature(is_sorted, generic_associated_types, int_log, trait_alias)]
+#![feature(is_sorted, int_log, trait_alias)]
 #![feature(drain_filter)]
 #![feature(map_first_last)]
 #![cfg_attr(test, feature(type_alias_impl_trait))]
-#![feature(core_intrinsics)]
+// #![feature(core_intrinsics)]
 // #![deny(warnings)]
 
 #[macro_use]
