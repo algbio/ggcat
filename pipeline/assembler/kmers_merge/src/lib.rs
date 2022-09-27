@@ -141,6 +141,9 @@ pub fn kmers_merge<
         .write()
         .start_phase("phase: kmers merge".to_string());
 
+    H::initialize(k);
+    MH::initialize(k);
+
     let hashes_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
         buckets_count,
         out_directory.as_ref().join("hashes"),

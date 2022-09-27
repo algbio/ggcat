@@ -215,6 +215,8 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
     k: usize,
     m: usize,
 ) -> (Vec<PathBuf>, PathBuf) {
+    H::initialize(k);
+
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: reads bucketing".to_string());

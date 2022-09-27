@@ -69,6 +69,9 @@ pub fn run_query<
 ) {
     PHASES_TIMES_MONITOR.write().init();
 
+    BucketingHash::initialize(k);
+    MergingHash::initialize(k);
+
     let color_map = QuerierColorsManager::ColorsMergeManagerType::<MergingHash>::open_colors_table(
         graph_input.with_extension("colors.dat"),
     );
