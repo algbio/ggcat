@@ -39,7 +39,7 @@ parking_lot = "0.12.1"
 fs_extra = "1.2.0"
 rayon = "1.5.3"
 hashbrown = "0.12.3"
-itertools = "0.10.3"
+itertools = "0.10.5"
 byteorder = "1.4.3"
 
 [features]

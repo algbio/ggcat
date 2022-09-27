@@ -14,21 +14,21 @@ required-features = ["analyzer"]
 
 [dependencies]
 instrumenter-derive = { path = "instrumenter-derive-rs" }
-dashmap = "5.3.4"
+dashmap = "5.4.0"
 parking_lot = "0.12.1"
 thread_local = "1.1.4"
 
 # Tracing libraries
-tracing = { version = "0.1.35", optional = true }
-libc = { version = "0.2.126", optional = true }
+tracing = { version = "0.1.36", optional = true }
+libc = { version = "0.2.133", optional = true }
 papi = { path = "libs/papi-rs", optional = true }
-serde = { version = "1.0.140", features = ["serde_derive"], optional = true }
-serde_json = { version = "1.0.82", optional = true }
+serde = { version = "1.0.145", features = ["serde_derive"], optional = true }
+serde_json = { version = "1.0.85", optional = true }
 
 # Analyzer libraries
 human_format = { version = "1.0.3", optional = true }
 structopt = { version = "0.3.26", optional = true }
-plotters = { version = "0.3.2", optional = true }
+plotters = { version = "0.3.4", optional = true }
 
 [features]
 # Enabled triggers

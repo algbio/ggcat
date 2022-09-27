@@ -9,8 +9,8 @@ edition = "2021"
 name = "hashes"
 
 [dependencies]
-serde = "1.0.140"
-ahash = "0.7.6"
+serde = "1.0.145"
+ahash = "0.8.0"
 
 # Config
 config = { path = "../../../config" }
