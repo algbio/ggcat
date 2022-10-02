@@ -503,7 +503,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
                     let buckets_info = &buckets_info;
                     let packets_pool = address
                         .pool_alloc_await(max(
-                            global_context.max_buckets,
+                            global_context.max_buckets / 2,
                             2 * buckets_info.addresses.len(),
                         ))
                         .await;

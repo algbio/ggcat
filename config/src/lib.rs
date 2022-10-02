@@ -20,7 +20,7 @@ pub const PACKETS_PRIORITY_FILES: usize = 1;
 pub const READ_INTERMEDIATE_CHUNKS_SIZE: usize = 1024 * 512 * 1;
 pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(4);
 
-pub const KMERS_TRANSFORM_READS_CHUNKS_SIZE: usize = 1024 * 48;
+pub const KMERS_TRANSFORM_READS_CHUNKS_SIZE: usize = 1024 * 24;
 
 /// 2MB read file prefetch
 pub const DEFAULT_PREFETCH_AMOUNT: Option<usize> = Some(1024 * 1024 * 2);
