@@ -297,7 +297,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         let bucket_readers = disk_thread_pool.register_executors::<KmersTransformReader<F>>(
             read_threads_count,
             PoolAllocMode::Distinct {
-                capacity: self.global_context.max_buckets,
+                capacity: 2 * self.global_context.max_buckets,
             },
             max(
                 16,

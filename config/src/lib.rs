@@ -52,7 +52,7 @@ pub const USE_SECOND_BUCKET: bool = false;
 
 pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 10;
 
-pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 512;
+pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 368;
 pub const MAXIMUM_SECOND_BUCKETS_COUNT: usize = 256;
 pub const MAXIMUM_JIT_PROCESSED_BUCKETS: usize = 16;
 

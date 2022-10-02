@@ -488,9 +488,6 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
                 }
 
                 let mut spawner = address.make_spawner();
-                let packets_pool = address
-                    .pool_alloc_await((buckets_info.concurrency + 1) * buckets_info.addresses.len())
-                    .await;
 
                 // println!(
                 //     "Reading with concurrency: {} and max buckets: {} with addrs: {}",
@@ -504,7 +501,9 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
 
                     let address = &address;
                     let buckets_info = &buckets_info;
-                    let packets_pool = packets_pool.clone();
+                    let packets_pool = address
+                        .pool_alloc_await(2 * buckets_info.addresses.len())
+                        .await;
 
                     spawner.spawn_executor(async move {
                         Self::read_bucket(
