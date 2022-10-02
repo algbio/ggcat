@@ -25,7 +25,7 @@ use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInp
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
