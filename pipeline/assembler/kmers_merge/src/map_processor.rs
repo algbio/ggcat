@@ -185,6 +185,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                         CX::ColorsMergeManagerType::<MH>::new_color_index(),
                     ));
 
+
                 entry.update_flags(
                     ((begin_ignored as u8) << ((!is_forward) as u8))
                         | ((end_ignored as u8) << (is_forward as u8)),

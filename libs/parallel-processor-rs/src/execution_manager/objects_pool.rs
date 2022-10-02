@@ -1,4 +1,5 @@
 use crate::execution_manager::async_channel::AsyncChannel;
+use std::cmp::max;
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,6 +28,7 @@ pub struct ObjectsPool<T: Sync + Send + 'static> {
     pub(crate) returner: Arc<(AsyncChannel<T>, AtomicU64)>,
     allocate_fn: Box<dyn (Fn() -> T) + Sync + Send>,
     max_count: u64,
+    temp_max_count: AtomicU64,
 }
 
 pub trait PoolReturner<T: Send + Sync>: Send + Sync {
@@ -50,7 +52,13 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
             returner: Arc::new((channel, AtomicU64::new(0))),
             allocate_fn: Box::new(move || T::allocate_new(&init_data)),
             max_count: cap as u64,
+            temp_max_count: AtomicU64::new(0),
         }
+    }
+
+    pub fn set_size(&self, new_size: usize) {
+        self.temp_max_count
+            .store(new_size as u64, Ordering::Relaxed);
     }
 
     #[inline(always)]
@@ -66,7 +74,7 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
     pub async fn alloc_object(&self) -> PoolObject<T> {
         let el_count = self.returner.1.fetch_add(1, Ordering::Relaxed);
 
-        if el_count >= self.max_count {
+        if el_count >= max(self.max_count, self.temp_max_count.load(Ordering::Relaxed)) {
             return PoolObject::from_element(self.alloc_wait().await.unwrap(), self);
         }
 
@@ -79,7 +87,7 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
     pub fn alloc_object_blocking(&self) -> PoolObject<T> {
         let el_count = self.returner.1.fetch_add(1, Ordering::Relaxed);
 
-        if el_count >= self.max_count {
+        if el_count >= max(self.max_count, self.temp_max_count.load(Ordering::Relaxed)) {
             return PoolObject::from_element(self.alloc_wait_blocking().unwrap(), self);
         }
 
@@ -98,7 +106,8 @@ impl<T: PoolObjectTrait> ObjectsPool<T> {
     }
 
     pub fn get_available_items(&self) -> i64 {
-        (self.max_count as i64) - (self.returner.1.load(Ordering::Relaxed) as i64)
+        (max(self.max_count, self.temp_max_count.load(Ordering::Relaxed)) as i64)
+            - (self.returner.1.load(Ordering::Relaxed) as i64)
     }
 
     pub fn get_allocated_items(&self) -> i64 {

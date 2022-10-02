@@ -89,6 +89,10 @@ impl<T: PacketTrait> PacketsPool<T> {
         packet
     }
 
+    pub fn set_size(&self, new_size: usize) {
+        self.objects_pool.set_size(new_size);
+    }
+
     pub fn alloc_packet_blocking(&self) -> Packet<T> {
         let mut object = self.objects_pool.alloc_object_blocking();
 

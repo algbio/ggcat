@@ -45,7 +45,9 @@ impl FileWriter {
         }
 
         unsafe {
+            let current_buffer_lock = self.current_buffer.read();
             if self.file.get_chunks_count() > 0 {
+                drop(current_buffer_lock);
                 match self.file.get_chunk(0).read().deref() {
                     FileChunk::OnDisk { .. } => {
                         if let UnderlyingFile::WriteMode { file, .. } =
@@ -73,7 +75,7 @@ impl FileWriter {
             } else {
                 std::ptr::copy_nonoverlapping(
                     data.as_ptr(),
-                    self.current_buffer.read().get_mut_ptr(),
+                    current_buffer_lock.get_mut_ptr(),
                     data.len(),
                 );
                 Ok(())

@@ -20,7 +20,7 @@ pub const PACKETS_PRIORITY_FILES: usize = 1;
 pub const READ_INTERMEDIATE_CHUNKS_SIZE: usize = 1024 * 512 * 1;
 pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(4);
 
-pub const KMERS_TRANSFORM_READS_CHUNKS_SIZE: usize = 4 * 1024;
+pub const KMERS_TRANSFORM_READS_CHUNKS_SIZE: usize = 1024 * 32;
 
 /// 2MB read file prefetch
 pub const DEFAULT_PREFETCH_AMOUNT: Option<usize> = Some(1024 * 1024 * 2);
@@ -52,7 +52,7 @@ pub const USE_SECOND_BUCKET: bool = false;
 
 pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 10;
 
-pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 512;
+pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 768;
 pub const MAXIMUM_SECOND_BUCKETS_COUNT: usize = 256;
 pub const MAXIMUM_JIT_PROCESSED_BUCKETS: usize = 16;
 

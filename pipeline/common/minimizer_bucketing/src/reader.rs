@@ -30,7 +30,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
         context: &MinimizerBucketingExecutionContext<GlobalData>,
         ops: &ExecutorAddressOperations<'_, Self>,
     ) {
-        let packets_pool = ops.pool_alloc_await().await;
+        let packets_pool = ops.pool_alloc_await(0).await;
 
         while let Some(input_packet) = ops.receive_packet().await {
             let mut data_packet = packets_pool.alloc_packet().await;

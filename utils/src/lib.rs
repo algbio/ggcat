@@ -25,13 +25,16 @@ macro_rules! panic_debug {
 }
 
 pub fn compute_best_m(k: usize) -> usize {
-    min(
+    let upper_bound = k / 5;
+    let lower_bound = min(
         k - 1,
         max(
             2,
-            (((k as f64).log(2.0) * 2.0).ceil() as usize).next_power_of_two() / 2,
+            (((k as f64).log(2.0) * 2.5).ceil() as usize).next_power_of_two() / 2,
         ),
-    )
+    );
+
+    max(upper_bound, lower_bound)
 }
 
 impl Utils {

@@ -25,7 +25,7 @@ use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInp
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -126,6 +126,7 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     k: usize,
     min_bucket_size: u64,
     buckets_count: usize,
+    max_buckets: usize,
     extra_buckets_count: AtomicUsize,
     rewritten_buckets_count: AtomicUsize,
     processed_buckets_count: AtomicUsize,
@@ -230,12 +231,24 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             buckets_list
         };
 
+        let compute_threads_count = max(1, threads_count);
         let read_threads_count = max(1, threads_count / 4 * 3);
+
+        let max_extra_read_buffers_count =
+            max(MAXIMUM_JIT_PROCESSED_BUCKETS, compute_threads_count) + 1;
+        let max_buckets = max(
+            min(
+                MAXIMUM_JIT_PROCESSED_BUCKETS,
+                1 << MAXIMUM_SECOND_BUCKETS_COUNT.ilog2(),
+            ),
+            max_extra_read_buffers_count,
+        );
 
         let execution_context = Arc::new(KmersTransformContext {
             k,
             min_bucket_size,
             buckets_count,
+            max_buckets,
             extra_buckets_count: AtomicUsize::new(0),
             rewritten_buckets_count: AtomicUsize::new(0),
             processed_buckets_count: AtomicUsize::new(0),
@@ -243,9 +256,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             total_buckets_size,
             processed_buckets_size: AtomicUsize::new(0),
             processed_extra_buckets_size: AtomicUsize::new(0),
-            compute_threads_count: max(1, threads_count),
-            read_threads_count,
             global_extra_data,
+            compute_threads_count,
+            read_threads_count,
             max_second_buckets_count_log2: MAXIMUM_SECOND_BUCKETS_COUNT.ilog2() as usize,
             temp_dir: temp_dir.to_path_buf(),
             reader_init_lock: tokio::sync::Mutex::new(()),
@@ -261,11 +274,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
     }
 
     pub fn parallel_kmers_transform(mut self) {
-        let max_extra_read_buffers_count = max(
-            MAXIMUM_JIT_PROCESSED_BUCKETS,
-            self.global_context.compute_threads_count,
-        ) + 1;
-
         let compute_threads_count = self.global_context.compute_threads_count;
         let read_threads_count = self.global_context.read_threads_count;
 
@@ -289,10 +297,12 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         let bucket_readers = disk_thread_pool.register_executors::<KmersTransformReader<F>>(
             read_threads_count,
             PoolAllocMode::Distinct {
-                capacity: (1 << self.global_context.max_second_buckets_count_log2)
-                    + max_extra_read_buffers_count,
+                capacity: self.global_context.max_buckets,
             },
-            KMERS_TRANSFORM_READS_CHUNKS_SIZE,
+            max(
+                16,
+                KMERS_TRANSFORM_READS_CHUNKS_SIZE / self.global_context.k,
+            ),
             &self.global_context,
         );
 
