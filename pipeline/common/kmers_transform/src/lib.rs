@@ -234,14 +234,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         let compute_threads_count = max(1, threads_count);
         let read_threads_count = max(1, threads_count / 4 * 3);
 
-        let max_extra_read_buffers_count = max(256, compute_threads_count) + 1;
-        let max_buckets = max(
-            min(
-                MAXIMUM_JIT_PROCESSED_BUCKETS,
-                1 << MAXIMUM_SECOND_BUCKETS_COUNT.ilog2(),
-            ),
-            max_extra_read_buffers_count,
-        );
+        let max_buckets = max(MAXIMUM_SECOND_BUCKETS_COUNT, compute_threads_count);
 
         let execution_context = Arc::new(KmersTransformContext {
             k,
