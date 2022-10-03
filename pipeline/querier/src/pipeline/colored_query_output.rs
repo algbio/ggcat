@@ -4,6 +4,7 @@ use config::{DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use flate2::Compression;
 use hashbrown::HashMap;
 use io::get_bucket_index;
+use lz4::{BlockMode, BlockSize, ContentChecksum};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::memory_fs::RemoveFileMode;
@@ -12,8 +13,8 @@ use parking_lot::{Condvar, Mutex};
 use rayon::prelude::*;
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::BufWriter;
 use std::io::Write;
+use std::io::{BufWriter, Cursor};
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -129,6 +130,31 @@ pub fn colored_query_output<CX: ColorsManager>(
 
                 let mut queries_lock = query_output.lock();
 
+                let mut compressed_stream = lz4::EncoderBuilder::new()
+                    .level(1)
+                    .checksum(ContentChecksum::NoChecksum)
+                    .block_mode(BlockMode::Linked)
+                    .block_size(BlockSize::Max1MB)
+                    .build(Vec::new())
+                    .unwrap();
+
+                for (query, result) in results {
+                    write!(compressed_stream, "{}: ", query).unwrap();
+                    let mut query_result = result.into_iter().collect::<Vec<_>>();
+                    query_result.sort_unstable_by_key(|r| r.0);
+
+                    for (i, q) in query_result.into_iter().enumerate() {
+                        if i != 0 {
+                            write!(compressed_stream, ", ").unwrap();
+                        }
+                        write!(compressed_stream, "{}[{}]", q.0, q.1).unwrap();
+                    }
+                    writeln!(compressed_stream).unwrap();
+                }
+
+                let mut decompress_stream =
+                    lz4::Decoder::new(Cursor::new(compressed_stream.finish().0)).unwrap();
+
                 let (queries_file, query_write_index) = {
                     while queries_lock.1 != bucket_index {
                         output_sync_condvar.wait(&mut queries_lock);
@@ -136,19 +162,7 @@ pub fn colored_query_output<CX: ColorsManager>(
                     queries_lock.deref_mut()
                 };
 
-                for (query, result) in results {
-                    write!(queries_file, "{}: ", query).unwrap();
-                    let mut query_result = result.into_iter().collect::<Vec<_>>();
-                    query_result.sort_unstable_by_key(|r| r.0);
-
-                    for (i, q) in query_result.into_iter().enumerate() {
-                        if i != 0 {
-                            write!(queries_file, ", ").unwrap();
-                        }
-                        write!(queries_file, "{}[{}]", q.0, q.1).unwrap();
-                    }
-                    writeln!(queries_file).unwrap();
-                }
+                std::io::copy(&mut decompress_stream, queries_file).unwrap();
 
                 *query_write_index += 1;
                 output_sync_condvar.notify_all();
