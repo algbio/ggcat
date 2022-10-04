@@ -5,7 +5,7 @@ pub mod owned_drop;
 pub mod resource_counter;
 pub mod vec_slice;
 
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::sync::atomic::AtomicUsize;
 
 pub struct Utils;
@@ -25,16 +25,16 @@ macro_rules! panic_debug {
 }
 
 pub fn compute_best_m(k: usize) -> usize {
-    let upper_bound = k / 5;
-    let lower_bound = min(
-        k - 1,
-        max(
-            2,
-            (((k as f64).log(2.0) * 2.5).ceil() as usize).next_power_of_two() / 2,
-        ),
-    );
-
-    max(upper_bound, lower_bound)
+    match k {
+        0..=13 => max(k / 2, k - 4),
+        14..=15 => 9,
+        16..=21 => 10,
+        22..=30 => 11,
+        31..=37 => 12,
+        38..=42 => 13,
+        43..=64 => 14,
+        _ => ((k as f64) / 4.0).round() as usize,
+    }
 }
 
 impl Utils {
