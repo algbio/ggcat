@@ -91,6 +91,8 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
                     }
                     read_index += 1;
                 },
+                context.partial_read_copyback,
+                context.copy_ident,
                 false,
             );
 

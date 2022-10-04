@@ -1,4 +1,4 @@
-#![feature(int_log)]
+#![feature(int_log, let_chains)]
 
 use config::{BucketIndexType, MAX_BUCKETS_COUNT_LOG, MAX_BUCKET_SIZE, MIN_BUCKETS_COUNT_LOG};
 use std::cmp::{max, min};

@@ -40,6 +40,8 @@ pub fn cmd_rewrite(args: CmdRewriteArgs) {
             |f| {
                 writer.add_read(f);
             },
+            None,
+            true,
             false,
         )
     });

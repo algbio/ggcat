@@ -96,6 +96,8 @@ pub fn counters_sorting<CX: ColorsManager>(
         |seq| {
             sequences_info.push((seq.seq.len() - k + 1) as u64);
         },
+        None,
+        false,
         false,
     );
 

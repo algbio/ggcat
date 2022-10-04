@@ -98,24 +98,27 @@ impl LinesReader {
 
     pub fn process_lines(
         file: impl AsRef<Path>,
-        mut callback: impl FnMut(&[u8], bool),
+        mut callback: impl FnMut(
+            &[u8],
+            bool, /* partial (line continues on next call) */
+            bool, /* finished (last line) */
+        ),
         remove: bool,
     ) {
-        let mut tmp_line = Vec::new();
+        let mut line_pending = false;
+
         Self::read_binary_file(
             file.as_ref(),
             |mut buffer: &[u8]| {
                 // File finished
                 if buffer.len() == 0 {
-                    if tmp_line.len() > 0 {
+                    if line_pending {
                         eprintln!(
                             "WARNING: No newline at ending of file '{}'",
                             file.as_ref().display()
                         );
-                        callback(&tmp_line, true);
                     }
-
-                    callback(&[], true);
+                    callback(&[], false, true);
                     return;
                 }
 
@@ -123,18 +126,12 @@ impl LinesReader {
                     let (full, line) = Self::split_line(&mut buffer);
 
                     if full {
-                        callback(
-                            if tmp_line.len() > 0 {
-                                tmp_line.extend_from_slice(line);
-                                &tmp_line
-                            } else {
-                                line
-                            },
-                            false,
-                        );
-                        tmp_line.clear();
+                        callback(line, false, false);
                     } else {
-                        tmp_line.extend_from_slice(line);
+                        line_pending = line.len() > 0;
+                        if line_pending {
+                            callback(line, true, false);
+                        }
                         break;
                     }
                 }

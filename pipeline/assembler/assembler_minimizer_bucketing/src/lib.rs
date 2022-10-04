@@ -235,5 +235,7 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
         k,
         m,
         (),
+        Some(k - 1),
+        false,
     )
 }

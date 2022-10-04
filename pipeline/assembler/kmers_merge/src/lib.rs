@@ -294,7 +294,7 @@ mod tests {
         // );
 
         MemoryFs::init(
-            parallel_processor::memory_data_size::MemoryDataSize::from_bytes(
+            MemoryDataSize::from_bytes(
                 (8.0 * (MemoryDataSize::OCTET_GIBIOCTET_FACTOR as f64)) as usize,
             ),
             FLUSH_QUEUE_FACTOR * threads_count,

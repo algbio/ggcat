@@ -183,6 +183,9 @@ pub struct MinimizerBucketingExecutionContext<GlobalData> {
     pub total_files: usize,
     pub read_threads_count: usize,
     pub threads_count: usize,
+
+    pub partial_read_copyback: Option<usize>,
+    pub copy_ident: bool,
 }
 
 pub struct GenericMinimizerBucketing;
@@ -394,6 +397,8 @@ impl GenericMinimizerBucketing {
         k: usize,
         m: usize,
         global_data: E::GlobalData,
+        partial_read_copyback: Option<usize>,
+        copy_ident: bool,
     ) -> (Vec<PathBuf>, PathBuf) {
         let read_threads_count = max(1, threads_count / 2);
         let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count / 4));
@@ -436,7 +441,9 @@ impl GenericMinimizerBucketing {
                 global_data,
             )),
             threads_count: compute_threads_count,
+            partial_read_copyback,
             read_threads_count,
+            copy_ident,
         });
 
         {

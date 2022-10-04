@@ -281,6 +281,8 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
             QuerierMinimizerBucketingGlobalData {
                 queries_count: queries_count.clone(),
             },
+            None,
+            CX::COLORS_ENABLED,
         ),
         queries_count.load(Ordering::Relaxed) as u64,
     )

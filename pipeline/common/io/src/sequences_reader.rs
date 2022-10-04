@@ -1,5 +1,7 @@
 use crate::lines_reader::LinesReader;
+use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use nightly_quirks::branch_pred::unlikely;
+use std::cmp::max;
 use std::path::Path;
 
 const IDENT_STATE: usize = 0;
@@ -47,6 +49,8 @@ impl SequencesReader {
     pub fn process_file_extended<F: FnMut(FastaSequence)>(
         source: impl AsRef<Path>,
         func: F,
+        line_split_copyback: Option<usize>,
+        copy_ident: bool,
         remove_file: bool,
     ) {
         const FASTQ_EXTS: &[&str] = &["fq", "fastq"];
@@ -76,10 +80,10 @@ impl SequencesReader {
             ),
             Some(ftype) => match ftype {
                 FileType::Fasta => {
-                    Self::process_fasta(source, func, remove_file);
+                    Self::process_fasta(source, func, line_split_copyback, copy_ident, remove_file);
                 }
                 FileType::Fastq => {
-                    Self::process_fastq(source, func, remove_file);
+                    Self::process_fastq(source, func, false, remove_file);
                 }
             },
         }
@@ -88,33 +92,71 @@ impl SequencesReader {
     fn process_fasta(
         source: impl AsRef<Path>,
         mut func: impl FnMut(FastaSequence),
+        line_split_copyback: Option<usize>,
+        copy_ident: bool,
         remove_file: bool,
     ) {
         let mut intermediate = [Vec::new(), Vec::new()];
+        let mut on_comment = false;
+        let mut state = SEQ_STATE;
+        let mut new_line = true;
+
+        let flush_size = max(
+            DEFAULT_OUTPUT_BUFFER_SIZE,
+            line_split_copyback.unwrap_or(0) * 2,
+        );
 
         LinesReader::process_lines(
             source,
-            |line: &[u8], finished| {
-                if finished || (line.len() > 0 && line[0] == b'>') {
+            |line: &[u8], partial, finished| {
+                if on_comment {
+                    on_comment = !partial;
+                }
+                // If a new ident line is found (or it's the last line)
+                else if finished || (new_line && line.len() > 0 && line[0] == b'>') {
                     if intermediate[SEQ_STATE].len() > 0 {
-                        Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
                         func(FastaSequence {
                             ident: &intermediate[IDENT_STATE],
                             seq: &intermediate[SEQ_STATE],
                             qual: None,
                         });
-                        intermediate[SEQ_STATE].clear();
                     }
-                    intermediate[IDENT_STATE].clear();
-                    intermediate[IDENT_STATE].extend_from_slice(line);
-                }
-                // Comment line, ignore it
-                else if line.len() > 0 && line[0] == b';' {
-                    return;
+
+                    if copy_ident {
+                        intermediate[IDENT_STATE].clear();
+                        intermediate[IDENT_STATE].extend_from_slice(line);
+                    }
+                    intermediate[SEQ_STATE].clear();
+
+                    state = if partial { IDENT_STATE } else { SEQ_STATE };
+                } else if new_line && line.len() > 0 && line[0] == b';' {
+                    on_comment = true;
+                } else if state == IDENT_STATE {
+                    if copy_ident {
+                        intermediate[IDENT_STATE].extend_from_slice(line);
+                    }
+
+                    if !partial {
+                        state = SEQ_STATE;
+                    }
                 } else {
-                    // Sequence line
                     intermediate[SEQ_STATE].extend_from_slice(line);
                 }
+
+                if let Some(copyback) = line_split_copyback &&
+                    (intermediate[SEQ_STATE].len() >= flush_size) {
+                    Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
+                    func(FastaSequence {
+                        ident: &intermediate[IDENT_STATE],
+                        seq: &intermediate[SEQ_STATE],
+                        qual: None,
+                    });
+                    let copy_start = intermediate[SEQ_STATE].len() - copyback;
+                    intermediate[SEQ_STATE].copy_within(copy_start.., 0);
+                    intermediate[SEQ_STATE].truncate(copyback);
+                }
+
+                new_line = !partial;
             },
             remove_file,
         );
@@ -123,40 +165,58 @@ impl SequencesReader {
     fn process_fastq(
         source: impl AsRef<Path>,
         mut func: impl FnMut(FastaSequence),
+        get_quality: bool,
         remove_file: bool,
     ) {
         let mut state = IDENT_STATE;
         let mut skipped_plus = false;
 
-        let mut intermediate = [Vec::new(), Vec::new()];
+        let mut intermediate = [Vec::new(), Vec::new(), Vec::new()];
 
         LinesReader::process_lines(
             source,
-            |line: &[u8], finished| {
+            |line: &[u8], partial, finished| {
                 if unlikely(finished) {
                     return;
                 }
-                match state {
-                    QUAL_STATE => {
-                        if !skipped_plus {
-                            skipped_plus = true;
-                            return;
-                        }
 
+                if state == QUAL_STATE {
+                    if !skipped_plus {
+                        if !partial {
+                            skipped_plus = true;
+                        }
+                        return;
+                    }
+
+                    if get_quality {
+                        intermediate[state].extend_from_slice(line);
+                    }
+
+                    if !partial {
                         Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
                         func(FastaSequence {
                             ident: &intermediate[IDENT_STATE],
                             seq: &intermediate[SEQ_STATE],
-                            qual: Some(line),
+                            qual: if get_quality {
+                                Some(&intermediate[QUAL_STATE])
+                            } else {
+                                None
+                            },
                         });
+
+                        intermediate[IDENT_STATE].clear();
+                        intermediate[SEQ_STATE].clear();
+                        intermediate[QUAL_STATE].clear();
+
                         skipped_plus = false;
                     }
-                    state => {
-                        intermediate[state].clear();
-                        intermediate[state].extend_from_slice(line);
-                    }
+                } else {
+                    intermediate[state].extend_from_slice(line);
                 }
-                state = (state + 1) % 3;
+
+                if !partial {
+                    state = (state + 1) % 3;
+                }
             },
             remove_file,
         );
