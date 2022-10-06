@@ -188,7 +188,6 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
                     }
 
                     entry.set_counter_after_check(VISITED_BIT | (last_color as usize));
-                    assert!(entry.get_kmer_multiplicity() >= min_multiplicity);
                 }
             }
         }
