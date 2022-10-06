@@ -33,10 +33,10 @@ pub struct ParallelKmersMergeFinalExecutor<
 
     forward_seq: Vec<u8>,
     backward_seq: Vec<u8>,
-    unitigs_temp_colors: color_types::TempUnitigColorStructure<MH, CX>,
-    current_bucket: Option<ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>>,
+    unitigs_temp_colors: color_types::TempUnitigColorStructure<H, MH, CX>,
+    current_bucket: Option<ResultsBucket<color_types::PartialUnitigsColorStructure<H, MH, CX>>>,
     temp_color_buffer:
-        <color_types::PartialUnitigsColorStructure<MH, CX> as SequenceExtraData>::TempBuffer,
+        <color_types::PartialUnitigsColorStructure<H, MH, CX> as SequenceExtraData>::TempBuffer,
     bucket_counter: usize,
     bucket_change_threshold: usize,
     _phantom: PhantomData<H>,
@@ -45,7 +45,7 @@ pub struct ParallelKmersMergeFinalExecutor<
 impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
     ParallelKmersMergeFinalExecutor<H, MH, CX>
 {
-    pub fn new(global_data: &GlobalMergeData<MH, CX>) -> Self {
+    pub fn new(global_data: &GlobalMergeData<H, MH, CX>) -> Self {
         let hashes_buffer =
             BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, global_data.buckets_count);
 
@@ -53,10 +53,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             hashes_tmp: BucketsThreadDispatcher::new(&global_data.hashes_buckets, hashes_buffer),
             forward_seq: Vec::with_capacity(global_data.k),
             backward_seq: Vec::with_capacity(global_data.k),
-            unitigs_temp_colors: CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure(),
-            current_bucket: None,
-            temp_color_buffer: color_types::PartialUnitigsColorStructure::<MH, CX>::new_temp_buffer(
+            unitigs_temp_colors: CX::ColorsMergeManagerType::<H, MH>::alloc_unitig_color_structure(
             ),
+            current_bucket: None,
+            temp_color_buffer:
+                color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer(),
             bucket_counter: 0,
             bucket_change_threshold: 16, // TODO: Parametrize
             _phantom: PhantomData,
@@ -70,7 +71,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     KmersTransformFinalExecutor<ParallelKmersMergeFactory<H, MH, CX>>
     for ParallelKmersMergeFinalExecutor<H, MH, CX>
 {
-    type MapStruct = ParallelKmersMergeMapPacket<MH, CX>;
+    type MapStruct = ParallelKmersMergeMapPacket<H, MH, CX>;
 
     #[instrumenter::track(fields(map_capacity = map_struct_packet.rhash_map.capacity(), map_size = map_struct_packet.rhash_map.len()))]
     fn process_map(
@@ -92,7 +93,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         let bucket_index = current_bucket.get_bucket_index();
 
         if CX::COLORS_ENABLED {
-            CX::ColorsMergeManagerType::<MH>::process_colors(
+            CX::ColorsMergeManagerType::<H, MH>::process_colors(
                 &global_data.colors_global_table,
                 &mut map_struct.temp_colors,
                 &mut map_struct.rhash_map,
@@ -186,7 +187,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                     )
                 };
 
-                CX::ColorsMergeManagerType::<MH>::reset_unitig_color_structure(
+                CX::ColorsMergeManagerType::<H, MH>::reset_unitig_color_structure(
                     &mut self.unitigs_temp_colors,
                 );
 
@@ -199,7 +200,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 self.backward_seq[..].copy_from_slice(&self.forward_seq[..]);
                 self.backward_seq.reverse();
 
-                CX::ColorsMergeManagerType::<MH>::extend_forward(
+                CX::ColorsMergeManagerType::<H, MH>::extend_forward(
                     &mut self.unitigs_temp_colors,
                     rhentry,
                 );
@@ -221,8 +222,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 )
                     -> MH::HashTypeExtendable,
                                                colors_function: fn(
-                    ts: &mut color_types::TempUnitigColorStructure<MH, CX>,
-                    entry: &MapEntry<color_types::HashMapTempColorIndex<MH, CX>>,
+                    ts: &mut color_types::TempUnitigColorStructure<H, MH, CX>,
+                    entry: &MapEntry<color_types::HashMapTempColorIndex<H, MH, CX>>,
                 )| {
                     let mut temp_data = (hash, 0);
                     let mut current_hash;
@@ -312,7 +313,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                             &mut self.forward_seq,
                             MH::manual_roll_forward,
                             MH::manual_roll_reverse,
-                            CX::ColorsMergeManagerType::<MH>::extend_forward,
+                            CX::ColorsMergeManagerType::<H, MH>::extend_forward,
                         );
                         (fw_hash, end_ignored)
                     }
@@ -326,7 +327,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                             &mut self.backward_seq,
                             MH::manual_roll_reverse,
                             MH::manual_roll_forward,
-                            CX::ColorsMergeManagerType::<MH>::extend_backward,
+                            CX::ColorsMergeManagerType::<H, MH>::extend_backward,
                         );
                         (bw_hash, begin_ignored)
                     }
@@ -339,14 +340,14 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 };
 
                 let colors =
-                    color_types::ColorsMergeManagerType::<MH, CX>::encode_part_unitigs_colors(
+                    color_types::ColorsMergeManagerType::<H, MH, CX>::encode_part_unitigs_colors(
                         &mut self.unitigs_temp_colors,
                         &mut self.temp_color_buffer,
                     );
 
                 let read_index = current_bucket.add_read(colors, out_seq, &self.temp_color_buffer);
 
-                color_types::PartialUnitigsColorStructure::<MH, CX>::clear_temp_buffer(
+                color_types::PartialUnitigsColorStructure::<H, MH, CX>::clear_temp_buffer(
                     &mut self.temp_color_buffer,
                 );
 

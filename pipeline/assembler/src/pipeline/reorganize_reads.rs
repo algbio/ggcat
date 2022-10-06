@@ -2,7 +2,7 @@ use config::{
     get_memory_mode, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
     DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
 };
-use hashes::{HashFunctionFactory, HashableSequence};
+use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 
 use crate::pipeline::build_unitigs::write_fasta_entry;
 use crate::structs::link_mapping::LinkMapping;
@@ -107,7 +107,11 @@ impl<CX: SequenceExtraData> SequenceExtraData for ReorganizedReadsExtraData<CX> 
     }
 }
 
-pub fn reorganize_reads<MH: HashFunctionFactory, CX: ColorsManager>(
+pub fn reorganize_reads<
+    H: MinimizerHashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+>(
     mut reads: Vec<PathBuf>,
     mut mapping_files: Vec<PathBuf>,
     temp_path: &Path,
@@ -173,7 +177,7 @@ pub fn reorganize_reads<MH: HashFunctionFactory, CX: ColorsManager>(
         let mut fasta_temp_buffer = Vec::new();
 
         let mut colors_buffer =
-            color_types::PartialUnitigsColorStructure::<MH, CX>::new_temp_buffer();
+            color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer();
 
         CompressedBinaryReader::new(
             read_file,
@@ -183,7 +187,7 @@ pub fn reorganize_reads<MH: HashFunctionFactory, CX: ColorsManager>(
             DEFAULT_PREFETCH_AMOUNT,
         )
         .decode_all_bucket_items::<CompressedReadsBucketHelper<
-            color_types::PartialUnitigsColorStructure<MH, CX>,
+            color_types::PartialUnitigsColorStructure<H, MH, CX>,
             typenum::U0,
             false,
         >, _>(
@@ -208,7 +212,7 @@ pub fn reorganize_reads<MH: HashFunctionFactory, CX: ColorsManager>(
                         ReorganizedReadsBuffer::from_inner(color_buffer),
                         &CompressedReadsBucketHelper::<
                             ReorganizedReadsExtraData<
-                                color_types::PartialUnitigsColorStructure<MH, CX>,
+                                color_types::PartialUnitigsColorStructure<H, MH, CX>,
                             >,
                             typenum::U0,
                             false,
@@ -217,7 +221,7 @@ pub fn reorganize_reads<MH: HashFunctionFactory, CX: ColorsManager>(
                     map_index += 1;
                 } else {
                     // No mapping, write unitig to file
-                    write_fasta_entry::<MH, CX, _>(
+                    write_fasta_entry::<H, MH, CX, _>(
                         &mut fasta_temp_buffer,
                         &mut tmp_lonely_unitigs_buffer,
                         color,
@@ -227,7 +231,7 @@ pub fn reorganize_reads<MH: HashFunctionFactory, CX: ColorsManager>(
                     );
                 }
 
-                color_types::PartialUnitigsColorStructure::<MH, CX>::clear_temp_buffer(
+                color_types::PartialUnitigsColorStructure::<H, MH, CX>::clear_temp_buffer(
                     color_buffer,
                 );
 

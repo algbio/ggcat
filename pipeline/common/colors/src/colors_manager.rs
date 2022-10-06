@@ -1,7 +1,7 @@
 use crate::parsers::SingleSequenceInfo;
 use config::BucketIndexType;
 use hashbrown::HashMap;
-use hashes::HashFunctionFactory;
+use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use static_dispatch::static_dispatch;
@@ -19,8 +19,11 @@ pub mod color_types {
 
     macro_rules! color_manager_type_alias {
         ($tyn:ident) => {
-            pub type $tyn<H, C> =
-                <<C as ColorsManager>::ColorsMergeManagerType<H> as ColorsMergeManager<H>>::$tyn;
+            pub type $tyn<H, MH, C> =
+                <<C as ColorsManager>::ColorsMergeManagerType<H, MH> as ColorsMergeManager<
+                    H,
+                    MH,
+                >>::$tyn;
         };
     }
 
@@ -40,7 +43,7 @@ pub mod color_types {
     color_parser_type_alias!(MinimizerBucketingSeqColorDataType);
 
     pub type ColorsParserType<C> = <C as ColorsManager>::ColorsParserType;
-    pub type ColorsMergeManagerType<H, C> = <C as ColorsManager>::ColorsMergeManagerType<H>;
+    pub type ColorsMergeManagerType<H, MH, C> = <C as ColorsManager>::ColorsMergeManagerType<H, MH>;
 }
 
 /// Encoded color(s) of a minimizer bucketing step sequence
@@ -90,7 +93,9 @@ pub trait ColorsParser: Sized {
 }
 
 /// Helper trait to manage colors labeling on KmersMerge step
-pub trait ColorsMergeManager<H: HashFunctionFactory>: Sized {
+pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory>:
+    Sized
+{
     type SingleKmerColorDataType: Clone
         + Eq
         + PartialEq
@@ -124,13 +129,16 @@ pub trait ColorsMergeManager<H: HashFunctionFactory>: Sized {
     fn add_temp_buffer_structure_el(
         data: &mut Self::ColorsBufferTempStructure,
         kmer_color: &Self::SingleKmerColorDataType,
-        el: (usize, H::HashTypeUnextendable),
+        el: (usize, MH::HashTypeUnextendable),
         entry: &mut MapEntry<Self::HashMapTempColorIndex>,
     );
 
     fn add_temp_buffer_sequence(
         data: &mut Self::ColorsBufferTempStructure,
         sequence: CompressedRead,
+        k: usize,
+        m: usize,
+        flags: u8,
     );
 
     /// Temporary storage for colors associated with a single kmer in the hashmap (holds the color subset index)
@@ -141,7 +149,7 @@ pub trait ColorsMergeManager<H: HashFunctionFactory>: Sized {
     fn process_colors(
         global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
-        map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+        map: &mut HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
         k: usize,
         min_multiplicity: usize,
     );
@@ -226,8 +234,9 @@ pub trait ColorsManager: 'static + Sync + Send + Sized {
     ) -> BucketIndexType;
 
     type ColorsParserType: ColorsParser<SingleKmerColorDataType = Self::SingleKmerColorDataType>;
-    type ColorsMergeManagerType<H: HashFunctionFactory>: ColorsMergeManager<
+    type ColorsMergeManagerType<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory>: ColorsMergeManager<
         H,
+        MH,
         SingleKmerColorDataType = Self::SingleKmerColorDataType,
     >;
 }

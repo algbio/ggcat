@@ -4,7 +4,7 @@ use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::{color_types, ColorsManager};
 use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use hashbrown::HashMap;
-use hashes::{HashFunctionFactory, HashableSequence};
+use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
@@ -63,6 +63,7 @@ impl FastaCompatibleRead for [u8] {
 
 #[allow(unused_variables)]
 pub fn write_fasta_entry<
+    H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
     R: FastaCompatibleRead + ?Sized,
@@ -70,8 +71,8 @@ pub fn write_fasta_entry<
 >(
     temp_buffer: &mut Vec<u8>,
     writer: &mut FastaWriterConcurrentBuffer,
-    color: color_types::PartialUnitigsColorStructure<MH, CX>,
-    color_buffer: &<color_types::PartialUnitigsColorStructure<MH, CX> as SequenceExtraData>::TempBuffer,
+    color: color_types::PartialUnitigsColorStructure<H, MH, CX>,
+    color_buffer: &<color_types::PartialUnitigsColorStructure<H, MH, CX> as SequenceExtraData>::TempBuffer,
     read: &R,
     index: usize,
     // links_iterator: I,
@@ -80,7 +81,7 @@ pub fn write_fasta_entry<
     temp_buffer.clear();
     write!(temp_buffer, ">{} LN:i:{}", index, read.get_length()).unwrap();
 
-    CX::ColorsMergeManagerType::<MH>::print_color_data(&color, color_buffer, temp_buffer);
+    CX::ColorsMergeManagerType::<H, MH>::print_color_data(&color, color_buffer, temp_buffer);
 
     let ident_buffer_size = temp_buffer.len();
 
@@ -94,14 +95,18 @@ pub fn write_fasta_entry<
     });
 }
 
-type CompressedReadsHelperUnitigsBuilding<'a, MH, CX> = CompressedReadsBucketHelper<
+type CompressedReadsHelperUnitigsBuilding<'a, H, MH, CX> = CompressedReadsBucketHelper<
     'a,
-    ReorganizedReadsExtraData<color_types::PartialUnitigsColorStructure<MH, CX>>,
+    ReorganizedReadsExtraData<color_types::PartialUnitigsColorStructure<H, MH, CX>>,
     typenum::U0,
     false,
 >;
 
-pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
+pub fn build_unitigs<
+    H: MinimizerHashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+>(
     mut read_buckets_files: Vec<PathBuf>,
     mut unitig_map_files: Vec<PathBuf>,
     _temp_path: &Path,
@@ -213,10 +218,10 @@ pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
                 final_sequences.resize(counter, None);
 
                 let mut color_extra_buffer = ReorganizedReadsExtraData::<
-                    color_types::PartialUnitigsColorStructure<MH, CX>,
+                    color_types::PartialUnitigsColorStructure<H, MH, CX>,
                 >::new_temp_buffer();
                 let mut final_color_extra_buffer =
-                    color_types::PartialUnitigsColorStructure::<MH, CX>::new_temp_buffer();
+                    color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer();
 
                 CompressedBinaryReader::new(
                     read_file,
@@ -225,7 +230,7 @@ pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
                     },
                     DEFAULT_PREFETCH_AMOUNT,
                 )
-                .decode_all_bucket_items::<CompressedReadsHelperUnitigsBuilding<MH, CX>, _>(
+                .decode_all_bucket_items::<CompressedReadsHelperUnitigsBuilding<H, MH, CX>, _>(
                     Vec::new(),
                     &mut color_extra_buffer,
                     |(_, _, index, seq), _color_extra_buffer| {
@@ -243,7 +248,7 @@ pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
                 let mut unitig_index = 0;
 
                 let mut final_unitig_color =
-                    CX::ColorsMergeManagerType::<MH>::alloc_unitig_color_structure();
+                    CX::ColorsMergeManagerType::<H, MH>::alloc_unitig_color_structure();
 
                 'uloop: for sequence in
                     final_sequences.group_by(|_a, b| !b.as_ref().unwrap().1.is_start)
@@ -252,7 +257,7 @@ pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
                     let is_circular = sequence[0].as_ref().unwrap().1.is_circular;
 
                     temp_sequence.clear();
-                    CX::ColorsMergeManagerType::<MH>::reset_unitig_color_structure(
+                    CX::ColorsMergeManagerType::<H, MH>::reset_unitig_color_structure(
                         &mut final_unitig_color,
                     );
 
@@ -272,7 +277,7 @@ pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
                         if is_first {
                             if flags.is_reverse_complemented() {
                                 temp_sequence.extend(compr_read.as_reverse_complement_bases_iter());
-                                CX::ColorsMergeManagerType::<MH>::join_structures::<true>(
+                                CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
                                     &mut final_unitig_color,
                                     color,
                                     &color_extra_buffer.0,
@@ -280,7 +285,7 @@ pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
                                 );
                             } else {
                                 temp_sequence.extend(compr_read.as_bases_iter());
-                                CX::ColorsMergeManagerType::<MH>::join_structures::<false>(
+                                CX::ColorsMergeManagerType::<H, MH>::join_structures::<false>(
                                     &mut final_unitig_color,
                                     color,
                                     &color_extra_buffer.0,
@@ -296,7 +301,7 @@ pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
                                         .sub_slice(0..compr_read.bases_count() - k)
                                         .as_reverse_complement_bases_iter(),
                                 );
-                                CX::ColorsMergeManagerType::<MH>::join_structures::<true>(
+                                CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
                                     &mut final_unitig_color,
                                     color,
                                     &color_extra_buffer.0,
@@ -309,7 +314,7 @@ pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
                                         .sub_slice(k..compr_read.bases_count())
                                         .as_bases_iter(),
                                 );
-                                CX::ColorsMergeManagerType::<MH>::join_structures::<false>(
+                                CX::ColorsMergeManagerType::<H, MH>::join_structures::<false>(
                                     &mut final_unitig_color,
                                     color,
                                     &color_extra_buffer.0,
@@ -322,16 +327,16 @@ pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
                     // In case of circular unitigs, remove an extra ending base
                     if is_circular {
                         temp_sequence.pop();
-                        CX::ColorsMergeManagerType::<MH>::pop_base(&mut final_unitig_color);
+                        CX::ColorsMergeManagerType::<H, MH>::pop_base(&mut final_unitig_color);
                     }
 
                     let writable_color =
-                        CX::ColorsMergeManagerType::<MH>::encode_part_unitigs_colors(
+                        CX::ColorsMergeManagerType::<H, MH>::encode_part_unitigs_colors(
                             &mut final_unitig_color,
                             &mut final_color_extra_buffer,
                         );
 
-                    write_fasta_entry::<MH, CX, _>(
+                    write_fasta_entry::<H, MH, CX, _>(
                         &mut ident_buffer,
                         &mut tmp_final_unitigs_buffer,
                         writable_color,
@@ -343,7 +348,7 @@ pub fn build_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
                 }
 
                 // ReorganizedReadsExtraData::<
-                //     color_types::PartialUnitigsColorStructure<MH, CX>,
+                //     color_types::PartialUnitigsColorStructure<H, MH, CX>,
                 // >::clear_temp_buffer(&mut color_extra_buffer);
 
                 tmp_final_unitigs_buffer.finalize();

@@ -4,7 +4,7 @@ use crate::colors_manager::{
 use crate::parsers::SingleSequenceInfo;
 use config::BucketIndexType;
 use hashbrown::HashMap;
-use hashes::HashFunctionFactory;
+use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use static_dispatch::static_dispatch;
@@ -31,7 +31,8 @@ impl ColorsManager for NonColoredManager {
     }
 
     type ColorsParserType = NonColoredManager;
-    type ColorsMergeManagerType<H: HashFunctionFactory> = NonColoredManager;
+    type ColorsMergeManagerType<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> =
+        NonColoredManager;
 }
 
 impl SequenceExtraData for NonColoredManager {
@@ -84,7 +85,9 @@ impl ColorsParser for NonColoredManager {
     type MinimizerBucketingSeqColorDataType = NonColoredManager;
 }
 
-impl<H: HashFunctionFactory> ColorsMergeManager<H> for NonColoredManager {
+impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManager<H, MH>
+    for NonColoredManager
+{
     type SingleKmerColorDataType = NonColoredManager;
     type GlobalColorsTableWriter = ();
     type GlobalColorsTableReader = ();
@@ -116,7 +119,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for NonColoredManager {
     fn add_temp_buffer_structure_el(
         _data: &mut Self::ColorsBufferTempStructure,
         _kmer_color: &Self::SingleKmerColorDataType,
-        _el: (usize, <H as HashFunctionFactory>::HashTypeUnextendable),
+        _el: (usize, <MH as HashFunctionFactory>::HashTypeUnextendable),
         _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
     ) {
     }
@@ -125,6 +128,9 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for NonColoredManager {
     fn add_temp_buffer_sequence(
         _data: &mut Self::ColorsBufferTempStructure,
         _sequence: CompressedRead,
+        _k: usize,
+        _m: usize,
+        _flags: u8,
     ) {
     }
 
@@ -140,7 +146,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for NonColoredManager {
         _global_colors_table: &Self::GlobalColorsTableWriter,
         _data: &mut Self::ColorsBufferTempStructure,
         _map: &mut HashMap<
-            <H as HashFunctionFactory>::HashTypeUnextendable,
+            <MH as HashFunctionFactory>::HashTypeUnextendable,
             MapEntry<Self::HashMapTempColorIndex>,
         >,
         _k: usize,

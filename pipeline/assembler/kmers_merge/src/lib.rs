@@ -41,14 +41,18 @@ mod map_processor;
 mod preprocessor;
 pub mod structs;
 
-pub struct GlobalMergeData<MH: HashFunctionFactory, CX: ColorsManager> {
+pub struct GlobalMergeData<
+    H: MinimizerHashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+> {
     k: usize,
     m: usize,
     buckets_count: usize,
     min_multiplicity: usize,
-    colors_global_table: Arc<GlobalColorsTableWriter<MH, CX>>,
+    colors_global_table: Arc<GlobalColorsTableWriter<H, MH, CX>>,
     output_results_buckets:
-        ArrayQueue<ResultsBucket<color_types::PartialUnitigsColorStructure<MH, CX>>>,
+        ArrayQueue<ResultsBucket<color_types::PartialUnitigsColorStructure<H, MH, CX>>>,
     hashes_buckets: Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
     global_resplit_data: Arc<MinimizerBucketingCommonData<()>>,
     sequences_size_total: AtomicU64,
@@ -66,7 +70,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     KmersTransformExecutorFactory for ParallelKmersMergeFactory<H, MH, CX>
 {
     type SequencesResplitterFactory = AssemblerMinimizerBucketingExecutorFactory<H, CX>;
-    type GlobalExtraData = GlobalMergeData<MH, CX>;
+    type GlobalExtraData = GlobalMergeData<H, MH, CX>;
     type AssociatedExtraData = MinimizerBucketingSeqColorDataType<CX>;
 
     type PreprocessorType = ParallelKmersMergePreprocessor<H, MH, CX>;
@@ -129,7 +133,7 @@ pub fn kmers_merge<
 >(
     file_inputs: Vec<PathBuf>,
     buckets_counters_path: PathBuf,
-    colors_global_table: Arc<GlobalColorsTableWriter<MH, CX>>,
+    colors_global_table: Arc<GlobalColorsTableWriter<H, MH, CX>>,
     buckets_count: usize,
     min_multiplicity: usize,
     out_directory: P,
@@ -167,7 +171,7 @@ pub fn kmers_merge<
 
     let output_results_buckets = ArrayQueue::new(reads_buckets.count());
     for (index, bucket) in reads_buckets.into_buckets().enumerate() {
-        let bucket_read = ResultsBucket::<color_types::PartialUnitigsColorStructure<MH, CX>> {
+        let bucket_read = ResultsBucket::<color_types::PartialUnitigsColorStructure<H, MH, CX>> {
             read_index: 0,
             reads_writer: OwnedDrop::new(bucket),
             temp_buffer: Vec::with_capacity(256),
@@ -179,7 +183,7 @@ pub fn kmers_merge<
         assert!(res);
     }
 
-    let global_data = Arc::new(GlobalMergeData::<MH, CX> {
+    let global_data = Arc::new(GlobalMergeData::<H, MH, CX> {
         k,
         m,
         buckets_count,

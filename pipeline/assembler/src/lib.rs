@@ -314,7 +314,7 @@ pub fn run_assembler<
 
     let (reorganized_reads, _final_unitigs_bucket) =
         if step <= AssemblerStartingStep::ReorganizeReads {
-            reorganize_reads::<MergingHash, AssemblerColorsManager>(
+            reorganize_reads::<BucketingHash, MergingHash, AssemblerColorsManager>(
                 sequences,
                 reads_map,
                 temp_dir.as_path(),
@@ -344,7 +344,7 @@ pub fn run_assembler<
     links_manager.compute_id_offsets();
 
     if step <= AssemblerStartingStep::BuildUnitigs {
-        build_unitigs::<MergingHash, AssemblerColorsManager>(
+        build_unitigs::<BucketingHash, MergingHash, AssemblerColorsManager>(
             reorganized_reads,
             unitigs_map,
             temp_dir.as_path(),

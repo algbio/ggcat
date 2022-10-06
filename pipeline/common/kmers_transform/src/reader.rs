@@ -363,19 +363,17 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                 F::AssociatedExtraData::new_temp_buffer(),
             );
 
-        let mut buckets_mults = vec![0; 1 << bucket_info.second_buckets_log_max];
-
         while let Some((read_info, extra_buffer)) = items_iterator.next() {
-            let orig_bucket = preprocessor.get_sequence_bucket(
-                global_extra_data,
-                &read_info,
-                bucket_info.used_hash_bits,
-                bucket_info.second_buckets_log_max,
-            ) as usize;
-
             let bucket = if has_single_addr {
                 0
             } else {
+                let orig_bucket = preprocessor.get_sequence_bucket(
+                    global_extra_data,
+                    &read_info,
+                    bucket_info.used_hash_bits,
+                    bucket_info.second_buckets_log_max,
+                ) as usize;
+
                 bucket_info.buckets_remapping[orig_bucket]
             };
 
@@ -389,7 +387,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                 &mut buffers[bucket].extra_buffer,
             );
 
-            buckets_mults[orig_bucket] += 1;
             buffers[bucket].reads.push((flags, extra_data, ind_read));
 
             let packets_pool = &packets_pool;

@@ -2,10 +2,10 @@ use crate::colors_manager::ColorsMergeManager;
 use crate::colors_memmap_writer::ColorsMemMapWriter;
 use crate::DefaultColorsSerializer;
 use byteorder::ReadBytesExt;
-use config::ColorIndexType;
+use config::{ColorIndexType, MinimizerType, READ_FLAG_INCL_END};
 use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
-use hashes::{HashFunction, HashFunctionFactory, HashableSequence};
+use hashes::{HashFunction, HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
@@ -19,18 +19,22 @@ use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::{MapEntry, COUNTER_BITS};
 
-pub struct MultipleColorsManager<H: HashFunctionFactory> {
+const COLOR_SEQUENCES_SUBBUKETS: usize = 32;
+
+pub struct MultipleColorsManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> {
     last_color: ColorIndexType,
-    sequences: Vec<u8>,
+    sequences: Vec<Vec<u8>>,
     kmers_count: usize,
     sequences_count: usize,
     temp_colors_buffer: Vec<ColorIndexType>,
-    _phantom: PhantomData<H>,
+    _phantom: PhantomData<(H, MH)>,
 }
 
 const VISITED_BIT: usize = 1 << (COUNTER_BITS - 1);
 
-impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> {
+impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManager<H, MH>
+    for MultipleColorsManager<H, MH>
+{
     type SingleKmerColorDataType = ColorIndexType;
     type GlobalColorsTableWriter = ColorsMemMapWriter<DefaultColorsSerializer>;
     type GlobalColorsTableReader = ();
@@ -55,7 +59,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
     fn allocate_temp_buffer_structure() -> Self::ColorsBufferTempStructure {
         Self {
             last_color: 0,
-            sequences: vec![],
+            sequences: vec![vec![]; COLOR_SEQUENCES_SUBBUKETS],
             kmers_count: 0,
             sequences_count: 0,
             temp_colors_buffer: vec![],
@@ -64,7 +68,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
     }
 
     fn reinit_temp_buffer_structure(data: &mut Self::ColorsBufferTempStructure) {
-        data.sequences.clear();
+        data.sequences.iter_mut().for_each(|s| s.clear());
         data.temp_colors_buffer.clear();
         data.kmers_count = 0;
         data.sequences_count = 0;
@@ -73,7 +77,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
     fn add_temp_buffer_structure_el(
         data: &mut Self::ColorsBufferTempStructure,
         kmer_color: &ColorIndexType,
-        _el: (usize, H::HashTypeUnextendable),
+        _el: (usize, MH::HashTypeUnextendable),
         _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
     ) {
         data.last_color = *kmer_color;
@@ -83,14 +87,29 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
     fn add_temp_buffer_sequence(
         data: &mut Self::ColorsBufferTempStructure,
         sequence: CompressedRead,
+        k: usize,
+        m: usize,
+        flags: u8,
     ) {
-        data.sequences
-            .extend_from_slice(&data.last_color.to_ne_bytes());
+        let decr_val =
+            ((sequence.bases_count() == k) && (flags & READ_FLAG_INCL_END) == 0) as usize;
+        let hashes = H::new(sequence.sub_slice((1 - decr_val)..(k - decr_val)), m);
+
+        let minimizer = hashes
+            .iter()
+            .map(|m| H::get_full_minimizer(m.to_unextendable()))
+            .min()
+            .unwrap();
+
+        const MULTIPLIER: MinimizerType = 3715284523;
+        let bucket = (minimizer.wrapping_mul(MULTIPLIER) as usize) % COLOR_SEQUENCES_SUBBUKETS;
+
+        data.sequences[bucket].extend_from_slice(&data.last_color.to_ne_bytes());
         encode_varint(
-            |b| data.sequences.extend_from_slice(b),
+            |b| data.sequences[bucket].extend_from_slice(b),
             sequence.bases_count() as u64,
         );
-        sequence.copy_to_buffer(&mut data.sequences);
+        sequence.copy_to_buffer(&mut data.sequences[bucket]);
     }
 
     type HashMapTempColorIndex = ();
@@ -102,92 +121,97 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
     fn process_colors(
         global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
-        map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+        map: &mut HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
         k: usize,
         min_multiplicity: usize,
     ) {
-        let mut stream = Cursor::new(&data.sequences);
+        for buffer in data.sequences.iter() {
+            data.temp_colors_buffer.clear();
 
-        let mut color_buf = [0; size_of::<ColorIndexType>()];
-        let mut read_buf = vec![];
+            let mut stream = Cursor::new(buffer);
 
-        let mut last_partition = 0..0;
-        let mut last_color = 0;
+            let mut color_buf = [0; size_of::<ColorIndexType>()];
+            let mut read_buf = vec![];
 
-        loop {
-            if stream.read(&mut color_buf).unwrap() == 0 {
-                break;
-            }
+            let mut last_partition = 0..0;
+            let mut last_color = 0;
 
-            let color = ColorIndexType::from_ne_bytes(color_buf);
-            let read_length = decode_varint(|| stream.read_u8().ok()).unwrap() as usize;
-            let read_bytes_count = (read_length + 3) / 4;
-
-            read_buf.clear();
-            read_buf.reserve(read_bytes_count);
-            unsafe { read_buf.set_len(read_bytes_count) };
-            stream.read_exact(&mut read_buf[..]).unwrap();
-
-            let read = CompressedRead::new_from_compressed(&read_buf[..], read_length);
-
-            let hashes = H::new(read, k);
-
-            data.temp_colors_buffer
-                .reserve(data.kmers_count + data.sequences_count);
-
-            for kmer_hash in hashes.iter() {
-                let entry = map.get_mut(&kmer_hash.to_unextendable()).unwrap();
-
-                if entry.get_kmer_multiplicity() < min_multiplicity {
-                    continue;
+            loop {
+                if stream.read(&mut color_buf).unwrap() == 0 {
+                    break;
                 }
 
-                let mut entry_count = entry.get_counter();
+                let color = ColorIndexType::from_ne_bytes(color_buf);
+                let read_length = decode_varint(|| stream.read_u8().ok()).unwrap() as usize;
+                let read_bytes_count = (read_length + 3) / 4;
 
-                if entry_count & VISITED_BIT == 0 {
-                    let colors_count = entry_count;
-                    let start_temp_color_index = data.temp_colors_buffer.len();
+                read_buf.clear();
+                read_buf.reserve(read_bytes_count);
+                unsafe { read_buf.set_len(read_bytes_count) };
+                stream.read_exact(&mut read_buf[..]).unwrap();
 
-                    entry_count = VISITED_BIT | start_temp_color_index;
-                    entry.set_counter_after_check(entry_count);
+                let read = CompressedRead::new_from_compressed(&read_buf[..], read_length);
 
-                    data.temp_colors_buffer
-                        .resize(data.temp_colors_buffer.len() + colors_count + 1, 0);
+                let hashes = MH::new(read, k);
 
-                    data.temp_colors_buffer[start_temp_color_index] = 1;
-                }
+                data.temp_colors_buffer
+                    .reserve(data.kmers_count + data.sequences_count);
 
-                let position = entry_count & !VISITED_BIT;
+                for kmer_hash in hashes.iter() {
+                    let entry = map.get_mut(&kmer_hash.to_unextendable()).unwrap();
 
-                let col_count = data.temp_colors_buffer[position] as usize;
-                data.temp_colors_buffer[position] += 1;
-
-                assert_eq!(data.temp_colors_buffer[position + col_count], 0);
-                data.temp_colors_buffer[position + col_count] = color;
-
-                let has_all_colors = (position + col_count + 1) == data.temp_colors_buffer.len()
-                    || data.temp_colors_buffer[position + col_count + 1] != 0;
-
-                // All colors were added, let's assign the final color
-                if has_all_colors {
-                    let colors_range =
-                        &mut data.temp_colors_buffer[(position + 1)..(position + col_count + 1)];
-
-                    colors_range.sort_unstable();
-
-                    // Get the new partition indexes, start to dedup last element
-                    let new_partition =
-                        (position + 1)..(position + 1 + colors_range.partition_dedup().0.len());
-
-                    let unique_colors = &data.temp_colors_buffer[new_partition.clone()];
-
-                    // Assign the subset color index to the current kmer
-                    if unique_colors != &data.temp_colors_buffer[last_partition.clone()] {
-                        last_color = global_colors_table.get_id(unique_colors);
-                        last_partition = new_partition;
+                    if entry.get_kmer_multiplicity() < min_multiplicity {
+                        continue;
                     }
 
-                    entry.set_counter_after_check(VISITED_BIT | (last_color as usize));
+                    let mut entry_count = entry.get_counter();
+
+                    if entry_count & VISITED_BIT == 0 {
+                        let colors_count = entry_count;
+                        let start_temp_color_index = data.temp_colors_buffer.len();
+
+                        entry_count = VISITED_BIT | start_temp_color_index;
+                        entry.set_counter_after_check(entry_count);
+
+                        data.temp_colors_buffer
+                            .resize(data.temp_colors_buffer.len() + colors_count + 1, 0);
+
+                        data.temp_colors_buffer[start_temp_color_index] = 1;
+                    }
+
+                    let position = entry_count & !VISITED_BIT;
+
+                    let col_count = data.temp_colors_buffer[position] as usize;
+                    data.temp_colors_buffer[position] += 1;
+
+                    assert_eq!(data.temp_colors_buffer[position + col_count], 0);
+                    data.temp_colors_buffer[position + col_count] = color;
+
+                    let has_all_colors = (position + col_count + 1)
+                        == data.temp_colors_buffer.len()
+                        || data.temp_colors_buffer[position + col_count + 1] != 0;
+
+                    // All colors were added, let's assign the final color
+                    if has_all_colors {
+                        let colors_range = &mut data.temp_colors_buffer
+                            [(position + 1)..(position + col_count + 1)];
+
+                        colors_range.sort_unstable();
+
+                        // Get the new partition indexes, start to dedup last element
+                        let new_partition =
+                            (position + 1)..(position + 1 + colors_range.partition_dedup().0.len());
+
+                        let unique_colors = &data.temp_colors_buffer[new_partition.clone()];
+
+                        // Assign the subset color index to the current kmer
+                        if unique_colors != &data.temp_colors_buffer[last_partition.clone()] {
+                            last_color = global_colors_table.get_id(unique_colors);
+                            last_partition = new_partition;
+                        }
+
+                        entry.set_counter_after_check(VISITED_BIT | (last_color as usize));
+                    }
                 }
             }
         }

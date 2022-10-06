@@ -2,7 +2,7 @@ use crate::colors_manager::ColorsManager;
 use crate::managers::single::SingleColorManager;
 use crate::parsers::graph::GraphColorsParser;
 use config::{BucketIndexType, ColorIndexType, COLORS_SINGLE_BATCH_SIZE};
-use hashes::HashFunctionFactory;
+use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use static_dispatch::static_dispatch;
 
 #[derive(Copy, Clone)]
@@ -28,5 +28,6 @@ impl ColorsManager for ColorBundleGraphQuerying {
     }
 
     type ColorsParserType = GraphColorsParser;
-    type ColorsMergeManagerType<H: HashFunctionFactory> = SingleColorManager<H>;
+    type ColorsMergeManagerType<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> =
+        SingleColorManager<H, MH>;
 }

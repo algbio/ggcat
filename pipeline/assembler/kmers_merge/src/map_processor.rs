@@ -26,12 +26,16 @@ use structs::map_entry::MapEntry;
 
 instrumenter::use_instrumenter!();
 
-pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManager> {
+pub struct ParallelKmersMergeMapPacket<
+    H: MinimizerHashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+> {
     pub rhash_map:
-        HashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<MH, CX>>>,
+        HashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<H, MH, CX>>>,
     pub saved_reads: Vec<u8>,
     pub encoded_saved_reads_indexes: Vec<u8>,
-    pub temp_colors: color_types::ColorsBufferTempStructure<MH, CX>,
+    pub temp_colors: color_types::ColorsBufferTempStructure<H, MH, CX>,
     average_hasmap_size: u64,
     average_sequences_size: u64,
 }
@@ -48,8 +52,8 @@ fn clear_hashmap<K, V>(hashmap: &mut HashMap<K, V>, suggested_size: usize) {
     }
 }
 
-impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
-    for ParallelKmersMergeMapPacket<MH, CX>
+impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
+    for ParallelKmersMergeMapPacket<H, MH, CX>
 {
     type InitData = ();
 
@@ -58,7 +62,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
             rhash_map: HashMap::with_capacity(4096),
             saved_reads: vec![],
             encoded_saved_reads_indexes: vec![],
-            temp_colors: CX::ColorsMergeManagerType::<MH>::allocate_temp_buffer_structure(),
+            temp_colors: CX::ColorsMergeManagerType::<H, MH>::allocate_temp_buffer_structure(),
             average_hasmap_size: 0,
             average_sequences_size: 0,
         }
@@ -84,18 +88,18 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
             self.encoded_saved_reads_indexes = Vec::with_capacity(saved_reads_suggested_size)
         }
 
-        CX::ColorsMergeManagerType::<MH>::reinit_temp_buffer_structure(&mut self.temp_colors);
+        CX::ColorsMergeManagerType::<H, MH>::reinit_temp_buffer_structure(&mut self.temp_colors);
     }
 }
 
-impl<MH: HashFunctionFactory, CX: ColorsManager> PacketTrait
-    for ParallelKmersMergeMapPacket<MH, CX>
+impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager> PacketTrait
+    for ParallelKmersMergeMapPacket<H, MH, CX>
 {
     fn get_size(&self) -> usize {
         self.rhash_map.len()
             * (size_of::<(
                 MH::HashTypeUnextendable,
-                MapEntry<color_types::HashMapTempColorIndex<MH, CX>>,
+                MapEntry<color_types::HashMapTempColorIndex<H, MH, CX>>,
             )>() + 1)
             + self.saved_reads.len()
     }
@@ -133,7 +137,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     KmersTransformMapProcessor<ParallelKmersMergeFactory<H, MH, CX>>
     for ParallelKmersMergeMapProcessor<H, MH, CX>
 {
-    type MapStruct = ParallelKmersMergeMapPacket<MH, CX>;
+    type MapStruct = ParallelKmersMergeMapPacket<H, MH, CX>;
 
     fn process_group_start(
         &mut self,
@@ -182,7 +186,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                     .rhash_map
                     .entry(hash.to_unextendable())
                     .or_insert(MapEntry::new(
-                        CX::ColorsMergeManagerType::<MH>::new_color_index(),
+                        CX::ColorsMergeManagerType::<H, MH>::new_color_index(),
                     ));
 
                 entry.update_flags(
@@ -192,7 +196,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 
                 entry.incr();
 
-                CX::ColorsMergeManagerType::<MH>::add_temp_buffer_structure_el(
+                CX::ColorsMergeManagerType::<H, MH>::add_temp_buffer_structure_el(
                     &mut map_packet.temp_colors,
                     &kmer_color,
                     (idx, hash.to_unextendable()),
@@ -205,9 +209,12 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 }
             }
 
-            CX::ColorsMergeManagerType::<MH>::add_temp_buffer_sequence(
+            CX::ColorsMergeManagerType::<H, MH>::add_temp_buffer_sequence(
                 &mut map_packet.temp_colors,
                 read,
+                global_data.k,
+                global_data.m,
+                *flags,
             );
 
             if min_idx != usize::MAX {

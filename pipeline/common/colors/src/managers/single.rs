@@ -4,7 +4,7 @@ use crate::DefaultColorsSerializer;
 use byteorder::ReadBytesExt;
 use config::ColorIndexType;
 use hashbrown::HashMap;
-use hashes::HashFunctionFactory;
+use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
@@ -17,9 +17,13 @@ use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::MapEntry;
 
-pub struct SingleColorManager<H: HashFunctionFactory>(PhantomData<H>);
+pub struct SingleColorManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory>(
+    PhantomData<(H, MH)>,
+);
 
-impl<H: HashFunctionFactory> ColorsMergeManager<H> for SingleColorManager<H> {
+impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManager<H, MH>
+    for SingleColorManager<H, MH>
+{
     type SingleKmerColorDataType = ColorIndexType;
     type GlobalColorsTableWriter = ();
     type GlobalColorsTableReader = ColorsDeserializer<DefaultColorsSerializer>;
@@ -48,7 +52,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for SingleColorManager<H> {
     fn add_temp_buffer_structure_el(
         _data: &mut Self::ColorsBufferTempStructure,
         kmer_color: &ColorIndexType,
-        _el: (usize, H::HashTypeUnextendable),
+        _el: (usize, MH::HashTypeUnextendable),
         entry: &mut MapEntry<Self::HashMapTempColorIndex>,
     ) {
         assert!(
@@ -62,6 +66,9 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for SingleColorManager<H> {
     fn add_temp_buffer_sequence(
         _data: &mut Self::ColorsBufferTempStructure,
         _sequence: CompressedRead,
+        _k: usize,
+        _m: usize,
+        _flags: u8,
     ) {
     }
 
@@ -76,7 +83,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for SingleColorManager<H> {
     fn process_colors(
         _global_colors_table: &Self::GlobalColorsTableWriter,
         _data: &mut Self::ColorsBufferTempStructure,
-        _map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+        _map: &mut HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
         _k: usize,
         _min_multiplicity: usize,
     ) {

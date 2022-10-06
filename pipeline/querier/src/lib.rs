@@ -72,7 +72,7 @@ pub fn run_query<
     BucketingHash::initialize(k);
     MergingHash::initialize(k);
 
-    let color_map = QuerierColorsManager::ColorsMergeManagerType::<MergingHash>::open_colors_table(
+    let color_map = QuerierColorsManager::ColorsMergeManagerType::<BucketingHash, MergingHash>::open_colors_table(
         graph_input.with_extension("colors.dat"),
     );
 
