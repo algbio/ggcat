@@ -28,6 +28,7 @@ pub struct MultipleColorsManager<H: MinimizerHashFunctionFactory, MH: HashFuncti
     sequences_count: usize,
     temp_colors_buffer: Vec<ColorIndexType>,
     _phantom: PhantomData<(H, MH)>,
+    dbg_minimizers_set: HashMap<u64, usize>,
 }
 
 const VISITED_BIT: usize = 1 << (COUNTER_BITS - 1);
@@ -64,6 +65,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             sequences_count: 0,
             temp_colors_buffer: vec![],
             _phantom: PhantomData,
+            dbg_minimizers_set: Default::default(),
         }
     }
 
@@ -72,6 +74,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         data.temp_colors_buffer.clear();
         data.kmers_count = 0;
         data.sequences_count = 0;
+        data.dbg_minimizers_set.clear();
     }
 
     fn add_temp_buffer_structure_el(
@@ -101,6 +104,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             .min()
             .unwrap();
 
+        data.dbg_minimizers_set.insert(minimizer as u64, 1);
+
         const MULTIPLIER: MinimizerType = 3715284523;
         let bucket = (minimizer.wrapping_mul(MULTIPLIER) as usize) % COLOR_SEQUENCES_SUBBUKETS;
 
@@ -126,11 +131,17 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         min_multiplicity: usize,
     ) {
         println!(
-            "Sequence color sizes: {:?}",
+            "Sequence color sizes: {:?} with {} minimizers: {:?}",
             data.sequences
                 .iter()
                 .map(|x| (x.len(), x.capacity()))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            data.dbg_minimizers_set.len(),
+            if data.dbg_minimizers_set.len() < 10 {
+                Some(&data.dbg_minimizers_set)
+            } else {
+                None
+            }
         );
 
         for buffer in data.sequences.iter() {
