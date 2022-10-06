@@ -147,7 +147,9 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                     &mut preprocess_info.colors_buffer.0,
                 );
 
-                if color.debug_count() != sequence.seq.len() - self.global_data.k + 1 {
+                if CX::COLORS_ENABLED
+                    && (color.debug_count() != sequence.seq.len() - self.global_data.k + 1)
+                {
                     println!(
                         "WARN: Sequence does not have enough colors, please check matching k size:\n{}\n{}",
                         std::str::from_utf8(sequence.ident).unwrap(),

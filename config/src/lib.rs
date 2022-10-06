@@ -75,6 +75,7 @@ impl SwapPriority {
     pub const ReorganizeReads: usize = 3;
     pub const LinksBuckets: usize = 3;
     pub const LinkPairs: usize = 4;
+    pub const KmersMergeTempColors: usize = 4;
     pub const KmersMergeBuckets: usize = 6;
 }
 

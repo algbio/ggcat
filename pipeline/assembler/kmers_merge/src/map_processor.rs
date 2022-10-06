@@ -18,13 +18,17 @@ use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
+use parking_lot::RwLock;
 use std::cmp::{max, min};
 use std::mem::size_of;
-use std::ops::DerefMut;
+use std::ops::{Deref, DerefMut};
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use structs::map_entry::MapEntry;
 
 instrumenter::use_instrumenter!();
+
+pub(crate) static KMERGE_TEMP_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
 
 pub struct ParallelKmersMergeMapPacket<
     H: MinimizerHashFunctionFactory,
@@ -62,7 +66,9 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             rhash_map: HashMap::with_capacity(4096),
             saved_reads: vec![],
             encoded_saved_reads_indexes: vec![],
-            temp_colors: CX::ColorsMergeManagerType::<H, MH>::allocate_temp_buffer_structure(),
+            temp_colors: CX::ColorsMergeManagerType::<H, MH>::allocate_temp_buffer_structure(
+                KMERGE_TEMP_DIR.read().deref().as_ref().unwrap(),
+            ),
             average_hasmap_size: 0,
             average_sequences_size: 0,
         }

@@ -2,7 +2,10 @@ use crate::colors_manager::ColorsMergeManager;
 use crate::colors_memmap_writer::ColorsMemMapWriter;
 use crate::DefaultColorsSerializer;
 use byteorder::ReadBytesExt;
-use config::{ColorIndexType, MinimizerType, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
+use config::{
+    get_memory_mode, ColorIndexType, MinimizerType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
+    PARTIAL_VECS_CHECKPOINT_SIZE, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END,
+};
 use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
 use hashes::{HashFunction, HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
@@ -11,26 +14,104 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::LockFreeBucket;
+use parallel_processor::memory_fs::RemoveFileMode;
 use std::collections::VecDeque;
 use std::io::{Cursor, Read, Write};
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use structs::map_entry::{MapEntry, COUNTER_BITS};
 
 const COLOR_SEQUENCES_SUBBUKETS: usize = 32;
 
+struct SequencesStorage {
+    buffer: Vec<u8>,
+    file: Option<CompressedBinaryWriter>,
+}
+
+struct SequencesStorageStream<'a> {
+    buffer: Cursor<&'a [u8]>,
+    reader: Option<CompressedBinaryReader>,
+}
+
+impl<'a> Read for SequencesStorageStream<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(ref mut reader) = self.reader {
+            let amount = reader.get_single_stream().read(buf)?;
+            if amount > 0 {
+                return Ok(amount);
+            } else {
+                self.reader.take();
+            }
+        }
+        self.buffer.read(buf)
+    }
+}
+
+impl SequencesStorage {
+    pub fn new() -> Self {
+        Self {
+            buffer: Vec::with_capacity(READS_BUFFERS_MAX_CAPACITY),
+            file: None,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.buffer.clear();
+        assert!(self.file.is_none());
+    }
+
+    pub fn get_stream(&mut self) -> SequencesStorageStream {
+        let reader = self.file.take().map(|f| {
+            let path = f.get_path();
+            f.finalize();
+            CompressedBinaryReader::new(path, RemoveFileMode::Remove { remove_fs: true }, None)
+        });
+        SequencesStorageStream {
+            buffer: Cursor::new(&self.buffer),
+            reader,
+        }
+    }
+
+    pub fn flush(&mut self, temp_dir: &PathBuf) {
+        if self.buffer.len() >= READS_BUFFERS_MAX_CAPACITY {
+            if self.file.is_none() {
+                static COLOR_STORAGE_INDEX: AtomicUsize = AtomicUsize::new(0);
+                self.file = Some(CompressedBinaryWriter::new(
+                    temp_dir.join("color-storage-temp").as_path(),
+                    &(
+                        get_memory_mode(SwapPriority::KmersMergeTempColors),
+                        PARTIAL_VECS_CHECKPOINT_SIZE,
+                        0,
+                    ),
+                    COLOR_STORAGE_INDEX.fetch_add(1, Ordering::Relaxed),
+                ))
+            }
+
+            self.file.as_ref().unwrap().write_data(&self.buffer);
+            self.buffer.clear();
+        }
+    }
+}
+
 pub struct MultipleColorsManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> {
     last_color: ColorIndexType,
-    sequences: Vec<Vec<u8>>,
+    sequences: Vec<SequencesStorage>,
     kmers_count: usize,
     sequences_count: usize,
     temp_colors_buffer: Vec<ColorIndexType>,
+    temp_dir: PathBuf,
     _phantom: PhantomData<(H, MH)>,
 }
 
 const VISITED_BIT: usize = 1 << (COUNTER_BITS - 1);
+const TEMP_BUFFER_START_SIZE: usize = 1024 * 64;
+const READS_BUFFERS_MAX_CAPACITY: usize = 1024 * 32;
 
 impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManager<H, MH>
     for MultipleColorsManager<H, MH>
@@ -56,13 +137,16 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
     type ColorsBufferTempStructure = Self;
 
-    fn allocate_temp_buffer_structure() -> Self::ColorsBufferTempStructure {
+    fn allocate_temp_buffer_structure(temp_dir: &Path) -> Self::ColorsBufferTempStructure {
         Self {
             last_color: 0,
-            sequences: vec![vec![]; COLOR_SEQUENCES_SUBBUKETS],
+            sequences: (0..COLOR_SEQUENCES_SUBBUKETS)
+                .map(|_| SequencesStorage::new())
+                .collect(),
             kmers_count: 0,
             sequences_count: 0,
             temp_colors_buffer: vec![],
+            temp_dir: temp_dir.to_path_buf(),
             _phantom: PhantomData,
         }
     }
@@ -70,6 +154,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     fn reinit_temp_buffer_structure(data: &mut Self::ColorsBufferTempStructure) {
         data.sequences.iter_mut().for_each(|s| s.clear());
         data.temp_colors_buffer.clear();
+        data.temp_colors_buffer.shrink_to(TEMP_BUFFER_START_SIZE);
         data.kmers_count = 0;
         data.sequences_count = 0;
     }
@@ -103,14 +188,17 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
         const MINIMIZER_SHIFT: usize =
             size_of::<MinimizerType>() * 8 - (2 * COLOR_SEQUENCES_SUBBUKETS.ilog2() as usize);
-        let bucket = 0; //(minimizer >> MINIMIZER_SHIFT) as usize % COLOR_SEQUENCES_SUBBUKETS;
+        let bucket = (minimizer >> MINIMIZER_SHIFT) as usize % COLOR_SEQUENCES_SUBBUKETS;
 
-        data.sequences[bucket].extend_from_slice(&data.last_color.to_ne_bytes());
+        data.sequences[bucket]
+            .buffer
+            .extend_from_slice(&data.last_color.to_ne_bytes());
         encode_varint(
-            |b| data.sequences[bucket].extend_from_slice(b),
+            |b| data.sequences[bucket].buffer.extend_from_slice(b),
             sequence.bases_count() as u64,
         );
-        sequence.copy_to_buffer(&mut data.sequences[bucket]);
+        sequence.copy_to_buffer(&mut data.sequences[bucket].buffer);
+        data.sequences[bucket].flush(&data.temp_dir)
     }
 
     type HashMapTempColorIndex = ();
@@ -126,10 +214,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         k: usize,
         min_multiplicity: usize,
     ) {
-        for buffer in data.sequences.iter() {
+        for buffer in data.sequences.iter_mut() {
             data.temp_colors_buffer.clear();
 
-            let mut stream = Cursor::new(buffer);
+            let mut stream = buffer.get_stream();
 
             let mut color_buf = [0; size_of::<ColorIndexType>()];
             let mut read_buf = vec![];
@@ -138,7 +226,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             let mut last_color = 0;
 
             loop {
-                if stream.read(&mut color_buf).unwrap() == 0 {
+                // TODO: Distinguish between error and no more data
+                if stream.read_exact(&mut color_buf).is_err() {
                     break;
                 }
 
@@ -158,14 +247,32 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                 data.temp_colors_buffer
                     .reserve(data.kmers_count + data.sequences_count);
 
+                let mut is_first = true;
+
                 for kmer_hash in hashes.iter() {
                     let entry = map.get_mut(&kmer_hash.to_unextendable()).unwrap();
+
+                    let is_first = {
+                        let tmp = is_first;
+                        is_first = false;
+                        tmp
+                    };
 
                     if entry.get_kmer_multiplicity() < min_multiplicity {
                         continue;
                     }
 
                     let mut entry_count = entry.get_counter();
+
+                    const BIDIRECTIONAL_FLAGS: u8 = READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END;
+
+                    if entry.get_flags() & BIDIRECTIONAL_FLAGS == BIDIRECTIONAL_FLAGS {
+                        if kmer_hash.is_forward() ^ is_first {
+                            continue;
+                        } else if entry_count & VISITED_BIT == 0 {
+                            entry_count /= 2;
+                        }
+                    }
 
                     if entry_count & VISITED_BIT == 0 {
                         let colors_count = entry_count;

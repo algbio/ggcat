@@ -1152,6 +1152,7 @@ dependencies = [
  "minimizer_bucketing",
  "nightly-quirks",
  "parallel-processor",
+ "parking_lot",
  "rayon",
  "structs",
  "typenum",

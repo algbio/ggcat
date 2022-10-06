@@ -124,7 +124,7 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
 
     /// Temporary buffer that holds color values for each kmer while merging them
     type ColorsBufferTempStructure: 'static + Send + Sync;
-    fn allocate_temp_buffer_structure() -> Self::ColorsBufferTempStructure;
+    fn allocate_temp_buffer_structure(temp_dir: &Path) -> Self::ColorsBufferTempStructure;
     fn reinit_temp_buffer_structure(data: &mut Self::ColorsBufferTempStructure);
     fn add_temp_buffer_structure_el(
         data: &mut Self::ColorsBufferTempStructure,

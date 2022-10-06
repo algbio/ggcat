@@ -1,7 +1,7 @@
 #![feature(int_log)]
 
 use crate::final_executor::ParallelKmersMergeFinalExecutor;
-use crate::map_processor::ParallelKmersMergeMapProcessor;
+use crate::map_processor::{ParallelKmersMergeMapProcessor, KMERGE_TEMP_DIR};
 use crate::preprocessor::ParallelKmersMergePreprocessor;
 use crate::structs::{ResultsBucket, RetType};
 use assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
@@ -147,6 +147,7 @@ pub fn kmers_merge<
 
     H::initialize(k);
     MH::initialize(k);
+    *KMERGE_TEMP_DIR.write() = Some(out_directory.as_ref().to_path_buf());
 
     let hashes_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
         buckets_count,

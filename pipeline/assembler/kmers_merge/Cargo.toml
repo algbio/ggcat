@@ -35,6 +35,7 @@ crossbeam = "0.8.2"
 
 # Profiler
 instrumenter = { path = "../../../libs/instrumenter-rs" }
+parking_lot = "0.12.1"
 
 [dev-dependencies]
 fdlimit = "0.2.1"

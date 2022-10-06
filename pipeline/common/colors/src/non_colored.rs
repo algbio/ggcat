@@ -108,7 +108,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     type ColorsBufferTempStructure = NonColoredManager;
 
     #[inline(always)]
-    fn allocate_temp_buffer_structure() -> Self::ColorsBufferTempStructure {
+    fn allocate_temp_buffer_structure(_init_data: &Path) -> Self::ColorsBufferTempStructure {
         NonColoredManager
     }
 
