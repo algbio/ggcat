@@ -158,7 +158,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 if rhentry.is_used() {
                     continue;
                 }
-                rhentry.set_used();
 
                 let base_index = read_start * 4 + base_index;
                 let read_bases_start = base_index / 4;
@@ -204,6 +203,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                     &mut self.unitigs_temp_colors,
                     rhentry,
                 );
+                rhentry.set_used();
 
                 let mut try_extend_function = |output: &mut Vec<u8>,
                                                compute_hash_fw: fn(
@@ -283,12 +283,12 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                                 break (temp_data.0, false);
                             }
 
-                            // Flag the entry as already used
-                            entryref.set_used();
-
                             if CX::COLORS_ENABLED {
                                 colors_function(&mut self.unitigs_temp_colors, entryref);
                             }
+
+                            // Flag the entry as already used
+                            entryref.set_used();
 
                             output.push(Utils::decompress_base(temp_data.1));
 
