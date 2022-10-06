@@ -142,6 +142,7 @@ pub trait ColorsMergeManager<H: HashFunctionFactory>: Sized {
         global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
         map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+        k: usize,
         min_multiplicity: usize,
     );
 

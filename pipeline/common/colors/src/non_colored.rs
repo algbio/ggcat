@@ -143,9 +143,10 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for NonColoredManager {
             <H as HashFunctionFactory>::HashTypeUnextendable,
             MapEntry<Self::HashMapTempColorIndex>,
         >,
+        _k: usize,
         _min_multiplicity: usize,
     ) {
-        todo!()
+        unreachable!()
     }
 
     type PartialUnitigsColorStructure = NonColoredManager;

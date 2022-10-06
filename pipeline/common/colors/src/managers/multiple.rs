@@ -5,15 +5,16 @@ use byteorder::ReadBytesExt;
 use config::ColorIndexType;
 use core::slice::from_raw_parts;
 use hashbrown::HashMap;
-use hashes::{HashFunctionFactory, HashableSequence};
+use hashes::{HashFunction, HashFunctionFactory, HashableSequence};
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use std::collections::VecDeque;
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::marker::PhantomData;
+use std::mem::size_of;
 use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::MapEntry;
@@ -98,8 +99,43 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
         global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
         map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+        k: usize,
         min_multiplicity: usize,
     ) {
+        let mut stream = Cursor::new(&data.sequences);
+
+        let mut color_buf = [0; size_of::<ColorIndexType>()];
+        let mut read_buf = vec![];
+        loop {
+            if stream.read(&mut color_buf).unwrap() == 0 {
+                break;
+            }
+
+            let color = ColorIndexType::from_ne_bytes(color_buf);
+            let read_length = decode_varint(|| stream.read_u8().ok()).unwrap() as usize;
+            let read_bytes_count = (read_length + 3) / 4;
+
+            read_buf.clear();
+            read_buf.reserve(read_bytes_count);
+            unsafe { read_buf.set_len(read_bytes_count) };
+            stream.read_exact(&mut read_buf[..]).unwrap();
+
+            let read = CompressedRead::new_from_compressed(&read_buf[..], read_length);
+
+            let hashes = H::new(read, k);
+
+            for kmer_hash in hashes.iter() {
+                let entry = map.get_mut(kmer_hash).unwrap();
+                let entry_count = entry.get_counter();
+
+                if entry_count < min_multiplicity {
+                    continue;
+                }
+
+                entry.incr();
+            }
+        }
+
         // let vec_len = data.kmers.len();
         // data.flags.last_mut().iter_mut().for_each(|l| l.1 = vec_len);
         //

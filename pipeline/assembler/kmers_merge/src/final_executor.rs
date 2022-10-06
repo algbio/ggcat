@@ -96,6 +96,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 &global_data.colors_global_table,
                 &mut map_struct.temp_colors,
                 &mut map_struct.rhash_map,
+                global_data.k,
                 global_data.min_multiplicity,
             );
         }

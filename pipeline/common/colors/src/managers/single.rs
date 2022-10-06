@@ -77,6 +77,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for SingleColorManager<H> {
         _global_colors_table: &Self::GlobalColorsTableWriter,
         _data: &mut Self::ColorsBufferTempStructure,
         _map: &mut HashMap<H::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+        _k: usize,
         _min_multiplicity: usize,
     ) {
     }
