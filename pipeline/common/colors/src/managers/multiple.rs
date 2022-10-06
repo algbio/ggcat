@@ -125,7 +125,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
             let hashes = H::new(read, k);
 
             for kmer_hash in hashes.iter() {
-                let entry = map.get_mut(kmer_hash).unwrap();
+                let entry = map.get_mut(&kmer_hash).unwrap();
                 let entry_count = entry.get_counter();
 
                 if entry_count < min_multiplicity {
