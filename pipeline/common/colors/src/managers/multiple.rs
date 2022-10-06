@@ -2,7 +2,7 @@ use crate::colors_manager::ColorsMergeManager;
 use crate::colors_memmap_writer::ColorsMemMapWriter;
 use crate::DefaultColorsSerializer;
 use byteorder::ReadBytesExt;
-use config::{ColorIndexType, MinimizerType, READ_FLAG_INCL_END};
+use config::{ColorIndexType, MinimizerType, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
 use hashes::{HashFunction, HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
@@ -162,6 +162,16 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                     let entry = map.get_mut(&kmer_hash.to_unextendable()).unwrap();
 
                     if entry.get_kmer_multiplicity() < min_multiplicity {
+                        continue;
+                    }
+
+                    let flags = entry.get_flags();
+                    let incl_begin = (flags & READ_FLAG_INCL_BEGIN) != 0;
+                    let incl_end = (flags & READ_FLAG_INCL_END) != 0;
+
+                    // Ignore extra kmers
+                    if incl_begin ^ incl_end {
+                        entry.set_counter_after_check(VISITED_BIT | 0x0FFFFFFF);
                         continue;
                     }
 
