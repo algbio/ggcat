@@ -205,6 +205,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 }
             }
 
+            CX::ColorsMergeManagerType::<MH>::add_temp_buffer_sequence(
+                &mut map_packet.temp_colors,
+                read,
+            );
+
             if min_idx != usize::MAX {
                 encode_varint(
                     |b| {
