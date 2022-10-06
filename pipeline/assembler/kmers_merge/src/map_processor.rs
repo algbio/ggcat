@@ -185,24 +185,25 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                         CX::ColorsMergeManagerType::<MH>::new_color_index(),
                     ));
 
-
                 entry.update_flags(
                     ((begin_ignored as u8) << ((!is_forward) as u8))
                         | ((end_ignored as u8) << (is_forward as u8)),
                 );
 
-                entry.incr();
+                for _ in 0..10 {
+                    entry.incr();
 
-                CX::ColorsMergeManagerType::<MH>::add_temp_buffer_structure_el(
-                    &mut map_packet.temp_colors,
-                    &kmer_color,
-                    (idx, hash.to_unextendable()),
-                    entry,
-                );
+                    CX::ColorsMergeManagerType::<MH>::add_temp_buffer_structure_el(
+                        &mut map_packet.temp_colors,
+                        &kmer_color,
+                        (idx, hash.to_unextendable()),
+                        entry,
+                    );
 
-                if entry.get_counter() == global_data.min_multiplicity {
-                    min_idx = min(min_idx, idx / 4);
-                    max_idx = max(max_idx, idx);
+                    if entry.get_counter() == global_data.min_multiplicity {
+                        min_idx = min(min_idx, idx / 4);
+                        max_idx = max(max_idx, idx);
+                    }
                 }
             }
 
