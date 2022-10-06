@@ -165,16 +165,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                         continue;
                     }
 
-                    let flags = entry.get_flags();
-                    let incl_begin = (flags & READ_FLAG_INCL_BEGIN) != 0;
-                    let incl_end = (flags & READ_FLAG_INCL_END) != 0;
-
-                    // Ignore extra kmers
-                    if incl_begin ^ incl_end {
-                        entry.set_counter_after_check(VISITED_BIT | 0x0FFFFFFF);
-                        continue;
-                    }
-
                     let mut entry_count = entry.get_counter();
 
                     if entry_count & VISITED_BIT == 0 {
