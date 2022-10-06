@@ -109,8 +109,9 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
         data.dbg_minimizers_set.insert(minimizer as u64, 1);
 
-        const MULTIPLIER: MinimizerType = 3715284523;
-        let bucket = (minimizer.wrapping_mul(MULTIPLIER) as usize) % COLOR_SEQUENCES_SUBBUKETS;
+        const MINIMIZER_SHIFT: usize =
+            size_of::<MinimizerType>() - (COLOR_SEQUENCES_SUBBUKETS.ilog2() as usize);
+        let bucket = minimizer >> MINIMIZER_SHIFT;
 
         data.dbg_bcount |= (1 << bucket);
 

@@ -4,6 +4,7 @@
 #![feature(const_type_id)]
 #![feature(int_roundings)]
 #![feature(let_chains)]
+#![feature(int_log)]
 
 use crate::storage::run_length::RunLengthColorsSerializer;
 
