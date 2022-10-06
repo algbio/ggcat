@@ -103,7 +103,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
         const MINIMIZER_SHIFT: usize =
             size_of::<MinimizerType>() * 8 - (2 * COLOR_SEQUENCES_SUBBUKETS.ilog2() as usize);
-        let bucket = 0; //(minimizer >> MINIMIZER_SHIFT) as usize % COLOR_SEQUENCES_SUBBUKETS;
+        let bucket = (minimizer >> MINIMIZER_SHIFT) as usize % COLOR_SEQUENCES_SUBBUKETS;
 
         data.sequences[bucket].extend_from_slice(&data.last_color.to_ne_bytes());
         encode_varint(
@@ -158,14 +158,32 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                 data.temp_colors_buffer
                     .reserve(data.kmers_count + data.sequences_count);
 
+                let mut is_first = true;
+
                 for kmer_hash in hashes.iter() {
                     let entry = map.get_mut(&kmer_hash.to_unextendable()).unwrap();
+
+                    let is_first = {
+                        let tmp = is_first;
+                        is_first = false;
+                        tmp
+                    };
 
                     if entry.get_kmer_multiplicity() < min_multiplicity {
                         continue;
                     }
 
                     let mut entry_count = entry.get_counter();
+
+                    const BIDIRECTIONAL_FLAGS: u8 = READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END;
+
+                    if entry.get_flags() & BIDIRECTIONAL_FLAGS == BIDIRECTIONAL_FLAGS {
+                        if kmer_hash.is_forward() ^ is_first {
+                            continue;
+                        } else if entry_count & VISITED_BIT == 0 {
+                            entry_count /= 2;
+                        }
+                    }
 
                     if entry_count & VISITED_BIT == 0 {
                         let colors_count = entry_count;
