@@ -6,6 +6,8 @@ const FLAGS_COUNT: usize = 2;
 const FLAGS_SHIFT: usize = size_of::<usize>() * 8 - FLAGS_COUNT;
 const COUNTER_MASK: usize = (1 << FLAGS_SHIFT) - 1;
 
+pub const COUNTER_BITS: usize = FLAGS_SHIFT;
+
 pub struct MapEntry<CHI> {
     count_flags: usize,
     pub color_index: CHI,
@@ -37,6 +39,10 @@ impl<CHI> MapEntry<CHI> {
     #[inline(always)]
     pub fn get_counter(&self) -> usize {
         self.count_flags & COUNTER_MASK
+    }
+
+    pub fn set_counter_after_check(&mut self, value: usize) {
+        self.count_flags = (self.count_flags & !COUNTER_MASK) | (value & COUNTER_MASK);
     }
 
     #[inline(always)]

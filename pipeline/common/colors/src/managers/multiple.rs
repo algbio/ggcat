@@ -3,7 +3,6 @@ use crate::colors_memmap_writer::ColorsMemMapWriter;
 use crate::DefaultColorsSerializer;
 use byteorder::ReadBytesExt;
 use config::ColorIndexType;
-use core::slice::from_raw_parts;
 use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
 use hashes::{HashFunction, HashFunctionFactory, HashableSequence};
@@ -18,13 +17,18 @@ use std::marker::PhantomData;
 use std::mem::size_of;
 use std::ops::Range;
 use std::path::Path;
-use structs::map_entry::MapEntry;
+use structs::map_entry::{MapEntry, COUNTER_BITS};
 
 pub struct MultipleColorsManager<H: HashFunctionFactory> {
     last_color: ColorIndexType,
     sequences: Vec<u8>,
+    kmers_count: usize,
+    sequences_count: usize,
+    temp_colors_buffer: Vec<ColorIndexType>,
     _phantom: PhantomData<H>,
 }
+
+const VISITED_BIT: usize = 1 << (COUNTER_BITS - 1);
 
 impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> {
     type SingleKmerColorDataType = ColorIndexType;
@@ -52,12 +56,18 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
         Self {
             last_color: 0,
             sequences: vec![],
+            kmers_count: 0,
+            sequences_count: 0,
+            temp_colors_buffer: vec![],
             _phantom: PhantomData,
         }
     }
 
     fn reinit_temp_buffer_structure(data: &mut Self::ColorsBufferTempStructure) {
         data.sequences.clear();
+        data.temp_colors_buffer.clear();
+        data.kmers_count = 0;
+        data.sequences_count = 0;
     }
 
     fn add_temp_buffer_structure_el(
@@ -67,13 +77,6 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
         _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
     ) {
         data.last_color = *kmer_color;
-        // if data.flags.last().map(|l| &l.2) != Some(kmer_color) {
-        //     if let Some(last) = data.flags.last_mut() {
-        //         last.1 = data.kmers.len();
-        //     }
-        //     data.flags.push((data.kmers.len(), 0, kmer_color.clone()));
-        // }
-        // data.kmers.push(el.1);
     }
 
     #[inline(always)]
@@ -90,10 +93,10 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
         sequence.copy_to_buffer(&mut data.sequences);
     }
 
-    type HashMapTempColorIndex = DefaultHashMapTempColorIndex;
+    type HashMapTempColorIndex = ();
 
     fn new_color_index() -> Self::HashMapTempColorIndex {
-        DefaultHashMapTempColorIndex { temp_index: (0, 0) }
+        ()
     }
 
     fn process_colors(
@@ -107,6 +110,10 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
 
         let mut color_buf = [0; size_of::<ColorIndexType>()];
         let mut read_buf = vec![];
+
+        let mut last_partition = 0..0;
+        let mut last_color = 0;
+
         loop {
             if stream.read(&mut color_buf).unwrap() == 0 {
                 break;
@@ -125,15 +132,62 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
 
             let hashes = H::new(read, k);
 
+            data.temp_colors_buffer
+                .reserve(data.kmers_count + data.sequences_count);
+
             for kmer_hash in hashes.iter() {
                 let entry = map.get_mut(&kmer_hash.to_unextendable()).unwrap();
-                let entry_count = entry.get_counter();
+                let mut entry_count = entry.get_counter();
 
                 if entry_count < min_multiplicity {
                     continue;
                 }
 
-                entry.incr();
+                if entry_count & VISITED_BIT == 0 {
+                    let colors_count = entry_count;
+                    let start_temp_color_index = data.temp_colors_buffer.len();
+
+                    entry_count = VISITED_BIT | start_temp_color_index;
+                    entry.set_counter_after_check(entry_count);
+
+                    data.temp_colors_buffer
+                        .resize(data.temp_colors_buffer.len() + colors_count + 1, 0);
+
+                    data.temp_colors_buffer[start_temp_color_index] = 1;
+                }
+
+                let position = entry_count & !VISITED_BIT;
+
+                let col_count = data.temp_colors_buffer[position] as usize;
+                data.temp_colors_buffer[position] += 1;
+
+                assert_eq!(data.temp_colors_buffer[position + col_count], 0);
+                data.temp_colors_buffer[position + col_count] = color;
+
+                let has_all_colors = (position + col_count + 1) == data.temp_colors_buffer.len()
+                    || data.temp_colors_buffer[position + col_count + 1] != 0;
+
+                // All colors were added, let's assign the final color
+                if has_all_colors {
+                    let colors_range =
+                        &mut data.temp_colors_buffer[(position + 1)..(position + col_count + 2)];
+
+                    colors_range.sort_unstable();
+
+                    // Get the new partition indexes, start to dedup last element
+                    let new_partition =
+                        (position + 1)..(position + 1 + colors_range.partition_dedup().0.len());
+
+                    let unique_colors = &data.temp_colors_buffer[new_partition.clone()];
+
+                    // Assign the subset color index to the current kmer
+                    if unique_colors != &data.temp_colors_buffer[last_partition.clone()] {
+                        last_color = global_colors_table.get_id(unique_colors);
+                        last_partition = new_partition;
+                    }
+
+                    entry.set_counter_after_check(VISITED_BIT | (last_color as usize));
+                }
             }
         }
 
@@ -209,30 +263,27 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
         ts: &mut Self::TempUnitigColorStructure,
         entry: &MapEntry<Self::HashMapTempColorIndex>,
     ) {
-        unsafe {
-            if let Some(back_ts) = ts.colors.back_mut() {
-                if back_ts.0 == entry.color_index.color_index {
+        let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
+
+        if let Some(back_ts) = ts.colors.back_mut() && back_ts.0 == kmer_color {
                     back_ts.1 += 1;
-                    return;
-                }
+            } else {
+                ts.colors.push_back((kmer_color, 1));
             }
-            ts.colors.push_back((entry.color_index.color_index, 1));
-        }
     }
 
     fn extend_backward(
         ts: &mut Self::TempUnitigColorStructure,
         entry: &MapEntry<Self::HashMapTempColorIndex>,
     ) {
-        unsafe {
-            if let Some(front_ts) = ts.colors.front_mut() {
-                if front_ts.0 == entry.color_index.color_index {
-                    front_ts.1 += 1;
-                    return;
-                }
+        let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
+
+        if let Some(front_ts) = ts.colors.front_mut()
+                && front_ts.0 == kmer_color {
+                front_ts.1 += 1;
+            } else {
+                ts.colors.push_front((kmer_color, 1));
             }
-            ts.colors.push_front((entry.color_index.color_index, 1));
-        }
     }
 
     fn join_structures<const REVERSE: bool>(
@@ -314,11 +365,6 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
             assert_eq!(sum as usize, seq.len());
         }
     }
-}
-
-pub union DefaultHashMapTempColorIndex {
-    color_index: ColorIndexType,
-    temp_index: (u32 /*Vector index*/, u32 /*Remaining*/),
 }
 
 #[derive(Debug)]
