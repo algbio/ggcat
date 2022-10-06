@@ -28,8 +28,6 @@ pub struct MultipleColorsManager<H: MinimizerHashFunctionFactory, MH: HashFuncti
     sequences_count: usize,
     temp_colors_buffer: Vec<ColorIndexType>,
     _phantom: PhantomData<(H, MH)>,
-    dbg_minimizers_set: HashMap<u64, usize>,
-    dbg_bcount: usize,
 }
 
 const VISITED_BIT: usize = 1 << (COUNTER_BITS - 1);
@@ -66,8 +64,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             sequences_count: 0,
             temp_colors_buffer: vec![],
             _phantom: PhantomData,
-            dbg_minimizers_set: Default::default(),
-            dbg_bcount: 0,
         }
     }
 
@@ -76,8 +72,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         data.temp_colors_buffer.clear();
         data.kmers_count = 0;
         data.sequences_count = 0;
-        data.dbg_minimizers_set.clear();
-        data.dbg_bcount = 0;
     }
 
     fn add_temp_buffer_structure_el(
@@ -107,13 +101,9 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             .min()
             .unwrap();
 
-        data.dbg_minimizers_set.insert(minimizer as u64, 1);
-
         const MINIMIZER_SHIFT: usize =
             size_of::<MinimizerType>() * 8 - (COLOR_SEQUENCES_SUBBUKETS.ilog2() as usize);
         let bucket = (minimizer >> MINIMIZER_SHIFT) as usize;
-
-        data.dbg_bcount |= 1 << bucket;
 
         data.sequences[bucket].extend_from_slice(&data.last_color.to_ne_bytes());
         encode_varint(
@@ -136,18 +126,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         k: usize,
         min_multiplicity: usize,
     ) {
-        println!(
-            "Sequence color sizes: {:?} with {} minimizers: {:?} mask: {:b} / {}",
-            data.sequences
-                .iter()
-                .map(|x| (x.len(), x.capacity()))
-                .collect::<Vec<_>>(),
-            data.dbg_minimizers_set.len(),
-            data.dbg_minimizers_set.iter().take(10).collect::<Vec<_>>(),
-            data.dbg_bcount,
-            data.dbg_bcount.count_ones()
-        );
-
         for buffer in data.sequences.iter() {
             data.temp_colors_buffer.clear();
 
