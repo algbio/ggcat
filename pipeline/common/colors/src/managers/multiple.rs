@@ -110,10 +110,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         data.dbg_minimizers_set.insert(minimizer as u64, 1);
 
         const MINIMIZER_SHIFT: usize =
-            size_of::<MinimizerType>() - (COLOR_SEQUENCES_SUBBUKETS.ilog2() as usize);
+            size_of::<MinimizerType>() * 8 - (COLOR_SEQUENCES_SUBBUKETS.ilog2() as usize);
         let bucket = (minimizer >> MINIMIZER_SHIFT) as usize;
 
-        data.dbg_bcount |= (1 << bucket);
+        data.dbg_bcount |= 1 << bucket;
 
         data.sequences[bucket].extend_from_slice(&data.last_color.to_ne_bytes());
         encode_varint(
