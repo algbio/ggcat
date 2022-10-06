@@ -125,6 +125,14 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         k: usize,
         min_multiplicity: usize,
     ) {
+        println!(
+            "Sequence color sizes: {:?}",
+            data.sequences
+                .iter()
+                .map(|x| (x.len(), x.capacity()))
+                .collect::<Vec<_>>()
+        );
+
         for buffer in data.sequences.iter() {
             data.temp_colors_buffer.clear();
 
