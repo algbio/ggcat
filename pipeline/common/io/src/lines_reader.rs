@@ -1,11 +1,19 @@
 use bstr::ByteSlice;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use libdeflate_rs::decompress_file_buffered;
+use parallel_processor::counter_stats::counter::{AtomicCounter, SumMode};
+use parallel_processor::counter_stats::declare_counter_i64;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
 pub struct LinesReader {}
+
+static COUNTER_THREADS_BUSY_READING: AtomicCounter<SumMode> =
+    declare_counter_i64!("line_reading_threads", SumMode, false);
+
+static COUNTER_THREADS_PROCESSING_READS: AtomicCounter<SumMode> =
+    declare_counter_i64!("line_processing_threads", SumMode, false);
 
 impl LinesReader {
     #[inline(always)]
@@ -14,12 +22,20 @@ impl LinesReader {
         mut callback: impl FnMut(&[u8]),
     ) -> Result<(), ()> {
         let mut buffer = vec![0; DEFAULT_OUTPUT_BUFFER_SIZE];
+        COUNTER_THREADS_BUSY_READING.inc();
+
         while let Ok(count) = stream.read(buffer.as_mut_slice()) {
+            COUNTER_THREADS_BUSY_READING.sub(1);
             if count == 0 {
+                COUNTER_THREADS_PROCESSING_READS.inc();
                 callback(&[]);
+                COUNTER_THREADS_PROCESSING_READS.sub(1);
                 return Ok(());
             }
+            COUNTER_THREADS_PROCESSING_READS.inc();
             callback(&buffer[0..count]);
+            COUNTER_THREADS_PROCESSING_READS.sub(1);
+            COUNTER_THREADS_BUSY_READING.inc();
         }
         Err(())
     }
