@@ -154,12 +154,6 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
                     data.temp_colors_buffer
                         .resize(data.temp_colors_buffer.len() + colors_count + 1, 0);
 
-                    println!(
-                        "Add color subset {} at {}",
-                        colors_count,
-                        data.temp_colors_buffer.len()
-                    );
-
                     data.temp_colors_buffer[start_temp_color_index] = 1;
                 }
 
