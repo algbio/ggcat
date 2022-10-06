@@ -103,7 +103,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
         const MINIMIZER_SHIFT: usize =
             size_of::<MinimizerType>() * 8 - (2 * COLOR_SEQUENCES_SUBBUKETS.ilog2() as usize);
-        let bucket = (minimizer >> MINIMIZER_SHIFT) as usize;
+        let bucket = (minimizer >> MINIMIZER_SHIFT) as usize % COLOR_SEQUENCES_SUBBUKETS;
 
         data.sequences[bucket].extend_from_slice(&data.last_color.to_ne_bytes());
         encode_varint(
