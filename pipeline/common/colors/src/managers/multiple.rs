@@ -184,7 +184,7 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
                 // All colors were added, let's assign the final color
                 if has_all_colors {
                     let colors_range =
-                        &mut data.temp_colors_buffer[(position + 1)..(position + col_count + 2)];
+                        &mut data.temp_colors_buffer[(position + 1)..(position + col_count + 1)];
 
                     colors_range.sort_unstable();
 
