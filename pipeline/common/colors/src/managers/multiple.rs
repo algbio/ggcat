@@ -168,13 +168,6 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for MultipleColorsManager<H> 
                 let col_count = data.temp_colors_buffer[position] as usize;
                 data.temp_colors_buffer[position] += 1;
 
-                println!(
-                    "Update color subset at {} + {} < {}",
-                    position,
-                    col_count,
-                    data.temp_colors_buffer.len()
-                );
-
                 assert_eq!(data.temp_colors_buffer[position + col_count], 0);
                 data.temp_colors_buffer[position + col_count] = color;
 
