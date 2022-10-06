@@ -2,6 +2,7 @@ use crate::parsers::SingleSequenceInfo;
 use config::BucketIndexType;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
+use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use static_dispatch::static_dispatch;
 use std::cmp::min;
@@ -125,6 +126,11 @@ pub trait ColorsMergeManager<H: HashFunctionFactory>: Sized {
         kmer_color: &Self::SingleKmerColorDataType,
         el: (usize, H::HashTypeUnextendable),
         entry: &mut MapEntry<Self::HashMapTempColorIndex>,
+    );
+
+    fn add_temp_buffer_sequence(
+        data: &mut Self::ColorsBufferTempStructure,
+        sequence: CompressedRead,
     );
 
     /// Temporary storage for colors associated with a single kmer in the hashmap (holds the color subset index)

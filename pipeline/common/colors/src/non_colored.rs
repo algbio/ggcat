@@ -5,6 +5,7 @@ use crate::parsers::SingleSequenceInfo;
 use config::BucketIndexType;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
+use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use static_dispatch::static_dispatch;
 use std::io::{Read, Write};
@@ -117,6 +118,13 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for NonColoredManager {
         _kmer_color: &Self::SingleKmerColorDataType,
         _el: (usize, <H as HashFunctionFactory>::HashTypeUnextendable),
         _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
+    ) {
+    }
+
+    #[inline(always)]
+    fn add_temp_buffer_sequence(
+        _data: &mut Self::ColorsBufferTempStructure,
+        _sequence: CompressedRead,
     ) {
     }
 

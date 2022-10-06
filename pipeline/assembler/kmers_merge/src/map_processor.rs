@@ -190,20 +190,18 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                         | ((end_ignored as u8) << (is_forward as u8)),
                 );
 
-                for _ in 0..10 {
-                    entry.incr();
+                entry.incr();
 
-                    CX::ColorsMergeManagerType::<MH>::add_temp_buffer_structure_el(
-                        &mut map_packet.temp_colors,
-                        &kmer_color,
-                        (idx, hash.to_unextendable()),
-                        entry,
-                    );
+                CX::ColorsMergeManagerType::<MH>::add_temp_buffer_structure_el(
+                    &mut map_packet.temp_colors,
+                    &kmer_color,
+                    (idx, hash.to_unextendable()),
+                    entry,
+                );
 
-                    if entry.get_counter() == global_data.min_multiplicity {
-                        min_idx = min(min_idx, idx / 4);
-                        max_idx = max(max_idx, idx);
-                    }
+                if entry.get_counter() == global_data.min_multiplicity {
+                    min_idx = min(min_idx, idx / 4);
+                    max_idx = max(max_idx, idx);
                 }
             }
 

@@ -5,6 +5,7 @@ use byteorder::ReadBytesExt;
 use config::ColorIndexType;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
+use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
@@ -55,6 +56,13 @@ impl<H: HashFunctionFactory> ColorsMergeManager<H> for SingleColorManager<H> {
                 || entry.color_index.color_index == *kmer_color
         );
         entry.color_index.color_index = *kmer_color;
+    }
+
+    #[inline(always)]
+    fn add_temp_buffer_sequence(
+        _data: &mut Self::ColorsBufferTempStructure,
+        _sequence: CompressedRead,
+    ) {
     }
 
     type HashMapTempColorIndex = SingleHashMapTempColorIndex;
