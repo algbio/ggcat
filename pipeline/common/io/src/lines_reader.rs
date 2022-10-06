@@ -2,7 +2,7 @@ use bstr::ByteSlice;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use libdeflate_rs::decompress_file_buffered;
 use parallel_processor::counter_stats::counter::{AtomicCounter, AvgMode, SumMode};
-use parallel_processor::counter_stats::declare_counter_i64;
+use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter_i64};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -18,7 +18,7 @@ static COUNTER_THREADS_PROCESSING_READS: AtomicCounter<SumMode> =
 static COUNTER_THREADS_READ_BYTES: AtomicCounter<SumMode> =
     declare_counter_i64!("line_read_bytes", SumMode, false);
 static COUNTER_THREADS_READ_BYTES_AVG: AtomicCounter<AvgMode> =
-    declare_counter_i64!("line_read_bytes_avg", AvgMode, false);
+    declare_avg_counter_i64!("line_read_bytes_avg", false);
 
 impl LinesReader {
     #[inline(always)]
