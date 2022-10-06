@@ -1,7 +1,7 @@
 use bstr::ByteSlice;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use libdeflate_rs::decompress_file_buffered;
-use parallel_processor::counter_stats::counter::{AtomicCounter, SumMode};
+use parallel_processor::counter_stats::counter::{AtomicCounter, AvgMode, SumMode};
 use parallel_processor::counter_stats::declare_counter_i64;
 use std::fs::File;
 use std::io::Read;
@@ -15,6 +15,11 @@ static COUNTER_THREADS_BUSY_READING: AtomicCounter<SumMode> =
 static COUNTER_THREADS_PROCESSING_READS: AtomicCounter<SumMode> =
     declare_counter_i64!("line_processing_threads", SumMode, false);
 
+static COUNTER_THREADS_READ_BYTES: AtomicCounter<SumMode> =
+    declare_counter_i64!("line_read_bytes", SumMode, false);
+static COUNTER_THREADS_READ_BYTES_AVG: AtomicCounter<AvgMode> =
+    declare_counter_i64!("line_read_bytes_avg", AvgMode, false);
+
 impl LinesReader {
     #[inline(always)]
     fn read_stream_buffered(
@@ -25,6 +30,8 @@ impl LinesReader {
         COUNTER_THREADS_BUSY_READING.inc();
 
         while let Ok(count) = stream.read(buffer.as_mut_slice()) {
+            COUNTER_THREADS_READ_BYTES.inc_by(count as i64);
+            COUNTER_THREADS_READ_BYTES_AVG.add_value(count as i64);
             COUNTER_THREADS_BUSY_READING.sub(1);
             if count == 0 {
                 COUNTER_THREADS_PROCESSING_READS.inc();
