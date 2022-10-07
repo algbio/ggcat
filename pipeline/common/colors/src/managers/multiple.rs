@@ -3,8 +3,8 @@ use crate::colors_memmap_writer::ColorsMemMapWriter;
 use crate::DefaultColorsSerializer;
 use byteorder::ReadBytesExt;
 use config::{
-    get_memory_mode, ColorIndexType, MinimizerType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
-    PARTIAL_VECS_CHECKPOINT_SIZE, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END,
+    get_memory_mode, ColorIndexType, MinimizerType, SwapPriority, PARTIAL_VECS_CHECKPOINT_SIZE,
+    READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END,
 };
 use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
