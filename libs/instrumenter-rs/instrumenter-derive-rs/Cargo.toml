@@ -10,9 +10,9 @@ proc-macro = true
 
 
 [dependencies]
-proc-macro2 = { version = "1.0.44", optional = true }
+proc-macro2 = { version = "1.0.46", optional = true }
 quote = { version = "1.0.21", optional = true }
-syn = { version = "1.0.101", features = ["full"], optional = true }
+syn = { version = "1.0.102", features = ["full"], optional = true }
 
 [features]
 enabled = ["proc-macro2", "quote", "syn"]

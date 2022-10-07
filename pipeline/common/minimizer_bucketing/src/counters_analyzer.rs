@@ -1,4 +1,4 @@
-use config::{BucketIndexType, MIN_OUTLIER_SIZE};
+use config::{BucketIndexType, MAX_NON_OUTLIER_SIZE, MIN_OUTLIER_SIZE};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
@@ -49,7 +49,7 @@ impl CountersAnalyzer {
         };
 
         for (count, bucket, second_bucket) in sorted_counters {
-            if count > median * 500 && count > MIN_OUTLIER_SIZE {
+            if count > MAX_NON_OUTLIER_SIZE || (count > median * 500 && count > MIN_OUTLIER_SIZE) {
                 counters[bucket][second_bucket].is_outlier = true;
             }
         }

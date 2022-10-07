@@ -22,7 +22,6 @@ use backtrace::Backtrace;
 use std::cmp::max;
 
 use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
-use clap::arg_enum;
 use colors::bundles::multifile_building::ColorBundleMultifileBuilding;
 use colors::colors_manager::ColorsManager;
 use hashes::MinimizerHashFunctionFactory;
@@ -83,6 +82,7 @@ use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use static_dispatch::StaticDispatch;
 use std::io::BufRead;
+use structopt::clap::arg_enum;
 
 #[derive(StructOpt, Debug)]
 enum CliArgs {

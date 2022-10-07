@@ -10,8 +10,8 @@ proc-macro = true
 
 [dependencies]
 proc-macro-error = "1.0.4"
-proc-macro2 = "1.0.44"
+proc-macro2 = "1.0.46"
 quote = "1.0.21"
 regex = "1.6.0"
-syn = { version = "1.0.101", features = ["full"] }
+syn = { version = "1.0.102", features = ["full"] }
 

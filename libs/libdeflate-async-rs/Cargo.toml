@@ -12,7 +12,7 @@ static_assertions = "1.1.0"
 structopt = "0.3.26"
 nightly-quirks = { path = "../nightly-quirks" }
 counter-stats = { git = "https://github.com/Guilucand/counter-stats.git" }
-tokio = { version = "1.21.1", features = ["io-util", "macros", "rt-multi-thread", "fs"] }
+tokio = { version = "1.21.2", features = ["io-util", "macros", "rt-multi-thread", "fs"] }
 
 [[bin]]
 name = "gzipd"

@@ -19,8 +19,8 @@ parking_lot = "0.12.1"
 thread_local = "1.1.4"
 
 # Tracing libraries
-tracing = { version = "0.1.36", optional = true }
-libc = { version = "0.2.133", optional = true }
+tracing = { version = "0.1.37", optional = true }
+libc = { version = "0.2.134", optional = true }
 papi = { path = "libs/papi-rs", optional = true }
 serde = { version = "1.0.145", features = ["serde_derive"], optional = true }
 serde_json = { version = "1.0.85", optional = true }
