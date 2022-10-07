@@ -18,7 +18,7 @@ pub const PACKETS_PRIORITY_FILES: usize = 1;
 // pub type DefaultColorsSerializer = RunLengthColorsSerializer;
 
 pub const READ_INTERMEDIATE_CHUNKS_SIZE: usize = 1024 * 512 * 1;
-pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(4);
+pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(2);
 
 pub const KMERS_TRANSFORM_READS_CHUNKS_SIZE: usize = 1024 * 24;
 

@@ -466,7 +466,7 @@ impl GenericMinimizerBucketing {
             let reader_executors = disk_thread_pool
                 .register_executors::<MinimizerBucketingFilesReader<E::GlobalData, E::FileInfo>>(
                     global_context.read_threads_count,
-                    PoolAllocMode::Distinct {
+                    PoolAllocMode::Shared {
                         capacity: max_read_buffers_count,
                     },
                     READ_INTERMEDIATE_CHUNKS_SIZE,
