@@ -223,17 +223,19 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 *flags,
             );
 
-            if min_idx != usize::MAX {
-                encode_varint(
-                    |b| {
-                        map_packet.encoded_saved_reads_indexes.extend_from_slice(b);
-                    },
-                    (map_packet.saved_reads.len() - self.last_saved_len) as u64,
-                );
-                self.last_saved_len = map_packet.saved_reads.len();
-                map_packet
-                    .saved_reads
-                    .extend_from_slice(&read.get_packed_slice()[min_idx..((max_idx + k + 3) / 4)]);
+            if !MH::INVERTIBLE {
+                if min_idx != usize::MAX {
+                    encode_varint(
+                        |b| {
+                            map_packet.encoded_saved_reads_indexes.extend_from_slice(b);
+                        },
+                        (map_packet.saved_reads.len() - self.last_saved_len) as u64,
+                    );
+                    self.last_saved_len = map_packet.saved_reads.len();
+                    map_packet.saved_reads.extend_from_slice(
+                        &read.get_packed_slice()[min_idx..((max_idx + k + 3) / 4)],
+                    );
+                }
             }
         }
         self.mem_tracker
@@ -269,7 +271,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             + 1;
 
         map_packet.average_hasmap_size = kmers_total / batches_count;
-        map_packet.average_sequences_size = sequences_size_total / batches_count;
+        map_packet.average_sequences_size = max(256, sequences_size_total / batches_count);
 
         COUNTER_KMERS_MAX.max(all_kmers as i64);
         COUNTER_READS_AVG.add_value(all_kmers as i64);
