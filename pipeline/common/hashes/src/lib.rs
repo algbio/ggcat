@@ -104,7 +104,8 @@ pub trait HashFunctionFactory: Sized + Clone + Debug + Send + Sync + 'static {
     ) -> Self::HashTypeExtendable;
 
     const INVERTIBLE: bool;
-    fn invert(hash: Self::HashTypeUnextendable, k: usize, out_buf: &mut [u8]);
+    type SeqType: AsRef<[u8]>;
+    fn invert(hash: Self::HashTypeUnextendable) -> Self::SeqType;
 }
 
 #[static_dispatch]
@@ -388,11 +389,8 @@ pub mod tests {
                     let mut buffer = vec![];
                     kmer.copy_to_buffer(&mut buffer);
 
-                    let mut buffer1 = vec![0; kval.div_ceil(4)];
+                    let buffer1 = FACTORY::invert(hash);
                     println!("Original slice: {:?}", buffer);
-
-                    FACTORY::invert(hash, *kval, buffer1.as_mut_slice());
-                    println!("New slice: {:?}", buffer1);
 
                     // assert_eq!(buffer, buffer1, "Hash: {}", hash);
 
@@ -404,14 +402,23 @@ pub mod tests {
                     );
                     println!(
                         "New decoded: {}",
-                        CompressedRead::new_from_compressed(buffer1.as_slice(), *kval).to_string()
+                        CompressedRead::new_from_compressed(buffer1.as_ref(), *kval).to_string()
                     );
 
                     let first = kmer.to_string();
-                    let second =
-                        CompressedRead::new_from_compressed(buffer1.as_slice(), *kval).to_string();
+                    let second_read = CompressedRead::new_from_compressed(buffer1.as_ref(), *kval);
 
-                    assert_eq!(first, second, "Hash: {:?}", hash);
+                    let second_fwd = second_read.to_string();
+                    let second_rcomp = second_read
+                        .as_reverse_complement_bases_iter()
+                        .map(|x| x as char)
+                        .collect::<String>();
+
+                    assert!(
+                        (first == second_fwd) || (first == second_rcomp),
+                        "Hash: {:?}",
+                        hash
+                    );
                 }
             }
         }

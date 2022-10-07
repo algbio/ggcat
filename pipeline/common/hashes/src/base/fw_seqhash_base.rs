@@ -5,7 +5,6 @@ use std::mem::size_of;
 
 pub struct ForwardSeqHashIterator<N: HashableSequence> {
     seq: N,
-    mask: HashIntegerType,
     fh: HashIntegerType,
     k_minus1: usize,
 }
@@ -23,15 +22,12 @@ impl<N: HashableSequence> ForwardSeqHashIterator<N> {
 
         let mut fh = 0;
         for i in 0..(k - 1) {
-            fh = (fh << 2) | unsafe { seq.get_unchecked_cbase(i) as HashIntegerType };
+            fh |= unsafe { seq.get_unchecked_cbase(i) as HashIntegerType } << (i * 2);
         }
-
-        let mask = get_mask(k);
 
         Ok(ForwardSeqHashIterator {
             seq,
-            mask,
-            fh: fh & mask,
+            fh: fh << 2,
             k_minus1: k - 1,
         })
     }
@@ -40,9 +36,10 @@ impl<N: HashableSequence> ForwardSeqHashIterator<N> {
     fn roll_hash(&mut self, index: usize) -> ExtForwardSeqHash {
         assert!(unsafe { self.seq.get_unchecked_cbase(index) } < 4);
 
-        self.fh = ((self.fh << 2)
-            | unsafe { self.seq.get_unchecked_cbase(index) as HashIntegerType })
-            & self.mask;
+        self.fh = (self.fh >> 2)
+            | ((unsafe { self.seq.get_unchecked_cbase(index) as HashIntegerType })
+                << (self.k_minus1 * 2));
+
         ExtForwardSeqHash(self.fh)
     }
 }
@@ -140,10 +137,9 @@ impl HashFunctionFactory for ForwardSeqHashFactory {
         assert!(in_base < 4);
         // K = 2
         // 00AABB => roll CC
-        // 00BBCC
+        // 00CCAA
 
-        let mask = get_mask(k);
-        ExtForwardSeqHash(((hash.0 << 2) | (in_base as HashIntegerType)) & mask)
+        ExtForwardSeqHash((hash.0 >> 2) | ((in_base as HashIntegerType) << ((k - 1) * 2)))
     }
 
     fn manual_roll_reverse(
@@ -155,41 +151,39 @@ impl HashFunctionFactory for ForwardSeqHashFactory {
         assert!(in_base < 4);
         // K = 2
         // 00AABB => roll rev CC
-        // 00CCAA
+        // 00BBCC
 
-        ExtForwardSeqHash((hash.0 >> 2) | ((in_base as HashIntegerType) << ((k - 1) * 2)))
+        let mask = get_mask(k);
+        ExtForwardSeqHash(((hash.0 << 2) | (in_base as HashIntegerType)) & mask)
     }
 
     fn manual_remove_only_forward(
-        hash: Self::HashTypeExtendable,
-        k: usize,
-        _out_base: u8,
-    ) -> Self::HashTypeExtendable {
-        // K = 2
-        // 00AABB => roll
-        // 0000BB
-        let mask = get_mask(k - 1);
-        ExtForwardSeqHash(hash.0 & mask)
-    }
-
-    fn manual_remove_only_reverse(
         hash: Self::HashTypeExtendable,
         _k: usize,
         _out_base: u8,
     ) -> Self::HashTypeExtendable {
         // K = 2
-        // 00AABB => roll rev
+        // 00AABB => roll
         // 0000AA
         ExtForwardSeqHash(hash.0 >> 2)
     }
 
+    fn manual_remove_only_reverse(
+        hash: Self::HashTypeExtendable,
+        k: usize,
+        _out_base: u8,
+    ) -> Self::HashTypeExtendable {
+        // K = 2
+        // 00AABB => roll rev
+        // 0000BB
+        let mask = get_mask(k - 1);
+        ExtForwardSeqHash(hash.0 & mask)
+    }
+
     const INVERTIBLE: bool = true;
-    fn invert(hash: Self::HashTypeUnextendable, k: usize, out_buf: &mut [u8]) {
-        let bytes_count = k.div_ceil(4);
-        out_buf[..bytes_count].copy_from_slice(
-            &(hash << (size_of::<Self::HashTypeUnextendable>() * 8 - k * 2)).to_be_bytes()
-                [..bytes_count],
-        );
+    type SeqType = [u8; size_of::<Self::HashTypeUnextendable>()];
+    fn invert(hash: Self::HashTypeUnextendable) -> Self::SeqType {
+        hash.to_le_bytes()
     }
 }
 

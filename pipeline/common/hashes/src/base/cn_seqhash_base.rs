@@ -26,8 +26,8 @@ impl<N: HashableSequence> CanonicalSeqHashIterator<N> {
         let mut fh = 0;
         let mut bw = 0;
         for i in 0..(k - 1) {
-            fh = (fh << 2) | unsafe { seq.get_unchecked_cbase(i) as HashIntegerType };
-            bw |= unsafe { xrc(seq.get_unchecked_cbase(i) as HashIntegerType) } << (i * 2);
+            fh |= unsafe { seq.get_unchecked_cbase(i) as HashIntegerType } << (i * 2);
+            bw = (bw << 2) | unsafe { xrc(seq.get_unchecked_cbase(i) as HashIntegerType) };
         }
 
         let mask = get_mask(k);
@@ -35,8 +35,8 @@ impl<N: HashableSequence> CanonicalSeqHashIterator<N> {
         Ok(CanonicalSeqHashIterator {
             seq,
             mask,
-            fh: fh & mask,
-            rc: bw << 2,
+            fh: fh << 2,
+            rc: bw & mask,
             k_minus1: k - 1,
         })
     }
@@ -45,13 +45,14 @@ impl<N: HashableSequence> CanonicalSeqHashIterator<N> {
     fn roll_hash(&mut self, index: usize) -> ExtCanonicalSeqHash {
         assert!(unsafe { self.seq.get_unchecked_cbase(index) } < 4);
 
-        self.fh = ((self.fh << 2)
-            | unsafe { self.seq.get_unchecked_cbase(index) as HashIntegerType })
+        self.fh = (self.fh >> 2)
+            | ((unsafe { self.seq.get_unchecked_cbase(index) as HashIntegerType })
+                << (self.k_minus1 * 2));
+
+        self.rc = ((self.rc << 2)
+            | unsafe { xrc(self.seq.get_unchecked_cbase(index) as HashIntegerType) })
             & self.mask;
 
-        self.rc = (self.rc >> 2)
-            | ((unsafe { xrc(self.seq.get_unchecked_cbase(index) as HashIntegerType) })
-                << (self.k_minus1 * 2));
         ExtCanonicalSeqHash(self.fh, self.rc)
     }
 }
@@ -148,12 +149,11 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
         assert!(in_base < 4);
         // K = 2
         // 00AABB => roll CC
-        // 00BBCC
-
+        // 00CCAA
         let mask = get_mask(k);
         ExtCanonicalSeqHash(
-            ((hash.0 << 2) | (in_base as HashIntegerType)) & mask,
-            (hash.1 >> 2) | (xrc(in_base as HashIntegerType) << ((k - 1) * 2)),
+            (hash.0 >> 2) | ((in_base as HashIntegerType) << ((k - 1) * 2)),
+            ((hash.1 << 2) | (xrc(in_base as HashIntegerType))) & mask,
         )
     }
 
@@ -166,12 +166,12 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
         assert!(in_base < 4);
         // K = 2
         // 00AABB => roll rev CC
-        // 00CCAA
+        // 00BBCC
 
         let mask = get_mask(k);
         ExtCanonicalSeqHash(
-            (hash.0 >> 2) | ((in_base as HashIntegerType) << ((k - 1) * 2)),
-            ((hash.1 << 2) | (xrc(in_base as HashIntegerType))) & mask,
+            ((hash.0 << 2) | (in_base as HashIntegerType)) & mask,
+            (hash.1 >> 2) | (xrc(in_base as HashIntegerType) << ((k - 1) * 2)),
         )
     }
 
@@ -182,9 +182,9 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
     ) -> Self::HashTypeExtendable {
         // K = 2
         // 00AABB => roll
-        // 0000BB
+        // 0000AA
         let mask = get_mask(k - 1);
-        ExtCanonicalSeqHash(hash.0 & mask, hash.1 >> 2)
+        ExtCanonicalSeqHash(hash.0 >> 2, hash.1 & mask)
     }
 
     fn manual_remove_only_reverse(
@@ -194,27 +194,16 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
     ) -> Self::HashTypeExtendable {
         // K = 2
         // 00AABB => roll rev
-        // 0000AA
+        // 0000BB
         let mask = get_mask(k - 1);
-        ExtCanonicalSeqHash(hash.0 >> 2, hash.1 & mask)
+        ExtCanonicalSeqHash(hash.0 & mask, hash.1 >> 2)
     }
 
     const INVERTIBLE: bool = true;
-    fn invert(hash: Self::HashTypeUnextendable, k: usize, out_buf: &mut [u8]) {
-        println!(
-            "Shift: {}",
-            (size_of::<Self::HashTypeUnextendable>() * 8 - k * 2)
-        );
-        println!(
-            "Result: {}",
-            (hash << (size_of::<Self::HashTypeUnextendable>() * 8 - k * 2))
-        );
+    type SeqType = [u8; size_of::<Self::HashTypeUnextendable>()];
 
-        let bytes_count = k.div_ceil(4);
-        out_buf[..bytes_count].copy_from_slice(
-            &(hash << (size_of::<Self::HashTypeUnextendable>() * 8 - k * 2)).to_be_bytes()
-                [..bytes_count],
-        );
+    fn invert(hash: Self::HashTypeUnextendable) -> Self::SeqType {
+        hash.to_le_bytes()
     }
 }
 

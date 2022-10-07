@@ -185,7 +185,8 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
     }
 
     const INVERTIBLE: bool = false;
-    fn invert(_hash: Self::HashTypeUnextendable, _k: usize, _out_buf: &mut [u8]) {
+    type SeqType = [u8; 0];
+    fn invert(_hash: Self::HashTypeUnextendable) -> Self::SeqType {
         unimplemented!()
     }
 }
