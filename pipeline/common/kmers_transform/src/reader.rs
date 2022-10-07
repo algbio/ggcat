@@ -5,8 +5,9 @@ use crate::{KmersTransformContext, KmersTransformExecutorFactory, KmersTransform
 use config::{
     get_memory_mode, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_OUTPUT_BUFFER_SIZE,
     DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    MAXIMUM_JIT_PROCESSED_BUCKETS, MIN_BUCKET_CHUNKS_FOR_READING_THREAD, PACKETS_PRIORITY_DEFAULT,
-    PACKETS_PRIORITY_REWRITTEN, PARTIAL_VECS_CHECKPOINT_SIZE, USE_SECOND_BUCKET,
+    MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_NON_OUTLIER_SIZE, MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
+    PACKETS_PRIORITY_DEFAULT, PACKETS_PRIORITY_REWRITTEN, PARTIAL_VECS_CHECKPOINT_SIZE,
+    USE_SECOND_BUCKET,
 };
 use instrumenter::local_setup_instrumenter;
 use io::compressed_read::CompressedReadIndipendent;
@@ -155,6 +156,14 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         bucket_sizes.make_contiguous().sort();
 
         let unique_estimator_factor = (sequences_size_ratio * sequences_size_ratio * 3.0).min(1.0);
+
+        if bucket_sizes.len() > 1 {
+            bucket_sizes.iter_mut().for_each(|(counter, _)| {
+                if counter.count as f64 * unique_estimator_factor > MAX_NON_OUTLIER_SIZE as f64 {
+                    counter.is_outlier = true;
+                }
+            });
+        }
 
         let mut has_outliers = false;
 

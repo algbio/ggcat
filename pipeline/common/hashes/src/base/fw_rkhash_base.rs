@@ -226,6 +226,11 @@ impl HashFunctionFactory for ForwardRabinKarpHashFactory {
         // 0000AA
         ExtForwardRabinKarpHash(hash.0.wrapping_sub(fwd_l(out_base)).wrapping_mul(MULT_INV))
     }
+
+    const INVERTIBLE: bool = false;
+    fn invert(_hash: Self::HashTypeUnextendable, _k: usize, _out_buf: &mut [u8]) {
+        unimplemented!()
+    }
 }
 
 #[cfg(test)]

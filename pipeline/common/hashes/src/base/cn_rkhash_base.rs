@@ -63,16 +63,20 @@ pub struct CanonicalRabinKarpHashIterator<N: HashableSequence> {
 
 impl<N: HashableSequence> CanonicalRabinKarpHashIterator<N> {
     pub fn new(seq: N, k: usize) -> Result<CanonicalRabinKarpHashIterator<N>, &'static str> {
-        let mut fh = 0;
-        let mut bw = 0;
+        let mut fh: HashIntegerType = 0;
+        let mut bw: HashIntegerType = 0;
         for i in 0..(k - 1) {
-            fh = fh * MULTIPLIER + fwd_l(unsafe { seq.get_unchecked_cbase(i) });
+            fh = fh
+                .wrapping_mul(MULTIPLIER)
+                .wrapping_add(fwd_l(unsafe { seq.get_unchecked_cbase(i) }));
         }
 
         for i in (0..(k - 1)).rev() {
-            bw = bw * MULTIPLIER + bkw_l(unsafe { seq.get_unchecked_cbase(i) });
+            bw = bw
+                .wrapping_mul(MULTIPLIER)
+                .wrapping_add(bkw_l(unsafe { seq.get_unchecked_cbase(i) }));
         }
-        bw *= MULTIPLIER;
+        bw = bw.wrapping_mul(MULTIPLIER);
 
         let rmmult = get_rmmult(k) as HashIntegerType;
 
@@ -274,6 +278,11 @@ impl HashFunctionFactory for CanonicalRabinKarpHashFactory {
             hash.0.wrapping_sub(fwd_l(out_base)).wrapping_mul(MULT_INV),
             hash.1.wrapping_sub(rmmult.wrapping_mul(bkw_l(out_base))),
         )
+    }
+
+    const INVERTIBLE: bool = false;
+    fn invert(_hash: Self::HashTypeUnextendable, _k: usize, _out_buf: &mut [u8]) {
+        unimplemented!()
     }
 }
 

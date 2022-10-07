@@ -198,6 +198,24 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
         let mask = get_mask(k - 1);
         ExtCanonicalSeqHash(hash.0 >> 2, hash.1 & mask)
     }
+
+    const INVERTIBLE: bool = true;
+    fn invert(hash: Self::HashTypeUnextendable, k: usize, out_buf: &mut [u8]) {
+        println!(
+            "Shift: {}",
+            (size_of::<Self::HashTypeUnextendable>() * 8 - k * 2)
+        );
+        println!(
+            "Result: {}",
+            (hash << (size_of::<Self::HashTypeUnextendable>() * 8 - k * 2))
+        );
+
+        let bytes_count = k.div_ceil(4);
+        out_buf[..bytes_count].copy_from_slice(
+            &(hash << (size_of::<Self::HashTypeUnextendable>() * 8 - k * 2)).to_be_bytes()
+                [..bytes_count],
+        );
+    }
 }
 
 // Returns the complement of a compressed format base

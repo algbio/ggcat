@@ -183,6 +183,11 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
         let ExtCanonicalNtHash(fw, rc) = cnc_nt_manual_roll_rev(hash, k, out_base, Self::NULL_BASE);
         ExtCanonicalNtHash(fw, rc.rotate_right(1))
     }
+
+    const INVERTIBLE: bool = false;
+    fn invert(_hash: Self::HashTypeUnextendable, _k: usize, _out_buf: &mut [u8]) {
+        unimplemented!()
+    }
 }
 
 #[static_dispatch]

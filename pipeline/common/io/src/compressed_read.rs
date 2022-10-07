@@ -201,6 +201,10 @@ impl<'a> CompressedRead<'a> {
                 .map(|i| unsafe { Utils::decompress_base(self.get_base_unchecked(i)) as char }),
         )
     }
+
+    pub fn get_length(&self) -> usize {
+        self.bases_count()
+    }
 }
 //
 // impl<'a> FastaCompatibleRead for CompressedRead<'a> {
@@ -222,9 +226,7 @@ impl<'a> CompressedRead<'a> {
 //         &buffer[data]
 //     }
 //
-//     fn get_length(&self) -> usize {
-//         self.bases_count()
-//     }
+
 // }
 //
 impl<'a> HashableSequence for CompressedRead<'a> {

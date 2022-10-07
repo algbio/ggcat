@@ -897,6 +897,7 @@ version = "0.1.0"
 dependencies = [
  "ahash 0.8.0",
  "config",
+ "io",
  "pcg_rand",
  "rand 0.8.5",
  "serde",

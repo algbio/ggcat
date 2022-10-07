@@ -182,6 +182,15 @@ impl HashFunctionFactory for ForwardSeqHashFactory {
         // 0000AA
         ExtForwardSeqHash(hash.0 >> 2)
     }
+
+    const INVERTIBLE: bool = true;
+    fn invert(hash: Self::HashTypeUnextendable, k: usize, out_buf: &mut [u8]) {
+        let bytes_count = k.div_ceil(4);
+        out_buf[..bytes_count].copy_from_slice(
+            &(hash << (size_of::<Self::HashTypeUnextendable>() * 8 - k * 2)).to_be_bytes()
+                [..bytes_count],
+        );
+    }
 }
 
 #[cfg(test)]

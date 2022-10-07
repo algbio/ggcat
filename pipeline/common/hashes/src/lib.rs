@@ -1,6 +1,7 @@
 #![feature(type_alias_impl_trait)]
 #![feature(trait_alias)]
 #![feature(const_type_id)]
+#![feature(int_roundings)]
 
 use static_dispatch::static_dispatch;
 
@@ -101,6 +102,9 @@ pub trait HashFunctionFactory: Sized + Clone + Debug + Send + Sync + 'static {
         k: usize,
         out_base: u8,
     ) -> Self::HashTypeExtendable;
+
+    const INVERTIBLE: bool;
+    fn invert(hash: Self::HashTypeUnextendable, k: usize, out_buf: &mut [u8]);
 }
 
 #[static_dispatch]
@@ -156,7 +160,7 @@ fn init_rmmult(k: usize, multiplier: u128) -> [u128; RMMULT_CACHE_SIZE] {
 
     let mut cache = [0; RMMULT_CACHE_SIZE];
     for k in k.saturating_sub(RMMULT_CACHE_SIZE / 2)..(k + RMMULT_CACHE_SIZE / 2) {
-        cache[k % RMMULT_CACHE_SIZE] = fastexp(multiplier, k - 1);
+        cache[k % RMMULT_CACHE_SIZE] = fastexp(multiplier, k.saturating_sub(1));
     }
 
     cache
@@ -167,6 +171,8 @@ pub mod tests {
     use super::ExtendableHashTraitType;
     use super::HashFunction;
     use super::HashFunctionFactory;
+    use crate::HashableSequence;
+    use io::compressed_read::CompressedRead;
     use rand::{RngCore, SeedableRng};
     use std::mem::size_of;
     use utils::Utils;
@@ -212,6 +218,18 @@ pub mod tests {
             .collect::<Vec<_>>();
 
         result
+    }
+
+    impl<'a> HashableSequence for CompressedRead<'a> {
+        #[inline(always)]
+        unsafe fn get_unchecked_cbase(&self, index: usize) -> u8 {
+            self.get_base_unchecked(index)
+        }
+
+        #[inline(always)]
+        fn bases_count(&self) -> usize {
+            self.get_length()
+        }
     }
 
     pub fn test_hash_function<FACTORY: HashFunctionFactory>(kvalues: &[usize], canonical: bool) {
@@ -348,6 +366,52 @@ pub mod tests {
                         Utils::compress_base(test_bases[i + *kval - 1]),
                     );
                     assert_eq!(lhashes[i], manual_roll);
+                }
+            }
+
+            // Invertibility test
+            if FACTORY::INVERTIBLE {
+                let compressed_slice_vec = to_compressed(test_bases.as_slice());
+                let compressed_read = CompressedRead::new_from_compressed(
+                    compressed_slice_vec.as_slice(),
+                    test_bases.len(),
+                );
+
+                for i in 0..(test_bases.len() - *kval) {
+                    let kmer = compressed_read.sub_slice(i..(i + *kval));
+                    let hash = FACTORY::new(kmer, *kval)
+                        .iter()
+                        .next()
+                        .unwrap()
+                        .to_unextendable();
+
+                    let mut buffer = vec![];
+                    kmer.copy_to_buffer(&mut buffer);
+
+                    let mut buffer1 = vec![0; kval.div_ceil(4)];
+                    println!("Original slice: {:?}", buffer);
+
+                    FACTORY::invert(hash, *kval, buffer1.as_mut_slice());
+                    println!("New slice: {:?}", buffer1);
+
+                    // assert_eq!(buffer, buffer1, "Hash: {}", hash);
+
+                    // buffer1 = buffer.clone();
+
+                    println!(
+                        "Old decoded: {}",
+                        CompressedRead::new_from_compressed(buffer.as_slice(), *kval).to_string()
+                    );
+                    println!(
+                        "New decoded: {}",
+                        CompressedRead::new_from_compressed(buffer1.as_slice(), *kval).to_string()
+                    );
+
+                    let first = kmer.to_string();
+                    let second =
+                        CompressedRead::new_from_compressed(buffer1.as_slice(), *kval).to_string();
+
+                    assert_eq!(first, second, "Hash: {:?}", hash);
                 }
             }
         }

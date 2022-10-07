@@ -172,6 +172,11 @@ impl HashFunctionFactory for ForwardNtHashIteratorFactory {
     ) -> Self::HashTypeExtendable {
         fwd_nt_manual_roll_rev(hash, k, out_base, Self::NULL_BASE)
     }
+
+    const INVERTIBLE: bool = false;
+    fn invert(_hash: Self::HashTypeUnextendable, _k: usize, _out_buf: &mut [u8]) {
+        unimplemented!()
+    }
 }
 
 #[static_dispatch]
