@@ -9,7 +9,8 @@ use ::static_dispatch::static_dispatch;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
 use config::{
-    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, KEEP_FILES, MINIMUM_LOG_DELTA_TIME,
+    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, KEEP_FILES,
+    MAXIMUM_SECOND_BUCKETS_LOG, MINIMUM_LOG_DELTA_TIME,
 };
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::reads_writer::ReadsWriter;
@@ -82,6 +83,7 @@ pub fn run_assembler<
     min_multiplicity: usize,
     buckets_count_log: Option<usize>,
     loopit_number: Option<usize>,
+    only_bstats: bool,
 ) {
     PHASES_TIMES_MONITOR.write().init();
 
@@ -133,6 +135,24 @@ pub fn run_assembler<
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
+    }
+
+    if only_bstats {
+        use rayon::prelude::*;
+        buckets.par_iter().enumerate().for_each(|(index, bucket)| {
+            kmers_transform::debug_bucket_stats::compute_stats_for_bucket::<
+                BucketingHash,
+                MergingHash,
+            >(
+                bucket.clone(),
+                index,
+                buckets.len(),
+                MAXIMUM_SECOND_BUCKETS_LOG,
+                k,
+                m,
+            );
+        });
+        return;
     }
 
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {

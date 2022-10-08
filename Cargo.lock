@@ -87,6 +87,7 @@ dependencies = [
  "io",
  "itertools",
  "kmers_merge",
+ "kmers_transform",
  "libdeflate-rs",
  "nightly-quirks",
  "parallel-processor",

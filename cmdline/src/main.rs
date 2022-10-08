@@ -145,6 +145,9 @@ struct CommonArgs {
     /// The level of debugging
     #[structopt(short = "d", long = "debug-level", default_value = "0")]
     pub debug_level: usize,
+
+    #[structopt(long = "only-bstats", hidden = true)]
+    pub only_bstats: bool,
 }
 
 #[derive(StructOpt, Debug)]
@@ -375,6 +378,7 @@ fn run_assembler_from_args(
         args.min_multiplicity,
         args.common_args.buckets_count_log,
         Some(args.number),
+        args.common_args.only_bstats,
     );
 }
 

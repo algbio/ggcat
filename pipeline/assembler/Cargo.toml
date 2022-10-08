@@ -25,6 +25,7 @@ nightly-quirks = { path = "../../libs/nightly-quirks" }
 # Pipeline crates
 assembler_minimizer_bucketing = { path = "assembler_minimizer_bucketing" }
 kmers_merge = { path = "kmers_merge" }
+kmers_transform = { path = "../common/kmers_transform" }
 
 
 # Common pipeline libraries
