@@ -18,11 +18,15 @@ config = { path = "../../../config" }
 # Static dispatch
 static-dispatch = { path = "../../../libs/static-dispatch" }
 
+[[bench]]
+name = "hashes-bench"
+harness = false
 
 [dev-dependencies]
 pcg_rand = "0.13.0"
 rand = "0.8.5"
 utils = { path = "../../../utils" }
 io = { path = "../../common/io" }
+criterion = "0.4.0"
 
 
