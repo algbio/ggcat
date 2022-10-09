@@ -6,7 +6,7 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use colors::colors_manager::color_types::{
     MinimizerBucketingSeqColorDataType, SingleKmerColorDataType,
 };
-use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
+use colors::colors_manager::{color_types, ColorsManager, MinimizerBucketingSeqColorData};
 use config::{
     get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
     MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
@@ -23,7 +23,7 @@ use io::concurrent::temp_reads::extra_data::{
 use io::varint::{decode_varint, encode_varint};
 use kmers_transform::processor::KmersTransformProcessor;
 use kmers_transform::{
-    KmersTransform, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
+    GroupProcessStats, KmersTransform, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
     KmersTransformMapProcessor, KmersTransformPreprocessor,
 };
 use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory};
@@ -37,6 +37,7 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
+use std::mem::size_of;
 use std::num::NonZeroU64;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -258,6 +259,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     for ParallelKmersQueryMapProcessor<H, MH, CX>
 {
     type MapStruct = ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>;
+    const MAP_SIZE: usize = size_of::<MH::HashTypeUnextendable>() + 8;
 
     fn process_group_start(
         &mut self,
@@ -277,12 +279,16 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         )>,
         extra_data_buffer: &<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraData>::TempBuffer,
         ref_sequences: &Vec<u8>,
-    ) {
+    ) -> GroupProcessStats {
         let k = global_data.k;
         let map_packet = self.map_packet.as_mut().unwrap();
 
+        let mut kmers_count = 0;
+
         for (_, sequence_type, read) in batch.iter() {
             let hashes = MH::new(read.as_reference(ref_sequences), k);
+
+            kmers_count += (read.bases_count() - k + 1) as u64;
 
             match sequence_type {
                 QueryKmersReferenceData::Graph(col_info) => {
@@ -301,6 +307,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                     }
                 }
             }
+        }
+
+        GroupProcessStats {
+            total_kmers: kmers_count,
+            unique_kmers: kmers_count,
         }
     }
 
@@ -418,7 +429,7 @@ pub fn parallel_kmers_counting<
         global_data.clone(),
         threads_count,
         k,
-        (MINIMUM_SUBBUCKET_KMERS_COUNT / k) as u64,
+        MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
     )
     .parallel_kmers_transform();
 

@@ -1,11 +1,14 @@
 use crate::processor::{KmersProcessorInitData, KmersTransformProcessor};
 use crate::reads_buffer::ReadsBuffer;
 use crate::resplitter::{KmersTransformResplitter, ResplitterInitData};
-use crate::{KmersTransformContext, KmersTransformExecutorFactory, KmersTransformPreprocessor};
+use crate::{
+    KmersTransformContext, KmersTransformExecutorFactory, KmersTransformMapProcessor,
+    KmersTransformPreprocessor,
+};
 use config::{
     get_memory_mode, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_OUTPUT_BUFFER_SIZE,
     DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_NON_OUTLIER_SIZE, MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
+    MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_INTERMEDIATE_MAP_SIZE, MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
     PACKETS_PRIORITY_DEFAULT, PACKETS_PRIORITY_REWRITTEN, PARTIAL_VECS_CHECKPOINT_SIZE,
     USE_SECOND_BUCKET,
 };
@@ -150,22 +153,18 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
         let file_size = reader.get_file_size();
 
-        let sequences_size_ratio =
-            file_size as f64 / (sequences_count * global_context.k as u64) as f64 * 2.67;
-
         bucket_sizes.make_contiguous().sort();
 
-        let unique_estimator_factor = (sequences_size_ratio * sequences_size_ratio * 3.0).min(1.0);
-
-        if bucket_sizes.len() > 1 {
-            bucket_sizes.iter_mut().for_each(|(counter, _)| {
-                if counter.count as f64 * unique_estimator_factor > MAX_NON_OUTLIER_SIZE as f64 {
-                    counter.is_outlier = true;
-                }
-            });
-        }
-
         let mut has_outliers = false;
+
+        let total_sequences = global_context.total_sequences.load(Ordering::Relaxed);
+        let unique_kmers = global_context.unique_kmers.load(Ordering::Relaxed);
+
+        let unique_estimator_factor = if total_sequences > 0 {
+            unique_kmers as f64 / total_sequences as f64
+        } else {
+            global_context.k as f64 / 2.0
+        };
 
         while bucket_sizes.len() > 0 {
             let buckets_count = queue.len();
@@ -173,8 +172,22 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
             let biggest_sub_bucket = bucket_sizes.pop_back().unwrap();
 
+            let is_outlier = !file.resplitted
+                && (total_sequences > 0)
+                && (biggest_sub_bucket.0.count as f64 * unique_estimator_factor
+                    >= (MAX_INTERMEDIATE_MAP_SIZE / F::MapProcessorType::MAP_SIZE as u64) as f64);
+
+            // if is_outlier {
+            //     println!(
+            //         "Is outlier bucket with count {} and {} >= {}",
+            //         biggest_sub_bucket.0.count,
+            //         biggest_sub_bucket.0.count as f64 * unique_estimator_factor,
+            //         MAX_INTERMEDIATE_MAP_SIZE / F::MapProcessorType::MAP_SIZE as u64
+            //     );
+            // }
+
             // Alloc a new bucket
-            if (smallest_bucket.2 == biggest_sub_bucket.0.is_outlier)
+            if (smallest_bucket.2 == is_outlier)
                 && smallest_bucket.0 .0 > 0
                 && (biggest_sub_bucket.0.count + smallest_bucket.0 .0) as f64
                     * unique_estimator_factor
@@ -193,8 +206,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
             // Assign the sub-bucket to the current smallest bucket
             smallest_bucket.0 .0 += biggest_sub_bucket.0.count;
-            smallest_bucket.2 |= biggest_sub_bucket.0.is_outlier;
-            has_outliers |= biggest_sub_bucket.0.is_outlier;
+            smallest_bucket.2 |= is_outlier;
+            has_outliers |= is_outlier;
             buckets_remapping[biggest_sub_bucket.1] = smallest_bucket.1;
             queue.push(smallest_bucket);
         }
@@ -221,6 +234,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                         KmersProcessorInitData {
                             sequences_count: count.0 as usize,
                             sub_bucket: index,
+                            is_resplitted: file.resplitted,
                             bucket_path: file.path.clone(),
                         },
                     );
@@ -553,7 +567,6 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
                                 },
                                 sub_bucket_counters: vec![BucketCounter {
                                     count: seq_count.into_inner(),
-                                    is_outlier: false,
                                 }],
                                 resplitted: false,
                                 rewritten: true,

@@ -12,7 +12,9 @@ use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use io::varint::encode_varint;
 use kmers_transform::processor::KmersTransformProcessor;
-use kmers_transform::{KmersTransformExecutorFactory, KmersTransformMapProcessor};
+use kmers_transform::{
+    GroupProcessStats, KmersTransformExecutorFactory, KmersTransformMapProcessor,
+};
 use parallel_processor::counter_stats::counter::{AtomicCounter, AvgMode, MaxMode};
 use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter_i64};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
@@ -144,6 +146,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     for ParallelKmersMergeMapProcessor<H, MH, CX>
 {
     type MapStruct = ParallelKmersMergeMapPacket<H, MH, CX>;
+    const MAP_SIZE: usize = size_of::<MH::HashTypeUnextendable>()
+        + size_of::<MapEntry<color_types::HashMapTempColorIndex<H, MH, CX>>>();
 
     fn process_group_start(
         &mut self,
@@ -165,15 +169,20 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         )>,
         extra_data_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraData>::TempBuffer,
         ref_sequences: &Vec<u8>,
-    ) {
+    ) -> GroupProcessStats {
         let k = global_data.k;
 
         let map_packet = self.map_packet.as_mut().unwrap().deref_mut();
+
+        let mut kmers_count = 0;
+        let mut unique_kmers_count = 0;
 
         for (flags, color, read) in batch.iter() {
             let read = read.as_reference(ref_sequences);
 
             let hashes = MH::new(read, k);
+
+            kmers_count += (read.bases_count() - k + 1) as u64;
 
             let last_hash_pos = read.bases_count() - k;
             let mut min_idx = usize::MAX;
@@ -191,9 +200,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 let entry = map_packet
                     .rhash_map
                     .entry(hash.to_unextendable())
-                    .or_insert(MapEntry::new(
-                        CX::ColorsMergeManagerType::<H, MH>::new_color_index(),
-                    ));
+                    .or_insert_with(|| {
+                        unique_kmers_count += 1;
+                        MapEntry::new(CX::ColorsMergeManagerType::<H, MH>::new_color_index())
+                    });
 
                 entry.update_flags(
                     ((begin_ignored as u8) << ((!is_forward) as u8))
@@ -238,8 +248,14 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 }
             }
         }
+
         self.mem_tracker
-            .update_memory_usage(&[map_packet.get_size(), 0])
+            .update_memory_usage(&[map_packet.get_size(), 0]);
+
+        GroupProcessStats {
+            total_kmers: kmers_count,
+            unique_kmers: unique_kmers_count,
+        }
     }
 
     #[instrumenter::track]

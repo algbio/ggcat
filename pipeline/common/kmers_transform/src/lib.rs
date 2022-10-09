@@ -25,10 +25,10 @@ use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInp
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -78,10 +78,16 @@ pub trait KmersTransformPreprocessor<F: KmersTransformExecutorFactory>:
     ) -> BucketIndexType;
 }
 
+pub struct GroupProcessStats {
+    pub total_kmers: u64,
+    pub unique_kmers: u64,
+}
+
 pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
     Sized + 'static + Sync + Send
 {
     type MapStruct: PacketTrait + PoolObjectTrait<InitData = ()>;
+    const MAP_SIZE: usize;
 
     fn process_group_start(
         &mut self,
@@ -94,7 +100,7 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
         batch: &Vec<(u8, F::AssociatedExtraData, CompressedReadIndipendent)>,
         extra_data_buffer: &<F::AssociatedExtraData as SequenceExtraData>::TempBuffer,
         ref_sequences: &Vec<u8>,
-    );
+    ) -> GroupProcessStats;
     fn process_group_finalize(
         &mut self,
         global_data: &F::GlobalExtraData,
@@ -145,6 +151,10 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     max_second_buckets_count_log2: usize,
     temp_dir: PathBuf,
 
+    total_sequences: AtomicU64,
+    total_kmers: AtomicU64,
+    unique_kmers: AtomicU64,
+
     reader_init_lock: tokio::sync::Mutex<()>,
 }
 
@@ -178,31 +188,28 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         files_with_sizes.sort_by_key(|x| x.1);
         files_with_sizes.reverse();
 
-        // let oversized_buckets_list = files_with_sizes
-        //     .drain_filter(|b| {
-        //         counters
-        //             .get_counters_for_bucket(get_bucket_index(&b.0))
-        //             .iter()
-        //             .any(|sb| false) // sb.is_outlier)
-        //     })
-        //     .map(|(path, size)| {
-        //         let bucket_index = get_bucket_index(&path);
-        //         InputBucketDesc {
-        //             path,
-        //             sub_bucket_counters: counters.get_counters_for_bucket(bucket_index).clone(),
-        //             resplitted: false,
-        //             rewritten: false,
-        //             used_hash_bits: 0,
-        //         }
-        //     })
-        //     .collect();
-
         let normal_buckets_list = {
             let mut buckets_list = Vec::with_capacity(files_with_sizes.len());
             let mut start_idx = 0;
             let mut end_idx = files_with_sizes.len();
 
             let mut matched_size = 0i64;
+
+            let mut unique_estimator_buckets_count = min(buckets_count / 8, threads_count * 2);
+
+            while start_idx != end_idx && unique_estimator_buckets_count > 0 {
+                end_idx -= 1;
+                unique_estimator_buckets_count -= 1;
+                let file_entry = files_with_sizes[end_idx].0.clone();
+                let bucket_index = get_bucket_index(&file_entry);
+                buckets_list.push(InputBucketDesc {
+                    path: file_entry,
+                    sub_bucket_counters: counters.get_counters_for_bucket(bucket_index).clone(),
+                    resplitted: false,
+                    rewritten: false,
+                    used_hash_bits: buckets_count.ilog2() as usize,
+                });
+            }
 
             while start_idx != end_idx {
                 let file_entry = if matched_size <= 0 {
@@ -254,6 +261,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             read_threads_count,
             max_second_buckets_count_log2: MAXIMUM_SECOND_BUCKETS_COUNT.ilog2() as usize,
             temp_dir: temp_dir.to_path_buf(),
+            total_sequences: AtomicU64::new(0),
+            total_kmers: AtomicU64::new(0),
+            unique_kmers: AtomicU64::new(0),
             reader_init_lock: tokio::sync::Mutex::new(()),
         });
 

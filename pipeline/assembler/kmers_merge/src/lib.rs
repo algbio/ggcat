@@ -216,7 +216,7 @@ pub fn kmers_merge<
         global_data,
         threads_count,
         k,
-        (MINIMUM_SUBBUCKET_KMERS_COUNT / k) as u64,
+        MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
     )
     .parallel_kmers_transform();
 

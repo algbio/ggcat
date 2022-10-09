@@ -49,6 +49,10 @@ impl CompressedReadIndipendent {
             _phantom: Default::default(),
         }
     }
+
+    pub fn bases_count(&self) -> usize {
+        self.size
+    }
 }
 
 impl<'a> CompressedRead<'a> {

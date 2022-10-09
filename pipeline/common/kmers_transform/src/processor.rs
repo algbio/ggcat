@@ -12,7 +12,7 @@ use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use std::future::Future;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use utils::track;
 
 pub struct KmersTransformProcessor<F: KmersTransformExecutorFactory>(PhantomData<F>);
@@ -27,6 +27,7 @@ static PACKET_WAITING_COUNTER: AtomicCounter<SumMode> =
 pub struct KmersProcessorInitData {
     pub sequences_count: usize,
     pub sub_bucket: usize,
+    pub is_resplitted: bool,
     pub bucket_path: PathBuf,
 }
 
@@ -63,17 +64,33 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                 map_processor.process_group_start(packet, &global_context.global_extra_data);
 
                 let mut real_size = 0;
+                let mut total_kmers = 0;
+                let mut unique_kmers = 0;
 
                 while let Some(input_packet) =
                     track!(address.receive_packet().await, PACKET_WAITING_COUNTER)
                 {
                     real_size += input_packet.reads.len();
-                    map_processor.process_group_batch_sequences(
+                    let stats = map_processor.process_group_batch_sequences(
                         &global_context.global_extra_data,
                         &input_packet.reads,
                         &input_packet.extra_buffer,
                         &input_packet.reads_buffer,
                     );
+                    total_kmers += stats.total_kmers;
+                    unique_kmers += stats.unique_kmers;
+                }
+
+                if !proc_info.is_resplitted {
+                    global_context
+                        .total_sequences
+                        .fetch_add(real_size as u64, Ordering::Relaxed);
+                    global_context
+                        .total_kmers
+                        .fetch_add(total_kmers, Ordering::Relaxed);
+                    global_context
+                        .unique_kmers
+                        .fetch_add(unique_kmers, Ordering::Relaxed);
                 }
 
                 packet = map_processor.process_group_finalize(&global_context.global_extra_data);

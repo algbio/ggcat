@@ -1,4 +1,4 @@
-use config::{BucketIndexType, MIN_OUTLIER_SIZE};
+use config::BucketIndexType;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
@@ -8,7 +8,6 @@ use std::sync::atomic::AtomicU64;
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct BucketCounter {
     pub count: u64,
-    pub is_outlier: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -21,7 +20,7 @@ impl CountersAnalyzer {
     pub fn new(counters: Vec<Vec<AtomicU64>>) -> Self {
         let mut sorted_counters: Vec<(u64, usize, usize)> = Vec::new();
 
-        let mut counters: Vec<Vec<BucketCounter>> = counters
+        let counters: Vec<Vec<BucketCounter>> = counters
             .into_iter()
             .enumerate()
             .map(|(bucket, vec)| {
@@ -32,10 +31,7 @@ impl CountersAnalyzer {
                         if count != 0 {
                             sorted_counters.push((count, bucket, second_bucket));
                         }
-                        BucketCounter {
-                            count,
-                            is_outlier: false,
-                        }
+                        BucketCounter { count }
                     })
                     .collect()
             })
@@ -47,12 +43,6 @@ impl CountersAnalyzer {
         } else {
             0
         };
-
-        for (count, bucket, second_bucket) in sorted_counters {
-            if count > median * 500 && count > MIN_OUTLIER_SIZE {
-                counters[bucket][second_bucket].is_outlier = true;
-            }
-        }
 
         Self { counters, median }
     }

@@ -52,13 +52,12 @@ pub const USE_SECOND_BUCKET: bool = false;
 
 pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 10;
 
-pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 512;
+pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 32;
 pub const MAXIMUM_SECOND_BUCKETS_LOG: usize = 8;
 pub const MAXIMUM_SECOND_BUCKETS_COUNT: usize = 1 << MAXIMUM_SECOND_BUCKETS_LOG;
 pub const MAXIMUM_JIT_PROCESSED_BUCKETS: usize = 16;
 
-pub const MIN_OUTLIER_SIZE: u64 = 200000;
-pub const MAX_NON_OUTLIER_SIZE: u64 = 500000;
+pub const MAX_INTERMEDIATE_MAP_SIZE: u64 = 1024 * 1024 * 32;
 
 // Assembler include flags
 pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;

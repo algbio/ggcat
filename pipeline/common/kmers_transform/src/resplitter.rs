@@ -55,11 +55,21 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
         global_context: &KmersTransformContext<F>,
         init_data: &ResplitterInitData,
     ) -> BucketsResplitInfo {
+        let total_sequences = global_context.total_sequences.load(Ordering::Relaxed);
+        let unique_kmers = global_context.unique_kmers.load(Ordering::Relaxed);
+
+        let unique_estimator_factor = if total_sequences > 0 {
+            unique_kmers as f64 / total_sequences as f64
+        } else {
+            global_context.k as f64 / 2.0
+        };
+
         let subsplit_buckets_count_log = min(
             MAX_RESPLIT_BUCKETS_COUNT_LOG,
             max(
                 MAXIMUM_JIT_PROCESSED_BUCKETS,
-                init_data.bucket_size / (global_context.min_bucket_size as usize),
+                init_data.bucket_size / (global_context.min_bucket_size as usize)
+                    * unique_estimator_factor as usize,
             )
             .next_power_of_two()
             .ilog2() as usize,
@@ -224,7 +234,6 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
                             .into_iter()
                             .map(|x| BucketCounter {
                                 count: x.into_inner(),
-                                is_outlier: false,
                             }),
                     )
                 {
