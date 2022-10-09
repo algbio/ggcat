@@ -198,14 +198,29 @@ pub fn counters_sorting<CX: ColorsManager>(
             thread_buffer.put_back(colored_buckets_writer.finalize().0);
         });
 
-    let mut writer = csv::Writer::from_path(output_file).unwrap();
-
     if !CX::COLORS_ENABLED {
-        for (info, counter) in sequences_info.iter().zip(final_counters.iter()) {
+        let mut writer = csv::Writer::from_path(output_file).unwrap();
+        writer
+            .write_record(&[
+                "query_index",
+                "matched_kmers",
+                "query_kmers",
+                "match_percentage",
+            ])
+            .unwrap();
+
+        for (query_index, (info, counter)) in
+            sequences_info.iter().zip(final_counters.iter()).enumerate()
+        {
             writer
                 .write_record(&[
-                    info.to_string(),
+                    query_index.to_string(),
                     counter.load(Ordering::Relaxed).to_string(),
+                    info.to_string(),
+                    format!(
+                        "{:.2}",
+                        (counter.load(Ordering::Relaxed) as f64 / *info as f64)
+                    ),
                 ])
                 .unwrap();
         }
