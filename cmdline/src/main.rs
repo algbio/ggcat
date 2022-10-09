@@ -198,8 +198,8 @@ struct QueryArgs {
     #[structopt(short, long)]
     pub colors: bool,
 
-    #[structopt(short = "o", long = "output-file", default_value = "output.csv")]
-    pub output_file: PathBuf,
+    #[structopt(short = "o", long = "output-file-prefix", default_value = "output")]
+    pub output_file_prefix: PathBuf,
 
     #[structopt(short = "x", long, default_value = "MinimizerBucketing")]
     pub step: QuerierStartingStep,
@@ -404,7 +404,7 @@ fn run_querier_from_args(
         convert_querier_step(args.step),
         args.input_graph,
         args.input_query,
-        args.output_file,
+        args.output_file_prefix,
         args.common_args.temp_dir,
         args.common_args.buckets_count_log,
         args.common_args.threads_count,
@@ -491,7 +491,7 @@ fn main() {
             return; // Skip final memory deallocation
         }
         CliArgs::Query(args) => {
-            initialize(&args.common_args, &args.output_file);
+            initialize(&args.common_args, &args.output_file_prefix);
 
             let bucketing_hash = if args.common_args.forward_only {
                 <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::STATIC_DISPATCH_ID

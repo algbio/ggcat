@@ -162,7 +162,6 @@ pub fn run_query<
         );
 
         colored_query_output::<QuerierColorsManager>(
-            query_input,
             remapped_query_color_buckets,
             output_file.clone(),
             &query_kmers_count,

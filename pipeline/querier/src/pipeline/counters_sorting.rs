@@ -188,6 +188,12 @@ pub fn counters_sorting<CX: ColorsManager>(
         });
 
     if !CX::COLORS_ENABLED {
+        let output_file = if output_file.extension().is_none() {
+            output_file.with_extension("csv")
+        } else {
+            output_file
+        };
+
         let mut writer = csv::Writer::from_path(output_file).unwrap();
         writer
             .write_record(&[

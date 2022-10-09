@@ -44,7 +44,6 @@ impl Write for QueryOutputFileWriter {
 }
 
 pub fn colored_query_output<CX: ColorsManager>(
-    query_input: PathBuf,
     mut colored_query_buckets: Vec<PathBuf>,
     output_file: PathBuf,
     query_kmers_count: &[u64],
@@ -64,6 +63,12 @@ pub fn colored_query_output<CX: ColorsManager>(
 
     colored_query_buckets.reverse();
     let buckets_channel = Mutex::new(colored_query_buckets);
+
+    let output_file = if output_file.extension().is_none() {
+        output_file.with_extension("jsonl")
+    } else {
+        output_file
+    };
 
     let query_output_file = File::create(&output_file).unwrap();
 
@@ -156,7 +161,7 @@ pub fn colored_query_output<CX: ColorsManager>(
                         )
                         .unwrap();
                     }
-                    writeln!(compressed_stream, "}} }}").unwrap();
+                    writeln!(compressed_stream, "}}}}").unwrap();
                 }
 
                 let mut decompress_stream =
