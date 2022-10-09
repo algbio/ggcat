@@ -12,6 +12,7 @@ use ::static_dispatch::static_dispatch;
 use colors::colors_manager::{ColorMapReader, ColorsManager, ColorsMergeManager};
 use colors::DefaultColorsSerializer;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use io::sequences_reader::SequencesReader;
 use io::{compute_buckets_log_from_input_files, generate_bucket_names};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::fs::File;
@@ -123,6 +124,20 @@ pub fn run_query<
 
     let colored_buckets_prefix = temp_dir.join("color_counters");
 
+    let query_kmers_count = {
+        let mut sequences_lengths = vec![];
+        SequencesReader::process_file_extended(
+            &query_input,
+            |seq| {
+                sequences_lengths.push((seq.seq.len() - k + 1) as u64);
+            },
+            None,
+            false,
+            false,
+        );
+        sequences_lengths
+    };
+
     let colored_buckets = if step <= QuerierStartingStep::CountersSorting {
         counters_sorting::<QuerierColorsManager>(
             k,
@@ -131,6 +146,7 @@ pub fn run_query<
             colored_buckets_prefix,
             color_map.colors_count(),
             output_file.clone(),
+            &query_kmers_count,
         )
     } else {
         generate_bucket_names(colored_buckets_prefix, buckets_count, None)
@@ -149,6 +165,7 @@ pub fn run_query<
             query_input,
             remapped_query_color_buckets,
             output_file.clone(),
+            &query_kmers_count,
         );
     }
 

@@ -47,6 +47,7 @@ pub fn colored_query_output<CX: ColorsManager>(
     query_input: PathBuf,
     mut colored_query_buckets: Vec<PathBuf>,
     output_file: PathBuf,
+    query_kmers_count: &[u64],
 ) {
     PHASES_TIMES_MONITOR
         .write()
@@ -139,17 +140,23 @@ pub fn colored_query_output<CX: ColorsManager>(
                     .unwrap();
 
                 for (query, result) in results {
-                    write!(compressed_stream, "{}: ", query).unwrap();
+                    write!(compressed_stream, "{{query_index:{}, matches:{{", query).unwrap();
                     let mut query_result = result.into_iter().collect::<Vec<_>>();
                     query_result.sort_unstable_by_key(|r| r.0);
 
                     for (i, q) in query_result.into_iter().enumerate() {
                         if i != 0 {
-                            write!(compressed_stream, ", ").unwrap();
+                            write!(compressed_stream, ",").unwrap();
                         }
-                        write!(compressed_stream, "{}[{}]", q.0, q.1).unwrap();
+                        write!(
+                            compressed_stream,
+                            "'{}': {:.2}",
+                            q.0,
+                            (q.1 as f64) / (query_kmers_count[query as usize] as f64)
+                        )
+                        .unwrap();
                     }
-                    writeln!(compressed_stream).unwrap();
+                    writeln!(compressed_stream, "}} }}").unwrap();
                 }
 
                 let mut decompress_stream =

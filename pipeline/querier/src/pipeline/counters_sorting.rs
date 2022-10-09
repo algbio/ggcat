@@ -82,30 +82,19 @@ pub fn counters_sorting<CX: ColorsManager>(
     colored_buckets_path: PathBuf,
     colors_count: u64,
     output_file: PathBuf,
+    query_kmers_count: &[u64],
 ) -> Vec<PathBuf> {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: counters sorting".to_string());
 
-    let mut sequences_info = vec![];
-
     let buckets_count = file_counters_inputs.len();
-
-    SequencesReader::process_file_extended(
-        query_input,
-        |seq| {
-            sequences_info.push((seq.seq.len() - k + 1) as u64);
-        },
-        None,
-        false,
-        false,
-    );
 
     let final_counters = if CX::COLORS_ENABLED {
         vec![]
     } else {
-        let mut counters = Vec::with_capacity(sequences_info.len());
-        counters.extend((0..sequences_info.len()).map(|_| AtomicU64::new(0)));
+        let mut counters = Vec::with_capacity(query_kmers_count.len());
+        counters.extend((0..query_kmers_count.len()).map(|_| AtomicU64::new(0)));
         counters
     };
 
@@ -209,8 +198,10 @@ pub fn counters_sorting<CX: ColorsManager>(
             ])
             .unwrap();
 
-        for (query_index, (info, counter)) in
-            sequences_info.iter().zip(final_counters.iter()).enumerate()
+        for (query_index, (info, counter)) in query_kmers_count
+            .iter()
+            .zip(final_counters.iter())
+            .enumerate()
         {
             writer
                 .write_record(&[
