@@ -301,7 +301,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                     let position = entry_count & !VISITED_BIT;
 
                     if position >= data.temp_colors_buffer.len() {
-                        let buffer = H::invert(kmer_hash.to_unextendable());
+                        let buffer = MH::invert(kmer_hash.to_unextendable());
 
                         let left_minimizer =
                             H::new(read.sub_slice(0..(k - 1)), 9).iter().min().unwrap();
