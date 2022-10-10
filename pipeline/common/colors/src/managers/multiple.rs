@@ -198,9 +198,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             .any(|x| MH::debug_eq_to_u128(x.to_unextendable(), 778549053))
         {
             println!(
-                "Found sequence {} with minimizer {}",
+                "Found sequence {} with minimizer {} and flags {}",
                 sequence.to_string(),
-                minimizer
+                minimizer,
+                flags
             );
         }
 
