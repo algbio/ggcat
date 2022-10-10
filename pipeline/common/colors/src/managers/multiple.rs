@@ -192,6 +192,18 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             .min()
             .unwrap();
 
+        let hashes_dbg = MH::new(sequence, k);
+        if hashes_dbg
+            .iter()
+            .any(|x| MH::debug_eq_to_u128(x.to_unextendable(), 778549053))
+        {
+            println!(
+                "Found sequence {} with minimizer {}",
+                sequence.to_string(),
+                minimizer
+            );
+        }
+
         const MINIMIZER_SHIFT: usize =
             size_of::<MinimizerType>() * 8 - (2 * COLOR_SEQUENCES_SUBBUKETS.ilog2() as usize);
         let bucket = (minimizer >> MINIMIZER_SHIFT) as usize % COLOR_SEQUENCES_SUBBUKETS;
@@ -220,7 +232,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         k: usize,
         min_multiplicity: usize,
     ) {
-        for buffer in data.sequences.iter_mut() {
+        for (idx, buffer) in data.sequences.iter_mut().enumerate() {
             data.temp_colors_buffer.clear();
 
             let mut stream = buffer.get_stream();
@@ -248,10 +260,13 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
                 let read = CompressedRead::new_from_compressed(&read_buf[..], read_length);
 
-                // let hashes_dbg = MH::new(read, k);
-                // if hashes_dbg.iter().any(|x| x.debug_eq_to_u128(1234)) {
-                //     println!("Found sequence: {} ", read.to_string());
-                // }
+                let hashes_dbg = MH::new(read, k);
+                if hashes_dbg
+                    .iter()
+                    .any(|x| MH::debug_eq_to_u128(x.to_unextendable(), 778549053))
+                {
+                    println!("Found sequence {} in bucket: {}", read.to_string(), idx);
+                }
 
                 let hashes = MH::new(read, k);
 
