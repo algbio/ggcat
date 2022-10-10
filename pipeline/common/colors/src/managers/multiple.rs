@@ -303,9 +303,14 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                     if position >= data.temp_colors_buffer.len() {
                         let buffer = MH::invert(kmer_hash.to_unextendable());
 
-                        let left_minimizer =
-                            H::new(read.sub_slice(0..(k - 1)), 9).iter().min().unwrap();
-                        let right_minimizer = H::new(read.sub_slice(1..k), 9).iter().min().unwrap();
+                        let left_minimizer = H::new(read.sub_slice(0..(k - 1)), 9)
+                            .iter()
+                            .min_by_key(|m| H::get_full_minimizer(m.to_unextendable()))
+                            .unwrap();
+                        let right_minimizer = H::new(read.sub_slice(1..k), 9)
+                            .iter()
+                            .min_by_key(|m| H::get_full_minimizer(m.to_unextendable()))
+                            .unwrap();
 
                         panic!(
                             "Position error for kmer: {:?} with hash: {:?} and read {:?} with left minimizer: {:?} and right minimizer: {:?}",
