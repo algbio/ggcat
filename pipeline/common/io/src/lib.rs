@@ -52,7 +52,12 @@ pub fn generate_bucket_names(
         .collect()
 }
 
-pub fn compute_buckets_log_from_input_files(files: &[PathBuf]) -> usize {
+pub struct FilesStatsInfo {
+    pub best_buckets_count_log: usize,
+    pub best_lz4_compression_level: u32,
+}
+
+pub fn compute_stats_from_input_files(files: &[PathBuf]) -> FilesStatsInfo {
     // TODO: Improve this ratio estimation
     const COMPRESSED_READS_RATIO: f64 = 0.5;
 
@@ -79,8 +84,11 @@ pub fn compute_buckets_log_from_input_files(files: &[PathBuf]) -> usize {
 
     let buckets_log = (max(1, buckets_count) - 1).next_power_of_two().ilog2() as usize;
 
-    min(
-        MAX_BUCKETS_COUNT_LOG,
-        max(MIN_BUCKETS_COUNT_LOG, buckets_log),
-    )
+    FilesStatsInfo {
+        best_buckets_count_log: min(
+            MAX_BUCKETS_COUNT_LOG,
+            max(MIN_BUCKETS_COUNT_LOG, buckets_log),
+        ),
+        best_lz4_compression_level: 0,
+    }
 }

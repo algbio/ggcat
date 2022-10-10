@@ -125,7 +125,7 @@ impl FileWriter {
                 offset += part.len();
             }
 
-            if temp_vec.len() > 0 && self.file.read().is_on_disk() {
+            if self.file.read().is_on_disk() {
                 self.file.write().flush_chunks(usize::MAX);
             }
             position

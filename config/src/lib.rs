@@ -2,7 +2,7 @@
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::time::Duration;
 
 pub type BucketIndexType = u16;
@@ -37,8 +37,6 @@ pub const DEFAULT_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024 * 4;
 pub const DEFAULT_PER_CPU_BUFFER_SIZE: MemoryDataSize = MemoryDataSize::from_kibioctets(4);
 
 pub const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(10);
-
-pub const DEFAULT_LZ4_COMPRESSION_LEVEL: u32 = 0;
 
 // 192MB of reads for each bucket
 pub const MAX_BUCKET_SIZE: u64 = 192 * 1024 * 1024;
@@ -82,6 +80,7 @@ impl SwapPriority {
 
 // Functions depending on global config parameters set at runtime
 pub static KEEP_FILES: AtomicBool = AtomicBool::new(false);
+pub static INTERMEDIATE_COMPRESSION_LEVEL: AtomicU32 = AtomicU32::new(0);
 pub static PREFER_MEMORY: AtomicBool = AtomicBool::new(false);
 
 pub fn get_memory_mode(swap_priority: usize) -> MemoryFileMode {

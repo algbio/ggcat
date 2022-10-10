@@ -2,8 +2,8 @@ use byteorder::ReadBytesExt;
 use colors::colors_manager::color_types::SingleKmerColorDataType;
 use colors::colors_manager::ColorsManager;
 use config::{
-    get_memory_mode, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
+    INTERMEDIATE_COMPRESSION_LEVEL, KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
 };
 use io::concurrent::temp_reads::extra_data::{SequenceExtraData, SequenceExtraDataOwned};
 use io::sequences_reader::SequencesReader;
@@ -105,7 +105,7 @@ pub fn counters_sorting<CX: ColorsManager>(
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
                 MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-                DEFAULT_LZ4_COMPRESSION_LEVEL,
+                INTERMEDIATE_COMPRESSION_LEVEL.load(Ordering::Relaxed),
             ),
         ))
     } else {

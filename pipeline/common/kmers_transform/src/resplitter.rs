@@ -2,8 +2,8 @@ use crate::reader::{InputBucketDesc, KmersTransformReader};
 use crate::reads_buffer::ReadsBuffer;
 use crate::{KmersTransformContext, KmersTransformExecutorFactory};
 use config::{
-    get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
-    DEFAULT_PER_CPU_BUFFER_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_RESPLIT_BUCKETS_COUNT_LOG,
+    get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
+    INTERMEDIATE_COMPRESSION_LEVEL, MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_RESPLIT_BUCKETS_COUNT_LOG,
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DONE_RESPLIT,
 };
 use hashes::HashableSequence;
@@ -84,7 +84,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
                 MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-                DEFAULT_LZ4_COMPRESSION_LEVEL,
+                INTERMEDIATE_COMPRESSION_LEVEL.load(Ordering::Relaxed),
             ),
         ));
 

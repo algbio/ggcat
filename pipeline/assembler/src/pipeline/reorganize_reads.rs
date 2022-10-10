@@ -1,6 +1,6 @@
 use config::{
-    get_memory_mode, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_PER_CPU_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
+    INTERMEDIATE_COMPRESSION_LEVEL, KEEP_FILES,
 };
 use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 
@@ -128,7 +128,7 @@ pub fn reorganize_reads<
         &(
             get_memory_mode(SwapPriority::ReorganizeReads),
             CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-            DEFAULT_LZ4_COMPRESSION_LEVEL,
+            INTERMEDIATE_COMPRESSION_LEVEL.load(Ordering::Relaxed),
         ),
     ));
 

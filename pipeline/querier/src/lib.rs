@@ -11,9 +11,10 @@ use crate::pipeline::querier_minimizer_bucketing::minimizer_bucketing;
 use ::static_dispatch::static_dispatch;
 use colors::colors_manager::{ColorMapReader, ColorsManager, ColorsMergeManager};
 use colors::DefaultColorsSerializer;
+use config::INTERMEDIATE_COMPRESSION_LEVEL;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::sequences_reader::SequencesReader;
-use io::{compute_buckets_log_from_input_files, generate_bucket_names};
+use io::{compute_stats_from_input_files, generate_bucket_names, FilesStatsInfo};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -67,6 +68,7 @@ pub fn run_query<
     temp_dir: PathBuf,
     buckets_count_log: Option<usize>,
     threads_count: usize,
+    default_compression_level: Option<u32>,
 ) {
     PHASES_TIMES_MONITOR.write().init();
 
@@ -77,9 +79,17 @@ pub fn run_query<
         graph_input.with_extension("colors.dat"),
     );
 
-    let buckets_count_log = buckets_count_log.unwrap_or_else(|| {
-        compute_buckets_log_from_input_files(&[graph_input.clone(), query_input.clone()])
-    });
+    let file_stats = compute_stats_from_input_files(&[graph_input.clone(), query_input.clone()]);
+
+    let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
+
+    let default_compression_level =
+        default_compression_level.unwrap_or_else(|| file_stats.best_lz4_compression_level);
+    INTERMEDIATE_COMPRESSION_LEVEL.store(
+        default_compression_level,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+
     let buckets_count = 1 << buckets_count_log;
 
     let ((buckets, counters), queries_count) = if step <= QuerierStartingStep::MinimizerBucketing {

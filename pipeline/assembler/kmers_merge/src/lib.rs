@@ -10,7 +10,7 @@ use colors::colors_manager::color_types::{
 };
 use colors::colors_manager::{color_types, ColorsManager};
 use config::{
-    get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
+    get_memory_mode, BucketIndexType, SwapPriority, INTERMEDIATE_COMPRESSION_LEVEL,
     MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use crossbeam::queue::*;
@@ -32,7 +32,7 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use utils::owned_drop::OwnedDrop;
 
@@ -166,7 +166,7 @@ pub fn kmers_merge<
         &(
             get_memory_mode(SwapPriority::ResultBuckets),
             CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-            DEFAULT_LZ4_COMPRESSION_LEVEL,
+            INTERMEDIATE_COMPRESSION_LEVEL.load(Ordering::Relaxed),
         ),
     );
 

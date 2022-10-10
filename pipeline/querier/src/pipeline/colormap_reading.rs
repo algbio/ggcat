@@ -3,8 +3,8 @@ use crate::structs::query_colored_counters::{ColorsRange, QueryColorDesc, QueryC
 use colors::storage::deserializer::ColorsDeserializer;
 use colors::storage::ColorsSerializerTrait;
 use config::{
-    get_memory_mode, BucketIndexType, ColorIndexType, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL,
-    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    get_memory_mode, BucketIndexType, ColorIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
+    DEFAULT_PREFETCH_AMOUNT, INTERMEDIATE_COMPRESSION_LEVEL, KEEP_FILES,
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
 };
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
@@ -43,7 +43,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
         &(
             get_memory_mode(SwapPriority::MinimizerBuckets),
             MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-            DEFAULT_LZ4_COMPRESSION_LEVEL,
+            INTERMEDIATE_COMPRESSION_LEVEL.load(Ordering::Relaxed),
         ),
     ));
 

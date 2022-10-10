@@ -9,12 +9,12 @@ use ::static_dispatch::static_dispatch;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
 use config::{
-    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, KEEP_FILES,
-    MAXIMUM_SECOND_BUCKETS_LOG, MINIMUM_LOG_DELTA_TIME,
+    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, INTERMEDIATE_COMPRESSION_LEVEL,
+    KEEP_FILES, MAXIMUM_SECOND_BUCKETS_LOG, MINIMUM_LOG_DELTA_TIME,
 };
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::reads_writer::ReadsWriter;
-use io::{compute_buckets_log_from_input_files, generate_bucket_names};
+use io::{compute_stats_from_input_files, generate_bucket_names};
 use kmers_merge::structs::RetType;
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
@@ -83,12 +83,19 @@ pub fn run_assembler<
     min_multiplicity: usize,
     buckets_count_log: Option<usize>,
     loopit_number: Option<usize>,
+    default_compression_level: Option<u32>,
     only_bstats: bool,
 ) {
     PHASES_TIMES_MONITOR.write().init();
 
-    let buckets_count_log =
-        buckets_count_log.unwrap_or_else(|| compute_buckets_log_from_input_files(&input));
+    let file_stats = compute_stats_from_input_files(&input);
+
+    let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
+
+    let default_compression_level =
+        default_compression_level.unwrap_or_else(|| file_stats.best_lz4_compression_level);
+    INTERMEDIATE_COMPRESSION_LEVEL.store(default_compression_level, Ordering::Relaxed);
+
     let buckets_count = 1 << buckets_count_log;
 
     let color_names: Vec<_> = input

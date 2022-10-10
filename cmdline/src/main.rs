@@ -142,8 +142,12 @@ struct CommonArgs {
     #[structopt(short = "b", long = "buckets-count-log")]
     pub buckets_count_log: Option<usize>,
 
+    /// The level of lz4 compression to be used for the intermediate files
+    #[structopt(long = "intermediate-compression-level")]
+    pub intermediate_compression_level: Option<u32>,
+
     /// The level of debugging
-    #[structopt(short = "d", long = "debug-level", default_value = "0")]
+    #[structopt(short = "d", long = "debug-level", default_value = "0", hidden = true)]
     pub debug_level: usize,
 
     #[structopt(long = "only-bstats", hidden = true)]
@@ -222,7 +226,6 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) {
     KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
 
     PREFER_MEMORY.store(args.prefer_memory, Ordering::Relaxed);
-
     DEBUG_LEVEL.store(args.debug_level, Ordering::Relaxed);
 
     ThreadPoolBuilder::new()
@@ -242,7 +245,7 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) {
     );
 
     MemoryFs::init(
-        parallel_processor::memory_data_size::MemoryDataSize::from_bytes(
+        MemoryDataSize::from_bytes(
             (args.memory * (MemoryDataSize::OCTET_GIBIOCTET_FACTOR as f64)) as usize,
         ),
         FLUSH_QUEUE_FACTOR * args.threads_count,
@@ -378,6 +381,7 @@ fn run_assembler_from_args(
         args.min_multiplicity,
         args.common_args.buckets_count_log,
         Some(args.number),
+        args.common_args.intermediate_compression_level,
         args.common_args.only_bstats,
     );
 }
@@ -408,6 +412,7 @@ fn run_querier_from_args(
         args.common_args.temp_dir,
         args.common_args.buckets_count_log,
         args.common_args.threads_count,
+        args.common_args.intermediate_compression_level,
     );
 }
 

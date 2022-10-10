@@ -6,8 +6,8 @@ use crate::{
     KmersTransformPreprocessor,
 };
 use config::{
-    get_memory_mode, SwapPriority, DEFAULT_LZ4_COMPRESSION_LEVEL, DEFAULT_OUTPUT_BUFFER_SIZE,
-    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    get_memory_mode, SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE,
+    DEFAULT_PREFETCH_AMOUNT, INTERMEDIATE_COMPRESSION_LEVEL, KEEP_FILES,
     MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_INTERMEDIATE_MAP_SIZE, MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
     PACKETS_PRIORITY_DEFAULT, PACKETS_PRIORITY_REWRITTEN, PARTIAL_VECS_CHECKPOINT_SIZE,
     USE_SECOND_BUCKET,
@@ -248,7 +248,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                         &(
                             get_memory_mode(SwapPriority::ResultBuckets),
                             PARTIAL_VECS_CHECKPOINT_SIZE,
-                            DEFAULT_LZ4_COMPRESSION_LEVEL,
+                            INTERMEDIATE_COMPRESSION_LEVEL.load(Ordering::Relaxed),
                         ),
                         SUBSPLIT_INDEX.fetch_add(1, Ordering::Relaxed),
                     );

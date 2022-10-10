@@ -26,7 +26,7 @@ pub static SWAPPABLE_FILES: Mutex<
     Option<BTreeMap<(usize, PathBuf), Weak<RwLock<MemoryFileInternal>>>>,
 > = Mutex::const_new(parking_lot::RawMutex::INIT, None);
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum MemoryFileMode {
     AlwaysMemory,
     PreferMemory { swap_priority: usize },
