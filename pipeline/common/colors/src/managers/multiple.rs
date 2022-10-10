@@ -299,6 +299,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                         } else if entry_count & VISITED_BIT == 0 {
                             entry_count /= 2;
                         }
+                        pritnln!("Passed forward test!");
                     }
 
                     if entry_count & VISITED_BIT == 0 {
