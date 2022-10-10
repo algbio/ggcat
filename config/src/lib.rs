@@ -80,7 +80,8 @@ impl SwapPriority {
 
 // Functions depending on global config parameters set at runtime
 pub static KEEP_FILES: AtomicBool = AtomicBool::new(false);
-pub static INTERMEDIATE_COMPRESSION_LEVEL: AtomicU32 = AtomicU32::new(0);
+pub static INTERMEDIATE_COMPRESSION_LEVEL_SLOW: AtomicU32 = AtomicU32::new(3);
+pub static INTERMEDIATE_COMPRESSION_LEVEL_FAST: AtomicU32 = AtomicU32::new(0);
 pub static PREFER_MEMORY: AtomicBool = AtomicBool::new(false);
 
 pub fn get_memory_mode(swap_priority: usize) -> MemoryFileMode {

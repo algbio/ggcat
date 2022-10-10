@@ -1,6 +1,7 @@
 use crate::buckets::writers::{finalize_bucket_file, initialize_bucket_file, THREADS_BUSY_WRITING};
 use crate::buckets::LockFreeBucket;
 use crate::memory_data_size::MemoryDataSize;
+use crate::memory_fs::file::flush::GlobalFlush;
 use crate::memory_fs::file::internal::MemoryFileMode;
 use crate::memory_fs::file::writer::FileWriter;
 use crate::utils::memory_size_to_log2;
@@ -23,7 +24,15 @@ impl CompressedCheckpointSize {
     }
 }
 
-fn create_lz4_stream<W: Write>(writer: W, level: u32) -> lz4::Encoder<W> {
+fn create_lz4_stream<W: Write>(writer: W, level: CompressionLevelInfo) -> lz4::Encoder<W> {
+    let (queue_occupation, queue_size) = GlobalFlush::global_queue_occupation();
+
+    let level = if queue_size < 2 * queue_occupation {
+        level.slow_disk
+    } else {
+        level.fast_disk
+    };
+
     lz4::EncoderBuilder::new()
         .level(level)
         .checksum(ContentChecksum::NoChecksum)
@@ -38,7 +47,7 @@ struct CompressedBinaryWriterInternal {
     checkpoint_max_size: u64,
     checkpoints: Vec<u64>,
     current_chunk_size: u64,
-    level: u32,
+    level: CompressionLevelInfo,
 }
 
 pub struct CompressedBinaryWriter {
@@ -67,15 +76,25 @@ impl CompressedBinaryWriter {
         CompressedCheckpointSize::new_from_log2(62);
 }
 
+#[derive(Copy, Clone)]
+pub struct CompressionLevelInfo {
+    pub fast_disk: u32,
+    pub slow_disk: u32,
+}
+
 impl LockFreeBucket for CompressedBinaryWriter {
-    type InitData = (MemoryFileMode, CompressedCheckpointSize, u32);
+    type InitData = (
+        MemoryFileMode,
+        CompressedCheckpointSize,
+        CompressionLevelInfo,
+    );
 
     fn new(
         path_prefix: &Path,
         (file_mode, checkpoint_max_size, compression_level): &(
             MemoryFileMode,
             CompressedCheckpointSize,
-            u32,
+            CompressionLevelInfo,
         ),
         index: usize,
     ) -> Self {

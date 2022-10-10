@@ -3,8 +3,9 @@ use crate::colors_memmap_writer::ColorsMemMapWriter;
 use crate::DefaultColorsSerializer;
 use byteorder::ReadBytesExt;
 use config::{
-    get_memory_mode, ColorIndexType, MinimizerType, SwapPriority, PARTIAL_VECS_CHECKPOINT_SIZE,
-    READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END,
+    get_memory_mode, ColorIndexType, MinimizerType, SwapPriority,
+    INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW,
+    PARTIAL_VECS_CHECKPOINT_SIZE, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END,
 };
 use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
@@ -15,7 +16,9 @@ use io::concurrent::temp_reads::extra_data::{
 };
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
-use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::writers::compressed_binary_writer::{
+    CompressedBinaryWriter, CompressionLevelInfo,
+};
 use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::memory_fs::RemoveFileMode;
 use std::collections::VecDeque;
@@ -87,7 +90,10 @@ impl SequencesStorage {
                     &(
                         get_memory_mode(SwapPriority::KmersMergeTempColors),
                         PARTIAL_VECS_CHECKPOINT_SIZE,
-                        0,
+                        CompressionLevelInfo {
+                            fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
+                            slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),
+                        },
                     ),
                     COLOR_STORAGE_INDEX.fetch_add(1, Ordering::Relaxed),
                 ))

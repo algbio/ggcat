@@ -3,7 +3,8 @@ use crate::reads_buffer::ReadsBuffer;
 use crate::{KmersTransformContext, KmersTransformExecutorFactory};
 use config::{
     get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
-    INTERMEDIATE_COMPRESSION_LEVEL, MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_RESPLIT_BUCKETS_COUNT_LOG,
+    INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW,
+    MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_RESPLIT_BUCKETS_COUNT_LOG,
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DONE_RESPLIT,
 };
 use hashes::HashableSequence;
@@ -12,7 +13,9 @@ use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
 use minimizer_bucketing::{MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::writers::compressed_binary_writer::{
+    CompressedBinaryWriter, CompressionLevelInfo,
+};
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::counter_stats::counter::{AtomicCounter, SumMode};
 use parallel_processor::counter_stats::declare_counter_i64;
@@ -84,7 +87,10 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
                 MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-                INTERMEDIATE_COMPRESSION_LEVEL.load(Ordering::Relaxed),
+                CompressionLevelInfo {
+                    fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
+                    slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),
+                },
             ),
         ));
 

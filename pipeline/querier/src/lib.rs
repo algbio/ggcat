@@ -11,7 +11,7 @@ use crate::pipeline::querier_minimizer_bucketing::minimizer_bucketing;
 use ::static_dispatch::static_dispatch;
 use colors::colors_manager::{ColorMapReader, ColorsManager, ColorsMergeManager};
 use colors::DefaultColorsSerializer;
-use config::INTERMEDIATE_COMPRESSION_LEVEL;
+use config::{INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW};
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::sequences_reader::SequencesReader;
 use io::{compute_stats_from_input_files, generate_bucket_names, FilesStatsInfo};
@@ -19,6 +19,7 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 
 mod pipeline;
 mod sparse_fenwick;
@@ -83,12 +84,10 @@ pub fn run_query<
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
 
-    let default_compression_level =
-        default_compression_level.unwrap_or_else(|| file_stats.best_lz4_compression_level);
-    INTERMEDIATE_COMPRESSION_LEVEL.store(
-        default_compression_level,
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    if let Some(default_compression_level) = default_compression_level {
+        INTERMEDIATE_COMPRESSION_LEVEL_SLOW.store(default_compression_level, Ordering::Relaxed);
+        INTERMEDIATE_COMPRESSION_LEVEL_FAST.store(default_compression_level, Ordering::Relaxed);
+    }
 
     let buckets_count = 1 << buckets_count_log;
 

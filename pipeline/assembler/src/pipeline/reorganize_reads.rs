@@ -1,6 +1,6 @@
 use config::{
     get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
-    INTERMEDIATE_COMPRESSION_LEVEL, KEEP_FILES,
+    INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES,
 };
 use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 
@@ -20,7 +20,9 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
-use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::writers::compressed_binary_writer::{
+    CompressedBinaryWriter, CompressionLevelInfo,
+};
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::RemoveFileMode;
@@ -128,7 +130,10 @@ pub fn reorganize_reads<
         &(
             get_memory_mode(SwapPriority::ReorganizeReads),
             CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-            INTERMEDIATE_COMPRESSION_LEVEL.load(Ordering::Relaxed),
+            CompressionLevelInfo {
+                fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
+                slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),
+            },
         ),
     ));
 

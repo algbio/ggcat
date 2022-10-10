@@ -54,7 +54,7 @@ pub fn generate_bucket_names(
 
 pub struct FilesStatsInfo {
     pub best_buckets_count_log: usize,
-    pub best_lz4_compression_level: u32,
+    // pub best_lz4_compression_level: u32,
 }
 
 pub fn compute_stats_from_input_files(files: &[PathBuf]) -> FilesStatsInfo {
@@ -89,6 +89,6 @@ pub fn compute_stats_from_input_files(files: &[PathBuf]) -> FilesStatsInfo {
             MAX_BUCKETS_COUNT_LOG,
             max(MIN_BUCKETS_COUNT_LOG, buckets_log),
         ),
-        best_lz4_compression_level: 0,
+        // best_lz4_compression_level: 0,
     }
 }
