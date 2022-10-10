@@ -248,6 +248,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
                 let read = CompressedRead::new_from_compressed(&read_buf[..], read_length);
 
+                // let hashes_dbg = MH::new(read, k);
+                // if hashes_dbg.iter().any(|x| x.debug_eq_to_u128(1234)) {
+                //     println!("Found sequence: {} ", read.to_string());
+                // }
+
                 let hashes = MH::new(read, k);
 
                 data.temp_colors_buffer
@@ -296,12 +301,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                     let position = entry_count & !VISITED_BIT;
 
                     if position >= data.temp_colors_buffer.len() {
-                        let buffer = MH::invert(kmer_hash.to_unextendable());
+                        let buffer = H::invert(kmer_hash.to_unextendable());
 
                         let left_minimizer =
-                            MH::new(read.sub_slice(0..(k - 1)), 9).iter().min().unwrap();
-                        let right_minimizer =
-                            MH::new(read.sub_slice(1..k), 9).iter().min().unwrap();
+                            H::new(read.sub_slice(0..(k - 1)), 9).iter().min().unwrap();
+                        let right_minimizer = H::new(read.sub_slice(1..k), 9).iter().min().unwrap();
 
                         panic!(
                             "Position error for kmer: {:?} with hash: {:?} and read {:?} with left minimizer: {:?} and right minimizer: {:?}",
