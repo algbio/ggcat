@@ -25,7 +25,7 @@ pub const KMERS_TRANSFORM_READS_CHUNKS_SIZE: usize = 1024 * 24;
 /// 2MB read file prefetch
 pub const DEFAULT_PREFETCH_AMOUNT: Option<usize> = Some(1024 * 1024 * 2);
 
-pub const FLUSH_QUEUE_FACTOR: usize = 1;
+pub const FLUSH_QUEUE_FACTOR: usize = 16;
 
 pub const PARTIAL_VECS_CHECKPOINT_SIZE: CompressedCheckpointSize =
     CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(2));

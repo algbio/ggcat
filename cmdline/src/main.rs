@@ -250,7 +250,7 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) {
         ),
         FLUSH_QUEUE_FACTOR * args.threads_count,
         max(1, args.threads_count / 4),
-        32768,
+        8192,
     );
 
     println!(
