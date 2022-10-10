@@ -295,6 +295,14 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
                     let position = entry_count & !VISITED_BIT;
 
+                    if position >= data.temp_colors_buffer.len() {
+                        let buffer = MH::invert(kmer_hash.to_unextendable());
+                        panic!(
+                            "Position error for kmer: {:?}",
+                            CompressedRead::new_from_compressed(buffer.as_ref(), k).to_string()
+                        )
+                    }
+
                     let col_count = data.temp_colors_buffer[position] as usize;
                     data.temp_colors_buffer[position] += 1;
 
