@@ -13,7 +13,7 @@ pub struct FileWriter {
     path: PathBuf,
     current_buffer: RwLock<AllocatedChunk>,
     file_length: AtomicU64,
-    file: Arc<MemoryFileInternal>,
+    file: Arc<RwLock<MemoryFileInternal>>,
 }
 
 impl FileWriter {
@@ -27,7 +27,7 @@ impl FileWriter {
             file_length: AtomicU64::new(0),
             file: {
                 let file = MemoryFileInternal::create_new(path, mode);
-                file.open(OpenMode::Write).unwrap();
+                file.write().open(OpenMode::Write).unwrap();
                 file
             },
         }
@@ -35,7 +35,7 @@ impl FileWriter {
 
     /// Returns the total length of the file (slow method)
     pub fn len(&self) -> usize {
-        self.file.len() + self.current_buffer.read().len()
+        self.file.read().len() + self.current_buffer.read().len()
     }
 
     /// Overwrites bytes at the start of the file, the data field should not be longer than 128 bytes
@@ -46,18 +46,21 @@ impl FileWriter {
 
         unsafe {
             let current_buffer_lock = self.current_buffer.read();
-            if self.file.get_chunks_count() > 0 {
+
+            let file_read = self.file.read();
+
+            if file_read.get_chunks_count() > 0 {
                 drop(current_buffer_lock);
-                match self.file.get_chunk(0).read().deref() {
+                match file_read.get_chunk(0).read().deref() {
                     FileChunk::OnDisk { .. } => {
                         if let UnderlyingFile::WriteMode { file, .. } =
-                            self.file.get_underlying_file().deref()
+                            file_read.get_underlying_file().deref()
                         {
-                            let mut file_lock = file.1.lock();
-                            let position = file_lock.stream_position().unwrap();
-                            file_lock.seek(SeekFrom::Start(0)).unwrap();
-                            file_lock.write_all(data).unwrap();
-                            file_lock.seek(SeekFrom::Start(position)).unwrap();
+                            let mut disk_file_lock = file.1.lock();
+                            let position = disk_file_lock.stream_position().unwrap();
+                            disk_file_lock.seek(SeekFrom::Start(0)).unwrap();
+                            disk_file_lock.write_all(data).unwrap();
+                            disk_file_lock.seek(SeekFrom::Start(position)).unwrap();
                             Ok(())
                         } else {
                             Err(())
@@ -100,9 +103,13 @@ impl FileWriter {
                 + (buffer.len() as u64);
 
             replace_with::replace_with_or_abort(buffer.deref_mut(), |buffer| {
-                let new_buffer = self
-                    .file
-                    .reserve_space(buffer, &mut temp_vec, buf.len(), el_size);
+                let new_buffer = MemoryFileInternal::reserve_space(
+                    &self.file,
+                    buffer,
+                    &mut temp_vec,
+                    buf.len(),
+                    el_size,
+                );
                 new_buffer
             });
 
@@ -118,8 +125,8 @@ impl FileWriter {
                 offset += part.len();
             }
 
-            if self.file.is_on_disk() {
-                self.file.flush_chunks(usize::MAX);
+            if temp_vec.len() > 0 && self.file.read().is_on_disk() {
+                self.file.write().flush_chunks(usize::MAX);
             }
             position
         }
@@ -149,14 +156,14 @@ impl Drop for FileWriter {
     fn drop(&mut self) {
         let mut current_buffer = self.current_buffer.write();
         if current_buffer.len() > 0 {
-            self.file.add_chunk(std::mem::replace(
-                current_buffer.deref_mut(),
-                AllocatedChunk::INVALID,
-            ));
-            if self.file.is_on_disk() {
-                self.file.flush_chunks(usize::MAX);
+            MemoryFileInternal::add_chunk(
+                &self.file,
+                std::mem::replace(current_buffer.deref_mut(), AllocatedChunk::INVALID),
+            );
+            if self.file.read().is_on_disk() {
+                self.file.write().flush_chunks(usize::MAX);
             }
         }
-        self.file.close();
+        self.file.write().close();
     }
 }

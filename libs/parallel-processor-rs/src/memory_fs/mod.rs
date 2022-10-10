@@ -72,7 +72,7 @@ impl MemoryFs {
 
     pub fn get_file_size(file: impl AsRef<Path>) -> Option<usize> {
         MemoryFileInternal::retrieve_reference(&file)
-            .map(|f| f.len())
+            .map(|f| f.read().len())
             .or_else(|| std::fs::metadata(&file).map(|m| m.len() as usize).ok())
     }
 
@@ -104,13 +104,15 @@ impl MemoryFs {
         let (current, max_size) = GlobalFlush::global_queue_occupation();
         if current * 3 < max_size {
             let mut map_lock = SWAPPABLE_FILES.lock();
-            let map_lock = NightlyUtils::mutex_get_or_init(&mut map_lock, || BTreeMap::new());
+            let map_lock_mut = NightlyUtils::mutex_get_or_init(&mut map_lock, || BTreeMap::new());
 
             let mut file_ref = None;
 
-            for (key, file) in map_lock.iter() {
+            for (key, file) in map_lock_mut.iter() {
                 if let Some(file) = file.upgrade() {
-                    if file.is_memory_preferred() && file.has_flush_pending_chunks() {
+                    let file_read = file.read();
+                    if file_read.is_memory_preferred() && file_read.has_flush_pending_chunks() {
+                        drop(file_read);
                         file_ref = Some((key.clone(), file));
                         break;
                     }
@@ -118,8 +120,9 @@ impl MemoryFs {
             }
 
             if let Some((key, file)) = file_ref {
-                map_lock.remove(&key);
+                map_lock_mut.remove(&key);
                 drop(map_lock);
+                let mut file = file.write();
                 file.change_to_disk_only();
                 file.flush_chunks(usize::MAX);
                 return true;

@@ -1,6 +1,6 @@
 use crate::memory_fs::file::internal::{FileChunk, MemoryFileInternal, OpenMode};
 use parking_lot::lock_api::ArcRwLockReadGuard;
-use parking_lot::RawRwLock;
+use parking_lot::{RawRwLock, RwLock};
 use std::cmp::min;
 use std::io;
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 pub struct FileReader {
     path: PathBuf,
-    file: Arc<MemoryFileInternal>,
+    file: Arc<RwLock<MemoryFileInternal>>,
     current_chunk_ref: Option<ArcRwLockReadGuard<RawRwLock, FileChunk>>,
     current_chunk_index: usize,
     chunks_count: usize,
@@ -41,10 +41,12 @@ impl Clone for FileReader {
 
 impl FileReader {
     fn set_chunk_info(&mut self, index: usize) {
-        let chunk = self.file.get_chunk(index);
+        let file = self.file.read();
+
+        let chunk = file.get_chunk(index);
         let chunk_guard = chunk.read_arc();
 
-        let underlying_file = self.file.get_underlying_file();
+        let underlying_file = file.get_underlying_file();
 
         self.current_ptr = chunk_guard.get_ptr(&underlying_file, self.prefetch_amount);
         self.current_len = chunk_guard.get_length();
@@ -57,9 +59,11 @@ impl FileReader {
             Some(x) => x,
         };
 
-        file.open(OpenMode::Read).unwrap();
+        let mut file_lock = file.write();
 
-        let chunks_count = file.get_chunks_count();
+        file_lock.open(OpenMode::Read).unwrap();
+        let chunks_count = file_lock.get_chunks_count();
+        drop(file_lock);
 
         let mut reader = Self {
             path: path.as_ref().into(),
@@ -80,7 +84,7 @@ impl FileReader {
     }
 
     pub fn total_file_size(&self) -> usize {
-        self.file.len()
+        self.file.read().len()
     }
 
     pub fn close_and_remove(self, remove_fs: bool) -> bool {
@@ -148,8 +152,9 @@ impl Seek for FileReader {
             SeekFrom::Start(mut offset) => {
                 let mut chunk_idx = 0;
 
+                let file = self.file.read();
                 while chunk_idx < self.chunks_count {
-                    let len = self.file.get_chunk(chunk_idx).read().get_length();
+                    let len = file.get_chunk(chunk_idx).read().get_length();
                     if offset < (len as u64) {
                         break;
                     }
@@ -165,6 +170,7 @@ impl Seek for FileReader {
                 }
 
                 self.current_chunk_index = chunk_idx;
+                drop(file);
                 self.set_chunk_info(chunk_idx);
                 unsafe {
                     self.current_ptr = self.current_ptr.add(offset as usize);
@@ -182,12 +188,13 @@ impl Seek for FileReader {
     fn stream_position(&mut self) -> io::Result<u64> {
         let mut position = 0;
 
+        let file_read = self.file.read();
+
         for i in 0..self.current_chunk_index {
-            position += self.file.get_chunk(i).read().get_length();
+            position += file_read.get_chunk(i).read().get_length();
         }
 
-        position += self
-            .file
+        position += file_read
             .get_chunk(self.current_chunk_index)
             .read()
             .get_length()
