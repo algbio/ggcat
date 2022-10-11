@@ -139,6 +139,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U0;
+    const HAS_COLORS: bool = CX::COLORS_ENABLED;
 
     fn new_resplitter(
         global_data: &Arc<Self::GlobalExtraData>,

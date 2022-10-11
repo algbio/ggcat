@@ -160,10 +160,16 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         let mut has_outliers = false;
 
         let total_sequences = global_context.total_sequences.load(Ordering::Relaxed);
+        let total_kmers = global_context.total_kmers.load(Ordering::Relaxed);
         let unique_kmers = global_context.unique_kmers.load(Ordering::Relaxed);
 
         let unique_estimator_factor = if total_sequences > 0 {
-            unique_kmers as f64 / total_sequences as f64
+            if F::HAS_COLORS {
+                (unique_kmers as f64 / total_sequences as f64)
+                    .max(total_kmers as f64 / total_sequences as f64 / 48.0)
+            } else {
+                unique_kmers as f64 / total_sequences as f64
+            }
         } else {
             global_context.k as f64 / 2.0
         };

@@ -54,6 +54,8 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT: typenum::uint::Unsigned;
 
+    const HAS_COLORS: bool;
+
     fn new_resplitter(
         global_data: &Arc<Self::GlobalExtraData>,
     ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType;
