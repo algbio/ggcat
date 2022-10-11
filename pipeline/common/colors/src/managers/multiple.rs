@@ -14,7 +14,9 @@ use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
-use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use io::varint::{
+    decode_varint, decode_varint_flags, encode_varint, encode_varint_flags, VARINT_MAX_SIZE,
+};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::{
     CompressedBinaryWriter, CompressionLevelInfo,
@@ -199,9 +201,17 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         data.sequences[bucket]
             .buffer
             .extend_from_slice(&data.last_color.to_ne_bytes());
-        encode_varint(
+
+        let klen_dist_flag = if sequence.bases_count() > k {
+            0
+        } else {
+            decr_val as u8
+        };
+
+        encode_varint_flags::<_, _, typenum::U1>(
             |b| data.sequences[bucket].buffer.extend_from_slice(b),
             sequence.bases_count() as u64,
+            klen_dist_flag,
         );
         sequence.copy_to_buffer(&mut data.sequences[bucket].buffer);
         data.sequences[bucket].flush(&data.temp_dir)
@@ -238,22 +248,26 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                 }
 
                 let color = ColorIndexType::from_ne_bytes(color_buf);
-                let read_length = decode_varint(|| stream.read_u8().ok()).unwrap() as usize;
-                let read_bytes_count = (read_length + 3) / 4;
+
+                let (read_length, only_extra_ending) =
+                    decode_varint_flags::<_, typenum::U1>(|| stream.read_u8().ok()).unwrap();
+                let only_extra_ending = if only_extra_ending != 0 { true } else { false };
+
+                let read_bytes_count = (read_length as usize + 3) / 4;
 
                 read_buf.clear();
                 read_buf.reserve(read_bytes_count);
                 unsafe { read_buf.set_len(read_bytes_count) };
                 stream.read_exact(&mut read_buf[..]).unwrap();
 
-                let read = CompressedRead::new_from_compressed(&read_buf[..], read_length);
+                let read = CompressedRead::new_from_compressed(&read_buf[..], read_length as usize);
 
                 let hashes = MH::new(read, k);
 
                 data.temp_colors_buffer
                     .reserve(data.kmers_count + data.sequences_count);
 
-                let mut is_first = true;
+                let mut is_first = !only_extra_ending;
 
                 for kmer_hash in hashes.iter() {
                     let entry = map.get_mut(&kmer_hash.to_unextendable()).unwrap();
