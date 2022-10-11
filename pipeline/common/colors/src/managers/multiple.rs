@@ -198,10 +198,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             .any(|x| MH::debug_eq_to_u128(x.to_unextendable(), 778549053))
         {
             println!(
-                "Found sequence {} with minimizer {} and flags {}",
+                "Found sequence {} with minimizer {} and flags {} with decrval {}",
                 sequence.to_string(),
                 minimizer,
-                flags
+                flags,
+                decr_val
             );
         }
 
@@ -261,15 +262,15 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
                 let read = CompressedRead::new_from_compressed(&read_buf[..], read_length);
 
-                let mut track = false;
-                let hashes_dbg = MH::new(read, k);
-                if hashes_dbg
-                    .iter()
-                    .any(|x| MH::debug_eq_to_u128(x.to_unextendable(), 778549053))
-                {
-                    println!("Found sequence {} in bucket: {}", read.to_string(), idx);
-                    track = true;
-                }
+                // let mut track = false;
+                // let hashes_dbg = MH::new(read, k);
+                // if hashes_dbg
+                //     .iter()
+                //     .any(|x| MH::debug_eq_to_u128(x.to_unextendable(), 778549053))
+                // {
+                //     println!("Found sequence {} in bucket: {}", read.to_string(), idx);
+                //     track = true;
+                // }
 
                 let hashes = MH::new(read, k);
 
@@ -301,13 +302,13 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                         } else if entry_count & VISITED_BIT == 0 {
                             entry_count /= 2;
                         }
-                        if track {
-                            println!(
-                                "Passed forward test {} ^ {}!",
-                                kmer_hash.is_forward(),
-                                is_first
-                            );
-                        }
+                        // if track {
+                        //     println!(
+                        //         "Passed forward test {} ^ {}!",
+                        //         kmer_hash.is_forward(),
+                        //         is_first
+                        //     );
+                        // }
                     }
 
                     if entry_count & VISITED_BIT == 0 {
