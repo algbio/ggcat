@@ -234,8 +234,9 @@ impl<MH: HashFunctionFactory, CX: Sync + Send + 'static> PoolObjectTrait
     }
 
     fn reset(&mut self) {
-        self.phmap.clear();
+        self.phmap = HashMap::with_capacity(32768);
         self.query_reads.clear();
+        self.query_reads.shrink_to(32768);
     }
 }
 impl<MH: HashFunctionFactory, CX: Sync + Send + 'static> PacketTrait
