@@ -107,7 +107,7 @@ struct CommonArgs {
     #[structopt(short, default_value = "32")]
     pub klen: usize,
 
-    /// Specifies the m-mers (minimizers) length, defaults to min(3, ceil((K + 2) / 3))
+    /// Overrides the default m-mers (minimizers) length
     #[structopt(long)]
     pub mlen: Option<usize>,
 

@@ -93,7 +93,7 @@ OPTIONS:
     -k <klen>                                                                Specifies the k-mers length [default: 32]
     -m, --memory <memory>                                                    Maximum memory usage (GB) [default: 2]
         --mlen <mlen>
-            Specifies the m-mers (minimizers) length, defaults to min(3, ceil((K + 2) / 3))
+            Overrides the default m-mers (minimizers) length
 
     -o, --output-file-prefix <output-file-prefix>                             [default: output]
     -x, --step <step>                                                         [default: MinimizerBucketing]
