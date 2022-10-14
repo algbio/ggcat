@@ -13,10 +13,100 @@ Or if you have a file with a list of input files:
 ```
 ggcat build -k <k_value> -j <threads_count> -l <input_files_list> -o <output_file>
 ```
-To see all the available options for graph building run:
+Here are all listed the available options for graph building:
 ```
-ggcat build --help
+> ggcat build --help
+USAGE:
+    ggcat build [FLAGS] [OPTIONS] [--] [input]...
+
+FLAGS:
+    -c, --colors             Enable colors
+    -f, --forward-only       Treats reverse complementary kmers as different
+    -h, --help               Prints help information
+        --keep-temp-files    Keep intermediate temporary files for debugging purposes
+    -p, --prefer-memory      Use all the given memory before writing to disk
+    -V, --version            Prints version information
+
+OPTIONS:
+    -b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
+    -w, --hash-type <hash-type>
+            Hash type used to identify kmers [default: Auto]
+
+    -l, --input-lists <input-lists>...                                       The lists of input files
+        --intermediate-compression-level <intermediate-compression-level>
+            The level of lz4 compression to be used for the intermediate files
+
+    -k <klen>                                                                Specifies the k-mers length [default: 32]
+        --last-step <last-step>                                               [default: BuildUnitigs]
+    -m, --memory <memory>                                                    Maximum memory usage (GB) [default: 2]
+    -s, --min-multiplicity <min-multiplicity>
+            Minimum multiplicity required to keep a kmer [default: 2]
+
+        --mlen <mlen>
+            Specifies the m-mers (minimizers) length, defaults to min(3, ceil((K + 2) / 3))
+
+    -n, --number <number>                                                     [default: 0]
+    -o, --output-file <output-file>                                           [default: output.fasta.lz4]
+        --step <step>                                                         [default: MinimizerBucketing]
+    -t, --temp-dir <temp-dir>
+            Directory for temporary files (default .temp_files) [default: .temp_files]
+
+    -j, --threads-count <threads-count>                                       [default: 16]
+
+ARGS:
+    <input>...    The input files
 ```
+### Querying a graph
+To query an uncolored graph use the command:
+```
+ggcat query -k <k_value> -j <threads_count> <input-graph> <input-query>
+```
+The provided k value must match the one used for graph construction.
+To query a colored graph use the command:
+```
+ggcat query --colors -k <k_value> -j <threads_count> <input-graph> <input-query>
+```
+The tool automatically searches for the colormap file associated with the 
+input graph, that must have the same name as the graph with extension '.colors.dat'
+Here are listed all the available options for graph querying:
+```
+> ggcat query --help
+USAGE:
+    ggcat query [FLAGS] [OPTIONS] <input-graph> <input-query>
+
+FLAGS:
+    -c, --colors             Enable colors
+    -f, --forward-only       Treats reverse complementary kmers as different
+    -h, --help               Prints help information
+        --keep-temp-files    Keep intermediate temporary files for debugging purposes
+    -p, --prefer-memory      Use all the given memory before writing to disk
+    -V, --version            Prints version information
+
+OPTIONS:
+    -b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
+    -w, --hash-type <hash-type>
+            Hash type used to identify kmers [default: Auto]
+
+        --intermediate-compression-level <intermediate-compression-level>
+            The level of lz4 compression to be used for the intermediate files
+
+    -k <klen>                                                                Specifies the k-mers length [default: 32]
+    -m, --memory <memory>                                                    Maximum memory usage (GB) [default: 2]
+        --mlen <mlen>
+            Specifies the m-mers (minimizers) length, defaults to min(3, ceil((K + 2) / 3))
+
+    -o, --output-file-prefix <output-file-prefix>                             [default: output]
+    -x, --step <step>                                                         [default: MinimizerBucketing]
+    -t, --temp-dir <temp-dir>
+            Directory for temporary files (default .temp_files) [default: .temp_files]
+
+    -j, --threads-count <threads-count>                                       [default: 16]
+
+ARGS:
+    <input-graph>    The input graph
+    <input-query>    The input query as a .fasta file
+```
+
 
 
 
