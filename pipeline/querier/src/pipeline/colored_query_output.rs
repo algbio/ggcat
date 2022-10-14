@@ -111,7 +111,7 @@ pub fn colored_query_output<CX: ColorsManager>(
                     |counters, _| {
                         for query in counters.queries {
                             let colors_map = queries_results
-                                .entry(query.query_index)
+                                .entry(query.query_index - 1)
                                 .or_insert_with(|| HashMap::new());
 
                             assert_eq!(counters.colors.len() % 2, 0);

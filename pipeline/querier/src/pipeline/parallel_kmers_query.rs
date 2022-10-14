@@ -304,7 +304,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                     for hash in hashes.iter() {
                         map_packet
                             .query_reads
-                            .push((index.get() - 1, hash.to_unextendable()));
+                            .push((index.get(), hash.to_unextendable()));
                     }
                 }
             }
