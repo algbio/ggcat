@@ -6,7 +6,7 @@ use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
-use io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
+use io::concurrent::structured_sequences::fasta::FastaWriterConcurrentBuffer;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,

@@ -8,7 +8,7 @@ use crate::pipeline::build_unitigs::write_fasta_entry;
 use crate::structs::link_mapping::LinkMapping;
 use colors::colors_manager::{color_types, ColorsManager};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
-use io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
+use io::concurrent::structured_sequences::fasta::FastaWriterConcurrentBuffer;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataOwned, SequenceExtraDataTempBufferManagement,
