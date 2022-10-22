@@ -14,7 +14,7 @@ pub struct FastaWriterConcurrentBuffer<
     seq_buf: Vec<u8>,
     extra_buffers: (ColorInfo::TempBuffer, LinksInfo::TempBuffer),
     temp_buffer: Backend::SequenceTempBuffer,
-    current_index: u64,
+    current_index: Option<u64>,
 }
 
 impl<
@@ -34,7 +34,7 @@ impl<
             seq_buf: Vec::with_capacity(max_size),
             extra_buffers: (ColorInfo::new_temp_buffer(), LinksInfo::new_temp_buffer()),
             temp_buffer: Backend::alloc_temp_buffer(),
-            current_index: 0,
+            current_index: None,
         }
     }
 
@@ -45,7 +45,7 @@ impl<
 
         let first_read_index = self.target.write_sequences(
             &mut self.temp_buffer,
-            None,
+            self.current_index.map(|c| c - self.sequences.len() as u64),
             self.sequences
                 .drain(..)
                 .map(|(slice, col, link)| (slice.get_slice(&self.seq_buf), col, link)),
@@ -79,9 +79,9 @@ impl<
             result = Some(self.flush());
         }
         else if let Some(sequence_index) = sequence_index
-            && sequence_index != self.current_index {
+            && Some(sequence_index) != self.current_index {
             result = Some(self.flush());
-            self.current_index = sequence_index;
+            self.current_index = Some(sequence_index);
         }
 
         let color =
@@ -95,7 +95,9 @@ impl<
             links,
         ));
 
-        self.current_index += 1;
+        if let Some(current_index) = &mut self.current_index {
+            *current_index += 1;
+        }
 
         result
     }

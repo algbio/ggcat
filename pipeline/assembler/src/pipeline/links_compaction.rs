@@ -41,7 +41,7 @@ pub fn links_compaction(
             .to_path_buf()
             .join(format!("linksi{}", elab_index)),
         &(
-            get_memory_mode(SwapPriority::LinksBuckets as usize),
+            get_memory_mode(SwapPriority::LinksBuckets),
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
     ));
@@ -107,6 +107,8 @@ pub fn links_compaction(
         let mut rem_links = 0;
 
         for x in vec.group_by_mut(|a, b| a.entry() == b.entry()) {
+            current_unitigs_vec.clear();
+
             let (link1, link2) =
                 if x.len() == 2 && x[0].entries.len() != 0 && x[1].entries.len() != 0 {
                     // assert_ne!(x[0].flags.is_forward(), x[1].flags.is_forward());
@@ -214,6 +216,7 @@ pub fn links_compaction(
                             let linked = entry.entries.get_slice(&last_unitigs_vec);
 
                             // Write to disk, full unitig!
+                            final_unitigs_vec.clear();
                             let entries = VecSlice::new_extend(&mut final_unitigs_vec, linked);
 
                             // thread_links_manager.notify_add_read();
@@ -260,6 +263,7 @@ pub fn links_compaction(
                         // Write to disk, full unitig!
                         let unitig_entries = entry.entries.get_slice(&last_unitigs_vec);
 
+                        final_unitigs_vec.clear();
                         let entries = VecSlice::new_extend(&mut final_unitigs_vec, unitig_entries);
 
                         // thread_links_manager.notify_add_read();

@@ -75,11 +75,6 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
             _phantom: PhantomData,
         }
     }
-
-    #[allow(dead_code)]
-    pub fn get_path(&self) -> PathBuf {
-        self.path.clone()
-    }
 }
 
 impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
@@ -106,6 +101,10 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
         buffer.extend_from_slice(b"\n");
         buffer.extend_from_slice(sequence);
         buffer.extend_from_slice(b"\n");
+    }
+
+    fn get_path(&self) -> PathBuf {
+        self.path.clone()
     }
 
     fn flush_temp_buffer(&mut self, buffer: &mut Self::SequenceTempBuffer) {

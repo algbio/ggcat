@@ -47,11 +47,6 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
             _phantom: Default::default(),
         }
     }
-
-    #[allow(dead_code)]
-    pub fn get_path(&self) -> PathBuf {
-        self.writer.get_path()
-    }
 }
 
 impl<CX: SequenceExtraData, LX: SequenceExtraData>
@@ -134,6 +129,10 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
             &(sequence_index, color_info, links_info),
             &extra_buffers,
         );
+    }
+
+    fn get_path(&self) -> PathBuf {
+        self.writer.get_path()
     }
 
     fn flush_temp_buffer(&mut self, buffer: &mut Self::SequenceTempBuffer) {

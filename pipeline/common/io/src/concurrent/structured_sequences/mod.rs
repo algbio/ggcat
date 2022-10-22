@@ -2,6 +2,7 @@ use crate::concurrent::temp_reads::extra_data::SequenceExtraData;
 use parking_lot::{Condvar, Mutex};
 use std::io::Write;
 use std::marker::PhantomData;
+use std::path::PathBuf;
 
 pub mod binary;
 pub mod concurrent;
@@ -46,6 +47,8 @@ pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: I
         links_info: LinksInfo,
         extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
     );
+
+    fn get_path(&self) -> PathBuf;
 
     fn flush_temp_buffer(&mut self, buffer: &mut Self::SequenceTempBuffer);
 
@@ -128,6 +131,10 @@ impl<
         }
 
         start_sequence_index
+    }
+
+    pub fn get_path(&self) -> PathBuf {
+        self.backend.lock().get_path()
     }
 
     pub fn finalize(self) {

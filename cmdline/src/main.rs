@@ -45,7 +45,8 @@ arg_enum! {
         HashesSorting = 2,
         LinksCompaction = 3,
         ReorganizeReads = 4,
-        BuildUnitigs = 5
+        BuildUnitigs = 5,
+        MaximalUnitigsLinks = 6,
     }
 }
 
@@ -185,6 +186,10 @@ struct AssemblerArgs {
 
     #[structopt(long = "last-step", default_value = "BuildUnitigs")]
     pub last_step: AssemblerStartingStep,
+
+    /// Generate maximal unitigs connections references, in BCALM2 format L:<+/->:<other id>:<+/->
+    #[structopt(short = "e", long = "generate-maximal-unitigs-links")]
+    pub generate_maximal_unitigs_links: bool,
 
     #[structopt(flatten)]
     pub common_args: CommonArgs,
@@ -344,6 +349,9 @@ fn convert_assembler_step(step: AssemblerStartingStep) -> assembler::AssemblerSt
         AssemblerStartingStep::LinksCompaction => assembler::AssemblerStartingStep::LinksCompaction,
         AssemblerStartingStep::ReorganizeReads => assembler::AssemblerStartingStep::ReorganizeReads,
         AssemblerStartingStep::BuildUnitigs => assembler::AssemblerStartingStep::BuildUnitigs,
+        AssemblerStartingStep::MaximalUnitigsLinks => {
+            assembler::AssemblerStartingStep::MaximalUnitigsLinks
+        }
     }
 }
 
@@ -382,6 +390,7 @@ fn run_assembler_from_args(
         args.common_args.buckets_count_log,
         Some(args.number),
         args.common_args.intermediate_compression_level,
+        args.generate_maximal_unitigs_links,
         args.common_args.only_bstats,
     );
 }
