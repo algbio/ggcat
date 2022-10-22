@@ -1,37 +1,22 @@
-use parallel_processor::buckets::bucket_writer::BucketItem;
+use crate::concurrent::temp_reads::extra_data::SequenceExtraData;
 use parking_lot::{Condvar, Mutex};
-use std::fmt::Write;
+use std::io::Write;
 use std::marker::PhantomData;
-use std::path::Path;
 
+pub mod concurrent;
 pub mod fasta;
 
-trait IndentSequenceWriter: BucketItem {
-    fn write_as_ident(
-        stream: impl Write,
-        extra_data: &Self::ExtraData,
-        extra_read_buffer: &Self::ExtraDataBuffer,
-    ) -> bool;
-    fn write_as_gfa(
-        stream: impl Write,
-        extra_data: &Self::ExtraData,
-        extra_read_buffer: &Self::ExtraDataBuffer,
-    ) -> bool;
+pub trait IdentSequenceWriter: SequenceExtraData {
+    fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) -> bool;
+    fn write_as_gfa(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) -> bool;
 
-    fn parse_as_ident<'a>(
-        ident: &[u8],
-        read_buffer: &'a mut Self::ReadBuffer,
-        extra_read_buffer: &mut Self::ExtraDataBuffer,
-    ) -> Option<Self::ReadType<'a>>;
+    fn parse_as_ident<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self>;
 
-    fn parse_as_gfa<'a>(
-        ident: &[u8],
-        read_buffer: &'a mut Self::ReadBuffer,
-        extra_read_buffer: &mut Self::ExtraDataBuffer,
-    ) -> Option<Self::ReadType<'a>>;
+    fn parse_as_gfa<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self>;
 }
 
-trait StructuredSequenceBackend<ColorInfo: IndentSequenceWriter, LinksInfo: IndentSequenceWriter> {
+pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
+{
     type SequenceTempBuffer;
 
     fn alloc_temp_buffer() -> Self::SequenceTempBuffer;
@@ -42,22 +27,20 @@ trait StructuredSequenceBackend<ColorInfo: IndentSequenceWriter, LinksInfo: Inde
         sequence: &[u8],
 
         color_info: &ColorInfo,
-        color_extra_data: &ColorInfo::ExtraData,
-        color_extra_read_buffer: &ColorInfo::ExtraDataBuffer,
+        color_extra_buffer: &ColorInfo::TempBuffer,
 
         links_info: &LinksInfo,
-        links_extra_data: &LinksInfo::ExtraData,
-        links_extra_read_buffer: &LinksInfo::ExtraDataBuffer,
+        links_extra_buffer: &LinksInfo::TempBuffer,
     );
 
     fn flush_temp_buffer(&mut self, buffer: &mut Self::SequenceTempBuffer);
 
-    fn new(output_file: impl AsRef<Path>) -> Self;
+    fn finalize(self);
 }
 
-struct StructuredSequenceWriter<
-    ColorInfo: IndentSequenceWriter,
-    LinksInfo: IndentSequenceWriter,
+pub struct StructuredSequenceWriter<
+    ColorInfo: IdentSequenceWriter,
+    LinksInfo: IdentSequenceWriter,
     Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
 > {
     current_index: Mutex<(u64, u64)>,
@@ -67,15 +50,15 @@ struct StructuredSequenceWriter<
 }
 
 impl<
-        ColorInfo: IndentSequenceWriter,
-        LinksInfo: IndentSequenceWriter,
+        ColorInfo: IdentSequenceWriter,
+        LinksInfo: IdentSequenceWriter,
         Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
     > StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>
 {
-    fn new(output_file: impl AsRef<Path>) -> Self {
+    fn new(backend: Backend) -> Self {
         Self {
             current_index: Mutex::new((0, 0)),
-            backend: Mutex::new(Backend::new(output_file)),
+            backend: Mutex::new(backend),
             index_condvar: Condvar::new(),
             _phantom: PhantomData,
         }
@@ -85,18 +68,10 @@ impl<
         &self,
         buffer: &mut Backend::SequenceTempBuffer,
         first_index: Option<u64>,
-        sequences: impl ExactSizeIterator<
-            Item = (
-                &'a [u8],
-                ColorInfo,
-                ColorInfo::ExtraData,
-                LinksInfo,
-                LinksInfo::ExtraData,
-            ),
-        >,
-        color_extra_read_buffer: &ColorInfo::ExtraDataBuffer,
-        links_extra_read_buffer: &LinksInfo::ExtraDataBuffer,
-    ) {
+        sequences: impl ExactSizeIterator<Item = (&'a [u8], ColorInfo, LinksInfo)>,
+        color_extra_buffer: &ColorInfo::TempBuffer,
+        links_extra_buffer: &LinksInfo::TempBuffer,
+    ) -> u64 {
         let sequences_count = sequences.len() as u64;
 
         // Preallocate the sequences indexes (depending on the first index)
@@ -112,17 +87,15 @@ impl<
 
         let mut current_index = start_sequence_index;
         // Write the sequences to a temporary buffer
-        for (sequence, color_info, color_extra, links_info, links_extra) in sequences {
+        for (sequence, color_info, links_info) in sequences {
             Backend::write_sequence(
                 buffer,
                 current_index,
                 sequence,
                 &color_info,
-                &color_extra,
-                color_extra_read_buffer,
+                &color_extra_buffer,
                 &links_info,
-                &links_extra,
-                links_extra_read_buffer,
+                &links_extra_buffer,
             );
             current_index += 1;
         }
@@ -140,5 +113,7 @@ impl<
                 self.index_condvar.wait(&mut index_lock);
             }
         }
+
+        start_sequence_index
     }
 }

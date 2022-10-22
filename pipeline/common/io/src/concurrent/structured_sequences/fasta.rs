@@ -1,85 +1,127 @@
-use crate::reads_writer::ReadsWriter;
-use crate::sequences_reader::FastaSequence;
-use parking_lot::Mutex;
-use utils::vec_slice::VecSlice;
+use crate::concurrent::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
+use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE};
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use lz4::{BlockMode, BlockSize, ContentChecksum};
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
 
-pub struct FastaWriterConcurrentBuffer<'a> {
-    target: &'a Mutex<ReadsWriter>,
-    sequences: Vec<(VecSlice<u8>, VecSlice<u8>, Option<VecSlice<u8>>)>,
-    ident_buf: Vec<u8>,
-    seq_buf: Vec<u8>,
-    qual_buf: Vec<u8>,
+pub struct FastaWriter<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> {
+    writer: Box<dyn Write>,
+    path: PathBuf,
+    reads_count: usize,
+    _phantom: PhantomData<(ColorInfo, LinksInfo)>,
 }
 
-impl<'a> FastaWriterConcurrentBuffer<'a> {
-    pub fn new(target: &'a Mutex<ReadsWriter>, max_size: usize) -> Self {
-        Self {
-            target,
-            sequences: Vec::with_capacity(max_size / 128),
-            ident_buf: Vec::with_capacity(max_size),
-            seq_buf: Vec::with_capacity(max_size),
-            qual_buf: Vec::new(),
+impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
+    FastaWriter<ColorInfo, LinksInfo>
+{
+    pub fn new_compressed_gzip(path: impl AsRef<Path>, level: u32) -> Self {
+        let compress_stream = GzEncoder::new(
+            BufWriter::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE, File::create(&path).unwrap()),
+            Compression::new(level),
+        );
+
+        FastaWriter {
+            writer: Box::new(BufWriter::with_capacity(
+                DEFAULT_OUTPUT_BUFFER_SIZE,
+                compress_stream,
+            )),
+            path: path.as_ref().to_path_buf(),
+            reads_count: 0,
+            _phantom: PhantomData,
         }
     }
 
-    fn flush(&mut self) -> usize {
-        let mut buffer = self.target.lock();
+    pub fn new_compressed_lz4(path: impl AsRef<Path>, level: u32) -> Self {
+        let compress_stream = lz4::EncoderBuilder::new()
+            .level(level)
+            .checksum(ContentChecksum::NoChecksum)
+            .block_mode(BlockMode::Linked)
+            .block_size(BlockSize::Max1MB)
+            .build(BufWriter::with_capacity(
+                DEFAULT_OUTPUT_BUFFER_SIZE,
+                File::create(&path).unwrap(),
+            ))
+            .unwrap();
 
-        let first_read_index = buffer.get_reads_count();
-
-        for (ident, seq, qual) in self.sequences.iter() {
-            buffer.add_read(FastaSequence {
-                ident: ident.get_slice(&self.ident_buf),
-                seq: seq.get_slice(&self.seq_buf),
-                qual: qual.as_ref().map(|qual| qual.get_slice(&self.qual_buf)),
-            })
+        FastaWriter {
+            writer: Box::new(BufWriter::with_capacity(
+                DEFAULT_OUTPUT_BUFFER_SIZE,
+                compress_stream,
+            )),
+            path: path.as_ref().to_path_buf(),
+            reads_count: 0,
+            _phantom: PhantomData,
         }
-        drop(buffer);
-        self.sequences.clear();
-        self.ident_buf.clear();
-        self.seq_buf.clear();
-        self.qual_buf.clear();
-
-        first_read_index
     }
 
-    #[inline(always)]
-    fn will_overflow(vec: &Vec<u8>, len: usize) -> bool {
-        vec.len() > 0 && (vec.len() + len > vec.capacity())
-    }
-
-    pub fn add_read(&mut self, read: FastaSequence) -> Option<usize> {
-        let mut result = None;
-
-        if Self::will_overflow(&self.ident_buf, read.ident.len())
-            || Self::will_overflow(&self.seq_buf, read.seq.len())
-            || match read.qual {
-                None => false,
-                Some(qual) => Self::will_overflow(&self.qual_buf, qual.len()),
-            }
-        {
-            result = Some(self.flush());
+    pub fn new_plain(path: impl AsRef<Path>) -> Self {
+        FastaWriter {
+            writer: Box::new(BufWriter::with_capacity(
+                DEFAULT_OUTPUT_BUFFER_SIZE,
+                File::create(&path).unwrap(),
+            )),
+            path: path.as_ref().to_path_buf(),
+            reads_count: 0,
+            _phantom: PhantomData,
         }
-        let qual = read
-            .qual
-            .map(|qual| VecSlice::new_extend(&mut self.qual_buf, qual));
-
-        self.sequences.push((
-            VecSlice::new_extend(&mut self.ident_buf, read.ident),
-            VecSlice::new_extend(&mut self.seq_buf, read.seq),
-            qual,
-        ));
-
-        result
     }
 
-    pub fn finalize(mut self) -> usize {
-        self.flush()
+    pub fn get_reads_count(&mut self) -> usize {
+        self.reads_count
+    }
+
+    #[allow(dead_code)]
+    pub fn get_path(&self) -> PathBuf {
+        self.path.clone()
     }
 }
 
-impl Drop for FastaWriterConcurrentBuffer<'_> {
+// Impl StructuredSequenceBackend for FastaWriter
+impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
+    StructuredSequenceBackend<ColorInfo, LinksInfo> for FastaWriter<ColorInfo, LinksInfo>
+{
+    type SequenceTempBuffer = Vec<u8>;
+
+    fn alloc_temp_buffer() -> Self::SequenceTempBuffer {
+        Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes())
+    }
+
+    fn write_sequence(
+        buffer: &mut Self::SequenceTempBuffer,
+        sequence_index: u64,
+        sequence: &[u8],
+        color_info: &ColorInfo,
+        color_extra_buffer: &ColorInfo::TempBuffer,
+        links_info: &LinksInfo,
+        links_extra_buffer: &LinksInfo::TempBuffer,
+    ) {
+        buffer.clear();
+        buffer.extend_from_slice(b">");
+        buffer.extend_from_slice(sequence_index.to_string().as_bytes());
+        buffer.extend_from_slice(b" ");
+        color_info.write_as_ident(buffer, &color_extra_buffer);
+        buffer.extend_from_slice(b" ");
+        links_info.write_as_ident(buffer, &links_extra_buffer);
+        buffer.extend_from_slice(b"\n");
+        buffer.extend_from_slice(sequence);
+        buffer.extend_from_slice(b"\n");
+    }
+
+    fn flush_temp_buffer(&mut self, buffer: &mut Self::SequenceTempBuffer) {
+        self.writer.write_all(buffer).unwrap();
+    }
+
+    fn finalize(self) {}
+}
+
+impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> Drop
+    for FastaWriter<ColorInfo, LinksInfo>
+{
     fn drop(&mut self) {
-        self.flush();
+        self.writer.flush().unwrap();
     }
 }
