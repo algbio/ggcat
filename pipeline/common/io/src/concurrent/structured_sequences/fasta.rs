@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 pub struct FastaWriter<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> {
     writer: Box<dyn Write>,
     path: PathBuf,
-    reads_count: usize,
     _phantom: PhantomData<(ColorInfo, LinksInfo)>,
 }
 
@@ -40,7 +39,6 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
                 compress_stream,
             )),
             path: path.as_ref().to_path_buf(),
-            reads_count: 0,
             _phantom: PhantomData,
         }
     }
@@ -63,7 +61,6 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
                 compress_stream,
             )),
             path: path.as_ref().to_path_buf(),
-            reads_count: 0,
             _phantom: PhantomData,
         }
     }
@@ -75,13 +72,8 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
                 File::create(&path).unwrap(),
             )),
             path: path.as_ref().to_path_buf(),
-            reads_count: 0,
             _phantom: PhantomData,
         }
-    }
-
-    pub fn get_reads_count(&mut self) -> usize {
-        self.reads_count
     }
 
     #[allow(dead_code)]
@@ -103,14 +95,14 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
         buffer: &mut Self::SequenceTempBuffer,
         sequence_index: u64,
         sequence: &[u8],
-        color_info: &ColorInfo,
-        color_extra_buffer: &ColorInfo::TempBuffer,
-        links_info: &LinksInfo,
-        links_extra_buffer: &LinksInfo::TempBuffer,
+
+        color_info: ColorInfo,
+        links_info: LinksInfo,
+        extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
     ) {
         write!(buffer, ">{} LN:i:{}", sequence_index, sequence.len()).unwrap();
-        color_info.write_as_ident(buffer, &color_extra_buffer);
-        links_info.write_as_ident(buffer, &links_extra_buffer);
+        color_info.write_as_ident(buffer, &extra_buffers.0);
+        links_info.write_as_ident(buffer, &extra_buffers.1);
         buffer.extend_from_slice(b"\n");
         buffer.extend_from_slice(sequence);
         buffer.extend_from_slice(b"\n");

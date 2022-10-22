@@ -12,8 +12,7 @@ pub struct FastaWriterConcurrentBuffer<
     target: &'a StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>,
     sequences: Vec<(VecSlice<u8>, ColorInfo, LinksInfo)>,
     seq_buf: Vec<u8>,
-    color_buf: ColorInfo::TempBuffer,
-    links_buf: LinksInfo::TempBuffer,
+    extra_buffers: (ColorInfo::TempBuffer, LinksInfo::TempBuffer),
     temp_buffer: Backend::SequenceTempBuffer,
     current_index: u64,
 }
@@ -33,8 +32,7 @@ impl<
             target,
             sequences: Vec::with_capacity(max_size / 128),
             seq_buf: Vec::with_capacity(max_size),
-            color_buf: ColorInfo::new_temp_buffer(),
-            links_buf: LinksInfo::new_temp_buffer(),
+            extra_buffers: (ColorInfo::new_temp_buffer(), LinksInfo::new_temp_buffer()),
             temp_buffer: Backend::alloc_temp_buffer(),
             current_index: 0,
         }
@@ -51,12 +49,11 @@ impl<
             self.sequences
                 .drain(..)
                 .map(|(slice, col, link)| (slice.get_slice(&self.seq_buf), col, link)),
-            &self.color_buf,
-            &self.links_buf,
+            &self.extra_buffers,
         );
 
-        ColorInfo::clear_temp_buffer(&mut self.color_buf);
-        LinksInfo::clear_temp_buffer(&mut self.links_buf);
+        ColorInfo::clear_temp_buffer(&mut self.extra_buffers.0);
+        LinksInfo::clear_temp_buffer(&mut self.extra_buffers.1);
         self.seq_buf.clear();
 
         first_read_index
@@ -87,8 +84,10 @@ impl<
             self.current_index = sequence_index;
         }
 
-        let color = ColorInfo::copy_extra_from(color, &color_extra_buffer, &mut self.color_buf);
-        let links = LinksInfo::copy_extra_from(links, &links_extra_buffer, &mut self.links_buf);
+        let color =
+            ColorInfo::copy_extra_from(color, &color_extra_buffer, &mut self.extra_buffers.0);
+        let links =
+            LinksInfo::copy_extra_from(links, &links_extra_buffer, &mut self.extra_buffers.1);
 
         self.sequences.push((
             VecSlice::new_extend(&mut self.seq_buf, sequence),

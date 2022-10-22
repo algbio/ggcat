@@ -3,6 +3,7 @@ use parking_lot::{Condvar, Mutex};
 use std::io::Write;
 use std::marker::PhantomData;
 
+pub mod binary;
 pub mod concurrent;
 pub mod fasta;
 
@@ -41,11 +42,9 @@ pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: I
         sequence_index: u64,
         sequence: &[u8],
 
-        color_info: &ColorInfo,
-        color_extra_buffer: &ColorInfo::TempBuffer,
-
-        links_info: &LinksInfo,
-        links_extra_buffer: &LinksInfo::TempBuffer,
+        color_info: ColorInfo,
+        links_info: LinksInfo,
+        extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
     );
 
     fn flush_temp_buffer(&mut self, buffer: &mut Self::SequenceTempBuffer);
@@ -84,8 +83,7 @@ impl<
         buffer: &mut Backend::SequenceTempBuffer,
         first_index: Option<u64>,
         sequences: impl ExactSizeIterator<Item = (&'a [u8], ColorInfo, LinksInfo)>,
-        color_extra_buffer: &ColorInfo::TempBuffer,
-        links_extra_buffer: &LinksInfo::TempBuffer,
+        extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
     ) -> u64 {
         let sequences_count = sequences.len() as u64;
         assert!(sequences_count > 0);
@@ -108,10 +106,9 @@ impl<
                 buffer,
                 current_index,
                 sequence,
-                &color_info,
-                &color_extra_buffer,
-                &links_info,
-                &links_extra_buffer,
+                color_info,
+                links_info,
+                extra_buffers,
             );
             current_index += 1;
         }
