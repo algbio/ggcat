@@ -1,4 +1,3 @@
-use crate::pipeline::unitig_links_manager::{ThreadUnitigsLinkManager, UnitigLinksManager};
 use crate::structs::link_mapping::LinkMapping;
 use config::{
     get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
@@ -29,7 +28,7 @@ pub fn links_compaction(
     elab_index: usize,
     result_map_buckets: &Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
     final_buckets: &Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
-    links_manager: &UnitigLinksManager,
+    // links_manager: &UnitigLinksManager,
     link_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
     result_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
 ) -> (Vec<PathBuf>, u64) {
@@ -57,7 +56,7 @@ pub fn links_compaction(
             bucket_index,
             &final_buckets,
         );
-        let mut thread_links_manager = ThreadUnitigsLinkManager::new(links_manager, bucket_index);
+        // let mut thread_links_manager = ThreadUnitigsLinkManager::new(links_manager, bucket_index);
 
         let mut result_buffers = result_thread_buffers.get();
         let mut results_tmp =
@@ -217,7 +216,7 @@ pub fn links_compaction(
                             // Write to disk, full unitig!
                             let entries = VecSlice::new_extend(&mut final_unitigs_vec, linked);
 
-                            thread_links_manager.notify_add_read();
+                            // thread_links_manager.notify_add_read();
 
                             final_links_tmp.add_element(
                                 &final_unitigs_vec,
@@ -263,7 +262,7 @@ pub fn links_compaction(
 
                         let entries = VecSlice::new_extend(&mut final_unitigs_vec, unitig_entries);
 
-                        thread_links_manager.notify_add_read();
+                        // thread_links_manager.notify_add_read();
 
                         final_links_tmp.add_element(
                             &final_unitigs_vec,

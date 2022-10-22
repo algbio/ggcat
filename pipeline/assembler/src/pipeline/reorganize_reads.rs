@@ -4,17 +4,17 @@ use config::{
 };
 use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 
-use crate::pipeline::build_unitigs::write_fasta_entry;
 use crate::structs::link_mapping::LinkMapping;
+use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::{color_types, ColorsManager};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
-use io::concurrent::structured_sequences::fasta::FastaWriterConcurrentBuffer;
+use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
+use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataOwned, SequenceExtraDataTempBufferManagement,
 };
 use io::get_bucket_index;
-use io::reads_writer::ReadsWriter;
 use io::structs::unitig_link::UnitigIndex;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
@@ -28,7 +28,6 @@ use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey}
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
-use parking_lot::Mutex;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::io::{Read, Write};
@@ -113,11 +112,12 @@ pub fn reorganize_reads<
     H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
+    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<H, MH, CX>, ()>,
 >(
     mut reads: Vec<PathBuf>,
     mut mapping_files: Vec<PathBuf>,
     temp_path: &Path,
-    out_file: &Mutex<ReadsWriter>,
+    out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<H, MH, CX>, (), BK>,
     buckets_count: usize,
 ) -> (Vec<PathBuf>, PathBuf) {
     PHASES_TIMES_MONITOR
@@ -179,8 +179,6 @@ pub fn reorganize_reads<
 
         let mut decompress_buffer = Vec::new();
 
-        let mut fasta_temp_buffer = Vec::new();
-
         let mut colors_buffer =
             color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer();
 
@@ -226,14 +224,17 @@ pub fn reorganize_reads<
                     map_index += 1;
                 } else {
                     // No mapping, write unitig to file
-                    write_fasta_entry::<H, MH, CX, _>(
-                        &mut fasta_temp_buffer,
-                        &mut tmp_lonely_unitigs_buffer,
-                        color,
-                        color_buffer,
-                        seq,
-                        0,
-                    );
+
+                    tmp_lonely_unitigs_buffer.add_read(seq, None, color, color_buffer, (), &());
+
+                    // write_fasta_entry::<H, MH, CX, _>(
+                    //     &mut fasta_temp_buffer,
+                    //     &mut tmp_lonely_unitigs_buffer,
+                    //     color,
+                    //     color_buffer,
+                    //     seq,
+                    //     0,
+                    // );
                 }
 
                 color_types::PartialUnitigsColorStructure::<H, MH, CX>::clear_temp_buffer(

@@ -16,12 +16,12 @@ mod benchmarks;
 
 #[macro_use]
 mod utils;
-mod cmd_utils;
+// mod cmd_utils;
 
 use backtrace::Backtrace;
 use std::cmp::max;
 
-use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
+// use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
 use colors::bundles::multifile_building::ColorBundleMultifileBuilding;
 use colors::colors_manager::ColorsManager;
 use hashes::MinimizerHashFunctionFactory;
@@ -89,7 +89,7 @@ enum CliArgs {
     Build(AssemblerArgs),
     Matches(MatchesArgs),
     Query(QueryArgs),
-    Utils(CmdUtilsArgs),
+    // Utils(CmdUtilsArgs),
 }
 
 #[derive(StructOpt, Debug)]
@@ -520,10 +520,9 @@ fn main() {
                 ),
                 args,
             )
-        }
-        CliArgs::Utils(args) => {
-            process_cmdutils(args);
-        }
+        } // CliArgs::Utils(args) => {
+          //     process_cmdutils(args);
+          // }
     }
 
     MemoryFs::terminate();

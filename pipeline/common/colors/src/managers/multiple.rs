@@ -11,6 +11,7 @@ use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
 use hashes::{HashFunction, HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
+use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
@@ -441,21 +442,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         }
     }
 
-    fn print_color_data(
-        colors: &Self::PartialUnitigsColorStructure,
-        colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
-        buffer: &mut impl Write,
-    ) {
-        for i in colors.slice.clone() {
-            write!(
-                buffer,
-                " C:{:x}:{}",
-                colors_buffer.colors[i].0, colors_buffer.colors[i].1
-            )
-            .unwrap();
-        }
-    }
-
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]) {
         let sum: u64 = str.colors.iter().map(|x| x.1).sum::<u64>() + 62;
         if sum as usize != seq.len() {
@@ -543,5 +529,33 @@ impl SequenceExtraData for UnitigColorDataSerializer {
     #[inline(always)]
     fn max_size(&self) -> usize {
         (2 * (self.slice.end - self.slice.start) + 1) * VARINT_MAX_SIZE
+    }
+}
+
+impl IdentSequenceWriter for UnitigColorDataSerializer {
+    fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
+        for i in self.slice.clone() {
+            write!(
+                stream,
+                " C:{:x}:{}",
+                extra_buffer.colors[i].0, extra_buffer.colors[i].1
+            )
+            .unwrap();
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn write_as_gfa(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
+        todo!()
+    }
+
+    #[allow(unused_variables)]
+    fn parse_as_ident<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+        todo!()
+    }
+
+    #[allow(unused_variables)]
+    fn parse_as_gfa<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+        todo!()
     }
 }

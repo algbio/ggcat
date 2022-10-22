@@ -4,7 +4,6 @@ use crate::pipeline::build_unitigs::build_unitigs;
 use crate::pipeline::hashes_sorting::hashes_sorting;
 use crate::pipeline::links_compaction::links_compaction;
 use crate::pipeline::reorganize_reads::reorganize_reads;
-use crate::pipeline::unitig_links_manager::UnitigLinksManager;
 use ::static_dispatch::static_dispatch;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
@@ -14,7 +13,8 @@ use config::{
     MAXIMUM_SECOND_BUCKETS_LOG, MINIMUM_LOG_DELTA_TIME,
 };
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
-use io::reads_writer::ReadsWriter;
+use io::concurrent::structured_sequences::fasta::FastaWriter;
+use io::concurrent::structured_sequences::StructuredSequenceWriter;
 use io::{compute_stats_from_input_files, generate_bucket_names};
 use kmers_merge::structs::RetType;
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
@@ -24,7 +24,6 @@ use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
-use parking_lot::Mutex;
 use std::fs::remove_file;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -216,7 +215,7 @@ pub fn run_assembler<
     let unames = generate_bucket_names(temp_dir.join("unitigs_map"), buckets_count, None);
     let rnames = generate_bucket_names(temp_dir.join("results_map"), buckets_count, None);
 
-    let mut links_manager = UnitigLinksManager::new(buckets_count);
+    // let mut links_manager = UnitigLinksManager::new(buckets_count);
 
     let (unitigs_map, reads_map) = if step <= AssemblerStartingStep::LinksCompaction {
         for file in unames {
@@ -285,7 +284,7 @@ pub fn run_assembler<
                 loop_iteration,
                 &result_map_buckets,
                 &final_buckets,
-                &links_manager,
+                // &links_manager,
                 &links_scoped_buffer,
                 &results_map_scoped_buffer,
             );
@@ -332,33 +331,34 @@ pub fn run_assembler<
         MemoryFs::free_memory();
     }
 
-    let final_unitigs_file = Mutex::new(match output_file.extension() {
+    let final_unitigs_file = StructuredSequenceWriter::new(match output_file.extension() {
         Some(ext) => match ext.to_string_lossy().to_string().as_str() {
-            "lz4" => ReadsWriter::new_compressed_lz4(&output_file, 2),
-            "gz" => ReadsWriter::new_compressed_gzip(&output_file, 2),
-            _ => ReadsWriter::new_plain(&output_file),
+            "lz4" => FastaWriter::new_compressed_lz4(&output_file, 2),
+            "gz" => FastaWriter::new_compressed_gzip(&output_file, 2),
+            _ => FastaWriter::new_plain(&output_file),
         },
-        None => ReadsWriter::new_plain(&output_file),
+        None => FastaWriter::new_plain(&output_file),
     });
 
-    let (reorganized_reads, _final_unitigs_bucket) =
-        if step <= AssemblerStartingStep::ReorganizeReads {
-            reorganize_reads::<BucketingHash, MergingHash, AssemblerColorsManager>(
-                sequences,
-                reads_map,
-                temp_dir.as_path(),
-                &final_unitigs_file,
-                buckets_count,
-            )
-        } else {
-            (
-                generate_bucket_names(temp_dir.join("reads_bucket"), buckets_count, Some("tmp")),
-                (generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
-                    .into_iter()
-                    .next()
-                    .unwrap()),
-            )
-        };
+    let (reorganized_reads, _final_unitigs_bucket) = if step
+        <= AssemblerStartingStep::ReorganizeReads
+    {
+        reorganize_reads::<BucketingHash, MergingHash, AssemblerColorsManager, FastaWriter<_, _>>(
+            sequences,
+            reads_map,
+            temp_dir.as_path(),
+            &final_unitigs_file,
+            buckets_count,
+        )
+    } else {
+        (
+            generate_bucket_names(temp_dir.join("reads_bucket"), buckets_count, Some("tmp")),
+            (generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
+                .into_iter()
+                .next()
+                .unwrap()),
+        )
+    };
 
     if last_step <= AssemblerStartingStep::ReorganizeReads {
         PHASES_TIMES_MONITOR
@@ -370,22 +370,21 @@ pub fn run_assembler<
         MemoryFs::free_memory();
     }
 
-    links_manager.compute_id_offsets();
+    // links_manager.compute_id_offsets();
 
     if step <= AssemblerStartingStep::BuildUnitigs {
-        build_unitigs::<BucketingHash, MergingHash, AssemblerColorsManager>(
+        build_unitigs::<BucketingHash, MergingHash, AssemblerColorsManager, FastaWriter<_, _>>(
             reorganized_reads,
             unitigs_map,
             temp_dir.as_path(),
             &final_unitigs_file,
             k,
-            &links_manager,
         );
     }
 
     let _ = std::fs::remove_dir(temp_dir.as_path());
 
-    final_unitigs_file.into_inner().finalize();
+    final_unitigs_file.finalize();
 
     PHASES_TIMES_MONITOR
         .write()

@@ -6,6 +6,7 @@ use config::ColorIndexType;
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
+use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
@@ -136,14 +137,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         panic!("Unsupported!");
     }
 
-    fn print_color_data(
-        _colors: &Self::PartialUnitigsColorStructure,
-        _colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
-        _buffer: &mut impl Write,
-    ) {
-        panic!("Unsupported!");
-    }
-
     fn debug_tucs(_str: &Self::TempUnitigColorStructure, _seq: &[u8]) {
         unimplemented!();
     }
@@ -230,5 +223,19 @@ impl SequenceExtraData for UnitigColorDataSerializer {
     #[inline(always)]
     fn max_size(&self) -> usize {
         (2 * (self.slice.end - self.slice.start) + 1) * VARINT_MAX_SIZE
+    }
+}
+
+impl IdentSequenceWriter for UnitigColorDataSerializer {
+    fn write_as_ident(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
+
+    fn write_as_gfa(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
+
+    fn parse_as_ident<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+        todo!()
+    }
+
+    fn parse_as_gfa<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+        todo!()
     }
 }

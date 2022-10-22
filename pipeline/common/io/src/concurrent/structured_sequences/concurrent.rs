@@ -41,6 +41,10 @@ impl<
     }
 
     fn flush(&mut self) -> u64 {
+        if self.sequences.len() == 0 {
+            return 0;
+        }
+
         let first_read_index = self.target.write_sequences(
             &mut self.temp_buffer,
             None,

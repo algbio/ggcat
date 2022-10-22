@@ -7,15 +7,30 @@ pub mod concurrent;
 pub mod fasta;
 
 pub trait IdentSequenceWriter: SequenceExtraData {
-    fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) -> bool;
-    fn write_as_gfa(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) -> bool;
+    fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer);
+    fn write_as_gfa(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer);
 
     fn parse_as_ident<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self>;
 
     fn parse_as_gfa<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self>;
 }
 
-pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
+impl IdentSequenceWriter for () {
+    fn write_as_ident(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
+
+    fn write_as_gfa(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
+
+    fn parse_as_ident<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+        Some(())
+    }
+
+    fn parse_as_gfa<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+        Some(())
+    }
+}
+
+pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>:
+    Sync + Send
 {
     type SequenceTempBuffer;
 
@@ -55,7 +70,7 @@ impl<
         Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
     > StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>
 {
-    fn new(backend: Backend) -> Self {
+    pub fn new(backend: Backend) -> Self {
         Self {
             current_index: Mutex::new((0, 0)),
             backend: Mutex::new(backend),
@@ -73,6 +88,7 @@ impl<
         links_extra_buffer: &LinksInfo::TempBuffer,
     ) -> u64 {
         let sequences_count = sequences.len() as u64;
+        assert!(sequences_count > 0);
 
         // Preallocate the sequences indexes (depending on the first index)
         let start_sequence_index = match first_index {
@@ -115,5 +131,9 @@ impl<
         }
 
         start_sequence_index
+    }
+
+    pub fn finalize(self) {
+        self.backend.into_inner().finalize();
     }
 }

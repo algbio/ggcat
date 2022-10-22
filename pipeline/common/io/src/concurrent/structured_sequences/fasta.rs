@@ -15,6 +15,16 @@ pub struct FastaWriter<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceW
     _phantom: PhantomData<(ColorInfo, LinksInfo)>,
 }
 
+unsafe impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> Send
+    for FastaWriter<ColorInfo, LinksInfo>
+{
+}
+
+unsafe impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> Sync
+    for FastaWriter<ColorInfo, LinksInfo>
+{
+}
+
 impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
     FastaWriter<ColorInfo, LinksInfo>
 {
@@ -80,7 +90,6 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
     }
 }
 
-// Impl StructuredSequenceBackend for FastaWriter
 impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
     StructuredSequenceBackend<ColorInfo, LinksInfo> for FastaWriter<ColorInfo, LinksInfo>
 {
@@ -99,12 +108,8 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
         links_info: &LinksInfo,
         links_extra_buffer: &LinksInfo::TempBuffer,
     ) {
-        buffer.clear();
-        buffer.extend_from_slice(b">");
-        buffer.extend_from_slice(sequence_index.to_string().as_bytes());
-        buffer.extend_from_slice(b" ");
+        write!(buffer, ">{} LN:i:{}", sequence_index, sequence.len()).unwrap();
         color_info.write_as_ident(buffer, &color_extra_buffer);
-        buffer.extend_from_slice(b" ");
         links_info.write_as_ident(buffer, &links_extra_buffer);
         buffer.extend_from_slice(b"\n");
         buffer.extend_from_slice(sequence);
@@ -113,6 +118,7 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
 
     fn flush_temp_buffer(&mut self, buffer: &mut Self::SequenceTempBuffer) {
         self.writer.write_all(buffer).unwrap();
+        buffer.clear();
     }
 
     fn finalize(self) {}
