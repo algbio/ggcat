@@ -47,7 +47,6 @@ OPTIONS:
         --mlen <mlen>
             Overrides the default m-mers (minimizers) length
 
-    -n, --number <number>                                                     [default: 0]
     -o, --output-file <output-file>                                           [default: output.fasta.lz4]
         --step <step>                                                         [default: MinimizerBucketing]
     -t, --temp-dir <temp-dir>

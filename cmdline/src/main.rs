@@ -175,7 +175,7 @@ struct AssemblerArgs {
     // /// Minimum correctness probability for each kmer (using fastq quality checks)
     // #[structopt(short = "q", long = "quality-threshold")]
     // pub quality_threshold: Option<f64>,
-    #[structopt(short = "n", long, default_value = "0")]
+    #[structopt(short = "n", long, default_value = "0", hidden = true)]
     pub number: usize,
 
     #[structopt(short = "o", long = "output-file", default_value = "output.fasta.lz4")]
