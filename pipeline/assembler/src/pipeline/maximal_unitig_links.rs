@@ -338,8 +338,10 @@ pub fn build_maximal_unitigs_links<
                             },
                         )
                     {
-                        continue;
+                        tmp_final_unitigs_buffer.flush();
                     }
+
+                    mappings_loader.notify_thread_ending(thread_index);
                 });
         });
     }

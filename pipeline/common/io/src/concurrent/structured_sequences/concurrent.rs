@@ -38,7 +38,7 @@ impl<
         }
     }
 
-    fn flush(&mut self) -> u64 {
+    pub fn flush(&mut self) -> u64 {
         if self.sequences.len() == 0 {
             return 0;
         }
@@ -59,10 +59,10 @@ impl<
         first_read_index
     }
 
-    #[inline(always)]
-    fn will_overflow(vec: &Vec<u8>, len: usize) -> bool {
-        vec.len() > 0 && (vec.len() + len > vec.capacity())
-    }
+    // #[inline(always)]
+    // fn will_overflow(vec: &Vec<u8>, len: usize) -> bool {
+    //     vec.len() > 0 && (vec.len() + len > vec.capacity())
+    // }
 
     pub fn add_read(
         &mut self,
@@ -75,14 +75,14 @@ impl<
     ) -> Option<u64> {
         let mut result = None;
 
-        if Self::will_overflow(&self.seq_buf, sequence.len()) {
-            result = Some(self.flush());
-        }
-        else if let Some(sequence_index) = sequence_index
+        if let Some(sequence_index) = sequence_index
             && Some(sequence_index) != self.current_index {
             result = Some(self.flush());
             self.current_index = Some(sequence_index);
         }
+        // else if Self::will_overflow(&self.seq_buf, sequence.len()) {
+        //     result = Some(self.flush());
+        // }
 
         let color =
             ColorInfo::copy_extra_from(color, &color_extra_buffer, &mut self.extra_buffers.0);

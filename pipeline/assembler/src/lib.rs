@@ -184,7 +184,7 @@ pub fn run_assembler<
         )
     } else {
         RetType {
-            sequences: generate_bucket_names(temp_dir.join("result"), buckets_count, Some("tmp")),
+            sequences: generate_bucket_names(temp_dir.join("result"), buckets_count, None),
             hashes: generate_bucket_names(temp_dir.join("hashes"), buckets_count, None),
         }
     };
@@ -353,7 +353,7 @@ pub fn run_assembler<
             temp_dir.join("maximal_unitigs.tmp"),
             &(
                 get_memory_mode(SwapPriority::FinalMaps as usize),
-                CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(8)),
+                CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
                 CompressionLevelInfo {
                     fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
                     slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),

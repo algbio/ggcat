@@ -123,6 +123,7 @@ impl<
             if index_lock.1 == start_sequence_index {
                 self.backend.lock().flush_temp_buffer(buffer);
                 index_lock.1 += sequences_count;
+
                 self.index_condvar.notify_all();
                 break;
             } else {

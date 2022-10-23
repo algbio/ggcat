@@ -6,6 +6,7 @@ use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parking_lot::{Mutex, RwLock};
+use std::cmp::min;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -106,14 +107,7 @@ impl MaximalUnitigLinksMappingsLoader {
         }
     }
 
-    pub fn get_mapping_for(
-        &self,
-        index: u64,
-        thread_index: usize,
-    ) -> Arc<MaximalUnitigLinksMapping> {
-        let bucket_index = (index / self.unitigs_per_bucket as u64) as usize;
-
-        self.minimum_buckets[thread_index].store(bucket_index, Ordering::Relaxed);
+    fn dispose_buckets(&self) {
         let minimum_bucket = self
             .minimum_buckets
             .iter()
@@ -123,7 +117,7 @@ impl MaximalUnitigLinksMappingsLoader {
 
         if *self.next_disposed_bucket_index.read() < minimum_bucket {
             let mut next_disposed_bucket_index = self.next_disposed_bucket_index.write();
-            while *next_disposed_bucket_index < minimum_bucket {
+            while *next_disposed_bucket_index < min(minimum_bucket, self.loaded_buckets.len()) {
                 self.loaded_buckets[*next_disposed_bucket_index]
                     .lock()
                     .take();
@@ -131,6 +125,18 @@ impl MaximalUnitigLinksMappingsLoader {
                 *next_disposed_bucket_index += 1;
             }
         }
+    }
+
+    pub fn get_mapping_for(
+        &self,
+        index: u64,
+        thread_index: usize,
+    ) -> Arc<MaximalUnitigLinksMapping> {
+        let bucket_index = (index / self.unitigs_per_bucket as u64) as usize;
+
+        self.minimum_buckets[thread_index].store(bucket_index, Ordering::Relaxed);
+
+        self.dispose_buckets();
 
         let mut bucket_guard = self.loaded_buckets[bucket_index].lock();
 
@@ -145,5 +151,10 @@ impl MaximalUnitigLinksMappingsLoader {
             *bucket_guard = Some(bucket.clone());
             bucket
         }
+    }
+
+    pub fn notify_thread_ending(&self, thread_index: usize) {
+        self.minimum_buckets[thread_index].store(usize::MAX, Ordering::Relaxed);
+        self.dispose_buckets();
     }
 }
