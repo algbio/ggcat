@@ -121,7 +121,7 @@ impl MaximalUnitigLinksMappingsLoader {
                 self.loaded_buckets[*next_disposed_bucket_index]
                     .lock()
                     .take();
-                println!("Disposing bucket {}", *next_disposed_bucket_index);
+                // println!("Disposing bucket {}", *next_disposed_bucket_index);
                 *next_disposed_bucket_index += 1;
             }
         }
