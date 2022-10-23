@@ -20,12 +20,14 @@ USAGE:
     ggcat build [FLAGS] [OPTIONS] [--] [input]...
 
 FLAGS:
-    -c, --colors             Enable colors
-    -f, --forward-only       Treats reverse complementary kmers as different
-    -h, --help               Prints help information
-        --keep-temp-files    Keep intermediate temporary files for debugging purposes
-    -p, --prefer-memory      Use all the given memory before writing to disk
-    -V, --version            Prints version information
+    -c, --colors                            Enable colors
+    -f, --forward-only                      Treats reverse complementary kmers as different
+    -e, --generate-maximal-unitigs-links    Generate maximal unitigs connections references, in BCALM2 format
+                                            L:<+/->:<other id>:<+/->
+    -h, --help                              Prints help information
+        --keep-temp-files                   Keep intermediate temporary files for debugging purposes
+    -p, --prefer-memory                     Use all the given memory before writing to disk
+    -V, --version                           Prints version information
 
 OPTIONS:
     -b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
@@ -43,7 +45,7 @@ OPTIONS:
             Minimum multiplicity required to keep a kmer [default: 2]
 
         --mlen <mlen>
-            Specifies the m-mers (minimizers) length, defaults to min(3, ceil((K + 2) / 3))
+            Overrides the default m-mers (minimizers) length
 
     -n, --number <number>                                                     [default: 0]
     -o, --output-file <output-file>                                           [default: output.fasta.lz4]
