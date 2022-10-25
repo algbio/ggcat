@@ -5,15 +5,21 @@ GGCAT is a tool for building compacted (and optinally colored) de Bruijn graphs 
 ## Tool usage
 
 ### Build a new graph
+
 To build a new graph with a specified k of some input files, run:
+
 ```
 ggcat build -k <k_value> -j <threads_count> <input_files> -o <output_file>
 ```
+
 Or if you have a file with a list of input files:
+
 ```
 ggcat build -k <k_value> -j <threads_count> -l <input_files_list> -o <output_file>
 ```
+
 Here are all listed the available options for graph building:
+
 ```
 > ggcat build --help
 USAGE:
@@ -56,19 +62,26 @@ OPTIONS:
 ARGS:
     <input>...    The input files
 ```
+
 ### Querying a graph
+
 To query an uncolored graph use the command:
+
 ```
 ggcat query -k <k_value> -j <threads_count> <input-graph> <input-query>
 ```
+
 The provided k value must match the one used for graph construction.
 To query a colored graph use the command:
+
 ```
 ggcat query --colors -k <k_value> -j <threads_count> <input-graph> <input-query>
 ```
-The tool automatically searches for the colormap file associated with the 
+
+The tool automatically searches for the colormap file associated with the
 input graph, that must have the same name as the graph with extension '.colors.dat'
 Here are listed all the available options for graph querying:
+
 ```
 > ggcat query --help
 USAGE:
@@ -107,10 +120,8 @@ ARGS:
     <input-query>    The input query as a .fasta file
 ```
 
-
-
-
 ## Installation
+
 At the moment building from source is the only option to install the tool.
 To build the tool the Rust nightly toolchain is required, and can be downloaded with the following commands:
 
@@ -123,6 +134,7 @@ rustup toolchain install nightly
 ```
 
 ### Windows
+
 Follow the instructions at the site:
 https://rustup.rs/
 
@@ -131,11 +143,13 @@ The building process was not tested on windows, but it should work with minor tw
 ### Building
 
 Then the tool can be installed with the commands:
+
 ```
 git clone https://github.com/Guilucand/ggcat --recursive
 cd ggcat/
-cargo install --path .
+cargo install --path cmdline/
 ```
-the binary is automatically copied to ```$HOME/.cargo/bin```
 
-To launch the tool directly from the command line, the above directory should be added to the ```$PATH``` variable. 
+the binary is automatically copied to `$HOME/.cargo/bin`
+
+To launch the tool directly from the command line, the above directory should be added to the `$PATH` variable.
