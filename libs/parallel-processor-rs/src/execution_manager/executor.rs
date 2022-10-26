@@ -108,7 +108,10 @@ impl<'a, E: AsyncExecutor> ExecutorAddressOperations<'a, E> {
     pub fn declare_addresses(&self, addresses: Vec<ExecutorAddress>, priority: usize) {
         self.context.register_executors_batch(addresses, priority);
     }
-    pub async fn pool_alloc_await(&self, new_size: usize) -> Arc<PoolObject<PacketsPool<E::OutputPacket>>> {
+    pub async fn pool_alloc_await(
+        &self,
+        new_size: usize,
+    ) -> Arc<PoolObject<PacketsPool<E::OutputPacket>>> {
         let pool = self.context.allocate_pool::<E>(false).await.unwrap();
         pool.set_size(new_size);
         pool

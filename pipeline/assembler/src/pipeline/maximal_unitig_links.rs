@@ -1,6 +1,6 @@
 mod mappings_loader;
 mod maximal_hash_entry;
-mod maximal_unitig_index;
+pub(crate) mod maximal_unitig_index;
 
 use crate::pipeline::maximal_unitig_links::mappings_loader::{
     MaximalUnitigLinksMapping, MaximalUnitigLinksMappingsLoader,
