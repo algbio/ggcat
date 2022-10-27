@@ -1,45 +1,80 @@
 use crate::pipeline::maximal_unitig_links::maximal_unitig_index::DoubleMaximalUnitigLinks;
+use colors::colors_manager::color_types::PartialUnitigsColorStructure;
+use colors::colors_manager::ColorsManager;
+use crossbeam::channel::{Receiver, Sender};
 use genome_graph::bigraph::implementation::node_bigraph_wrapper::NodeBigraphWrapper;
 use genome_graph::bigraph::interface::BidirectedData;
 use genome_graph::bigraph::traitgraph::implementation::petgraph_impl::PetGraph;
 use genome_graph::bigraph::traitgraph::interface::ImmutableGraphContainer;
 use genome_graph::generic::{GenericEdge, GenericNode};
-use io::concurrent::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
-use io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use io::compressed_read::CompressedReadIndipendent;
+use io::concurrent::structured_sequences::{
+    IdentSequenceWriter, StructuredSequenceBackend, StructuredSequenceWriter,
+};
+use io::concurrent::temp_reads::extra_data::{
+    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+};
 use libmatchtigs::MatchtigEdgeData;
 use libmatchtigs::{GreedytigAlgorithm, GreedytigAlgorithmConfiguration, TigAlgorithm};
-use std::marker::PhantomData;
-use std::path::{Path, PathBuf};
+use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use std::convert::identity;
+use std::path::PathBuf;
+use std::sync::Arc;
 use traitgraph_algo::dijkstra::DijkstraWeightedEdgeData;
 
+const DUMMY_EDGE_VALUE: usize = usize::MAX;
+
+#[derive(Clone)]
+struct SequenceHandle<ColorInfo: IdentSequenceWriter>(
+    Option<Arc<StructuredUnitigsStorage<ColorInfo>>>,
+    usize,
+);
+
+impl<ColorInfo: IdentSequenceWriter> Default for SequenceHandle<ColorInfo> {
+    fn default() -> Self {
+        Self(None, DUMMY_EDGE_VALUE)
+    }
+}
+
+impl<ColorInfo: IdentSequenceWriter> PartialEq for SequenceHandle<ColorInfo> {
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1
+    }
+}
+impl<ColorInfo: IdentSequenceWriter> Eq for SequenceHandle<ColorInfo> {}
+
 // Declare types for the graph. It may or may not make sense to have this be the same type as the iterator outputs.
-#[derive(Debug, Eq, PartialEq, Clone)]
-struct UnitigEdgeData<'a> {
-    sequence_handle: SequenceHandle,
-    self_complemental: bool,
+#[derive(Clone)]
+struct UnitigEdgeData<ColorInfo: IdentSequenceWriter> {
+    sequence_handle: SequenceHandle<ColorInfo>,
     forwards: bool,
     weight: usize,
     dummy_edge_id: usize,
-    edges_list: &'a [usize],
+}
+impl<ColorInfo: IdentSequenceWriter> PartialEq for UnitigEdgeData<ColorInfo> {
+    fn eq(&self, other: &Self) -> bool {
+        self.sequence_handle == other.sequence_handle
+    }
 }
 
-type SequenceHandle = usize;
+impl<ColorInfo: IdentSequenceWriter> Eq for UnitigEdgeData<ColorInfo> {}
 
-impl<'a> BidirectedData for UnitigEdgeData<'a> {
+impl<ColorInfo: IdentSequenceWriter> BidirectedData for UnitigEdgeData<ColorInfo> {
     fn mirror(&self) -> Self {
         Self {
-            sequence_handle: self.sequence_handle,
-            self_complemental: self.self_complemental,
+            sequence_handle: self.sequence_handle.clone(),
             forwards: !self.forwards,
             weight: self.weight,
             dummy_edge_id: self.dummy_edge_id,
-            edges_list: self.edges_list,
         }
     }
 }
 
 // SequenceHandle is the type that points to a sequence, e.g. just an integer.
-impl<'a> MatchtigEdgeData<SequenceHandle> for UnitigEdgeData<'a> {
+impl<ColorInfo: IdentSequenceWriter> MatchtigEdgeData<SequenceHandle<ColorInfo>>
+    for UnitigEdgeData<ColorInfo>
+{
     fn is_dummy(&self) -> bool {
         self.dummy_edge_id != 0
     }
@@ -49,34 +84,79 @@ impl<'a> MatchtigEdgeData<SequenceHandle> for UnitigEdgeData<'a> {
         self.forwards
     }
 
-    // store these values
     fn new(
-        sequence_handle: SequenceHandle,
+        sequence_handle: SequenceHandle<ColorInfo>,
         forwards: bool,
         weight: usize,
         dummy_edge_id: usize,
     ) -> Self {
-        unimplemented!()
+        Self {
+            sequence_handle,
+            forwards,
+            weight,
+            dummy_edge_id,
+        }
     }
 }
 
-impl<'a> DijkstraWeightedEdgeData<usize> for UnitigEdgeData<'a> {
+impl<ColorInfo: IdentSequenceWriter> DijkstraWeightedEdgeData<usize> for UnitigEdgeData<ColorInfo> {
     fn weight(&self) -> usize {
         self.weight
     }
 }
 
-// struct
+pub struct StructuredUnitigsStorage<ColorInfo: IdentSequenceWriter> {
+    first_sequence_index: usize,
+    sequences: Vec<(
+        CompressedReadIndipendent,
+        ColorInfo,
+        DoubleMaximalUnitigLinks,
+        bool,
+    )>,
 
-struct MatchtigsStorageBackend<ColorInfo: IdentSequenceWriter>(PhantomData<ColorInfo>);
+    sequences_buffer: Vec<u8>,
+    links_buffer: <DoubleMaximalUnitigLinks as SequenceExtraData>::TempBuffer,
+    color_buffer: ColorInfo::TempBuffer,
+}
+
+impl<ColorInfo: IdentSequenceWriter> StructuredUnitigsStorage<ColorInfo> {
+    fn new() -> Self {
+        Self {
+            first_sequence_index: usize::MAX,
+            sequences: vec![],
+            sequences_buffer: vec![],
+            links_buffer: DoubleMaximalUnitigLinks::new_temp_buffer(),
+            color_buffer: ColorInfo::new_temp_buffer(),
+        }
+    }
+}
+
+pub struct MatchtigsStorageBackend<ColorInfo: IdentSequenceWriter> {
+    sequences_channel: (
+        Sender<Arc<StructuredUnitigsStorage<ColorInfo>>>,
+        Receiver<Arc<StructuredUnitigsStorage<ColorInfo>>>,
+    ),
+}
+
+impl<ColorInfo: IdentSequenceWriter> MatchtigsStorageBackend<ColorInfo> {
+    pub fn new() -> Self {
+        Self {
+            sequences_channel: crossbeam::channel::unbounded(),
+        }
+    }
+
+    pub fn get_receiver(&self) -> Receiver<Arc<StructuredUnitigsStorage<ColorInfo>>> {
+        self.sequences_channel.1.clone()
+    }
+}
 
 impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, DoubleMaximalUnitigLinks>
     for MatchtigsStorageBackend<ColorInfo>
 {
-    type SequenceTempBuffer = ();
+    type SequenceTempBuffer = StructuredUnitigsStorage<ColorInfo>;
 
     fn alloc_temp_buffer() -> Self::SequenceTempBuffer {
-        todo!()
+        StructuredUnitigsStorage::new()
     }
 
     fn write_sequence(
@@ -90,51 +170,154 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
             <DoubleMaximalUnitigLinks as SequenceExtraData>::TempBuffer,
         ),
     ) {
-        todo!()
+        if buffer.first_sequence_index == usize::MAX {
+            buffer.first_sequence_index = sequence_index as usize;
+        } else {
+            assert_eq!(
+                buffer.first_sequence_index + buffer.sequences.len(),
+                sequence_index as usize
+            );
+        }
+
+        let sequence =
+            CompressedReadIndipendent::from_plain(sequence, &mut buffer.sequences_buffer);
+        let color_info =
+            ColorInfo::copy_extra_from(color_info, &extra_buffers.0, &mut buffer.color_buffer);
+        let links_info = DoubleMaximalUnitigLinks::copy_extra_from(
+            links_info,
+            &extra_buffers.1,
+            &mut buffer.links_buffer,
+        );
+
+        let self_complemental = links_info
+            .0
+            .iter()
+            .map(|x| {
+                x.entries
+                    .get_slice(&buffer.links_buffer)
+                    .iter()
+                    .any(|x| x.index() == sequence_index)
+            })
+            .any(identity);
+
+        buffer
+            .sequences
+            .push((sequence, color_info, links_info, self_complemental));
     }
 
     fn get_path(&self) -> PathBuf {
-        todo!()
+        unimplemented!("In memory data structure")
     }
 
     fn flush_temp_buffer(&mut self, buffer: &mut Self::SequenceTempBuffer) {
-        todo!()
+        self.sequences_channel
+            .0
+            .send(Arc::new(std::mem::replace(
+                buffer,
+                StructuredUnitigsStorage::new(),
+            )))
+            .unwrap();
     }
 
-    fn finalize(self) {
-        todo!()
-    }
+    fn finalize(self) {}
 }
 
-impl<'a> GenericNode for UnitigEdgeData<'a> {
-    type EdgeIterator = std::iter::Empty<GenericEdge>;
+impl<ColorInfo: IdentSequenceWriter> GenericNode for UnitigEdgeData<ColorInfo> {
+    type EdgeIterator = impl Iterator<Item = GenericEdge>;
 
     fn id(&self) -> usize {
-        self.sequence_handle
+        self.sequence_handle.1
     }
 
     fn is_self_complemental(&self) -> bool {
-        todo!()
+        self.sequence_handle
+            .0
+            .as_ref()
+            .map(|s| s.sequences[self.sequence_handle.1 - s.first_sequence_index].3)
+            .unwrap_or(false)
     }
 
     fn edges(&self) -> Self::EdgeIterator {
-        todo!()
+        let links = self
+            .sequence_handle
+            .0
+            .as_ref()
+            .map(|r| r.sequences[self.sequence_handle.1].2.clone())
+            .unwrap_or(DoubleMaximalUnitigLinks::EMPTY);
+        let storage = self.sequence_handle.0.clone();
+
+        links
+            .0
+            .into_iter()
+            .map(move |link| {
+                let storage = storage.clone();
+
+                link.entries.iter().map(move |entry| {
+                    let entry = &storage.as_ref().unwrap().links_buffer[entry];
+
+                    GenericEdge {
+                        from_side: !entry.flags.flip_current(),
+                        to_node: entry.index() as usize,
+                        to_side: !entry.flags.flip_other(),
+                    }
+                })
+            })
+            .flatten()
     }
 }
 
-pub fn compute_matchtigs_thread(k: usize, threads_count: usize, output_file: impl AsRef<Path>) {
-    // Generic node should be documented well enough, so check that out on how to implement it :)
-    // let test = vec![];
-    let iterator = (0..10).into_iter().map(|_| UnitigEdgeData { sequence_handle: 0, self_complemental: false, forwards: false, weight: 0, dummy_edge_id: 0, edges_list: &[] }) /* some iterator over something implementing genome_graph::generic::GenericNode */;
+pub fn compute_matchtigs_thread<
+    H: MinimizerHashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<H, MH, CX>, ()>,
+>(
+    k: usize,
+    threads_count: usize,
+    input_data: Receiver<Arc<StructuredUnitigsStorage<PartialUnitigsColorStructure<H, MH, CX>>>>,
+    out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<H, MH, CX>, (), BK>,
+) {
+    let iterator = input_data
+        .into_iter()
+        .map(|storage| {
+            (0..storage.sequences.len())
+                .into_iter()
+                .map(move |index| UnitigEdgeData {
+                    sequence_handle: SequenceHandle(
+                        Some(storage.clone()),
+                        storage.first_sequence_index + index,
+                    ),
+                    forwards: true,
+                    weight: 0,
+                    dummy_edge_id: 0,
+                })
+        })
+        .flatten();
 
-    let mut graph: NodeBigraphWrapper<PetGraph<(), UnitigEdgeData>> =
+    let mut graph: NodeBigraphWrapper<PetGraph<(), UnitigEdgeData<_>>> =
         genome_graph::generic::convert_generic_node_centric_bigraph_to_edge_centric::<(), _, _ ,_ ,_>(iterator)
             .unwrap();
 
+    PHASES_TIMES_MONITOR
+        .write()
+        .start_phase("phase: greedy matchtigs building [step1]".to_string());
+
     /* assign weight to each edge */
     for edge_index in graph.edge_indices() {
-        let edge_data: &mut UnitigEdgeData = graph.edge_data_mut(edge_index);
-        let sequence_length = 0; /* length (in characters) of the sequence associated with edge_data */
+        let edge_data: &mut UnitigEdgeData<_> = graph.edge_data_mut(edge_index);
+
+        // length (in characters) of the sequence associated with edge_data
+        let sequence_length = edge_data
+            .sequence_handle
+            .0
+            .as_ref()
+            .map(|s| {
+                s.sequences[edge_data.sequence_handle.1 - s.first_sequence_index]
+                    .0
+                    .bases_count()
+            })
+            .unwrap();
+
         let weight = sequence_length + 1 - k; // number of kmers in the sequence
         edge_data.weight = weight;
     }
@@ -143,6 +326,10 @@ pub fn compute_matchtigs_thread(k: usize, threads_count: usize, output_file: imp
         &mut graph,
         &GreedytigAlgorithmConfiguration::new(threads_count, k),
     );
+
+    PHASES_TIMES_MONITOR
+        .write()
+        .start_phase("phase: greedy matchtigs building [step2]".to_string());
 
     for walk in greedytigs.iter() {
         let first_edge = *walk.first().unwrap();

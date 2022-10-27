@@ -106,7 +106,7 @@ pub struct MaximalUnitigLink {
 }
 
 impl MaximalUnitigLink {
-    pub fn new(index: u64, entries: VecSlice<MaximalUnitigIndex>) -> Self {
+    pub const fn new(index: u64, entries: VecSlice<MaximalUnitigIndex>) -> Self {
         Self { index, entries }
     }
 
@@ -160,6 +160,13 @@ impl BucketItem for MaximalUnitigLink {
 
 #[derive(Clone, Debug)]
 pub struct DoubleMaximalUnitigLinks(pub [MaximalUnitigLink; 2]);
+
+impl DoubleMaximalUnitigLinks {
+    pub const EMPTY: Self = Self([
+        MaximalUnitigLink::new(0, VecSlice::new(0, 0)),
+        MaximalUnitigLink::new(0, VecSlice::new(0, 0)),
+    ]);
+}
 
 impl SequenceExtraDataTempBufferManagement<Vec<MaximalUnitigIndex>> for DoubleMaximalUnitigLinks {
     fn new_temp_buffer() -> Vec<MaximalUnitigIndex> {

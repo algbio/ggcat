@@ -1,6 +1,7 @@
-#![feature(slice_group_by, int_log)]
+#![feature(slice_group_by, int_log, type_alias_impl_trait)]
 
 use crate::pipeline::build_unitigs::build_unitigs;
+use crate::pipeline::compute_matchtigs::{compute_matchtigs_thread, MatchtigsStorageBackend};
 use crate::pipeline::hashes_sorting::hashes_sorting;
 use crate::pipeline::links_compaction::links_compaction;
 use crate::pipeline::maximal_unitig_links::build_maximal_unitigs_links;
@@ -91,6 +92,7 @@ pub fn run_assembler<
     loopit_number: Option<usize>,
     default_compression_level: Option<u32>,
     generate_maximal_unitigs_links: bool,
+    greedy_matchtigs: bool,
     only_bstats: bool,
 ) {
     PHASES_TIMES_MONITOR.write().init();
@@ -348,7 +350,7 @@ pub fn run_assembler<
     });
 
     // Temporary file to store maximal unitigs data without links info, if further processing is requested
-    let compressed_temp_unitigs_file = if generate_maximal_unitigs_links {
+    let compressed_temp_unitigs_file = if generate_maximal_unitigs_links || greedy_matchtigs {
         Some(StructuredSequenceWriter::new(StructSeqBinaryWriter::new(
             temp_dir.join("maximal_unitigs.tmp"),
             &(
@@ -367,7 +369,7 @@ pub fn run_assembler<
     let (reorganized_reads, _final_unitigs_bucket) = if step
         <= AssemblerStartingStep::ReorganizeReads
     {
-        if generate_maximal_unitigs_links {
+        if generate_maximal_unitigs_links || greedy_matchtigs {
             reorganize_reads::<
                 BucketingHash,
                 MergingHash,
@@ -412,7 +414,7 @@ pub fn run_assembler<
     // links_manager.compute_id_offsets();
 
     if step <= AssemblerStartingStep::BuildUnitigs {
-        if generate_maximal_unitigs_links {
+        if generate_maximal_unitigs_links || greedy_matchtigs {
             build_unitigs::<
                 BucketingHash,
                 MergingHash,
@@ -436,28 +438,70 @@ pub fn run_assembler<
         }
     }
 
-    final_unitigs_file.finalize();
+    if step <= AssemblerStartingStep::MaximalUnitigsLinks {
+        if generate_maximal_unitigs_links || greedy_matchtigs {
+            let compressed_temp_unitigs_file = compressed_temp_unitigs_file.unwrap();
+            let temp_path = compressed_temp_unitigs_file.get_path();
+            compressed_temp_unitigs_file.finalize();
 
-    if step <= AssemblerStartingStep::MaximalUnitigsLinks && generate_maximal_unitigs_links {
-        let compressed_temp_unitigs_file = compressed_temp_unitigs_file.unwrap();
-        let temp_path = compressed_temp_unitigs_file.get_path();
-        compressed_temp_unitigs_file.finalize();
+            if greedy_matchtigs {
+                let matchtigs_backend = MatchtigsStorageBackend::new();
 
-        let final_unitigs_file = StructuredSequenceWriter::new(match output_file.extension() {
-            Some(ext) => match ext.to_string_lossy().to_string().as_str() {
-                "lz4" => FastaWriter::new_compressed_lz4(&output_file, 2),
-                "gz" => FastaWriter::new_compressed_gzip(&output_file, 2),
-                _ => FastaWriter::new_plain(&output_file),
-            },
-            None => FastaWriter::new_plain(&output_file),
-        });
+                let matchtigs_receiver = matchtigs_backend.get_receiver();
 
-        build_maximal_unitigs_links::<
-            BucketingHash,
-            MergingHash,
-            AssemblerColorsManager,
-            FastaWriter<_, _>,
-        >(temp_path, temp_dir.as_path(), &final_unitigs_file, k);
+                std::thread::Builder::new()
+                    .name("greedy_matchtigs".to_string())
+                    .spawn(move || {
+                        compute_matchtigs_thread::<
+                            BucketingHash,
+                            MergingHash,
+                            AssemblerColorsManager,
+                            _,
+                        >(
+                            k, threads_count, matchtigs_receiver, &final_unitigs_file
+                        );
+                    })
+                    .unwrap()
+                    .join()
+                    .unwrap();
+
+                build_maximal_unitigs_links::<
+                    BucketingHash,
+                    MergingHash,
+                    AssemblerColorsManager,
+                    MatchtigsStorageBackend<_>,
+                >(
+                    temp_path,
+                    temp_dir.as_path(),
+                    &StructuredSequenceWriter::new(matchtigs_backend),
+                    k,
+                );
+            } else if generate_maximal_unitigs_links {
+                final_unitigs_file.finalize();
+
+                let final_unitigs_file =
+                    StructuredSequenceWriter::new(match output_file.extension() {
+                        Some(ext) => match ext.to_string_lossy().to_string().as_str() {
+                            "lz4" => FastaWriter::new_compressed_lz4(&output_file, 2),
+                            "gz" => FastaWriter::new_compressed_gzip(&output_file, 2),
+                            _ => FastaWriter::new_plain(&output_file),
+                        },
+                        None => FastaWriter::new_plain(&output_file),
+                    });
+
+                build_maximal_unitigs_links::<
+                    BucketingHash,
+                    MergingHash,
+                    AssemblerColorsManager,
+                    FastaWriter<_, _>,
+                >(temp_path, temp_dir.as_path(), &final_unitigs_file, k);
+                final_unitigs_file.finalize();
+            }
+        } else {
+            final_unitigs_file.finalize();
+        }
+    } else {
+        final_unitigs_file.finalize();
     }
 
     let _ = std::fs::remove_dir(temp_dir.as_path());

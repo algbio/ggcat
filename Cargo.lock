@@ -97,6 +97,7 @@ dependencies = [
  "byteorder",
  "colors",
  "config",
+ "crossbeam",
  "fs_extra",
  "genome-graph",
  "hashbrown",

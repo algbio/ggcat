@@ -191,6 +191,10 @@ struct AssemblerArgs {
     #[structopt(short = "e", long = "generate-maximal-unitigs-links")]
     pub generate_maximal_unitigs_links: bool,
 
+    /// Generate matchtigs instead of maximal unitigs
+    #[structopt(short = "g", long = "greedy-matchtigs")]
+    pub greedy_matchtigs: bool,
+
     #[structopt(flatten)]
     pub common_args: CommonArgs,
 }
@@ -391,6 +395,7 @@ fn run_assembler_from_args(
         Some(args.number),
         args.common_args.intermediate_compression_level,
         args.generate_maximal_unitigs_links,
+        args.greedy_matchtigs,
         args.common_args.only_bstats,
     );
 }
@@ -464,6 +469,10 @@ fn main() {
                 args.output_file.with_extension("tracing.json"),
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
+
+            if args.greedy_matchtigs && args.generate_maximal_unitigs_links {
+                println!("WARN: Unitig links are incompatible with greedy matchtigs, computing only greedy matchtigs");
+            }
 
             initialize(&args.common_args, &args.output_file);
 

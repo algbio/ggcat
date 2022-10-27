@@ -32,6 +32,19 @@ pub struct CompressedReadIndipendent {
 }
 
 impl CompressedReadIndipendent {
+    pub fn from_plain(plain: &[u8], storage: &mut Vec<u8>) -> CompressedReadIndipendent {
+        let start = storage.len() * 4;
+
+        CompressedRead::compress_from_plain(plain, |b| {
+            storage.extend_from_slice(b);
+        });
+
+        CompressedReadIndipendent {
+            start,
+            size: plain.len(),
+        }
+    }
+
     pub fn from_read(read: &CompressedRead, storage: &mut Vec<u8>) -> CompressedReadIndipendent {
         let start = storage.len() * 4;
         storage.extend_from_slice(read.get_packed_slice());
