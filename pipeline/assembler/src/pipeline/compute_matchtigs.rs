@@ -1,7 +1,7 @@
-use crate::pipeline::compute_matchtigs;
 use crate::pipeline::maximal_unitig_links::maximal_unitig_index::DoubleMaximalUnitigLinks;
 use genome_graph::bigraph::implementation::node_bigraph_wrapper::NodeBigraphWrapper;
 use genome_graph::bigraph::interface::BidirectedData;
+use genome_graph::bigraph::traitgraph::implementation::petgraph_impl::PetGraph;
 use genome_graph::bigraph::traitgraph::interface::ImmutableGraphContainer;
 use genome_graph::generic::{GenericEdge, GenericNode};
 use io::concurrent::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
@@ -9,33 +9,37 @@ use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use libmatchtigs::MatchtigEdgeData;
 use libmatchtigs::{GreedytigAlgorithm, GreedytigAlgorithmConfiguration, TigAlgorithm};
 use std::marker::PhantomData;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use traitgraph_algo::dijkstra::DijkstraWeightedEdgeData;
 
 // Declare types for the graph. It may or may not make sense to have this be the same type as the iterator outputs.
 #[derive(Debug, Eq, PartialEq, Clone)]
-struct UnitigEdgeData {
+struct UnitigEdgeData<'a> {
     sequence_handle: SequenceHandle,
+    self_complemental: bool,
     forwards: bool,
     weight: usize,
     dummy_edge_id: usize,
+    edges_list: &'a [usize],
 }
 
-type SequenceHandle = u64;
+type SequenceHandle = usize;
 
-impl BidirectedData for UnitigEdgeData {
+impl<'a> BidirectedData for UnitigEdgeData<'a> {
     fn mirror(&self) -> Self {
         Self {
             sequence_handle: self.sequence_handle,
+            self_complemental: self.self_complemental,
             forwards: !self.forwards,
             weight: self.weight,
             dummy_edge_id: self.dummy_edge_id,
+            edges_list: self.edges_list,
         }
     }
 }
 
 // SequenceHandle is the type that points to a sequence, e.g. just an integer.
-impl MatchtigEdgeData<SequenceHandle> for UnitigEdgeData {
+impl<'a> MatchtigEdgeData<SequenceHandle> for UnitigEdgeData<'a> {
     fn is_dummy(&self) -> bool {
         self.dummy_edge_id != 0
     }
@@ -52,24 +56,17 @@ impl MatchtigEdgeData<SequenceHandle> for UnitigEdgeData {
         weight: usize,
         dummy_edge_id: usize,
     ) -> Self {
-        Self {
-            sequence_handle,
-            forwards,
-            weight,
-            dummy_edge_id,
-        }
+        unimplemented!()
     }
 }
 
-impl DijkstraWeightedEdgeData<usize> for UnitigEdgeData {
+impl<'a> DijkstraWeightedEdgeData<usize> for UnitigEdgeData<'a> {
     fn weight(&self) -> usize {
         self.weight
     }
 }
 
-type MyGraph = genome_graph::bigraph::implementation::node_bigraph_wrapper::NodeBigraphWrapper<
-    genome_graph::bigraph::traitgraph::implementation::petgraph_impl::PetGraph<(), UnitigEdgeData>,
->;
+// struct
 
 struct MatchtigsStorageBackend<ColorInfo: IdentSequenceWriter>(PhantomData<ColorInfo>);
 
@@ -109,11 +106,11 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
     }
 }
 
-impl GenericNode for UnitigEdgeData {
+impl<'a> GenericNode for UnitigEdgeData<'a> {
     type EdgeIterator = std::iter::Empty<GenericEdge>;
 
     fn id(&self) -> usize {
-        todo!()
+        self.sequence_handle
     }
 
     fn is_self_complemental(&self) -> bool {
@@ -125,11 +122,12 @@ impl GenericNode for UnitigEdgeData {
     }
 }
 
-pub fn compute_matchtigs_thread(k: usize, threads_count: usize) {
+pub fn compute_matchtigs_thread(k: usize, threads_count: usize, output_file: impl AsRef<Path>) {
     // Generic node should be documented well enough, so check that out on how to implement it :)
-    let iterator = (0..10).into_iter().map(|_| UnitigEdgeData { sequence_handle: 0, forwards: false, weight: 0, dummy_edge_id: 0 }) /* some iterator over something implementing genome_graph::generic::GenericNode */;
+    // let test = vec![];
+    let iterator = (0..10).into_iter().map(|_| UnitigEdgeData { sequence_handle: 0, self_complemental: false, forwards: false, weight: 0, dummy_edge_id: 0, edges_list: &[] }) /* some iterator over something implementing genome_graph::generic::GenericNode */;
 
-    let mut graph: MyGraph =
+    let mut graph: NodeBigraphWrapper<PetGraph<(), UnitigEdgeData>> =
         genome_graph::generic::convert_generic_node_centric_bigraph_to_edge_centric::<(), _, _ ,_ ,_>(iterator)
             .unwrap();
 
