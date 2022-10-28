@@ -443,7 +443,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     }
 
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]) {
-        let sum: u64 = str.colors.iter().map(|x| x.1).sum::<u64>() + 62;
+        let sum: u64 = str.colors.iter().map(|x| x.1).sum::<u64>() + 30;
         if sum as usize != seq.len() {
             println!("Temp values: {} {}", sum as usize, seq.len());
             println!("Dbg: {:?}", str.colors);

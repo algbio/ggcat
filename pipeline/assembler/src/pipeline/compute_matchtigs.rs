@@ -408,11 +408,14 @@ pub fn compute_matchtigs_thread<
         let mut previous_data = first_data;
         for edge in walk.iter().skip(1) {
             let edge_data = graph.edge_data(*edge);
-            let offset = if previous_data.is_original() {
-                k - 1
+
+            let kmer_offset = if previous_data.is_original() {
+                0
             } else {
-                k - 1 - previous_data.weight()
+                previous_data.weight()
             };
+
+            let offset = kmer_offset + k - 1;
 
             previous_data = edge_data;
 
@@ -430,7 +433,7 @@ pub fn compute_matchtigs_thread<
                     &mut final_unitig_color,
                     &handle.1,
                     &storage.color_buffer,
-                    offset as u64,
+                    kmer_offset as u64,
                 );
             } else {
                 read_buffer.extend(
@@ -442,7 +445,7 @@ pub fn compute_matchtigs_thread<
                     &mut final_unitig_color,
                     &handle.1,
                     &storage.color_buffer,
-                    offset as u64,
+                    kmer_offset as u64,
                 );
             }
         }
