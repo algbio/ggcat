@@ -331,9 +331,15 @@ pub fn compute_matchtigs_thread<
         genome_graph::generic::convert_generic_node_centric_bigraph_to_edge_centric::<(), _, _ ,_ ,_>(iterator)
             .unwrap();
 
+    let phase_name = match mode {
+        MatchtigMode::EulerTigs => "euleryigs",
+        MatchtigMode::GreedyTigs => "greedy matchtigs",
+        MatchtigMode::PathTigs => "pathtigs",
+    };
+
     PHASES_TIMES_MONITOR
         .write()
-        .start_phase("phase: greedy matchtigs building [step1]".to_string());
+        .start_phase(format!("phase: {} building [step1]", phase_name));
 
     /* assign weight to each edge */
     for edge_index in graph.edge_indices() {
@@ -374,7 +380,7 @@ pub fn compute_matchtigs_thread<
 
     PHASES_TIMES_MONITOR
         .write()
-        .start_phase("phase: greedy matchtigs building [step2]".to_string());
+        .start_phase(format!("phase: {} building [step2]", phase_name));
 
     let mut output_buffer =
         FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
