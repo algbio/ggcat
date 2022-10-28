@@ -18,6 +18,13 @@ Or if you have a file with a list of input files:
 ggcat build -k <k_value> -j <threads_count> -l <input_files_list> -o <output_file>
 ```
 
+#### Building a colored graph
+To build a colored graph, add the `-c` flag to the above commands
+#### Building links
+To build links between maximal unitigs in BCALM2 like format, use the `-l` flag
+#### Building matchtigs
+To build greedy matchtigs, use the `-g` flag
+
 Here are all listed the available options for graph building:
 
 ```
@@ -30,6 +37,7 @@ FLAGS:
     -f, --forward-only                      Treats reverse complementary kmers as different
     -e, --generate-maximal-unitigs-links    Generate maximal unitigs connections references, in BCALM2 format
                                             L:<+/->:<other id>:<+/->
+    -g, --greedy-matchtigs                  Generate matchtigs instead of maximal unitigs
     -h, --help                              Prints help information
         --keep-temp-files                   Keep intermediate temporary files for debugging purposes
     -p, --prefer-memory                     Use all the given memory before writing to disk
@@ -154,3 +162,16 @@ cargo install --path cmdline/
 the binary is automatically copied to `$HOME/.cargo/bin`
 
 To launch the tool directly from the command line, the above directory should be added to the `$PATH` variable.
+
+### Citing
+If you use GGCAT in your research, please cite the following article:
+#### [GGCAT](https://doi.org/10.1101/2022.10.24.513174)
+> Extremely-fast construction and querying of compacted and colored de Bruijn graphs with GGCAT
+Andrea Cracco, Alexandru I. Tomescu
+bioRxiv 2022.10.24.513174; doi: https://doi.org/10.1101/2022.10.24.513174
+
+If you use the matchtigs feature, please also cite the following article:
+#### [Matchtigs](https://doi.org/10.1101/2021.12.15.472871)
+> Matchtigs: minimum plain text representation of kmer sets
+Sebastian Schmidt, Shahbaz Khan, Jarno Alanko, Alexandru I. Tomescu
+bioRxiv 2021.12.15.472871; doi: https://doi.org/10.1101/2021.12.15.472871
