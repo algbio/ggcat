@@ -10,9 +10,8 @@ use colors::colors_manager::color_types::{
 };
 use colors::colors_manager::{color_types, ColorsManager};
 use config::{
-    get_memory_mode, BucketIndexType, SwapPriority, INTERMEDIATE_COMPRESSION_LEVEL_FAST,
-    INTERMEDIATE_COMPRESSION_LEVEL_SLOW, MINIMUM_SUBBUCKET_KMERS_COUNT,
-    RESPLITTING_MAX_K_M_DIFFERENCE,
+    get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
+    MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use crossbeam::queue::*;
 use hashes::HashFunctionFactory;
@@ -23,9 +22,7 @@ use kmers_transform::processor::KmersTransformProcessor;
 use kmers_transform::{KmersTransform, KmersTransformExecutorFactory};
 use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
-use parallel_processor::buckets::writers::compressed_binary_writer::{
-    CompressedBinaryWriter, CompressionLevelInfo,
-};
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
@@ -35,7 +32,7 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use utils::owned_drop::OwnedDrop;
 
@@ -170,10 +167,7 @@ pub fn kmers_merge<
         &(
             get_memory_mode(SwapPriority::ResultBuckets),
             CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-            CompressionLevelInfo {
-                fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
-                slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),
-            },
+            get_compression_level_info(),
         ),
     );
 

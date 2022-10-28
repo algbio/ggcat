@@ -6,11 +6,11 @@ use crate::{
     KmersTransformPreprocessor,
 };
 use config::{
-    get_memory_mode, SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, INTERMEDIATE_COMPRESSION_LEVEL_FAST,
-    INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES, MAXIMUM_JIT_PROCESSED_BUCKETS,
-    MAX_INTERMEDIATE_MAP_SIZE, MIN_BUCKET_CHUNKS_FOR_READING_THREAD, PACKETS_PRIORITY_DEFAULT,
-    PACKETS_PRIORITY_REWRITTEN, PARTIAL_VECS_CHECKPOINT_SIZE, USE_SECOND_BUCKET,
+    get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE,
+    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_INTERMEDIATE_MAP_SIZE, MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
+    PACKETS_PRIORITY_DEFAULT, PACKETS_PRIORITY_REWRITTEN, PARTIAL_VECS_CHECKPOINT_SIZE,
+    USE_SECOND_BUCKET,
 };
 use instrumenter::local_setup_instrumenter;
 use io::compressed_read::CompressedReadIndipendent;
@@ -22,9 +22,7 @@ use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::readers::async_binary_reader::{
     AsyncBinaryReader, AsyncReaderThread,
 };
-use parallel_processor::buckets::writers::compressed_binary_writer::{
-    CompressedBinaryWriter, CompressionLevelInfo,
-};
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::counter_stats::counter::{AtomicCounter, SumMode};
 use parallel_processor::counter_stats::declare_counter_i64;
@@ -256,12 +254,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                         &(
                             get_memory_mode(SwapPriority::ResultBuckets),
                             PARTIAL_VECS_CHECKPOINT_SIZE,
-                            CompressionLevelInfo {
-                                fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST
-                                    .load(Ordering::Relaxed),
-                                slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW
-                                    .load(Ordering::Relaxed),
-                            },
+                            get_compression_level_info(),
                         ),
                         SUBSPLIT_INDEX.fetch_add(1, Ordering::Relaxed),
                     );

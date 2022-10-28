@@ -2,20 +2,16 @@ use byteorder::ReadBytesExt;
 use colors::colors_manager::color_types::SingleKmerColorDataType;
 use colors::colors_manager::ColorsManager;
 use config::{
-    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
-    INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
+    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
 };
 use io::concurrent::temp_reads::extra_data::{SequenceExtraData, SequenceExtraDataOwned};
-use io::sequences_reader::SequencesReader;
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
-use parallel_processor::buckets::writers::compressed_binary_writer::{
-    CompressedBinaryWriter, CompressionLevelInfo,
-};
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::RemoveFileMode;
@@ -79,8 +75,7 @@ impl<CX: SequenceExtraData<TempBuffer = ()>> BucketItem for CounterEntry<CX> {
 }
 
 pub fn counters_sorting<CX: ColorsManager>(
-    k: usize,
-    query_input: PathBuf,
+    _k: usize,
     file_counters_inputs: Vec<PathBuf>,
     colored_buckets_path: PathBuf,
     colors_count: u64,
@@ -108,10 +103,7 @@ pub fn counters_sorting<CX: ColorsManager>(
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
                 MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-                CompressionLevelInfo {
-                    fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
-                    slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),
-                },
+                get_compression_level_info(),
             ),
         ))
     } else {

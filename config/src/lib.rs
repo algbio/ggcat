@@ -1,5 +1,7 @@
 // use crate::RunLengthColorsSerializer;
-use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
+use parallel_processor::buckets::writers::compressed_binary_writer::{
+    CompressedCheckpointSize, CompressionLevelInfo,
+};
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -62,6 +64,7 @@ pub const READ_FLAG_INCL_BEGIN: u8 = 1 << 0;
 pub const READ_FLAG_INCL_END: u8 = 1 << 1;
 
 pub const COLORS_SINGLE_BATCH_SIZE: u64 = 20000;
+pub const QUERIES_COUNT_MIN_BATCH: u64 = 1000;
 
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]
@@ -75,6 +78,7 @@ impl SwapPriority {
     pub const LinksBuckets: usize = 3;
     pub const LinkPairs: usize = 4;
     pub const KmersMergeTempColors: usize = 4;
+    pub const ColoredQueryBuckets: usize = 5;
     pub const KmersMergeBuckets: usize = 6;
 }
 
@@ -89,5 +93,12 @@ pub fn get_memory_mode(swap_priority: usize) -> MemoryFileMode {
         MemoryFileMode::PreferMemory { swap_priority }
     } else {
         MemoryFileMode::DiskOnly
+    }
+}
+
+pub fn get_compression_level_info() -> CompressionLevelInfo {
+    CompressionLevelInfo {
+        fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
+        slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),
     }
 }

@@ -3,8 +3,7 @@ use colors::storage::run_length::ColorIndexSerializer;
 use config::ColorIndexType;
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use parallel_processor::buckets::bucket_writer::BucketItem;
-use std::borrow::Cow;
-use std::io::{Cursor, Read};
+use std::io::Read;
 use std::ops::Range;
 
 #[derive(Debug, Clone)]

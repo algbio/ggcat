@@ -14,9 +14,8 @@ use crate::pipeline::maximal_unitig_links::maximal_unitig_index::{
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::ColorsManager;
 use config::{
-    get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE,
-    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, INTERMEDIATE_COMPRESSION_LEVEL_FAST,
-    INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES,
+    get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
+    DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
 };
 use hashes::ExtendableHashTraitType;
 use hashes::{HashFunction, HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
@@ -27,9 +26,7 @@ use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagemen
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
-use parallel_processor::buckets::writers::compressed_binary_writer::{
-    CompressedBinaryWriter, CompressionLevelInfo,
-};
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::memory_fs::RemoveFileMode;
@@ -84,10 +81,7 @@ pub fn build_maximal_unitigs_links<
                     &(
                         get_memory_mode(SwapPriority::HashBuckets),
                         CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-                        CompressionLevelInfo {
-                            fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
-                            slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),
-                        },
+                        get_compression_level_info(),
                     ),
                 ));
 
@@ -193,10 +187,7 @@ pub fn build_maximal_unitigs_links<
             &(
                 get_memory_mode(SwapPriority::LinksBuckets),
                 CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-                CompressionLevelInfo {
-                    fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
-                    slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),
-                },
+                get_compression_level_info(),
             ),
         ));
 

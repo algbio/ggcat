@@ -1,7 +1,7 @@
 use crate::pipeline::parallel_kmers_query::QueryKmersReferenceData;
 use byteorder::ReadBytesExt;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
-use colors::colors_manager::{ColorsManager, ColorsParser, MinimizerBucketingSeqColorData};
+use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::SingleSequenceInfo;
 use config::BucketIndexType;
 use hashes::rolling::minqueue::RollingMinQueue;
@@ -221,7 +221,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                     0,
                     match &preprocess_info.read_type {
                         ReadType::Graph { color } => QueryKmersReferenceData::Graph(
-                            color.get_subslice(last_index..(index + 1)), // FIXME: Check if the subslice is correct,
+                            color.get_subslice(last_index..(index + 1)),
                         ),
 
                         ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
@@ -240,13 +240,9 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
             sequence.get_subslice(last_index..sequence.seq_len()),
             0,
             match &preprocess_info.read_type {
-                ReadType::Graph { color } => {
-                    QueryKmersReferenceData::Graph(
-                        color.get_subslice(
-                            last_index..(sequence.seq_len() + 1 - self.global_data.k),
-                        ), // FIXME: Check if the subslice is correct,
-                    )
-                }
+                ReadType::Graph { color } => QueryKmersReferenceData::Graph(
+                    color.get_subslice(last_index..(sequence.seq_len() + 1 - self.global_data.k)),
+                ),
 
                 ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
             },

@@ -3,25 +3,20 @@ use crate::structs::query_colored_counters::{ColorsRange, QueryColorDesc, QueryC
 use colors::storage::deserializer::ColorsDeserializer;
 use colors::storage::ColorsSerializerTrait;
 use config::{
-    get_memory_mode, BucketIndexType, ColorIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, INTERMEDIATE_COMPRESSION_LEVEL_FAST,
-    INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    get_compression_level_info, get_memory_mode, BucketIndexType, ColorIndexType, SwapPriority,
+    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, QUERIES_COUNT_MIN_BATCH,
 };
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
-use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
-use parallel_processor::buckets::writers::compressed_binary_writer::{
-    CompressedBinaryWriter, CompressionLevelInfo,
-};
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::prelude::*;
-use std::borrow::Cow;
-use std::cmp::min;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -45,10 +40,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
         &(
             get_memory_mode(SwapPriority::MinimizerBuckets),
             MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-            CompressionLevelInfo {
-                fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
-                slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),
-            },
+            get_compression_level_info(),
         ),
     ));
 
@@ -138,15 +130,12 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             //     temp_encoded_buffer
             // );
 
-            const QUERIES_COUNT_MIN_BATCH: u64 = 1000;
             let rounded_queries_count =
-                queries_count.div_ceil(QUERIES_COUNT_MIN_BATCH) * QUERIES_COUNT_MIN_BATCH;
+                (queries_count + 1).div_ceil(QUERIES_COUNT_MIN_BATCH) * QUERIES_COUNT_MIN_BATCH;
 
             let get_query_bucket = |query_index: u64| {
-                min(
-                    buckets_count as u64 - 1,
-                    query_index * (buckets_count as u64) / rounded_queries_count,
-                ) as BucketIndexType
+                ((query_index - 1) * (buckets_count as u64) / rounded_queries_count)
+                    as BucketIndexType
             };
 
             for entries in temp_queries_buffer

@@ -10,7 +10,7 @@ use ::static_dispatch::static_dispatch;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
 use config::{
-    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
+    get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
     INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES,
     MAXIMUM_SECOND_BUCKETS_LOG, MINIMUM_LOG_DELTA_TIME,
 };
@@ -21,9 +21,7 @@ use io::concurrent::structured_sequences::StructuredSequenceWriter;
 use io::{compute_stats_from_input_files, generate_bucket_names};
 use kmers_merge::structs::RetType;
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
-use parallel_processor::buckets::writers::compressed_binary_writer::{
-    CompressedCheckpointSize, CompressionLevelInfo,
-};
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::memory_data_size::MemoryDataSize;
@@ -354,10 +352,7 @@ pub fn run_assembler<
             &(
                 get_memory_mode(SwapPriority::FinalMaps as usize),
                 CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
-                CompressionLevelInfo {
-                    fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
-                    slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),
-                },
+                get_compression_level_info(),
             ),
         )))
     } else {
