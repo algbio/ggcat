@@ -165,7 +165,7 @@ the binary is automatically copied to `$HOME/.cargo/bin`
 
 To launch the tool directly from the command line, the above directory should be added to the `$PATH` variable.
 
-### Citing
+## Citing
 If you use GGCAT in your research, please cite the following article:
 ### [GGCAT](https://doi.org/10.1101/2022.10.24.513174)
 > Extremely-fast construction and querying of compacted and colored de Bruijn graphs with GGCAT
