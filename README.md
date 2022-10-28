@@ -167,13 +167,18 @@ To launch the tool directly from the command line, the above directory should be
 
 ### Citing
 If you use GGCAT in your research, please cite the following article:
-#### [GGCAT](https://doi.org/10.1101/2022.10.24.513174)
+### [GGCAT](https://doi.org/10.1101/2022.10.24.513174)
 > Extremely-fast construction and querying of compacted and colored de Bruijn graphs with GGCAT
 Andrea Cracco, Alexandru I. Tomescu
 bioRxiv 2022.10.24.513174; doi: https://doi.org/10.1101/2022.10.24.513174
 
-If you use the matchtigs/eulertigs/pathtigs output, please also cite the following article:
+If you use a matchtigs/eulertigs output, please also cite the following articles:
 #### [Matchtigs](https://doi.org/10.1101/2021.12.15.472871)
 > Matchtigs: minimum plain text representation of kmer sets
 Sebastian Schmidt, Shahbaz Khan, Jarno Alanko, Alexandru I. Tomescu
 bioRxiv 2021.12.15.472871; doi: https://doi.org/10.1101/2021.12.15.472871
+
+#### [Eulertigs](https://doi.org/10.1101/2021.12.15.472871)
+> Eulertigs: minimum plain text representation of k-mer sets without repetitions in linear time
+Sebastian Schmidt, Jarno N. Alanko
+bioRxiv 2022.05.17.492399; doi: https://doi.org/10.1101/2022.05.17.492399
