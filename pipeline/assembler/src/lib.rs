@@ -37,6 +37,8 @@ use std::time::Instant;
 mod pipeline;
 mod structs;
 
+pub use pipeline::compute_matchtigs::MatchtigMode;
+
 #[derive(PartialEq, PartialOrd)]
 pub enum AssemblerStartingStep {
     MinimizerBucketing = 0,
@@ -88,7 +90,7 @@ pub fn run_assembler<
     loopit_number: Option<usize>,
     default_compression_level: Option<u32>,
     generate_maximal_unitigs_links: bool,
-    greedy_matchtigs: bool,
+    compute_tigs_mode: Option<MatchtigMode>,
     only_bstats: bool,
 ) {
     PHASES_TIMES_MONITOR.write().init();
@@ -346,23 +348,24 @@ pub fn run_assembler<
     });
 
     // Temporary file to store maximal unitigs data without links info, if further processing is requested
-    let compressed_temp_unitigs_file = if generate_maximal_unitigs_links || greedy_matchtigs {
-        Some(StructuredSequenceWriter::new(StructSeqBinaryWriter::new(
-            temp_dir.join("maximal_unitigs.tmp"),
-            &(
-                get_memory_mode(SwapPriority::FinalMaps as usize),
-                CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
-                get_compression_level_info(),
-            ),
-        )))
-    } else {
-        None
-    };
+    let compressed_temp_unitigs_file =
+        if generate_maximal_unitigs_links || compute_tigs_mode.is_some() {
+            Some(StructuredSequenceWriter::new(StructSeqBinaryWriter::new(
+                temp_dir.join("maximal_unitigs.tmp"),
+                &(
+                    get_memory_mode(SwapPriority::FinalMaps as usize),
+                    CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
+                    get_compression_level_info(),
+                ),
+            )))
+        } else {
+            None
+        };
 
     let (reorganized_reads, _final_unitigs_bucket) = if step
         <= AssemblerStartingStep::ReorganizeReads
     {
-        if generate_maximal_unitigs_links || greedy_matchtigs {
+        if generate_maximal_unitigs_links || compute_tigs_mode.is_some() {
             reorganize_reads::<
                 BucketingHash,
                 MergingHash,
@@ -407,7 +410,7 @@ pub fn run_assembler<
     // links_manager.compute_id_offsets();
 
     if step <= AssemblerStartingStep::BuildUnitigs {
-        if generate_maximal_unitigs_links || greedy_matchtigs {
+        if generate_maximal_unitigs_links || compute_tigs_mode.is_some() {
             build_unitigs::<
                 BucketingHash,
                 MergingHash,
@@ -432,12 +435,12 @@ pub fn run_assembler<
     }
 
     if step <= AssemblerStartingStep::MaximalUnitigsLinks {
-        if generate_maximal_unitigs_links || greedy_matchtigs {
+        if generate_maximal_unitigs_links || compute_tigs_mode.is_some() {
             let compressed_temp_unitigs_file = compressed_temp_unitigs_file.unwrap();
             let temp_path = compressed_temp_unitigs_file.get_path();
             compressed_temp_unitigs_file.finalize();
 
-            if greedy_matchtigs {
+            if let Some(compute_tigs_mode) = compute_tigs_mode {
                 let matchtigs_backend = MatchtigsStorageBackend::new();
 
                 let matchtigs_receiver = matchtigs_backend.get_receiver();
@@ -451,7 +454,11 @@ pub fn run_assembler<
                             AssemblerColorsManager,
                             _,
                         >(
-                            k, threads_count, matchtigs_receiver, &final_unitigs_file
+                            k,
+                            threads_count,
+                            matchtigs_receiver,
+                            &final_unitigs_file,
+                            compute_tigs_mode,
                         );
                     })
                     .unwrap();

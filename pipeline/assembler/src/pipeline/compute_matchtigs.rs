@@ -17,7 +17,9 @@ use io::concurrent::structured_sequences::{
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
-use libmatchtigs::MatchtigEdgeData;
+use libmatchtigs::{
+    EulertigAlgorithm, EulertigAlgorithmConfiguration, MatchtigEdgeData, PathtigAlgorithm,
+};
 use libmatchtigs::{GreedytigAlgorithm, GreedytigAlgorithmConfiguration, TigAlgorithm};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::convert::identity;
@@ -289,6 +291,13 @@ impl<ColorInfo: IdentSequenceWriter> GenericNode for UnitigEdgeData<ColorInfo> {
     }
 }
 
+pub enum MatchtigMode {
+    EulerTigs,
+    GreedyTigs,
+    // MatchTigs,
+    PathTigs,
+}
+
 pub fn compute_matchtigs_thread<
     H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
@@ -299,6 +308,7 @@ pub fn compute_matchtigs_thread<
     threads_count: usize,
     input_data: Receiver<Arc<StructuredUnitigsStorage<PartialUnitigsColorStructure<H, MH, CX>>>>,
     out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<H, MH, CX>, (), BK>,
+    mode: MatchtigMode,
 ) {
     let iterator = input_data
         .into_iter()
@@ -345,10 +355,22 @@ pub fn compute_matchtigs_thread<
         edge_data.weight = weight;
     }
 
-    let greedytigs = GreedytigAlgorithm::compute_tigs(
-        &mut graph,
-        &GreedytigAlgorithmConfiguration::new(threads_count, k),
-    );
+    let tigs = match mode {
+        MatchtigMode::GreedyTigs => GreedytigAlgorithm::compute_tigs(
+            &mut graph,
+            &GreedytigAlgorithmConfiguration::new(threads_count, k),
+        ),
+        MatchtigMode::PathTigs => PathtigAlgorithm::compute_tigs(&mut graph, &()),
+        // MatchtigMode::MatchTigs => {
+        //     MatchtigAlgorithm::compute_tigs(
+        //         &mut graph,
+        //         &MatchtigAlgorithmConfiguration::new(threads_count, k),
+        //     )
+        // },
+        MatchtigMode::EulerTigs => {
+            EulertigAlgorithm::compute_tigs(&mut graph, &EulertigAlgorithmConfiguration { k })
+        }
+    };
 
     PHASES_TIMES_MONITOR
         .write()
@@ -364,7 +386,7 @@ pub fn compute_matchtigs_thread<
     let mut final_color_extra_buffer =
         color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer();
 
-    for walk in greedytigs.iter() {
+    for walk in tigs.iter() {
         // Reset the colors
         color_types::ColorsMergeManagerType::<H, MH, CX>::reset_unitig_color_structure(
             &mut final_unitig_color,

@@ -23,7 +23,7 @@ To build a colored graph, add the `-c` flag to the above commands
 #### Building links
 To build links between maximal unitigs in BCALM2 like format, use the `-l` flag
 #### Building matchtigs
-To build greedy matchtigs, use the `-g` flag
+To build greedy matchtigs, use the `-g` flag, also both `--eulertigs` and `--pathtigs` are supported
 
 Here are all listed the available options for graph building:
 
@@ -34,12 +34,14 @@ USAGE:
 
 FLAGS:
     -c, --colors                            Enable colors
+        --eulertigs                         Generate eulertigs instead of maximal unitigs
     -f, --forward-only                      Treats reverse complementary kmers as different
     -e, --generate-maximal-unitigs-links    Generate maximal unitigs connections references, in BCALM2 format
                                             L:<+/->:<other id>:<+/->
-    -g, --greedy-matchtigs                  Generate matchtigs instead of maximal unitigs
+    -g, --greedy-matchtigs                  Generate greedy matchtigs instead of maximal unitigs
     -h, --help                              Prints help information
         --keep-temp-files                   Keep intermediate temporary files for debugging purposes
+        --pathtigs                          Generate pathtigs instead of maximal unitigs
     -p, --prefer-memory                     Use all the given memory before writing to disk
     -V, --version                           Prints version information
 
@@ -170,7 +172,7 @@ If you use GGCAT in your research, please cite the following article:
 Andrea Cracco, Alexandru I. Tomescu
 bioRxiv 2022.10.24.513174; doi: https://doi.org/10.1101/2022.10.24.513174
 
-If you use the matchtigs feature, please also cite the following article:
+If you use the matchtigs/eulertigs/pathtigs output, please also cite the following article:
 #### [Matchtigs](https://doi.org/10.1101/2021.12.15.472871)
 > Matchtigs: minimum plain text representation of kmer sets
 Sebastian Schmidt, Shahbaz Khan, Jarno Alanko, Alexandru I. Tomescu

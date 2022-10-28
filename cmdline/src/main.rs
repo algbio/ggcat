@@ -83,7 +83,7 @@ use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use static_dispatch::StaticDispatch;
 use std::io::BufRead;
-use structopt::clap::arg_enum;
+use structopt::clap::{arg_enum, ArgGroup};
 
 #[derive(StructOpt, Debug)]
 enum CliArgs {
@@ -156,6 +156,7 @@ struct CommonArgs {
 }
 
 #[derive(StructOpt, Debug)]
+#[structopt(group = ArgGroup::with_name("output-mode").required(false))]
 struct AssemblerArgs {
     /// The input files
     pub input: Vec<PathBuf>,
@@ -188,12 +189,24 @@ struct AssemblerArgs {
     pub last_step: AssemblerStartingStep,
 
     /// Generate maximal unitigs connections references, in BCALM2 format L:<+/->:<other id>:<+/->
-    #[structopt(short = "e", long = "generate-maximal-unitigs-links")]
+    #[structopt(
+        short = "e",
+        long = "generate-maximal-unitigs-links",
+        group = "output-mode"
+    )]
     pub generate_maximal_unitigs_links: bool,
 
-    /// Generate matchtigs instead of maximal unitigs
-    #[structopt(short = "g", long = "greedy-matchtigs")]
+    /// Generate greedy matchtigs instead of maximal unitigs
+    #[structopt(short = "g", long = "greedy-matchtigs", group = "output-mode")]
     pub greedy_matchtigs: bool,
+
+    /// Generate eulertigs instead of maximal unitigs
+    #[structopt(long = "eulertigs", group = "output-mode")]
+    pub eulertigs: bool,
+
+    /// Generate pathtigs instead of maximal unitigs
+    #[structopt(long = "pathtigs", group = "output-mode")]
+    pub pathtigs: bool,
 
     #[structopt(flatten)]
     pub common_args: CommonArgs,
@@ -395,7 +408,15 @@ fn run_assembler_from_args(
         Some(args.number),
         args.common_args.intermediate_compression_level,
         args.generate_maximal_unitigs_links,
-        args.greedy_matchtigs,
+        if args.greedy_matchtigs {
+            Some(assembler::MatchtigMode::GreedyTigs)
+        } else if args.eulertigs {
+            Some(assembler::MatchtigMode::EulerTigs)
+        } else if args.pathtigs {
+            Some(assembler::MatchtigMode::PathTigs)
+        } else {
+            None
+        },
         args.common_args.only_bstats,
     );
 }
@@ -469,10 +490,6 @@ fn main() {
                 args.output_file.with_extension("tracing.json"),
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
-
-            if args.greedy_matchtigs && args.generate_maximal_unitigs_links {
-                println!("WARN: Unitig links are incompatible with greedy matchtigs, computing only greedy matchtigs");
-            }
 
             initialize(&args.common_args, &args.output_file);
 
