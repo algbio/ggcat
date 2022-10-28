@@ -36,7 +36,7 @@ structs = { path = "../common/structs" }
 
 
 # Matchtigs support
-matchtigs =  { git = "https://github.com/Guilucand/matchtigs.git", version = "1.4.3" }
+matchtigs = "1.5.0"
 genome-graph = {version = "5.1.0", features = ["traitgraph-algo"]}
 traitgraph-algo = {version = "5.3.0", features = ["hashbrown_dijkstra_node_weight_array"]}
 

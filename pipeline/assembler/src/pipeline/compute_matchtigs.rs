@@ -365,6 +365,14 @@ pub fn compute_matchtigs_thread<
         color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer();
 
     for walk in greedytigs.iter() {
+        // Reset the colors
+        color_types::ColorsMergeManagerType::<H, MH, CX>::reset_unitig_color_structure(
+            &mut final_unitig_color,
+        );
+        color_types::PartialUnitigsColorStructure::<H, MH, CX>::clear_temp_buffer(
+            &mut final_color_extra_buffer,
+        );
+
         let first_edge = *walk.first().unwrap();
         let first_data = graph.edge_data(first_edge);
         // print sequence of first edge forwards or reverse complemented, depending on first_data.is_forwards()
@@ -375,12 +383,26 @@ pub fn compute_matchtigs_thread<
         };
 
         read_buffer.clear();
-        // TODO: Write colors
+
         let first_sequence = handle.0.as_reference(&storage.sequences_buffer);
+
+        // Update the sequence and its colors
         if first_data.is_forwards() {
             read_buffer.extend(first_sequence.as_bases_iter());
+            CX::ColorsMergeManagerType::<H, MH>::join_structures::<false>(
+                &mut final_unitig_color,
+                &handle.1,
+                &storage.color_buffer,
+                0,
+            );
         } else {
             read_buffer.extend(first_sequence.as_reverse_complement_bases_iter());
+            CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
+                &mut final_unitig_color,
+                &handle.1,
+                &storage.color_buffer,
+                0,
+            );
         }
 
         let mut previous_data = first_data;
@@ -404,11 +426,23 @@ pub fn compute_matchtigs_thread<
 
             if edge_data.is_forwards() {
                 read_buffer.extend(next_sequence.as_bases_iter().skip(offset));
+                CX::ColorsMergeManagerType::<H, MH>::join_structures::<false>(
+                    &mut final_unitig_color,
+                    &handle.1,
+                    &storage.color_buffer,
+                    offset as u64,
+                );
             } else {
                 read_buffer.extend(
                     next_sequence
                         .as_reverse_complement_bases_iter()
                         .skip(offset),
+                );
+                CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
+                    &mut final_unitig_color,
+                    &handle.1,
+                    &storage.color_buffer,
+                    offset as u64,
                 );
             }
         }

@@ -1633,8 +1633,9 @@ checksum = "a8ca8afbe8af1785e09636acb5a41e08a765f5f0340568716c18a8700ba3c0d3"
 
 [[package]]
 name = "matchtigs"
-version = "1.4.3"
-source = "git+https://github.com/Guilucand/matchtigs.git#d0a2ebcdd1119b557908c5ea96319f737050123b"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "090d0dd3b25fd8aadf463edae8d1fb19782b7afc6318ecf4447128f36293b959"
 dependencies = [
  "atomic-counter",
  "clap 4.0.18",
