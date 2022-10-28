@@ -1633,8 +1633,8 @@ checksum = "a8ca8afbe8af1785e09636acb5a41e08a765f5f0340568716c18a8700ba3c0d3"
 
 [[package]]
 name = "matchtigs"
-version = "1.4.1"
-source = "git+https://github.com/Guilucand/matchtigs.git#575759c776b5e5cf36a8f7dc3a40e6918b1c920d"
+version = "1.4.3"
+source = "git+https://github.com/Guilucand/matchtigs.git#d0a2ebcdd1119b557908c5ea96319f737050123b"
 dependencies = [
  "atomic-counter",
  "clap 4.0.18",

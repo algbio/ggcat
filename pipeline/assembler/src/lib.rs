@@ -39,8 +39,6 @@ use std::time::Instant;
 mod pipeline;
 mod structs;
 
-extern crate parallel_processor;
-
 #[derive(PartialEq, PartialOrd)]
 pub enum AssemblerStartingStep {
     MinimizerBucketing = 0,
