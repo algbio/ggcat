@@ -152,7 +152,7 @@ pub fn reorganize_reads<
         let mut tmp_reads_buffer = BucketsThreadDispatcher::new(&buckets, buffers.take());
 
         let mut tmp_lonely_unitigs_buffer =
-            FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE);
+            FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
 
         let mut mappings = Vec::new();
 

@@ -1,6 +1,7 @@
 use crate::pipeline::maximal_unitig_links::maximal_unitig_index::DoubleMaximalUnitigLinks;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
-use colors::colors_manager::ColorsManager;
+use colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
+use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crossbeam::channel::{Receiver, Sender};
 use genome_graph::bigraph::implementation::node_bigraph_wrapper::NodeBigraphWrapper;
 use genome_graph::bigraph::interface::BidirectedData;
@@ -9,6 +10,7 @@ use genome_graph::bigraph::traitgraph::interface::ImmutableGraphContainer;
 use genome_graph::generic::{GenericEdge, GenericNode};
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
+use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{
     IdentSequenceWriter, StructuredSequenceBackend, StructuredSequenceWriter,
 };
@@ -19,6 +21,7 @@ use libmatchtigs::MatchtigEdgeData;
 use libmatchtigs::{GreedytigAlgorithm, GreedytigAlgorithmConfiguration, TigAlgorithm};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::convert::identity;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 use traitgraph_algo::dijkstra::DijkstraWeightedEdgeData;
@@ -30,6 +33,24 @@ struct SequenceHandle<ColorInfo: IdentSequenceWriter>(
     Option<Arc<StructuredUnitigsStorage<ColorInfo>>>,
     usize,
 );
+
+impl<ColorInfo: IdentSequenceWriter> SequenceHandle<ColorInfo> {
+    fn get_sequence_handle(
+        &self,
+    ) -> Option<(
+        &(
+            CompressedReadIndipendent,
+            ColorInfo,
+            DoubleMaximalUnitigLinks,
+            bool,
+        ),
+        &StructuredUnitigsStorage<ColorInfo>,
+    )> {
+        self.0
+            .as_ref()
+            .map(|s| (&s.sequences[self.1 - s.first_sequence_index], s.deref()))
+    }
+}
 
 impl<ColorInfo: IdentSequenceWriter> Default for SequenceHandle<ColorInfo> {
     fn default() -> Self {
@@ -52,9 +73,13 @@ struct UnitigEdgeData<ColorInfo: IdentSequenceWriter> {
     weight: usize,
     dummy_edge_id: usize,
 }
+
 impl<ColorInfo: IdentSequenceWriter> PartialEq for UnitigEdgeData<ColorInfo> {
     fn eq(&self, other: &Self) -> bool {
         self.sequence_handle == other.sequence_handle
+            && self.forwards == other.forwards
+            && self.weight == other.weight
+            && self.dummy_edge_id == other.dummy_edge_id
     }
 }
 
@@ -231,18 +256,16 @@ impl<ColorInfo: IdentSequenceWriter> GenericNode for UnitigEdgeData<ColorInfo> {
 
     fn is_self_complemental(&self) -> bool {
         self.sequence_handle
-            .0
-            .as_ref()
-            .map(|s| s.sequences[self.sequence_handle.1 - s.first_sequence_index].3)
+            .get_sequence_handle()
+            .map(|s| s.0 .3)
             .unwrap_or(false)
     }
 
     fn edges(&self) -> Self::EdgeIterator {
         let links = self
             .sequence_handle
-            .0
-            .as_ref()
-            .map(|r| r.sequences[self.sequence_handle.1].2.clone())
+            .get_sequence_handle()
+            .map(|h| h.0 .2.clone())
             .unwrap_or(DoubleMaximalUnitigLinks::EMPTY);
         let storage = self.sequence_handle.0.clone();
 
@@ -331,10 +354,34 @@ pub fn compute_matchtigs_thread<
         .write()
         .start_phase("phase: greedy matchtigs building [step2]".to_string());
 
+    let mut output_buffer =
+        FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
+
+    let mut read_buffer = Vec::new();
+
+    let mut final_unitig_color =
+        color_types::ColorsMergeManagerType::<H, MH, CX>::alloc_unitig_color_structure();
+    let mut final_color_extra_buffer =
+        color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer();
+
     for walk in greedytigs.iter() {
         let first_edge = *walk.first().unwrap();
         let first_data = graph.edge_data(first_edge);
         // print sequence of first edge forwards or reverse complemented, depending on first_data.is_forwards()
+
+        let (handle, storage) = match first_data.sequence_handle.get_sequence_handle() {
+            Some(handle) => handle,
+            None => continue,
+        };
+
+        read_buffer.clear();
+        // TODO: Write colors
+        let first_sequence = handle.0.as_reference(&storage.sequences_buffer);
+        if first_data.is_forwards() {
+            read_buffer.extend(first_sequence.as_bases_iter());
+        } else {
+            read_buffer.extend(first_sequence.as_reverse_complement_bases_iter());
+        }
 
         let mut previous_data = first_data;
         for edge in walk.iter().skip(1) {
@@ -345,9 +392,40 @@ pub fn compute_matchtigs_thread<
                 k - 1 - previous_data.weight()
             };
 
-            // print sequence of edge, starting from character at index offset, forwards or reverse complemented, depending on edge_data.is_forwards()
-
             previous_data = edge_data;
+
+            let (handle, storage) = match edge_data.sequence_handle.get_sequence_handle() {
+                Some(handle) => handle,
+                None => continue,
+            };
+
+            // print sequence of edge, starting from character at index offset, forwards or reverse complemented, depending on edge_data.is_forwards()
+            let next_sequence = handle.0.as_reference(&storage.sequences_buffer);
+
+            if edge_data.is_forwards() {
+                read_buffer.extend(next_sequence.as_bases_iter().skip(offset));
+            } else {
+                read_buffer.extend(
+                    next_sequence
+                        .as_reverse_complement_bases_iter()
+                        .skip(offset),
+                );
+            }
         }
+
+        let writable_color =
+            color_types::ColorsMergeManagerType::<H, MH, CX>::encode_part_unitigs_colors(
+                &mut final_unitig_color,
+                &mut final_color_extra_buffer,
+            );
+
+        output_buffer.add_read(
+            &read_buffer,
+            None,
+            writable_color,
+            &final_color_extra_buffer,
+            (),
+            &(),
+        );
     }
 }

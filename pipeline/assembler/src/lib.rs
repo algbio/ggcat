@@ -447,7 +447,7 @@ pub fn run_assembler<
 
                 let matchtigs_receiver = matchtigs_backend.get_receiver();
 
-                std::thread::Builder::new()
+                let handle = std::thread::Builder::new()
                     .name("greedy_matchtigs".to_string())
                     .spawn(move || {
                         compute_matchtigs_thread::<
@@ -459,8 +459,6 @@ pub fn run_assembler<
                             k, threads_count, matchtigs_receiver, &final_unitigs_file
                         );
                     })
-                    .unwrap()
-                    .join()
                     .unwrap();
 
                 build_maximal_unitigs_links::<
@@ -474,6 +472,8 @@ pub fn run_assembler<
                     &StructuredSequenceWriter::new(matchtigs_backend),
                     k,
                 );
+
+                handle.join().unwrap();
             } else if generate_maximal_unitigs_links {
                 final_unitigs_file.finalize();
 

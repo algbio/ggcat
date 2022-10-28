@@ -127,7 +127,7 @@ pub fn build_unitigs<
             .enumerate()
             .for_each(|(_index, (read_file, unitigs_map_file))| {
                 let mut tmp_final_unitigs_buffer =
-                    FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE);
+                    FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
 
                 assert_eq!(
                     get_bucket_index(read_file),

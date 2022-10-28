@@ -15,6 +15,7 @@ pub struct FastaWriterConcurrentBuffer<
     extra_buffers: (ColorInfo::TempBuffer, LinksInfo::TempBuffer),
     temp_buffer: Backend::SequenceTempBuffer,
     current_index: Option<u64>,
+    auto_flush: bool,
 }
 
 impl<
@@ -27,6 +28,7 @@ impl<
     pub fn new(
         target: &'a StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>,
         max_size: usize,
+        auto_flush: bool,
     ) -> Self {
         Self {
             target,
@@ -35,6 +37,7 @@ impl<
             extra_buffers: (ColorInfo::new_temp_buffer(), LinksInfo::new_temp_buffer()),
             temp_buffer: Backend::alloc_temp_buffer(),
             current_index: None,
+            auto_flush,
         }
     }
 
@@ -59,10 +62,10 @@ impl<
         first_read_index
     }
 
-    // #[inline(always)]
-    // fn will_overflow(vec: &Vec<u8>, len: usize) -> bool {
-    //     vec.len() > 0 && (vec.len() + len > vec.capacity())
-    // }
+    #[inline(always)]
+    fn will_overflow(vec: &Vec<u8>, len: usize) -> bool {
+        vec.len() > 0 && (vec.len() + len > vec.capacity())
+    }
 
     pub fn add_read(
         &mut self,
@@ -80,9 +83,9 @@ impl<
             result = Some(self.flush());
             self.current_index = Some(sequence_index);
         }
-        // else if Self::will_overflow(&self.seq_buf, sequence.len()) {
-        //     result = Some(self.flush());
-        // }
+        else if self.auto_flush && Self::will_overflow(&self.seq_buf, sequence.len()) {
+            result = Some(self.flush());
+        }
 
         let color =
             ColorInfo::copy_extra_from(color, &color_extra_buffer, &mut self.extra_buffers.0);

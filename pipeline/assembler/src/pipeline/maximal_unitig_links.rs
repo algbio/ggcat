@@ -294,8 +294,11 @@ pub fn build_maximal_unitigs_links<
             (0..rayon::current_num_threads())
                 .into_par_iter()
                 .for_each(|thread_index| {
-                    let mut tmp_final_unitigs_buffer =
-                        FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE);
+                    let mut tmp_final_unitigs_buffer = FastaWriterConcurrentBuffer::new(
+                        out_file,
+                        DEFAULT_OUTPUT_BUFFER_SIZE,
+                        false,
+                    );
 
                     let mut temp_sequence_buffer = Vec::new();
 
