@@ -3,14 +3,14 @@ use crate::colors_memmap_writer::ColorsMemMapWriter;
 use crate::DefaultColorsSerializer;
 use byteorder::ReadBytesExt;
 use config::{
-    get_memory_mode, ColorIndexType, MinimizerType, SwapPriority,
-    INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW,
+    get_compression_level_info, get_memory_mode, ColorIndexType, MinimizerType, SwapPriority,
     PARTIAL_VECS_CHECKPOINT_SIZE, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END,
 };
 use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
 use hashes::{HashFunction, HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
+use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
@@ -18,9 +18,7 @@ use io::varint::{
     decode_varint, decode_varint_flags, encode_varint, encode_varint_flags, VARINT_MAX_SIZE,
 };
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
-use parallel_processor::buckets::writers::compressed_binary_writer::{
-    CompressedBinaryWriter, CompressionLevelInfo,
-};
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::memory_fs::RemoveFileMode;
 use std::collections::VecDeque;
@@ -92,10 +90,7 @@ impl SequencesStorage {
                     &(
                         get_memory_mode(SwapPriority::KmersMergeTempColors),
                         PARTIAL_VECS_CHECKPOINT_SIZE,
-                        CompressionLevelInfo {
-                            fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
-                            slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),
-                        },
+                        get_compression_level_info(),
                     ),
                     COLOR_STORAGE_INDEX.fetch_add(1, Ordering::Relaxed),
                 ))
@@ -441,23 +436,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         }
     }
 
-    fn print_color_data(
-        colors: &Self::PartialUnitigsColorStructure,
-        colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
-        buffer: &mut impl Write,
-    ) {
-        for i in colors.slice.clone() {
-            write!(
-                buffer,
-                " C:{:x}:{}",
-                colors_buffer.colors[i].0, colors_buffer.colors[i].1
-            )
-            .unwrap();
-        }
-    }
-
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]) {
-        let sum: u64 = str.colors.iter().map(|x| x.1).sum::<u64>() + 62;
+        let sum: u64 = str.colors.iter().map(|x| x.1).sum::<u64>() + 30;
         if sum as usize != seq.len() {
             println!("Temp values: {} {}", sum as usize, seq.len());
             println!("Dbg: {:?}", str.colors);
@@ -543,5 +523,33 @@ impl SequenceExtraData for UnitigColorDataSerializer {
     #[inline(always)]
     fn max_size(&self) -> usize {
         (2 * (self.slice.end - self.slice.start) + 1) * VARINT_MAX_SIZE
+    }
+}
+
+impl IdentSequenceWriter for UnitigColorDataSerializer {
+    fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
+        for i in self.slice.clone() {
+            write!(
+                stream,
+                " C:{:x}:{}",
+                extra_buffer.colors[i].0, extra_buffer.colors[i].1
+            )
+            .unwrap();
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn write_as_gfa(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
+        todo!()
+    }
+
+    #[allow(unused_variables)]
+    fn parse_as_ident<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+        todo!()
+    }
+
+    #[allow(unused_variables)]
+    fn parse_as_gfa<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+        todo!()
     }
 }

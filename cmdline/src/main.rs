@@ -16,12 +16,12 @@ mod benchmarks;
 
 #[macro_use]
 mod utils;
-mod cmd_utils;
+// mod cmd_utils;
 
 use backtrace::Backtrace;
 use std::cmp::max;
 
-use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
+// use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
 use colors::bundles::multifile_building::ColorBundleMultifileBuilding;
 use colors::colors_manager::ColorsManager;
 use hashes::MinimizerHashFunctionFactory;
@@ -45,7 +45,8 @@ arg_enum! {
         HashesSorting = 2,
         LinksCompaction = 3,
         ReorganizeReads = 4,
-        BuildUnitigs = 5
+        BuildUnitigs = 5,
+        MaximalUnitigsLinks = 6,
     }
 }
 
@@ -82,14 +83,14 @@ use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use static_dispatch::StaticDispatch;
 use std::io::BufRead;
-use structopt::clap::arg_enum;
+use structopt::clap::{arg_enum, ArgGroup};
 
 #[derive(StructOpt, Debug)]
 enum CliArgs {
     Build(AssemblerArgs),
     Matches(MatchesArgs),
     Query(QueryArgs),
-    Utils(CmdUtilsArgs),
+    // Utils(CmdUtilsArgs),
 }
 
 #[derive(StructOpt, Debug)]
@@ -155,6 +156,7 @@ struct CommonArgs {
 }
 
 #[derive(StructOpt, Debug)]
+#[structopt(group = ArgGroup::with_name("output-mode").required(false))]
 struct AssemblerArgs {
     /// The input files
     pub input: Vec<PathBuf>,
@@ -174,7 +176,7 @@ struct AssemblerArgs {
     // /// Minimum correctness probability for each kmer (using fastq quality checks)
     // #[structopt(short = "q", long = "quality-threshold")]
     // pub quality_threshold: Option<f64>,
-    #[structopt(short = "n", long, default_value = "0")]
+    #[structopt(short = "n", long, default_value = "0", hidden = true)]
     pub number: usize,
 
     #[structopt(short = "o", long = "output-file", default_value = "output.fasta.lz4")]
@@ -185,6 +187,26 @@ struct AssemblerArgs {
 
     #[structopt(long = "last-step", default_value = "BuildUnitigs")]
     pub last_step: AssemblerStartingStep,
+
+    /// Generate maximal unitigs connections references, in BCALM2 format L:<+/->:<other id>:<+/->
+    #[structopt(
+        short = "e",
+        long = "generate-maximal-unitigs-links",
+        group = "output-mode"
+    )]
+    pub generate_maximal_unitigs_links: bool,
+
+    /// Generate greedy matchtigs instead of maximal unitigs
+    #[structopt(short = "g", long = "greedy-matchtigs", group = "output-mode")]
+    pub greedy_matchtigs: bool,
+
+    /// Generate eulertigs instead of maximal unitigs
+    #[structopt(long = "eulertigs", group = "output-mode")]
+    pub eulertigs: bool,
+
+    /// Generate pathtigs instead of maximal unitigs
+    #[structopt(long = "pathtigs", group = "output-mode")]
+    pub pathtigs: bool,
 
     #[structopt(flatten)]
     pub common_args: CommonArgs,
@@ -344,6 +366,9 @@ fn convert_assembler_step(step: AssemblerStartingStep) -> assembler::AssemblerSt
         AssemblerStartingStep::LinksCompaction => assembler::AssemblerStartingStep::LinksCompaction,
         AssemblerStartingStep::ReorganizeReads => assembler::AssemblerStartingStep::ReorganizeReads,
         AssemblerStartingStep::BuildUnitigs => assembler::AssemblerStartingStep::BuildUnitigs,
+        AssemblerStartingStep::MaximalUnitigsLinks => {
+            assembler::AssemblerStartingStep::MaximalUnitigsLinks
+        }
     }
 }
 
@@ -382,6 +407,16 @@ fn run_assembler_from_args(
         args.common_args.buckets_count_log,
         Some(args.number),
         args.common_args.intermediate_compression_level,
+        args.generate_maximal_unitigs_links,
+        if args.greedy_matchtigs {
+            Some(assembler::MatchtigMode::GreedyTigs)
+        } else if args.eulertigs {
+            Some(assembler::MatchtigMode::EulerTigs)
+        } else if args.pathtigs {
+            Some(assembler::MatchtigMode::PathTigs)
+        } else {
+            None
+        },
         args.common_args.only_bstats,
     );
 }
@@ -520,10 +555,9 @@ fn main() {
                 ),
                 args,
             )
-        }
-        CliArgs::Utils(args) => {
-            process_cmdutils(args);
-        }
+        } // CliArgs::Utils(args) => {
+          //     process_cmdutils(args);
+          // }
     }
 
     MemoryFs::terminate();

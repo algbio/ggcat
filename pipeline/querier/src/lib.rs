@@ -1,4 +1,3 @@
-#![allow(warnings)] // FIXME: Remove
 #![feature(slice_group_by)]
 #![feature(int_log)]
 #![feature(int_roundings)]
@@ -14,7 +13,7 @@ use colors::DefaultColorsSerializer;
 use config::{INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW};
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::sequences_reader::SequencesReader;
-use io::{compute_stats_from_input_files, generate_bucket_names, FilesStatsInfo};
+use io::{compute_stats_from_input_files, generate_bucket_names};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -22,7 +21,6 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 mod pipeline;
-mod sparse_fenwick;
 mod structs;
 
 #[derive(Debug, PartialOrd, PartialEq)]
@@ -150,7 +148,6 @@ pub fn run_query<
     let colored_buckets = if step <= QuerierStartingStep::CountersSorting {
         counters_sorting::<QuerierColorsManager>(
             k,
-            query_input.clone(),
             counters_buckets,
             colored_buckets_prefix,
             color_map.colors_count(),
@@ -166,13 +163,14 @@ pub fn run_query<
         let remapped_query_color_buckets = colormap_reading::<DefaultColorsSerializer>(
             colormap_file,
             colored_buckets,
-            temp_dir,
+            temp_dir.clone(),
             queries_count,
         );
 
         colored_query_output::<QuerierColorsManager>(
             remapped_query_color_buckets,
             output_file.clone(),
+            temp_dir,
             &query_kmers_count,
         );
     }

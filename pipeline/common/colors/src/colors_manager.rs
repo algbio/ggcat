@@ -3,11 +3,11 @@ use config::BucketIndexType;
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
+use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use static_dispatch::static_dispatch;
 use std::cmp::min;
 use std::hash::Hash;
-use std::io::Write;
 use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::MapEntry;
@@ -155,7 +155,7 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
     );
 
     /// Struct used to hold color information about unitigs
-    type PartialUnitigsColorStructure: SequenceExtraData + Clone + 'static;
+    type PartialUnitigsColorStructure: IdentSequenceWriter + Clone + 'static;
     /// Struct holding the result of joining multiple partial unitigs to build a final unitig
     type TempUnitigColorStructure: 'static + Send + Sync;
 
@@ -185,13 +185,6 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
         ts: &mut Self::TempUnitigColorStructure,
         colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
     ) -> Self::PartialUnitigsColorStructure;
-
-    /// Encodes the color data as ident sequence
-    fn print_color_data(
-        color: &Self::PartialUnitigsColorStructure,
-        color_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
-        buffer: &mut impl Write,
-    );
 
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]);
 }

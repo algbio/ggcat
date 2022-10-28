@@ -316,6 +316,6 @@ impl BucketItem for UnitigLink {
     }
 
     fn get_size(&self, _: &Vec<UnitigIndex>) -> usize {
-        16 + self.entries.len() * 8
+        16 + self.entries.len() * VARINT_MAX_SIZE * 2
     }
 }

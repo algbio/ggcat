@@ -1,2 +1,2 @@
-pub mod fasta_writer;
+pub mod structured_sequences;
 pub mod temp_reads;

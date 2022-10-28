@@ -1,20 +1,23 @@
 use crate::structs::query_colored_counters::{ColorsRange, QueryColoredCounters};
 use colors::colors_manager::ColorsManager;
-use config::{DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
+use config::{
+    get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    QUERIES_COUNT_MIN_BATCH,
+};
 use flate2::Compression;
 use hashbrown::HashMap;
 use io::get_bucket_index;
-use lz4::{BlockMode, BlockSize, ContentChecksum};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::{Condvar, Mutex};
 use rayon::prelude::*;
-use std::ffi::OsStr;
 use std::fs::File;
+use std::io::BufWriter;
 use std::io::Write;
-use std::io::{BufWriter, Cursor};
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -46,6 +49,7 @@ impl Write for QueryOutputFileWriter {
 pub fn colored_query_output<CX: ColorsManager>(
     mut colored_query_buckets: Vec<PathBuf>,
     output_file: PathBuf,
+    temp_dir: PathBuf,
     query_kmers_count: &[u64],
 ) {
     PHASES_TIMES_MONITOR
@@ -54,9 +58,9 @@ pub fn colored_query_output<CX: ColorsManager>(
 
     let buckets_count = colored_query_buckets.len();
 
-    // DONE: save ranges of queries divided per buckets along with ranges of colors
-    // DONE/PARTIAL: Load color ranges in the last phase and perform sparse fenwick tree updates on queries
-    // Write out the result iterating the fenwick contiguous slices one by one
+    let max_bucket_queries_count = (((query_kmers_count.len() + 1) as u64)
+        .div_ceil(QUERIES_COUNT_MIN_BATCH)
+        * QUERIES_COUNT_MIN_BATCH) as usize;
 
     static OPS_COUNT: AtomicUsize = AtomicUsize::new(0);
     static COL_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -94,9 +98,18 @@ pub fn colored_query_output<CX: ColorsManager>(
     (0..rayon::current_num_threads())
         .into_par_iter()
         .for_each(|_| {
-            while let Some(input) = buckets_channel.lock().pop() {
+
+            while let Some(input) = {
+                let mut lock = buckets_channel.lock();
+                let element = lock.pop();
+                drop(lock);
+                element
+            } {
                 // TODO: Replace hashmap with vec
-                let mut queries_results = HashMap::new();
+                let mut queries_results = vec![None; max_bucket_queries_count];
+
+                let start_query_index =
+                    get_bucket_index(&input) as usize * max_bucket_queries_count / buckets_count;
 
                 CompressedBinaryReader::new(
                     &input,
@@ -110,9 +123,28 @@ pub fn colored_query_output<CX: ColorsManager>(
                     &mut (),
                     |counters, _| {
                         for query in counters.queries {
+                            if (query.query_index as usize) < start_query_index {
+                                println!(
+                                    "Error on query index: {} on bucket {} with offset {} total queries: {}",
+                                    query.query_index,
+                                    get_bucket_index(&input),
+                                    get_bucket_index(&input) as usize * max_bucket_queries_count,
+                                    query_kmers_count.len()
+                                );
+                                continue;
+                            }
+
+                            if queries_results[query.query_index as usize - start_query_index - 1]
+                                .is_none()
+                            {
+                                queries_results
+                                    [query.query_index as usize - start_query_index - 1] =
+                                    Some(HashMap::new());
+                            }
                             let colors_map = queries_results
-                                .entry(query.query_index - 1)
-                                .or_insert_with(|| HashMap::new());
+                                [query.query_index as usize - start_query_index - 1]
+                                .as_mut()
+                                .unwrap();
 
                             assert_eq!(counters.colors.len() % 2, 0);
                             for range in counters.colors.chunks(2) {
@@ -131,41 +163,50 @@ pub fn colored_query_output<CX: ColorsManager>(
 
                 let bucket_index = get_bucket_index(input);
 
-                let mut results = queries_results.into_iter().collect::<Vec<_>>();
-                results.sort_unstable_by_key(|r| r.0);
+                let compressed_stream = CompressedBinaryWriter::new(
+                    &temp_dir.join("query-data"),
+                    &(
+                        get_memory_mode(SwapPriority::ColoredQueryBuckets),
+                        CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
+                        get_compression_level_info(),
+                    ),
+                    bucket_index as usize,
+                );
 
-                let mut queries_lock = query_output.lock();
-
-                let mut compressed_stream = lz4::EncoderBuilder::new()
-                    .level(1)
-                    .checksum(ContentChecksum::NoChecksum)
-                    .block_mode(BlockMode::Linked)
-                    .block_size(BlockSize::Max1MB)
-                    .build(Vec::new())
-                    .unwrap();
-
-                for (query, result) in results {
-                    write!(compressed_stream, "{{query_index:{}, matches:{{", query).unwrap();
+                let mut jsonline_buffer = vec![];
+                for (query, result) in queries_results
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, r)| r.map(|r| (i, r)))
+                {
+                    jsonline_buffer.clear();
+                    write!(jsonline_buffer, "{{query_index:{}, matches:{{", query).unwrap();
                     let mut query_result = result.into_iter().collect::<Vec<_>>();
                     query_result.sort_unstable_by_key(|r| r.0);
 
                     for (i, q) in query_result.into_iter().enumerate() {
                         if i != 0 {
-                            write!(compressed_stream, ",").unwrap();
+                            write!(jsonline_buffer, ",").unwrap();
                         }
                         write!(
-                            compressed_stream,
+                            jsonline_buffer,
                             "'{}': {:.2}",
                             q.0,
                             (q.1 as f64) / (query_kmers_count[query as usize] as f64)
                         )
                         .unwrap();
                     }
-                    writeln!(compressed_stream, "}}}}").unwrap();
+                    writeln!(jsonline_buffer, "}}}}").unwrap();
+                    compressed_stream.write_data(&jsonline_buffer);
                 }
 
+                let stream_path = compressed_stream.get_path();
+                compressed_stream.finalize();
+
                 let mut decompress_stream =
-                    lz4::Decoder::new(Cursor::new(compressed_stream.finish().0)).unwrap();
+                    CompressedBinaryReader::new(stream_path, RemoveFileMode::Remove { remove_fs: true }, DEFAULT_PREFETCH_AMOUNT);
+
+                let mut queries_lock = query_output.lock();
 
                 let (queries_file, query_write_index) = {
                     while queries_lock.1 != bucket_index {
@@ -174,7 +215,7 @@ pub fn colored_query_output<CX: ColorsManager>(
                     queries_lock.deref_mut()
                 };
 
-                std::io::copy(&mut decompress_stream, queries_file).unwrap();
+                std::io::copy(&mut decompress_stream.get_single_stream(), queries_file).unwrap();
 
                 *query_write_index += 1;
                 output_sync_condvar.notify_all();

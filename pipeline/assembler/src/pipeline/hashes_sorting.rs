@@ -35,7 +35,7 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
         buckets_count,
         output_dir.as_ref().join("links"),
         &(
-            get_memory_mode(SwapPriority::LinksBuckets as usize),
+            get_memory_mode(SwapPriority::LinksBuckets),
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
     ));

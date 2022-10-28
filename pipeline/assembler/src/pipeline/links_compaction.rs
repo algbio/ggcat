@@ -1,4 +1,3 @@
-use crate::pipeline::unitig_links_manager::{ThreadUnitigsLinkManager, UnitigLinksManager};
 use crate::structs::link_mapping::LinkMapping;
 use config::{
     get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
@@ -29,7 +28,7 @@ pub fn links_compaction(
     elab_index: usize,
     result_map_buckets: &Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
     final_buckets: &Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
-    links_manager: &UnitigLinksManager,
+    // links_manager: &UnitigLinksManager,
     link_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
     result_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
 ) -> (Vec<PathBuf>, u64) {
@@ -42,7 +41,7 @@ pub fn links_compaction(
             .to_path_buf()
             .join(format!("linksi{}", elab_index)),
         &(
-            get_memory_mode(SwapPriority::LinksBuckets as usize),
+            get_memory_mode(SwapPriority::LinksBuckets),
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
     ));
@@ -57,7 +56,7 @@ pub fn links_compaction(
             bucket_index,
             &final_buckets,
         );
-        let mut thread_links_manager = ThreadUnitigsLinkManager::new(links_manager, bucket_index);
+        // let mut thread_links_manager = ThreadUnitigsLinkManager::new(links_manager, bucket_index);
 
         let mut result_buffers = result_thread_buffers.get();
         let mut results_tmp =
@@ -108,6 +107,8 @@ pub fn links_compaction(
         let mut rem_links = 0;
 
         for x in vec.group_by_mut(|a, b| a.entry() == b.entry()) {
+            current_unitigs_vec.clear();
+
             let (link1, link2) =
                 if x.len() == 2 && x[0].entries.len() != 0 && x[1].entries.len() != 0 {
                     // assert_ne!(x[0].flags.is_forward(), x[1].flags.is_forward());
@@ -215,9 +216,10 @@ pub fn links_compaction(
                             let linked = entry.entries.get_slice(&last_unitigs_vec);
 
                             // Write to disk, full unitig!
+                            final_unitigs_vec.clear();
                             let entries = VecSlice::new_extend(&mut final_unitigs_vec, linked);
 
-                            thread_links_manager.notify_add_read();
+                            // thread_links_manager.notify_add_read();
 
                             final_links_tmp.add_element(
                                 &final_unitigs_vec,
@@ -261,9 +263,10 @@ pub fn links_compaction(
                         // Write to disk, full unitig!
                         let unitig_entries = entry.entries.get_slice(&last_unitigs_vec);
 
+                        final_unitigs_vec.clear();
                         let entries = VecSlice::new_extend(&mut final_unitigs_vec, unitig_entries);
 
-                        thread_links_manager.notify_add_read();
+                        // thread_links_manager.notify_add_read();
 
                         final_links_tmp.add_element(
                             &final_unitigs_vec,

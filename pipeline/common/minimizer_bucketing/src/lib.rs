@@ -11,10 +11,9 @@ use crate::queue_data::MinimizerBucketingQueueData;
 use crate::reader::MinimizerBucketingFilesReader;
 use crate::sequences_splitter::SequencesSplitter;
 use config::{
-    get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
-    INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DEFAULT, READ_INTERMEDIATE_CHUNKS_SIZE,
-    READ_INTERMEDIATE_QUEUE_MULTIPLIER,
+    get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
+    DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DEFAULT,
+    READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
 };
 use config::{MAXIMUM_SECOND_BUCKETS_COUNT, USE_SECOND_BUCKET};
 use hashes::HashableSequence;
@@ -23,9 +22,7 @@ use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use io::sequences_reader::FastaSequence;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::writers::compressed_binary_writer::{
-    CompressedBinaryWriter, CompressionLevelInfo,
-};
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::execution_manager::execution_context::{ExecutionContext, PoolAllocMode};
 use parallel_processor::execution_manager::executor::{
@@ -412,10 +409,7 @@ impl GenericMinimizerBucketing {
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
                 MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-                CompressionLevelInfo {
-                    fast_disk: INTERMEDIATE_COMPRESSION_LEVEL_FAST.load(Ordering::Relaxed),
-                    slow_disk: INTERMEDIATE_COMPRESSION_LEVEL_SLOW.load(Ordering::Relaxed),
-                },
+                get_compression_level_info(),
             ),
         ));
 

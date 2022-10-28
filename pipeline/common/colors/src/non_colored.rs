@@ -6,6 +6,7 @@ use config::BucketIndexType;
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
+use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use static_dispatch::static_dispatch;
 use std::io::{Read, Write};
@@ -83,6 +84,22 @@ impl MinimizerBucketingSeqColorData for NonColoredManager {
 impl ColorsParser for NonColoredManager {
     type SingleKmerColorDataType = NonColoredManager;
     type MinimizerBucketingSeqColorDataType = NonColoredManager;
+}
+
+impl IdentSequenceWriter for NonColoredManager {
+    #[inline(always)]
+    fn write_as_ident(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
+    #[inline(always)]
+    fn write_as_gfa(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
+
+    #[inline(always)]
+    fn parse_as_ident<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+        Some(NonColoredManager)
+    }
+    #[inline(always)]
+    fn parse_as_gfa<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+        Some(NonColoredManager)
+    }
 }
 
 impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManager<H, MH>
@@ -198,13 +215,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         _colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
     ) -> Self::PartialUnitigsColorStructure {
         NonColoredManager
-    }
-
-    fn print_color_data(
-        _data: &Self::PartialUnitigsColorStructure,
-        _colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
-        _buffer: &mut impl Write,
-    ) {
     }
 
     fn debug_tucs(_str: &Self::TempUnitigColorStructure, _seq: &[u8]) {}

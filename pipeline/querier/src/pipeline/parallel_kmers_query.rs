@@ -6,7 +6,7 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use colors::colors_manager::color_types::{
     MinimizerBucketingSeqColorDataType, SingleKmerColorDataType,
 };
-use colors::colors_manager::{color_types, ColorsManager, MinimizerBucketingSeqColorData};
+use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use config::{
     get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
     MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,

@@ -32,6 +32,10 @@ impl<T> VecSlice<T> {
         self.len
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = usize> {
+        (self.pos..self.pos + self.len).into_iter()
+    }
+
     pub fn get_slice<'a>(&self, vec: &'a Vec<T>) -> &'a [T] {
         &vec[self.pos..self.pos + self.len]
     }

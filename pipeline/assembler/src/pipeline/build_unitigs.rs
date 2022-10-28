@@ -1,19 +1,16 @@
 use crate::pipeline::reorganize_reads::ReorganizedReadsExtraData;
-use crate::pipeline::unitig_links_manager::UnitigLinksManager;
+use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::{color_types, ColorsManager};
 use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
-use io::concurrent::fasta_writer::FastaWriterConcurrentBuffer;
+use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
+use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
-use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
-};
+use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::get_bucket_index;
-use io::reads_writer::ReadsWriter;
-use io::sequences_reader::FastaSequence;
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
 use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
@@ -21,9 +18,7 @@ use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinar
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parking_lot::Mutex;
 use rayon::prelude::*;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -61,43 +56,43 @@ impl FastaCompatibleRead for [u8] {
     }
 }
 
-#[allow(unused_variables)]
-pub fn write_fasta_entry<
-    H: MinimizerHashFunctionFactory,
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-    R: FastaCompatibleRead + ?Sized,
-    // I: Iterator<Item = (bool, bool, usize)>,
->(
-    temp_buffer: &mut Vec<u8>,
-    writer: &mut FastaWriterConcurrentBuffer,
-    color: color_types::PartialUnitigsColorStructure<H, MH, CX>,
-    color_buffer: &<color_types::PartialUnitigsColorStructure<H, MH, CX> as SequenceExtraData>::TempBuffer,
-    read: &R,
-    index: usize,
-    // links_iterator: I,
-) {
-    // KC:i:{} km:f:
-    temp_buffer.clear();
-    write!(temp_buffer, ">{} LN:i:{}", index, read.get_length()).unwrap();
-
-    CX::ColorsMergeManagerType::<H, MH>::print_color_data(&color, color_buffer, temp_buffer);
-
-    let ident_buffer_size = temp_buffer.len();
-
-    let int_data = read.write_unpacked_to_buffer(temp_buffer);
-    let read_slice = read.as_slice_from_buffer(temp_buffer, int_data);
-
-    writer.add_read(FastaSequence {
-        ident: &temp_buffer[..ident_buffer_size],
-        seq: read_slice,
-        qual: None,
-    });
-}
+// #[allow(unused_variables)]
+// pub fn write_fasta_entry<
+//     H: MinimizerHashFunctionFactory,
+//     MH: HashFunctionFactory,
+//     CX: ColorsManager,
+//     R: FastaCompatibleRead + ?Sized,
+//     // I: Iterator<Item = (bool, bool, usize)>,
+// >(
+//     temp_buffer: &mut Vec<u8>,
+//     writer: &mut FastaWriterConcurrentBuffer,
+//     color: color_types::PartialUnitigsColorStructure<H, MH, CX>,
+//     color_buffer: &<color_types::PartialUnitigsColorStructure<H, MH, CX> as SequenceExtraData>::TempBuffer,
+//     read: &R,
+//     index: usize,
+//     // links_iterator: I,
+// ) {
+//     // KC:i:{} km:f:
+//     temp_buffer.clear();
+//     write!(temp_buffer, ">{} LN:i:{}", index, read.get_length()).unwrap();
+//
+//     CX::ColorsMergeManagerType::<H, MH>::print_color_data(&color, color_buffer, temp_buffer);
+//
+//     let ident_buffer_size = temp_buffer.len();
+//
+//     let int_data = read.write_unpacked_to_buffer(temp_buffer);
+//     let read_slice = read.as_slice_from_buffer(temp_buffer, int_data);
+//
+//     writer.add_read(FastaSequence {
+//         ident: &temp_buffer[..ident_buffer_size],
+//         seq: read_slice,
+//         qual: None,
+//     });
+// }
 
 type CompressedReadsHelperUnitigsBuilding<'a, H, MH, CX> = CompressedReadsBucketHelper<
     'a,
-    ReorganizedReadsExtraData<color_types::PartialUnitigsColorStructure<H, MH, CX>>,
+    ReorganizedReadsExtraData<PartialUnitigsColorStructure<H, MH, CX>>,
     typenum::U0,
     false,
 >;
@@ -106,13 +101,13 @@ pub fn build_unitigs<
     H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
+    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<H, MH, CX>, ()>,
 >(
     mut read_buckets_files: Vec<PathBuf>,
     mut unitig_map_files: Vec<PathBuf>,
     _temp_path: &Path,
-    out_file: &Mutex<ReadsWriter>,
+    out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<H, MH, CX>, (), BK>,
     k: usize,
-    links_manager: &UnitigLinksManager,
 ) {
     PHASES_TIMES_MONITOR
         .write()
@@ -132,7 +127,7 @@ pub fn build_unitigs<
             .enumerate()
             .for_each(|(_index, (read_file, unitigs_map_file))| {
                 let mut tmp_final_unitigs_buffer =
-                    FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_OUTPUT_BUFFER_SIZE);
+                    FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
 
                 assert_eq!(
                     get_bucket_index(read_file),
@@ -244,8 +239,6 @@ pub fn build_unitigs<
                 );
 
                 let mut temp_sequence = Vec::new();
-                let mut ident_buffer = Vec::new();
-                let mut unitig_index = 0;
 
                 let mut final_unitig_color =
                     CX::ColorsMergeManagerType::<H, MH>::alloc_unitig_color_structure();
@@ -336,15 +329,23 @@ pub fn build_unitigs<
                             &mut final_color_extra_buffer,
                         );
 
-                    write_fasta_entry::<H, MH, CX, _>(
-                        &mut ident_buffer,
-                        &mut tmp_final_unitigs_buffer,
+                    tmp_final_unitigs_buffer.add_read(
+                        temp_sequence.as_slice(),
+                        None,
                         writable_color,
                         &final_color_extra_buffer,
-                        temp_sequence.as_slice(),
-                        links_manager.get_unitig_index(bucket_index, unitig_index),
+                        (),
+                        &(),
                     );
-                    unitig_index += 1;
+
+                    // write_fasta_entry::<H, MH, CX, _>(
+                    //     &mut ident_buffer,
+                    //     &mut tmp_final_unitigs_buffer,
+                    //     writable_color,
+                    //     &final_color_extra_buffer,
+                    //     temp_sequence.as_slice(),
+                    //     links_manager.get_unitig_index(bucket_index, unitig_index),
+                    // );
                 }
 
                 // ReorganizedReadsExtraData::<
