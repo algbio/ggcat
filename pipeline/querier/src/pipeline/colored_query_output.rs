@@ -105,7 +105,6 @@ pub fn colored_query_output<CX: ColorsManager>(
                 drop(lock);
                 element
             } {
-                // TODO: Replace hashmap with vec
                 let mut queries_results = vec![None; max_bucket_queries_count];
 
                 let start_query_index =
@@ -180,7 +179,7 @@ pub fn colored_query_output<CX: ColorsManager>(
                     .filter_map(|(i, r)| r.map(|r| (i, r)))
                 {
                     jsonline_buffer.clear();
-                    write!(jsonline_buffer, "{{query_index:{}, matches:{{", query).unwrap();
+                    write!(jsonline_buffer, "{{query_index:{}, matches:{{", query + start_query_index).unwrap();
                     let mut query_result = result.into_iter().collect::<Vec<_>>();
                     query_result.sort_unstable_by_key(|r| r.0);
 
