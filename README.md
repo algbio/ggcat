@@ -178,7 +178,7 @@ If you use a matchtigs/eulertigs output, please also cite the following articles
 Sebastian Schmidt, Shahbaz Khan, Jarno Alanko, Alexandru I. Tomescu
 bioRxiv 2021.12.15.472871; doi: https://doi.org/10.1101/2021.12.15.472871
 
-#### [Eulertigs](https://doi.org/10.1101/2021.12.15.472871)
+#### [Eulertigs](https://doi.org/10.4230/LIPIcs.WABI.2022.2)
 > Eulertigs: minimum plain text representation of k-mer sets without repetitions in linear time
 Sebastian Schmidt and Jarno N. Alanko
 WABI 2022. [10.4230/LIPIcs.WABI.2022.2](https://doi.org/10.4230/LIPIcs.WABI.2022.2).
