@@ -176,10 +176,10 @@ pub fn colored_query_output<CX: ColorsManager>(
                 for (query, result) in queries_results
                     .into_iter()
                     .enumerate()
-                    .filter_map(|(i, r)| r.map(|r| (i, r)))
+                    .filter_map(|(i, r)| r.map(|r| (i + start_query_index, r)))
                 {
                     jsonline_buffer.clear();
-                    write!(jsonline_buffer, "{{query_index:{}, matches:{{", query + start_query_index).unwrap();
+                    write!(jsonline_buffer, "{{query_index:{}, matches:{{", query).unwrap();
                     let mut query_result = result.into_iter().collect::<Vec<_>>();
                     query_result.sort_unstable_by_key(|r| r.0);
 
