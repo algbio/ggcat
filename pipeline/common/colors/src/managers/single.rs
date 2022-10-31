@@ -37,7 +37,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     }
 
     fn open_colors_table(path: impl AsRef<Path>) -> Self::GlobalColorsTableReader {
-        ColorsDeserializer::new(path)
+        ColorsDeserializer::new(path, true)
     }
 
     fn print_color_stats(_global_colors_table: &Self::GlobalColorsTableWriter) {}

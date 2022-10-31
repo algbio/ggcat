@@ -48,8 +48,11 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
         BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
     });
 
+    let tlocal_colormap_decoder =
+        ScopedThreadLocal::new(move || ColorsDeserializer::<CD>::new(&colormap_file, false));
+
     colored_query_buckets.par_iter().for_each(|input| {
-        let mut colormap_decoder = ColorsDeserializer::<CD>::new(&colormap_file);
+        let mut colormap_decoder = tlocal_colormap_decoder.get();
         let mut temp_colors_buffer = Vec::new();
         let mut temp_queries_buffer = Vec::new();
         let mut temp_encoded_buffer = Vec::new();
