@@ -180,5 +180,5 @@ bioRxiv 2021.12.15.472871; doi: https://doi.org/10.1101/2021.12.15.472871
 
 #### [Eulertigs](https://doi.org/10.1101/2021.12.15.472871)
 > Eulertigs: minimum plain text representation of k-mer sets without repetitions in linear time
-Sebastian Schmidt, Jarno N. Alanko
-bioRxiv 2022.05.17.492399; doi: https://doi.org/10.1101/2022.05.17.492399
+Sebastian Schmidt and Jarno N. Alanko
+WABI 2022. [10.4230/LIPIcs.WABI.2022.2](https://doi.org/10.4230/LIPIcs.WABI.2022.2).
