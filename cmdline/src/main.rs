@@ -519,7 +519,7 @@ fn main() {
         CliArgs::Matches(args) => {
             let colors_file = args.input_file.with_extension("colors.dat");
             let mut colors_deserializer =
-                ColorsDeserializer::<DefaultColorsSerializer>::new(colors_file);
+                ColorsDeserializer::<DefaultColorsSerializer>::new(colors_file, true);
 
             let mut colors = Vec::new();
 

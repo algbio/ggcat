@@ -25,7 +25,7 @@ unsafe impl<DS: ColorsSerializerTrait> Sync for ColorsDeserializer<DS> {}
 unsafe impl<DS: ColorsSerializerTrait> Send for ColorsDeserializer<DS> {}
 
 impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
-    pub fn new(file: impl AsRef<Path>) -> Self {
+    pub fn new(file: impl AsRef<Path>, read_color_names: bool) -> Self {
         let mut file = File::open(file).unwrap();
 
         let mut header_buffer = [0; ColorsFileHeader::SIZE];
@@ -34,15 +34,15 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
         let header: ColorsFileHeader = ColorsFileHeader::deserialize_from(&header_buffer);
         assert_eq!(header.magic, DS::MAGIC);
 
-        // println!("Colors header: {:#?}", &header);
-
-        let color_names = {
+        let color_names = if read_color_names {
             let mut compressed_stream = lz4::Decoder::new(BufReader::new(file)).unwrap();
 
             let color_names: Vec<String> =
                 bincode::deserialize_from(&mut compressed_stream).unwrap();
             file = compressed_stream.finish().0.into_inner();
             color_names
+        } else {
+            Vec::new()
         };
 
         let colors_index: ColorsIndexMap = {

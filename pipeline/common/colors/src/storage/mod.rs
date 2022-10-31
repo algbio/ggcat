@@ -7,7 +7,7 @@ pub mod roaring;
 pub mod run_length;
 pub mod serializer;
 
-pub trait ColorsSerializerTrait {
+pub trait ColorsSerializerTrait: 'static {
     const MAGIC: [u8; 16];
 
     fn decode_color(reader: impl Read, out_vec: Option<&mut Vec<ColorIndexType>>);
