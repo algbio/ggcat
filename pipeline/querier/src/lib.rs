@@ -150,7 +150,7 @@ pub fn run_query<
             k,
             counters_buckets,
             colored_buckets_prefix,
-            color_map.colors_count(),
+            color_map.colors_subsets_count(),
             output_file.clone(),
             &query_kmers_count,
         )
@@ -167,7 +167,8 @@ pub fn run_query<
             queries_count,
         );
 
-        colored_query_output::<QuerierColorsManager>(
+        colored_query_output::<BucketingHash, MergingHash, QuerierColorsManager>(
+            &color_map,
             remapped_query_color_buckets,
             output_file.clone(),
             temp_dir,

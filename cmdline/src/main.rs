@@ -23,7 +23,7 @@ use std::cmp::max;
 
 // use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
 use colors::bundles::multifile_building::ColorBundleMultifileBuilding;
-use colors::colors_manager::ColorsManager;
+use colors::colors_manager::{ColorMapReader, ColorsManager};
 use hashes::MinimizerHashFunctionFactory;
 use parallel_processor::enable_counters_logging;
 use parallel_processor::memory_data_size::MemoryDataSize;
@@ -98,8 +98,8 @@ struct MatchesArgs {
     /// Input fasta file with associated colors file (in the same folder)
     input_file: PathBuf,
 
-    /// Debug print matches of a color index
-    match_color: ColorIndexType,
+    /// Debug print matches of a color index (in hexadecimal)
+    match_color: String,
 }
 
 #[derive(StructOpt, Debug)]
@@ -523,10 +523,16 @@ fn main() {
 
             let mut colors = Vec::new();
 
-            colors_deserializer.get_color_mappings(args.match_color, &mut colors);
+            let color = ColorIndexType::from_str_radix(&args.match_color, 16)
+                .expect("Invalid color, please use hex format");
+            colors_deserializer.get_color_mappings(color, &mut colors);
 
             for color in colors {
-                println!("MATCHES: {}", color);
+                println!(
+                    "MATCHES: {} => {}",
+                    color,
+                    colors_deserializer.get_color_name(color)
+                );
             }
             return; // Skip final memory deallocation
         }

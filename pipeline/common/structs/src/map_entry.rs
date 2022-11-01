@@ -2,12 +2,12 @@ use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use std::cell::Cell;
 use std::mem::size_of;
 
-const USED_MARKER: usize = usize::MAX >> FLAGS_COUNT;
 const FLAGS_COUNT: usize = 2;
 const FLAGS_SHIFT: usize = size_of::<usize>() * 8 - FLAGS_COUNT;
-const COUNTER_MASK: usize = (1 << FLAGS_SHIFT) - 1;
+const USED_MARKER: usize = 1 << (FLAGS_SHIFT - 1);
+const COUNTER_MASK: usize = (1 << (FLAGS_SHIFT - 1)) - 1;
 
-pub const COUNTER_BITS: usize = FLAGS_SHIFT;
+pub const COUNTER_BITS: usize = FLAGS_SHIFT - 1;
 
 pub struct MapEntry<CHI> {
     count_flags: Cell<usize>,

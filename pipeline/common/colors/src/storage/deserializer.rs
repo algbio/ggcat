@@ -127,7 +127,11 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
 }
 
 impl<DS: ColorsSerializerTrait> ColorMapReader for ColorsDeserializer<DS> {
-    fn colors_count(&self) -> u64 {
+    fn get_color_name(&self, index: ColorIndexType) -> &str {
+        &self.color_names[index as usize]
+    }
+
+    fn colors_subsets_count(&self) -> u64 {
         self.colors_index.subsets_count as u64
     }
 }

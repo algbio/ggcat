@@ -374,6 +374,13 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                     &mut self.temp_color_buffer,
                 );
 
+            // CX::ColorsMergeManagerType::<H, MH>::debug_colors(
+            //     &colors,
+            //     &self.temp_color_buffer,
+            //     out_seq,
+            //     &map_struct.rhash_map,
+            // );
+
             let read_index = current_bucket.add_read(colors, out_seq, &self.temp_color_buffer);
 
             color_types::PartialUnitigsColorStructure::<H, MH, CX>::clear_temp_buffer(

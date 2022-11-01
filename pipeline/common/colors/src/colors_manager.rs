@@ -1,5 +1,5 @@
 use crate::parsers::SingleSequenceInfo;
-use config::BucketIndexType;
+use config::{BucketIndexType, ColorIndexType};
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
@@ -65,11 +65,16 @@ pub trait MinimizerBucketingSeqColorData:
 }
 
 pub trait ColorMapReader {
-    fn colors_count(&self) -> u64;
+    fn get_color_name(&self, index: ColorIndexType) -> &str;
+    fn colors_subsets_count(&self) -> u64;
 }
 
 impl ColorMapReader for () {
-    fn colors_count(&self) -> u64 {
+    fn get_color_name(&self, _index: ColorIndexType) -> &str {
+        ""
+    }
+
+    fn colors_subsets_count(&self) -> u64 {
         0
     }
 }
@@ -187,6 +192,12 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
     ) -> Self::PartialUnitigsColorStructure;
 
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]);
+    fn debug_colors(
+        color: &Self::PartialUnitigsColorStructure,
+        colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
+        seq: &[u8],
+        hmap: &HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+    );
 }
 
 #[static_dispatch]

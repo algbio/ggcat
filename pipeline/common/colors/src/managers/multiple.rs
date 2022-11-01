@@ -9,7 +9,7 @@ use config::{
 use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
 use hashes::{HashFunction, HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
-use io::compressed_read::CompressedRead;
+use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
@@ -360,10 +360,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
 
         if let Some(back_ts) = ts.colors.back_mut() && back_ts.0 == kmer_color {
-                    back_ts.1 += 1;
-            } else {
-                ts.colors.push_back((kmer_color, 1));
-            }
+            back_ts.1 += 1;
+        } else {
+            ts.colors.push_back((kmer_color, 1));
+        }
     }
 
     fn extend_backward(
@@ -373,11 +373,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
 
         if let Some(front_ts) = ts.colors.front_mut()
-                && front_ts.0 == kmer_color {
-                front_ts.1 += 1;
-            } else {
-                ts.colors.push_front((kmer_color, 1));
-            }
+            && front_ts.0 == kmer_color {
+            front_ts.1 += 1;
+        } else {
+            ts.colors.push_front((kmer_color, 1));
+        }
     }
 
     fn join_structures<const REVERSE: bool>(
@@ -388,9 +388,9 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     ) {
         let get_index = |i| {
             if REVERSE {
-                src.slice.start + i
-            } else {
                 src.slice.end - i - 1
+            } else {
+                src.slice.start + i
             }
         };
 
@@ -442,6 +442,53 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             println!("Temp values: {} {}", sum as usize, seq.len());
             println!("Dbg: {:?}", str.colors);
             assert_eq!(sum as usize, seq.len());
+        }
+    }
+
+    fn debug_colors(
+        color: &Self::PartialUnitigsColorStructure,
+        colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
+        seq: &[u8],
+        hmap: &HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+    ) {
+        let mut storage = vec![];
+        let rind = CompressedReadIndipendent::from_plain(seq, &mut storage);
+        let read = rind.as_reference(&storage);
+
+        let hashes = MH::new(read, 31);
+
+        let subslice = &colors_buffer.colors[color.slice.clone()];
+
+        for (hash, color) in hashes.iter().zip(
+            subslice
+                .iter()
+                .map(|x| (0..x.1).into_iter().map(|_| x.0))
+                .flatten(),
+        ) {
+            let entry = hmap.get(&hash.to_unextendable()).unwrap();
+            let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
+            if kmer_color != color {
+                let hashes = MH::new(read, 31);
+                println!(
+                    "Err: {:?}",
+                    hashes
+                        .iter()
+                        .map(|h| {
+                            let entry = hmap.get(&h.to_unextendable()).unwrap();
+                            let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
+                            kmer_color
+                        })
+                        .zip(
+                            subslice
+                                .iter()
+                                .map(|x| (0..x.1).into_iter().map(|_| x.0))
+                                .flatten()
+                        )
+                        .collect::<Vec<_>>()
+                );
+
+                assert_eq!(kmer_color, color);
+            }
         }
     }
 }

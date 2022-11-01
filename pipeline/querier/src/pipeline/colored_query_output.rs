@@ -1,11 +1,13 @@
 use crate::structs::query_colored_counters::{ColorsRange, QueryColoredCounters};
-use colors::colors_manager::ColorsManager;
+use colors::colors_manager::ColorMapReader;
+use colors::colors_manager::{ColorsManager, ColorsMergeManager};
 use config::{
     get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
     QUERIES_COUNT_MIN_BATCH,
 };
 use flate2::Compression;
 use hashbrown::HashMap;
+use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::get_bucket_index;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
@@ -46,7 +48,12 @@ impl Write for QueryOutputFileWriter {
     }
 }
 
-pub fn colored_query_output<CX: ColorsManager>(
+pub fn colored_query_output<
+    H: MinimizerHashFunctionFactory,
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+>(
+    colormap: &<CX::ColorsMergeManagerType<H, MH> as ColorsMergeManager<H, MH>>::GlobalColorsTableReader,
     mut colored_query_buckets: Vec<PathBuf>,
     output_file: PathBuf,
     temp_dir: PathBuf,
@@ -190,7 +197,7 @@ pub fn colored_query_output<CX: ColorsManager>(
                         write!(
                             jsonline_buffer,
                             "'{}': {:.2}",
-                            q.0,
+                            colormap.get_color_name(q.0),
                             (q.1 as f64) / (query_kmers_count[query as usize] as f64)
                         )
                         .unwrap();
