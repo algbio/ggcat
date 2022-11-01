@@ -33,20 +33,25 @@ const SEQ_LETTERS_MAPPING: [u8; 256] = {
     lookup
 };
 
-pub struct SequencesReader {}
+pub struct SequencesReader {
+    lines_reader: LinesReader,
+}
 
 impl SequencesReader {
+    pub fn new() -> Self {
+        Self {
+            lines_reader: LinesReader::new(),
+        }
+    }
+
     fn normalize_sequence(seq: &mut [u8]) {
         for el in seq.iter_mut() {
             *el = SEQ_LETTERS_MAPPING[*el as usize];
         }
     }
 
-    pub fn new() -> Self {
-        Self {}
-    }
-
     pub fn process_file_extended<F: FnMut(FastaSequence)>(
+        &mut self,
         source: impl AsRef<Path>,
         func: F,
         line_split_copyback: Option<usize>,
@@ -80,16 +85,17 @@ impl SequencesReader {
             ),
             Some(ftype) => match ftype {
                 FileType::Fasta => {
-                    Self::process_fasta(source, func, line_split_copyback, copy_ident, remove_file);
+                    self.process_fasta(source, func, line_split_copyback, copy_ident, remove_file);
                 }
                 FileType::Fastq => {
-                    Self::process_fastq(source, func, false, remove_file);
+                    self.process_fastq(source, func, false, remove_file);
                 }
             },
         }
     }
 
     fn process_fasta(
+        &mut self,
         source: impl AsRef<Path>,
         mut func: impl FnMut(FastaSequence),
         line_split_copyback: Option<usize>,
@@ -106,7 +112,7 @@ impl SequencesReader {
             line_split_copyback.unwrap_or(0) * 2,
         );
 
-        LinesReader::process_lines(
+        self.lines_reader.process_lines(
             source,
             |line: &[u8], partial, finished| {
                 if on_comment {
@@ -163,6 +169,7 @@ impl SequencesReader {
     }
 
     fn process_fastq(
+        &mut self,
         source: impl AsRef<Path>,
         mut func: impl FnMut(FastaSequence),
         get_quality: bool,
@@ -173,7 +180,7 @@ impl SequencesReader {
 
         let mut intermediate = [Vec::new(), Vec::new(), Vec::new()];
 
-        LinesReader::process_lines(
+        self.lines_reader.process_lines(
             source,
             |line: &[u8], partial, finished| {
                 if unlikely(finished) {

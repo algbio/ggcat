@@ -7,7 +7,9 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-pub struct LinesReader {}
+pub struct LinesReader {
+    buffer: Vec<u8>,
+}
 
 static COUNTER_THREADS_BUSY_READING: AtomicCounter<SumMode> =
     declare_counter_i64!("line_reading_threads", SumMode, false);
@@ -21,15 +23,21 @@ static COUNTER_THREADS_READ_BYTES_AVG: AtomicCounter<AvgMode> =
     declare_avg_counter_i64!("line_read_bytes_avg", false);
 
 impl LinesReader {
+    pub(crate) fn new() -> Self {
+        Self {
+            buffer: vec![0; DEFAULT_OUTPUT_BUFFER_SIZE],
+        }
+    }
+
     #[inline(always)]
     fn read_stream_buffered(
+        &mut self,
         mut stream: impl Read,
         mut callback: impl FnMut(&[u8]),
     ) -> Result<(), ()> {
-        let mut buffer = vec![0; DEFAULT_OUTPUT_BUFFER_SIZE];
         COUNTER_THREADS_BUSY_READING.inc();
 
-        while let Ok(count) = stream.read(buffer.as_mut_slice()) {
+        while let Ok(count) = stream.read(self.buffer.as_mut_slice()) {
             COUNTER_THREADS_READ_BYTES.inc_by(count as i64);
             COUNTER_THREADS_READ_BYTES_AVG.add_value(count as i64);
             COUNTER_THREADS_BUSY_READING.sub(1);
@@ -40,14 +48,19 @@ impl LinesReader {
                 return Ok(());
             }
             COUNTER_THREADS_PROCESSING_READS.inc();
-            callback(&buffer[0..count]);
+            callback(&self.buffer[0..count]);
             COUNTER_THREADS_PROCESSING_READS.sub(1);
             COUNTER_THREADS_BUSY_READING.inc();
         }
         Err(())
     }
 
-    fn read_binary_file(path: impl AsRef<Path>, mut callback: impl FnMut(&[u8]), remove: bool) {
+    fn read_binary_file(
+        &mut self,
+        path: impl AsRef<Path>,
+        mut callback: impl FnMut(&[u8]),
+        remove: bool,
+    ) {
         if path.as_ref().extension().filter(|x| *x == "gz").is_some() {
             if let Err(_err) = decompress_file_buffered(
                 &path,
@@ -68,21 +81,23 @@ impl LinesReader {
                 File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display())),
             )
             .unwrap();
-            Self::read_stream_buffered(file, callback).unwrap_or_else(|_| {
-                println!(
-                    "WARNING: Error while reading file {}",
-                    path.as_ref().display()
-                );
-            });
+            self.read_stream_buffered(file, callback)
+                .unwrap_or_else(|_| {
+                    println!(
+                        "WARNING: Error while reading file {}",
+                        path.as_ref().display()
+                    );
+                });
         } else {
             let file =
                 File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display()));
-            Self::read_stream_buffered(file, callback).unwrap_or_else(|_| {
-                println!(
-                    "WARNING: Error while reading file {}",
-                    path.as_ref().display()
-                );
-            });
+            self.read_stream_buffered(file, callback)
+                .unwrap_or_else(|_| {
+                    println!(
+                        "WARNING: Error while reading file {}",
+                        path.as_ref().display()
+                    );
+                });
         }
 
         if remove {
@@ -120,6 +135,7 @@ impl LinesReader {
     }
 
     pub fn process_lines(
+        &mut self,
         file: impl AsRef<Path>,
         mut callback: impl FnMut(
             &[u8],
@@ -130,7 +146,7 @@ impl LinesReader {
     ) {
         let mut line_pending = false;
 
-        Self::read_binary_file(
+        self.read_binary_file(
             file.as_ref(),
             |mut buffer: &[u8]| {
                 // File finished

@@ -133,7 +133,7 @@ pub fn run_query<
 
     let query_kmers_count = {
         let mut sequences_lengths = vec![];
-        SequencesReader::process_file_extended(
+        SequencesReader::new().process_file_extended(
             &query_input,
             |seq| {
                 sequences_lengths.push((seq.seq.len() - k + 1) as u64);
