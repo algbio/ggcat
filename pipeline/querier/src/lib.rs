@@ -188,5 +188,17 @@ pub fn run_query<
         .write()
         .print_stats("Query completed.".to_string());
 
-    println!("Final output saved to: {}", output_file_prefix.display());
+    println!(
+        "Final output saved to: {}",
+        if output_file_prefix.extension().is_none() {
+            if QuerierColorsManager::COLORS_ENABLED {
+                output_file_prefix.with_extension("jsonl")
+            } else {
+                output_file_prefix.with_extension("csv")
+            }
+        } else {
+            output_file_prefix
+        }
+        .display()
+    );
 }

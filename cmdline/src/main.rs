@@ -608,7 +608,7 @@ fn main() {
             let colors_deserializer =
                 ColorsDeserializer::<DefaultColorsSerializer>::new(args.input_colormap, true);
 
-            let output_file_name = args.output_file.with_extension(".jsonl");
+            let output_file_name = args.output_file.with_extension("jsonl");
 
             let mut output_file = BufWriter::new(File::create(&output_file_name).unwrap());
 
