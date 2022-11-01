@@ -482,7 +482,7 @@ fn run_querier_from_args(
         args.common_args.intermediate_compression_level,
         convert_colored_query_format(
             args.colored_query_output_format
-                .unwrap_or(ColoredQueryOutputFormat::JsonLinesWithNames),
+                .unwrap_or(ColoredQueryOutputFormat::JsonLinesWithNumbers),
         ),
     );
 }
@@ -613,7 +613,7 @@ fn main() {
             let mut output_file = BufWriter::new(File::create(&output_file_name).unwrap());
 
             for color_idx in 0..colors_deserializer.colors_count() {
-                write!(
+                writeln!(
                     output_file,
                     "{{query_index:{}, matches:\"{}\" }}",
                     color_idx,
