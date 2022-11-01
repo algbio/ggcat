@@ -31,6 +31,12 @@ pub enum QuerierStartingStep {
     ColorMapReading = 3,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ColoredQueryOutputFormat {
+    JsonLinesWithNumbers,
+    JsonLinesWithNames,
+}
+
 #[static_dispatch(BucketingHash = [
     hashes::cn_nthash::CanonicalNtHashIteratorFactory,
     #[cfg(not(feature = "devel-build"))]  hashes::fw_nthash::ForwardNtHashIteratorFactory
@@ -63,11 +69,12 @@ pub fn run_query<
     step: QuerierStartingStep,
     graph_input: PathBuf,
     query_input: PathBuf,
-    output_file: PathBuf,
+    output_file_prefix: PathBuf,
     temp_dir: PathBuf,
     buckets_count_log: Option<usize>,
     threads_count: usize,
     default_compression_level: Option<u32>,
+    colored_query_output_format: ColoredQueryOutputFormat,
 ) {
     PHASES_TIMES_MONITOR.write().init();
 
@@ -151,7 +158,7 @@ pub fn run_query<
             counters_buckets,
             colored_buckets_prefix,
             color_map.colors_subsets_count(),
-            output_file.clone(),
+            output_file_prefix.clone(),
             &query_kmers_count,
         )
     } else {
@@ -170,9 +177,10 @@ pub fn run_query<
         colored_query_output::<BucketingHash, MergingHash, QuerierColorsManager>(
             &color_map,
             remapped_query_color_buckets,
-            output_file.clone(),
+            output_file_prefix.clone(),
             temp_dir,
             &query_kmers_count,
+            colored_query_output_format,
         );
     }
 
@@ -180,5 +188,5 @@ pub fn run_query<
         .write()
         .print_stats("Query completed.".to_string());
 
-    println!("Final output saved to: {}", output_file.display());
+    println!("Final output saved to: {}", output_file_prefix.display());
 }

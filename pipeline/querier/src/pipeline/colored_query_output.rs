@@ -1,4 +1,5 @@
 use crate::structs::query_colored_counters::{ColorsRange, QueryColoredCounters};
+use crate::ColoredQueryOutputFormat;
 use colors::colors_manager::ColorMapReader;
 use colors::colors_manager::{ColorsManager, ColorsMergeManager};
 use config::{
@@ -58,6 +59,7 @@ pub fn colored_query_output<
     output_file: PathBuf,
     temp_dir: PathBuf,
     query_kmers_count: &[u64],
+    colored_query_output_format: ColoredQueryOutputFormat,
 ) {
     PHASES_TIMES_MONITOR
         .write()
@@ -194,13 +196,29 @@ pub fn colored_query_output<
                         if i != 0 {
                             write!(jsonline_buffer, ",").unwrap();
                         }
-                        write!(
-                            jsonline_buffer,
-                            "'{}': {:.2}",
-                            colormap.get_color_name(q.0),
-                            (q.1 as f64) / (query_kmers_count[query as usize] as f64)
-                        )
-                        .unwrap();
+
+                        match colored_query_output_format {
+                            ColoredQueryOutputFormat::JsonLinesWithNumbers => {
+                                write!(
+                                    jsonline_buffer,
+                                    "\"{}\"", q.0
+                                )
+                            }
+                            ColoredQueryOutputFormat::JsonLinesWithNames => {
+                                write!(
+                                    jsonline_buffer,
+                                    "\"{}\"",
+                                    colormap.get_color_name(q.0, true)
+                                )
+                            }
+                        }
+                            .unwrap();
+
+
+                        write!(jsonline_buffer, ": {:.2}",
+                               (q.1 as f64) / (query_kmers_count[query as usize] as f64)
+                        ).unwrap();
+
                     }
                     writeln!(jsonline_buffer, "}}}}").unwrap();
                     compressed_stream.write_data(&jsonline_buffer);

@@ -12,8 +12,8 @@ use std::path::Path;
 
 pub struct ColorsDeserializer<DS: ColorsSerializerTrait> {
     colormap_file: lz4::Decoder<BufReader<File>>,
-    #[allow(dead_code)]
     color_names: Vec<String>,
+    json_escaped_color_names: Vec<String>,
     colors_index: ColorsIndexMap,
     current_chunk: ColorsIndexEntry,
     current_chunk_size: ColorIndexType,
@@ -60,9 +60,15 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
             .unwrap_or(colors_index.subsets_count as ColorIndexType)
             - first_chunk.start_index;
 
+        let json_escaped_color_names = color_names
+            .iter()
+            .map(|s| s.replace("\"", "\\\"").replace("\\", "\\\\"))
+            .collect();
+
         Self {
             colormap_file: lz4::Decoder::new(BufReader::new(file)).unwrap(),
             color_names,
+            json_escaped_color_names,
             colors_index,
             current_chunk: first_chunk,
             current_chunk_size,
@@ -127,8 +133,16 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
 }
 
 impl<DS: ColorsSerializerTrait> ColorMapReader for ColorsDeserializer<DS> {
-    fn get_color_name(&self, index: ColorIndexType) -> &str {
-        &self.color_names[index as usize]
+    fn get_color_name(&self, index: ColorIndexType, json_escaped: bool) -> &str {
+        if json_escaped {
+            &self.json_escaped_color_names[index as usize]
+        } else {
+            &self.color_names[index as usize]
+        }
+    }
+
+    fn colors_count(&self) -> usize {
+        self.color_names.len()
     }
 
     fn colors_subsets_count(&self) -> u64 {

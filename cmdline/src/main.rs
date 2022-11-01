@@ -29,7 +29,7 @@ use parallel_processor::enable_counters_logging;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use rayon::ThreadPoolBuilder;
 use std::fs::{create_dir_all, File};
-use std::io::{BufReader, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::panic;
 use std::path::PathBuf;
 use std::process::exit;
@@ -88,8 +88,9 @@ use structopt::clap::{arg_enum, ArgGroup};
 #[derive(StructOpt, Debug)]
 enum CliArgs {
     Build(AssemblerArgs),
-    Matches(MatchesArgs),
     Query(QueryArgs),
+    DumpColors(DumpColorsArgs),
+    Matches(MatchesArgs),
     // Utils(CmdUtilsArgs),
 }
 
@@ -213,6 +214,21 @@ struct AssemblerArgs {
 }
 
 #[derive(StructOpt, Debug)]
+struct DumpColorsArgs {
+    input_colormap: PathBuf,
+    output_file: PathBuf,
+}
+
+arg_enum! {
+    /// Format of the queries output
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    pub enum ColoredQueryOutputFormat {
+        JsonLinesWithNumbers,
+        JsonLinesWithNames,
+    }
+}
+
+#[derive(StructOpt, Debug)]
 struct QueryArgs {
     /// The input graph
     pub input_graph: PathBuf,
@@ -226,6 +242,9 @@ struct QueryArgs {
 
     #[structopt(short = "o", long = "output-file-prefix", default_value = "output")]
     pub output_file_prefix: PathBuf,
+
+    #[structopt(short = "f", long = "colored-query-output-format")]
+    pub colored_query_output_format: Option<ColoredQueryOutputFormat>,
 
     #[structopt(short = "x", long, default_value = "MinimizerBucketing")]
     pub step: QuerierStartingStep,
@@ -372,6 +391,19 @@ fn convert_assembler_step(step: AssemblerStartingStep) -> assembler::AssemblerSt
     }
 }
 
+fn convert_colored_query_format(
+    format: ColoredQueryOutputFormat,
+) -> querier::ColoredQueryOutputFormat {
+    match format {
+        ColoredQueryOutputFormat::JsonLinesWithNumbers => {
+            querier::ColoredQueryOutputFormat::JsonLinesWithNumbers
+        }
+        ColoredQueryOutputFormat::JsonLinesWithNames => {
+            querier::ColoredQueryOutputFormat::JsonLinesWithNames
+        }
+    }
+}
+
 fn run_assembler_from_args(
     generics: (StaticDispatch<()>, StaticDispatch<()>, StaticDispatch<()>),
     args: AssemblerArgs,
@@ -448,6 +480,10 @@ fn run_querier_from_args(
         args.common_args.buckets_count_log,
         args.common_args.threads_count,
         args.common_args.intermediate_compression_level,
+        convert_colored_query_format(
+            args.colored_query_output_format
+                .unwrap_or(ColoredQueryOutputFormat::JsonLinesWithNames),
+        ),
     );
 }
 
@@ -531,13 +567,17 @@ fn main() {
                 println!(
                     "MATCHES: {} => {}",
                     color,
-                    colors_deserializer.get_color_name(color)
+                    colors_deserializer.get_color_name(color, false)
                 );
             }
             return; // Skip final memory deallocation
         }
         CliArgs::Query(args) => {
             initialize(&args.common_args, &args.output_file_prefix);
+
+            if !args.colors && args.colored_query_output_format.is_some() {
+                println!("Warning: colored query output format is specified, but the graph is not colored");
+            }
 
             let bucketing_hash = if args.common_args.forward_only {
                 <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::STATIC_DISPATCH_ID
@@ -562,8 +602,31 @@ fn main() {
                 args,
             )
         } // CliArgs::Utils(args) => {
-          //     process_cmdutils(args);
-          // }
+        //     process_cmdutils(args);
+        // }
+        CliArgs::DumpColors(args) => {
+            let colors_deserializer =
+                ColorsDeserializer::<DefaultColorsSerializer>::new(args.input_colormap, true);
+
+            let output_file_name = args.output_file.with_extension(".jsonl");
+
+            let mut output_file = BufWriter::new(File::create(&output_file_name).unwrap());
+
+            for color_idx in 0..colors_deserializer.colors_count() {
+                write!(
+                    output_file,
+                    "{{query_index:{}, matches:\"{}\" }}",
+                    color_idx,
+                    colors_deserializer.get_color_name(color_idx as ColorIndexType, true),
+                )
+                .unwrap();
+            }
+
+            drop(output_file);
+            println!("Colors written to {}", output_file_name.display());
+
+            return; // Skip final memory deallocation
+        }
     }
 
     MemoryFs::terminate();

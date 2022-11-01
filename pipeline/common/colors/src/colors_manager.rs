@@ -65,13 +65,18 @@ pub trait MinimizerBucketingSeqColorData:
 }
 
 pub trait ColorMapReader {
-    fn get_color_name(&self, index: ColorIndexType) -> &str;
+    fn get_color_name(&self, index: ColorIndexType, json_escaped: bool) -> &str;
+    fn colors_count(&self) -> usize;
     fn colors_subsets_count(&self) -> u64;
 }
 
 impl ColorMapReader for () {
-    fn get_color_name(&self, _index: ColorIndexType) -> &str {
+    fn get_color_name(&self, _index: ColorIndexType, _json_escaped: bool) -> &str {
         ""
+    }
+
+    fn colors_count(&self) -> usize {
+        0
     }
 
     fn colors_subsets_count(&self) -> u64 {
