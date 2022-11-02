@@ -83,6 +83,10 @@ impl ExtendableHashTraitType for ExtForwardNtHash {
     fn is_forward(&self) -> bool {
         true
     }
+
+    fn is_rc_symmetric(&self) -> bool {
+        false
+    }
 }
 
 #[static_dispatch]

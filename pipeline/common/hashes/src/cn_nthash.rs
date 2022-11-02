@@ -97,6 +97,10 @@ impl ExtendableHashTraitType for ExtCanonicalNtHash {
     fn is_forward(&self) -> bool {
         self.0 < self.1
     }
+
+    fn is_rc_symmetric(&self) -> bool {
+        self.0 == self.1
+    }
 }
 
 #[static_dispatch]
