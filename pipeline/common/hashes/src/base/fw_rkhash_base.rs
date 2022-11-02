@@ -111,6 +111,10 @@ impl ExtendableHashTraitType for ExtForwardRabinKarpHash {
     fn is_forward(&self) -> bool {
         true
     }
+
+    fn is_rc_symmetric(&self) -> bool {
+        false
+    }
 }
 
 static mut RMMULT_CACHE: [u128; RMMULT_CACHE_SIZE] = [0; RMMULT_CACHE_SIZE];

@@ -150,6 +150,10 @@ impl ExtendableHashTraitType for ExtCanonicalRabinKarpHash {
     fn is_forward(&self) -> bool {
         self.0 < self.1
     }
+
+    fn is_rc_symmetric(&self) -> bool {
+        self.0 == self.1
+    }
 }
 
 static mut RMMULT_CACHE: [u128; RMMULT_CACHE_SIZE] = [0; RMMULT_CACHE_SIZE];

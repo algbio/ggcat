@@ -142,6 +142,23 @@ pub fn build_maximal_unitigs_links<
                                     ),
                                 );
 
+                                if first_hash.is_rc_symmetric() {
+                                    hashes_tmp.add_element(
+                                        MH::get_bucket(
+                                            0,
+                                            DEFAULT_BUCKET_HASHES_SIZE_LOG,
+                                            first_hash_unx,
+                                        ),
+                                        &(),
+                                        &MaximalHashEntry::new(
+                                            first_hash_unx,
+                                            index,
+                                            MaximalUnitigPosition::Beginning,
+                                            !first_hash.is_forward(),
+                                        ),
+                                    );
+                                }
+
                                 hashes_tmp.add_element(
                                     MH::get_bucket(
                                         0,
@@ -156,6 +173,23 @@ pub fn build_maximal_unitigs_links<
                                         !last_hash.is_forward(),
                                     ),
                                 );
+
+                                if last_hash.is_rc_symmetric() {
+                                    hashes_tmp.add_element(
+                                        MH::get_bucket(
+                                            0,
+                                            DEFAULT_BUCKET_HASHES_SIZE_LOG,
+                                            last_hash_unx,
+                                        ),
+                                        &(),
+                                        &MaximalHashEntry::new(
+                                            last_hash_unx,
+                                            index,
+                                            MaximalUnitigPosition::Ending,
+                                            last_hash.is_forward(),
+                                        ),
+                                    );
+                                }
                             },
                         ) {
                             continue;

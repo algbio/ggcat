@@ -42,6 +42,7 @@ pub trait ExtendableHashTraitType: Copy + Clone + Debug + Eq + Ord + Send + Sync
     type HashTypeUnextendable: UnextendableHashTraitType;
     fn to_unextendable(self) -> Self::HashTypeUnextendable;
     fn is_forward(&self) -> bool;
+    fn is_rc_symmetric(&self) -> bool;
 }
 
 #[static_dispatch]
