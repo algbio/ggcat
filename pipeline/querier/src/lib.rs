@@ -31,6 +31,12 @@ pub enum QuerierStartingStep {
     ColorMapReading = 3,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ColoredQueryOutputFormat {
+    JsonLinesWithNumbers,
+    JsonLinesWithNames,
+}
+
 #[static_dispatch(BucketingHash = [
     hashes::cn_nthash::CanonicalNtHashIteratorFactory,
     #[cfg(not(feature = "devel-build"))]  hashes::fw_nthash::ForwardNtHashIteratorFactory
@@ -63,11 +69,12 @@ pub fn run_query<
     step: QuerierStartingStep,
     graph_input: PathBuf,
     query_input: PathBuf,
-    output_file: PathBuf,
+    output_file_prefix: PathBuf,
     temp_dir: PathBuf,
     buckets_count_log: Option<usize>,
     threads_count: usize,
     default_compression_level: Option<u32>,
+    colored_query_output_format: ColoredQueryOutputFormat,
 ) {
     PHASES_TIMES_MONITOR.write().init();
 
@@ -133,7 +140,7 @@ pub fn run_query<
 
     let query_kmers_count = {
         let mut sequences_lengths = vec![];
-        SequencesReader::process_file_extended(
+        SequencesReader::new().process_file_extended(
             &query_input,
             |seq| {
                 sequences_lengths.push((seq.seq.len() - k + 1) as u64);
@@ -150,8 +157,8 @@ pub fn run_query<
             k,
             counters_buckets,
             colored_buckets_prefix,
-            color_map.colors_count(),
-            output_file.clone(),
+            color_map.colors_subsets_count(),
+            output_file_prefix.clone(),
             &query_kmers_count,
         )
     } else {
@@ -167,11 +174,13 @@ pub fn run_query<
             queries_count,
         );
 
-        colored_query_output::<QuerierColorsManager>(
+        colored_query_output::<BucketingHash, MergingHash, QuerierColorsManager>(
+            &color_map,
             remapped_query_color_buckets,
-            output_file.clone(),
+            output_file_prefix.clone(),
             temp_dir,
             &query_kmers_count,
+            colored_query_output_format,
         );
     }
 
@@ -179,5 +188,17 @@ pub fn run_query<
         .write()
         .print_stats("Query completed.".to_string());
 
-    println!("Final output saved to: {}", output_file.display());
+    println!(
+        "Final output saved to: {}",
+        if output_file_prefix.extension().is_none() {
+            if QuerierColorsManager::COLORS_ENABLED {
+                output_file_prefix.with_extension("jsonl")
+            } else {
+                output_file_prefix.with_extension("csv")
+            }
+        } else {
+            output_file_prefix
+        }
+        .display()
+    );
 }

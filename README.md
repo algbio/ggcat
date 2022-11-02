@@ -91,6 +91,13 @@ ggcat query --colors -k <k_value> -j <threads_count> <input-graph> <input-query>
 
 The tool automatically searches for the colormap file associated with the
 input graph, that must have the same name as the graph with extension '.colors.dat'
+
+The colors in the output are by default represented by an integer, to recover a mapping between the integers
+and the color filenames, use the command `ggcat dump-colors <colormap> <output_file>`.
+
+If you instead want the color file names to be written directly in the query output (leading to a potentially much bigger output file),
+pass the option `-f JsonLinesWithNames`.
+
 Here are listed all the available options for graph querying:
 
 ```
@@ -108,6 +115,7 @@ FLAGS:
 
 OPTIONS:
     -b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
+    -f, --colored-query-output-format <colored-query-output-format>
     -w, --hash-type <hash-type>
             Hash type used to identify kmers [default: Auto]
 

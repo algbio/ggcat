@@ -32,6 +32,8 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
     ) {
         let packets_pool = ops.pool_alloc_await(0).await;
 
+        let mut sequences_reader = SequencesReader::new();
+
         while let Some(input_packet) = ops.receive_packet().await {
             let mut data_packet = packets_pool.alloc_packet().await;
             let file_info = input_packet.1.clone();
@@ -46,7 +48,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
 
             let mut max_len = 0;
 
-            SequencesReader::process_file_extended(
+            sequences_reader.process_file_extended(
                 &input_packet.0,
                 |x| {
                     let mut data = data_packet.deref_mut();

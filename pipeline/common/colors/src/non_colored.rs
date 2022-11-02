@@ -218,4 +218,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     }
 
     fn debug_tucs(_str: &Self::TempUnitigColorStructure, _seq: &[u8]) {}
+    fn debug_colors(
+        _color: &Self::PartialUnitigsColorStructure,
+        _colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
+        _seq: &[u8],
+        _hmap: &HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+    ) {
+    }
 }
