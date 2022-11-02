@@ -3,11 +3,10 @@ use crate::ColoredQueryOutputFormat;
 use colors::colors_manager::ColorMapReader;
 use colors::colors_manager::{ColorsManager, ColorsMergeManager};
 use config::{
-    get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    QUERIES_COUNT_MIN_BATCH,
+    get_compression_level_info, get_memory_mode, ColorIndexType, SwapPriority,
+    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, QUERIES_COUNT_MIN_BATCH,
 };
 use flate2::Compression;
-use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::get_bucket_index;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
@@ -107,6 +106,19 @@ pub fn colored_query_output<
     (0..rayon::current_num_threads())
         .into_par_iter()
         .for_each(|_| {
+            #[derive(Copy, Clone)]
+            struct QueryColorListItem {
+                color: ColorIndexType,
+                count: u64,
+                next_index: usize,
+            }
+
+            let mut queries_colors_list_pool = vec![];
+            let mut queries_results =
+                vec![(0u32 /* epoch */, 0usize /* list index */); max_bucket_queries_count];
+            let mut temp_colors_list = vec![];
+
+            let mut epoch = 0;
 
             while let Some(input) = {
                 let mut lock = buckets_channel.lock();
@@ -114,7 +126,8 @@ pub fn colored_query_output<
                 drop(lock);
                 element
             } {
-                let mut queries_results = vec![None; max_bucket_queries_count];
+                epoch += 1;
+                queries_colors_list_pool.clear();
 
                 let start_query_index =
                     get_bucket_index(&input) as usize * max_bucket_queries_count / buckets_count;
@@ -131,28 +144,13 @@ pub fn colored_query_output<
                     &mut (),
                     |counters, _| {
                         for query in counters.queries {
-                            if (query.query_index as usize) < start_query_index {
-                                println!(
-                                    "Error on query index: {} on bucket {} with offset {} total queries: {}",
-                                    query.query_index,
-                                    get_bucket_index(&input),
-                                    get_bucket_index(&input) as usize * max_bucket_queries_count,
-                                    query_kmers_count.len()
-                                );
-                                continue;
-                            }
+                            let (entry_epoch, colors_map_index) = &mut queries_results
+                                [query.query_index as usize - start_query_index - 1];
 
-                            if queries_results[query.query_index as usize - start_query_index - 1]
-                                .is_none()
-                            {
-                                queries_results
-                                    [query.query_index as usize - start_query_index - 1] =
-                                    Some(HashMap::new());
+                            if *entry_epoch != epoch {
+                                *entry_epoch = epoch;
+                                *colors_map_index = usize::MAX;
                             }
-                            let colors_map = queries_results
-                                [query.query_index as usize - start_query_index - 1]
-                                .as_mut()
-                                .unwrap();
 
                             assert_eq!(counters.colors.len() % 2, 0);
                             for range in counters.colors.chunks(2) {
@@ -162,7 +160,12 @@ pub fn colored_query_output<
                                 COL_COUNT.fetch_add(range.len(), Ordering::Relaxed);
 
                                 for color in range {
-                                    *colors_map.entry(color).or_insert(0) += query.count;
+                                    queries_colors_list_pool.push(QueryColorListItem {
+                                        color,
+                                        count: query.count,
+                                        next_index: *colors_map_index,
+                                    });
+                                    *colors_map_index = queries_colors_list_pool.len() - 1;
                                 }
                             }
                         }
@@ -182,43 +185,54 @@ pub fn colored_query_output<
                 );
 
                 let mut jsonline_buffer = vec![];
-                for (query, result) in queries_results
-                    .into_iter()
-                    .enumerate()
-                    .filter_map(|(i, r)| r.map(|r| (i + start_query_index, r)))
+                for (query, mut query_colors_list_index) in
+                    queries_results.iter().enumerate().filter_map(|(i, r)| {
+                        if r.0 != epoch {
+                            None
+                        } else {
+                            Some((i + start_query_index, r.1))
+                        }
+                    })
                 {
                     jsonline_buffer.clear();
                     write!(jsonline_buffer, "{{query_index:{}, matches:{{", query).unwrap();
-                    let mut query_result = result.into_iter().collect::<Vec<_>>();
-                    query_result.sort_unstable_by_key(|r| r.0);
 
-                    for (i, q) in query_result.into_iter().enumerate() {
+                    temp_colors_list.clear();
+                    while query_colors_list_index != usize::MAX {
+                        let el = &queries_colors_list_pool[query_colors_list_index];
+                        temp_colors_list.push((el.color, el.count));
+                        query_colors_list_index = el.next_index;
+                    }
+                    temp_colors_list.sort_unstable_by_key(|r| r.0);
+
+                    for (i, qc) in temp_colors_list.group_by(|a, b| a.0 == b.0).enumerate() {
+                        let color_index = qc[0].0;
+                        let color_presence = qc.iter().map(|x| x.1).sum::<u64>();
+
                         if i != 0 {
                             write!(jsonline_buffer, ",").unwrap();
                         }
 
                         match colored_query_output_format {
                             ColoredQueryOutputFormat::JsonLinesWithNumbers => {
-                                write!(
-                                    jsonline_buffer,
-                                    "\"{}\"", q.0
-                                )
+                                write!(jsonline_buffer, "\"{}\"", color_index)
                             }
                             ColoredQueryOutputFormat::JsonLinesWithNames => {
                                 write!(
                                     jsonline_buffer,
                                     "\"{}\"",
-                                    colormap.get_color_name(q.0, true)
+                                    colormap.get_color_name(color_index, true)
                                 )
                             }
                         }
-                            .unwrap();
+                        .unwrap();
 
-
-                        write!(jsonline_buffer, ": {:.2}",
-                               (q.1 as f64) / (query_kmers_count[query as usize] as f64)
-                        ).unwrap();
-
+                        write!(
+                            jsonline_buffer,
+                            ": {:.2}",
+                            (color_presence as f64) / (query_kmers_count[query as usize] as f64)
+                        )
+                        .unwrap();
                     }
                     writeln!(jsonline_buffer, "}}}}").unwrap();
                     compressed_stream.write_data(&jsonline_buffer);
@@ -227,8 +241,11 @@ pub fn colored_query_output<
                 let stream_path = compressed_stream.get_path();
                 compressed_stream.finalize();
 
-                let mut decompress_stream =
-                    CompressedBinaryReader::new(stream_path, RemoveFileMode::Remove { remove_fs: true }, DEFAULT_PREFETCH_AMOUNT);
+                let mut decompress_stream = CompressedBinaryReader::new(
+                    stream_path,
+                    RemoveFileMode::Remove { remove_fs: true },
+                    DEFAULT_PREFETCH_AMOUNT,
+                );
 
                 let mut queries_lock = query_output.lock();
 
