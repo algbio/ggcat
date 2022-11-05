@@ -615,7 +615,7 @@ fn main() {
             for color_idx in 0..colors_deserializer.colors_count() {
                 writeln!(
                     output_file,
-                    "{{query_index:{}, matches:\"{}\" }}",
+                    "{{\"color_index\":{}, \"color_name\":\"{}\" }}",
                     color_idx,
                     colors_deserializer.get_color_name(color_idx as ColorIndexType, true),
                 )
