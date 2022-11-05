@@ -121,6 +121,7 @@ impl SequencesReader {
                 // If a new ident line is found (or it's the last line)
                 else if finished || (new_line && line.len() > 0 && line[0] == b'>') {
                     if intermediate[SEQ_STATE].len() > 0 {
+                        Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
                         func(FastaSequence {
                             ident: &intermediate[IDENT_STATE],
                             seq: &intermediate[SEQ_STATE],
