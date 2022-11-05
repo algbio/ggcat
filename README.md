@@ -21,7 +21,7 @@ ggcat build -k <k_value> -j <threads_count> -l <input_files_list> -o <output_fil
 #### Building a colored graph
 To build a colored graph, add the `-c` flag to the above commands
 #### Building links
-To build links between maximal unitigs in BCALM2 like format, use the `-l` flag
+To build links between maximal unitigs in BCALM2 like format, use the `-e` flag
 #### Building matchtigs
 To build greedy matchtigs, use the `-g` flag, also both `--eulertigs` and `--pathtigs` are supported
 
