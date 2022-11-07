@@ -531,6 +531,7 @@ dependencies = [
  "hashbrown",
  "hashes",
  "io",
+ "itertools",
  "libdeflate-rs",
  "lz4",
  "nightly-quirks",

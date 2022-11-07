@@ -19,6 +19,7 @@ use io::concurrent::temp_reads::extra_data::{
 use io::varint::{
     decode_varint, decode_varint_flags, encode_varint, encode_varint_flags, VARINT_MAX_SIZE,
 };
+use itertools::Itertools;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::LockFreeBucket;
@@ -606,7 +607,18 @@ impl IdentSequenceWriter for UnitigColorData {
 
     #[allow(unused_variables)]
     fn write_as_gfa(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
-        todo!()
+        if self.slice.len() > 0 {
+            write!(stream, "CS",).unwrap();
+        }
+
+        for i in self.slice.clone() {
+            write!(
+                stream,
+                ":{:x}:{}",
+                extra_buffer.colors[i].color, extra_buffer.colors[i].counter
+            )
+            .unwrap();
+        }
     }
 
     #[allow(unused_variables)]
@@ -633,6 +645,26 @@ impl IdentSequenceWriter for UnitigColorData {
 
     #[allow(unused_variables)]
     fn parse_as_gfa<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
-        todo!()
+        let mut colors_count = 0;
+        if let Some(mut col_pos) = ident.find(b"CA:") {
+            col_pos += 3;
+
+            for (col_string, col_len) in ident[col_pos..].split(|c| *c == b':').tuples() {
+                let color_index = ColorIndexType::from_radix_16(col_string).0;
+                let kmers_count = ColorCounterType::from_radix_10(col_len).0;
+                extra_buffer.colors.push(KmerSerializedColor {
+                    color: color_index,
+                    counter: kmers_count,
+                });
+                colors_count += kmers_count
+            }
+        }
+        if colors_count == 0 {
+            println!("Warn: 0 colors for {:?}", std::str::from_utf8(ident));
+        }
+
+        Some(UnitigColorData {
+            slice: 0..colors_count,
+        })
     }
 }
