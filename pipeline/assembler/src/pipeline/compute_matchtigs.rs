@@ -461,7 +461,7 @@ pub fn compute_matchtigs_thread<
                     &mut final_unitig_color,
                     &handle.1,
                     &storage.color_buffer,
-                    kmer_offset as u64,
+                    kmer_offset,
                 );
             } else {
                 read_buffer.extend(
@@ -473,7 +473,7 @@ pub fn compute_matchtigs_thread<
                     &mut final_unitig_color,
                     &handle.1,
                     &storage.color_buffer,
-                    kmer_offset as u64,
+                    kmer_offset,
                 );
             }
         }

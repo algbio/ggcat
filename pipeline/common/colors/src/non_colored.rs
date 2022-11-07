@@ -2,7 +2,7 @@ use crate::colors_manager::{
     ColorsManager, ColorsMergeManager, ColorsParser, MinimizerBucketingSeqColorData,
 };
 use crate::parsers::SingleSequenceInfo;
-use config::BucketIndexType;
+use config::{BucketIndexType, ColorCounterType};
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
@@ -202,7 +202,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         _dest: &mut Self::TempUnitigColorStructure,
         _src: &Self::PartialUnitigsColorStructure,
         _src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
-        _skip: u64,
+        _skip: ColorCounterType,
     ) {
     }
 

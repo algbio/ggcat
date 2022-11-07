@@ -2,7 +2,7 @@ use crate::pipeline::parallel_kmers_query::QueryKmersReferenceData;
 use byteorder::ReadBytesExt;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use colors::parsers::SingleSequenceInfo;
+use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
 use hashes::rolling::minqueue::RollingMinQueue;
 use hashes::ExtendableHashTraitType;
@@ -142,7 +142,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                 let color = MinimizerBucketingSeqColorDataType::<CX>::create(
                     SingleSequenceInfo {
                         file_index: 0, // FIXME: Change this to support querying of raw reads
-                        sequence_ident: sequence.ident,
+                        sequence_ident: SequenceIdent::Fasta(sequence.ident),
                     },
                     &mut preprocess_info.colors_buffer.0,
                 );

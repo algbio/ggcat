@@ -13,6 +13,7 @@ enum FileType {
     Fastq,
 }
 
+// TODO: Support both fasta and gfa sequences
 #[derive(Copy, Clone)]
 pub struct FastaSequence<'a> {
     pub ident: &'a [u8],

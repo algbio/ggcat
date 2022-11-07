@@ -1,7 +1,7 @@
 use ::static_dispatch::static_dispatch;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
-use colors::parsers::SingleSequenceInfo;
+use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::rolling::minqueue::RollingMinQueue;
@@ -102,7 +102,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         preprocess_info.color_info = MinimizerBucketingSeqColorDataType::<CX>::create(
             SingleSequenceInfo {
                 file_index: file_info.file_index,
-                sequence_ident: sequence.ident,
+                sequence_ident: SequenceIdent::Fasta(sequence.ident),
             },
             &mut preprocess_info.color_info_buffer,
         );

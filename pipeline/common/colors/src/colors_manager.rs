@@ -1,5 +1,5 @@
 use crate::parsers::SingleSequenceInfo;
-use config::{BucketIndexType, ColorIndexType};
+use config::{BucketIndexType, ColorCounterType, ColorIndexType};
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
@@ -185,7 +185,7 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
         dest: &mut Self::TempUnitigColorStructure,
         src: &Self::PartialUnitigsColorStructure,
         src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
-        skip: u64,
+        skip: ColorCounterType,
     );
 
     fn pop_base(target: &mut Self::TempUnitigColorStructure);

@@ -1,9 +1,11 @@
 use crate::colors_manager::{ColorsParser, MinimizerBucketingSeqColorData};
-use crate::parsers::SingleSequenceInfo;
-use atoi::{FromRadix10, FromRadix16};
-use bstr::ByteSlice;
+use crate::managers::multiple::{
+    KmerSerializedColor, UnitigColorData, UnitigsSerializerTempBuffer,
+};
+use crate::parsers::{SequenceIdent, SingleSequenceInfo};
 use byteorder::ReadBytesExt;
-use config::ColorIndexType;
+use config::{ColorCounterType, ColorIndexType};
+use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
@@ -19,17 +21,19 @@ pub struct MinBkMultipleColors {
 }
 
 impl MinBkMultipleColors {
-    fn optimize_buffer_start(&mut self, buffer: &[(usize, ColorIndexType)]) {
-        while buffer.len() > 0 && self.colors_subslice.start >= buffer[self.buffer_slice.start].0 {
-            self.colors_subslice.start -= buffer[self.buffer_slice.start].0;
-            self.colors_subslice.end -= buffer[self.buffer_slice.start].0;
+    fn optimize_buffer_start(&mut self, buffer: &[KmerSerializedColor]) {
+        while buffer.len() > 0
+            && self.colors_subslice.start >= buffer[self.buffer_slice.start].counter
+        {
+            self.colors_subslice.start -= buffer[self.buffer_slice.start].counter;
+            self.colors_subslice.end -= buffer[self.buffer_slice.start].counter;
             self.buffer_slice.start += 1;
         }
     }
 }
 
 pub struct MinBkColorsIterator<'a> {
-    colors_slice: &'a [(usize, ColorIndexType)],
+    colors_slice: &'a [KmerSerializedColor],
     slice_idx: usize,
     colors_left: usize,
     remaining_colors: usize,
@@ -44,7 +48,10 @@ impl<'a> Iterator for MinBkColorsIterator<'a> {
             None
         } else if self.colors_left == 0 {
             self.slice_idx += 1;
-            let (colors_left, color) = self.colors_slice[self.slice_idx];
+            let KmerSerializedColor {
+                color,
+                counter: colors_left,
+            } = self.colors_slice[self.slice_idx];
             self.colors_left = colors_left - 1;
             self.remaining_colors -= 1;
 
@@ -52,90 +59,90 @@ impl<'a> Iterator for MinBkColorsIterator<'a> {
         } else {
             self.colors_left -= 1;
             self.remaining_colors -= 1;
-            Some(self.colors_slice[self.slice_idx].1)
+            Some(self.colors_slice[self.slice_idx].color)
         }
     }
 }
 
 #[inline(always)]
 fn decode_minbk_color(
-    buffer: &mut Vec<(usize, ColorIndexType)>,
+    buffer: &mut UnitigsSerializerTempBuffer,
     mut get_byte_fn: impl FnMut() -> Option<u8>,
 ) -> Option<MinBkMultipleColors> {
-    let color_groups_count = decode_varint(&mut get_byte_fn)?;
+    let color_groups_count = decode_varint(&mut get_byte_fn)? as ColorCounterType;
     let mut colors_count = 0;
 
-    buffer.reserve(color_groups_count as usize);
-    let buffer_start = buffer.len();
+    buffer.colors.reserve(color_groups_count);
+    let buffer_start = buffer.colors.len();
     for _ in 0..color_groups_count {
-        let count = decode_varint(&mut get_byte_fn)? as usize;
         let color = decode_varint(&mut get_byte_fn)? as ColorIndexType;
-        buffer.push((count, color));
-        colors_count += count;
+        let counter = decode_varint(&mut get_byte_fn)? as ColorCounterType;
+        buffer.colors.push(KmerSerializedColor { color, counter });
+        colors_count += counter;
     }
     Some(MinBkMultipleColors {
-        buffer_slice: buffer_start..buffer.len(),
+        buffer_slice: buffer_start..buffer.colors.len(),
         colors_subslice: 0..colors_count,
     })
 }
 
-impl SequenceExtraDataTempBufferManagement<Vec<(usize, ColorIndexType)>> for MinBkMultipleColors {
+impl SequenceExtraDataTempBufferManagement<UnitigsSerializerTempBuffer> for MinBkMultipleColors {
     #[inline(always)]
-    fn new_temp_buffer() -> Vec<(usize, ColorIndexType)> {
-        Vec::new()
+    fn new_temp_buffer() -> UnitigsSerializerTempBuffer {
+        UnitigsSerializerTempBuffer { colors: Vec::new() }
     }
 
     #[inline(always)]
-    fn clear_temp_buffer(buffer: &mut Vec<(usize, ColorIndexType)>) {
-        buffer.clear();
+    fn clear_temp_buffer(buffer: &mut UnitigsSerializerTempBuffer) {
+        buffer.colors.clear();
     }
 
-    fn copy_temp_buffer(
-        dest: &mut Vec<(usize, ColorIndexType)>,
-        src: &Vec<(usize, ColorIndexType)>,
-    ) {
-        dest.clear();
-        dest.extend_from_slice(&src);
+    fn copy_temp_buffer(dest: &mut UnitigsSerializerTempBuffer, src: &UnitigsSerializerTempBuffer) {
+        dest.colors.clear();
+        dest.colors.extend_from_slice(&src.colors);
     }
 
     fn copy_extra_from(
         mut extra: Self,
-        src: &Vec<(usize, ColorIndexType)>,
-        dst: &mut Vec<(usize, ColorIndexType)>,
+        src: &UnitigsSerializerTempBuffer,
+        dst: &mut UnitigsSerializerTempBuffer,
     ) -> Self {
-        extra.optimize_buffer_start(src);
+        extra.optimize_buffer_start(&src.colors);
 
-        let buffer_start = dst.len();
+        let buffer_start = dst.colors.len();
 
         let mut remaining = extra.colors_subslice.len();
         let mut src_slice_pos = extra.buffer_slice.start;
 
-        let mut count = min(
+        let mut counter = min(
             remaining,
-            src[src_slice_pos].0 - extra.colors_subslice.start,
+            src.colors[src_slice_pos].counter - extra.colors_subslice.start,
         );
 
-        while count > 0 {
-            dst.push((count, src[src_slice_pos].1));
-            remaining -= count;
+        while counter > 0 {
+            dst.colors.push(KmerSerializedColor {
+                color: src.colors[src_slice_pos].color,
+                counter,
+            });
+            remaining -= counter;
 
             if remaining == 0 {
                 break;
             }
 
             src_slice_pos += 1;
-            count = min(remaining, src[src_slice_pos].0);
+            counter = min(remaining, src.colors[src_slice_pos].counter);
         }
 
         Self {
-            buffer_slice: buffer_start..dst.len(),
+            buffer_slice: buffer_start..dst.colors.len(),
             colors_subslice: 0..extra.colors_subslice.len(),
         }
     }
 }
 
 impl SequenceExtraData for MinBkMultipleColors {
-    type TempBuffer = Vec<(usize, ColorIndexType)>;
+    type TempBuffer = UnitigsSerializerTempBuffer;
 
     fn decode_from_slice_extended(buffer: &mut Self::TempBuffer, slice: &[u8]) -> Option<Self> {
         let mut index = 0;
@@ -163,7 +170,7 @@ impl SequenceExtraData for MinBkMultipleColors {
 
     fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write) {
         let mut self_ = self.clone();
-        self_.optimize_buffer_start(buffer);
+        self_.optimize_buffer_start(&buffer.colors);
 
         let mut write_to_buffer = |write_len: Option<usize>| {
             if let Some(write_len) = write_len {
@@ -174,25 +181,29 @@ impl SequenceExtraData for MinBkMultipleColors {
             let mut remaining = self_.colors_subslice.len();
             let mut src_slice_pos = self_.buffer_slice.start;
 
-            let mut count = min(
+            let mut counter = min(
                 remaining,
-                buffer[src_slice_pos].0 - self_.colors_subslice.start,
+                buffer.colors[src_slice_pos].counter - self_.colors_subslice.start,
             );
 
-            while count > 0 {
+            while counter > 0 {
                 if write_len.is_some() {
-                    encode_varint(|b| writer.write_all(b), count as u64).unwrap();
-                    encode_varint(|b| writer.write_all(b), buffer[src_slice_pos].1 as u64).unwrap();
+                    encode_varint(
+                        |b| writer.write_all(b),
+                        buffer.colors[src_slice_pos].color as u64,
+                    )
+                    .unwrap();
+                    encode_varint(|b| writer.write_all(b), counter as u64).unwrap();
                 }
                 items_count += 1;
-                remaining -= count;
+                remaining -= counter;
 
                 if remaining == 0 {
                     break;
                 }
 
                 src_slice_pos += 1;
-                count = min(remaining, buffer[src_slice_pos].0);
+                counter = min(remaining, buffer.colors[src_slice_pos].counter);
             }
 
             items_count
@@ -208,32 +219,23 @@ impl SequenceExtraData for MinBkMultipleColors {
     }
 }
 
-fn parse_colors(ident: &[u8], colors_buffer: &mut Vec<(usize, ColorIndexType)>) -> Range<usize> {
-    let mut colors_count = 0;
-    for col_pos in ident.find_iter(b"C:") {
-        let (color_index, next_pos) = ColorIndexType::from_radix_16(&ident[(col_pos + 2)..]);
-
-        let kmers_count = usize::from_radix_10(&ident[(col_pos + next_pos + 3)..]).0;
-        colors_buffer.push((kmers_count, color_index));
-        colors_count += kmers_count
-    }
-    if colors_count == 0 {
-        println!("Warn: 0 colors for {:?}", std::str::from_utf8(ident));
-    }
-    0..colors_count
-}
+// fn parse_colors(ident: &[u8], colors_buffer: &mut UnitigsSerializerTempBuffer) -> Range<usize> {
+// }
 
 impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
     type KmerColor = ColorIndexType;
     type KmerColorIterator<'a> = MinBkColorsIterator<'a>;
 
     fn create(sequence_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self {
-        let buffer_start = buffer.len();
-        let colors_subslice = parse_colors(sequence_info.sequence_ident, buffer);
+        let buffer_start = buffer.colors.len();
+        let colors_subslice = match sequence_info.sequence_ident {
+            SequenceIdent::Fasta(ident) => UnitigColorData::parse_as_ident(ident, buffer).unwrap(),
+            SequenceIdent::Gfa { colors } => UnitigColorData::parse_as_gfa(colors, buffer).unwrap(),
+        };
 
         Self {
-            buffer_slice: buffer_start..buffer.len(),
-            colors_subslice,
+            buffer_slice: buffer_start..buffer.colors.len(),
+            colors_subslice: colors_subslice.slice,
         }
     }
 
@@ -241,12 +243,13 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
         // self.colors_slice
 
         let mut self_ = self.clone();
-        self_.optimize_buffer_start(buffer);
+        self_.optimize_buffer_start(&buffer.colors);
 
         MinBkColorsIterator {
-            colors_slice: &buffer[self_.buffer_slice.clone()],
+            colors_slice: &buffer.colors[self_.buffer_slice.clone()],
             slice_idx: 0,
-            colors_left: buffer[self_.buffer_slice.start].0 - self_.colors_subslice.start,
+            colors_left: buffer.colors[self_.buffer_slice.start].counter
+                - self_.colors_subslice.start,
             remaining_colors: self_.colors_subslice.len(),
         }
     }

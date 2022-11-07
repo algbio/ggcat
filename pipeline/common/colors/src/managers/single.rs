@@ -2,7 +2,7 @@ use crate::colors_manager::ColorsMergeManager;
 use crate::storage::deserializer::ColorsDeserializer;
 use crate::DefaultColorsSerializer;
 use byteorder::ReadBytesExt;
-use config::ColorIndexType;
+use config::{ColorCounterType, ColorIndexType};
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
@@ -121,7 +121,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         _dest: &mut Self::TempUnitigColorStructure,
         _src: &Self::PartialUnitigsColorStructure,
         _src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
-        _skip: u64,
+        _skip: ColorCounterType,
     ) {
         panic!("Unsupported!");
     }

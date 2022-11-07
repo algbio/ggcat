@@ -1,10 +1,12 @@
 use crate::colors_manager::ColorsMergeManager;
 use crate::colors_memmap_writer::ColorsMemMapWriter;
 use crate::DefaultColorsSerializer;
+use atoi::{FromRadix10, FromRadix16};
+use bstr::ByteSlice;
 use byteorder::ReadBytesExt;
 use config::{
-    get_compression_level_info, get_memory_mode, ColorIndexType, MinimizerType, SwapPriority,
-    PARTIAL_VECS_CHECKPOINT_SIZE, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END,
+    get_compression_level_info, get_memory_mode, ColorCounterType, ColorIndexType, MinimizerType,
+    SwapPriority, PARTIAL_VECS_CHECKPOINT_SIZE, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END,
 };
 use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
@@ -340,7 +342,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         }
     }
 
-    type PartialUnitigsColorStructure = UnitigColorDataSerializer;
+    type PartialUnitigsColorStructure = UnitigColorData;
     type TempUnitigColorStructure = DefaultUnitigsTempColorData;
 
     fn alloc_unitig_color_structure() -> Self::TempUnitigColorStructure {
@@ -359,10 +361,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     ) {
         let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
 
-        if let Some(back_ts) = ts.colors.back_mut() && back_ts.0 == kmer_color {
-            back_ts.1 += 1;
+        if let Some(back_ts) = ts.colors.back_mut() && back_ts.color == kmer_color {
+            back_ts.counter += 1;
         } else {
-            ts.colors.push_back((kmer_color, 1));
+            ts.colors.push_back(KmerSerializedColor { color: kmer_color, counter: 1 });
         }
     }
 
@@ -373,10 +375,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
 
         if let Some(front_ts) = ts.colors.front_mut()
-            && front_ts.0 == kmer_color {
-            front_ts.1 += 1;
+            && front_ts.color == kmer_color {
+            front_ts.counter += 1;
         } else {
-            ts.colors.push_front((kmer_color, 1));
+            ts.colors.push_front(KmerSerializedColor { color: kmer_color, counter: 1 });
         }
     }
 
@@ -384,7 +386,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         dest: &mut Self::TempUnitigColorStructure,
         src: &Self::PartialUnitigsColorStructure,
         src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
-        mut skip: u64,
+        mut skip: ColorCounterType,
     ) {
         let get_index = |i| {
             if REVERSE {
@@ -401,15 +403,23 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         for i in 0..len {
             let color = colors_slice[get_index(i)];
 
-            if color.1 <= skip {
-                skip -= color.1;
+            if color.counter <= skip {
+                skip -= color.counter;
             } else {
-                let left = color.1 - skip;
+                let left = color.counter - skip;
                 skip = 0;
-                if dest.colors.back().map(|x| x.0 == color.0).unwrap_or(false) {
-                    dest.colors.back_mut().unwrap().1 += left;
+                if dest
+                    .colors
+                    .back()
+                    .map(|x| x.color == color.color)
+                    .unwrap_or(false)
+                {
+                    dest.colors.back_mut().unwrap().counter += left;
                 } else {
-                    dest.colors.push_back((color.0, left));
+                    dest.colors.push_back(KmerSerializedColor {
+                        color: color.color,
+                        counter: left,
+                    });
                 }
             }
         }
@@ -417,8 +427,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
     fn pop_base(target: &mut Self::TempUnitigColorStructure) {
         if let Some(last) = target.colors.back_mut() {
-            last.1 -= 1;
-            if last.1 == 0 {
+            last.counter -= 1;
+            if last.counter == 0 {
                 target.colors.pop_back();
             }
         }
@@ -431,14 +441,19 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         colors_buffer.colors.clear();
         colors_buffer.colors.extend(ts.colors.iter());
 
-        UnitigColorDataSerializer {
+        UnitigColorData {
             slice: 0..colors_buffer.colors.len(),
         }
     }
 
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]) {
-        let sum: u64 = str.colors.iter().map(|x| x.1).sum::<u64>() + 30;
-        if sum as usize != seq.len() {
+        let sum: usize = str
+            .colors
+            .iter()
+            .map(|x| x.counter)
+            .sum::<ColorCounterType>()
+            + 30;
+        if sum != seq.len() {
             println!("Temp values: {} {}", sum as usize, seq.len());
             println!("Dbg: {:?}", str.colors);
             assert_eq!(sum as usize, seq.len());
@@ -462,7 +477,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         for (hash, color) in hashes.iter().zip(
             subslice
                 .iter()
-                .map(|x| (0..x.1).into_iter().map(|_| x.0))
+                .map(|x| (0..x.counter).into_iter().map(|_| x.color))
                 .flatten(),
         ) {
             let entry = hmap.get(&hash.to_unextendable()).unwrap();
@@ -481,7 +496,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                         .zip(
                             subslice
                                 .iter()
-                                .map(|x| (0..x.1).into_iter().map(|_| x.0))
+                                .map(|x| (0..x.counter).into_iter().map(|_| x.color))
                                 .flatten()
                         )
                         .collect::<Vec<_>>()
@@ -495,22 +510,26 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
 #[derive(Debug)]
 pub struct DefaultUnitigsTempColorData {
-    colors: VecDeque<(ColorIndexType, u64)>,
+    colors: VecDeque<KmerSerializedColor>,
 }
 
 #[derive(Debug)]
 pub struct UnitigsSerializerTempBuffer {
-    colors: Vec<(ColorIndexType, u64)>,
+    pub(crate) colors: Vec<KmerSerializedColor>,
 }
 
 #[derive(Clone, Debug)]
-pub struct UnitigColorDataSerializer {
-    slice: Range<usize>,
+pub struct UnitigColorData {
+    pub(crate) slice: Range<usize>,
 }
 
-impl SequenceExtraDataTempBufferManagement<UnitigsSerializerTempBuffer>
-    for UnitigColorDataSerializer
-{
+#[derive(Copy, Clone, Debug)]
+pub struct KmerSerializedColor {
+    pub(crate) color: ColorIndexType,
+    pub(crate) counter: ColorCounterType,
+}
+
+impl SequenceExtraDataTempBufferManagement<UnitigsSerializerTempBuffer> for UnitigColorData {
     fn new_temp_buffer() -> UnitigsSerializerTempBuffer {
         UnitigsSerializerTempBuffer { colors: Vec::new() }
     }
@@ -537,7 +556,7 @@ impl SequenceExtraDataTempBufferManagement<UnitigsSerializerTempBuffer>
     }
 }
 
-impl SequenceExtraData for UnitigColorDataSerializer {
+impl SequenceExtraData for UnitigColorData {
     type TempBuffer = UnitigsSerializerTempBuffer;
 
     fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
@@ -546,10 +565,10 @@ impl SequenceExtraData for UnitigColorDataSerializer {
         let colors_count = decode_varint(|| reader.read_u8().ok())?;
 
         for _ in 0..colors_count {
-            buffer.colors.push((
-                decode_varint(|| reader.read_u8().ok())? as ColorIndexType,
-                decode_varint(|| reader.read_u8().ok())?,
-            ));
+            buffer.colors.push(KmerSerializedColor {
+                color: decode_varint(|| reader.read_u8().ok())? as ColorIndexType,
+                counter: decode_varint(|| reader.read_u8().ok())? as ColorCounterType,
+            });
         }
         Some(Self {
             slice: start..buffer.colors.len(),
@@ -562,8 +581,8 @@ impl SequenceExtraData for UnitigColorDataSerializer {
 
         for i in self.slice.clone() {
             let el = buffer.colors[i];
-            encode_varint(|b| writer.write_all(b), el.0 as u64).unwrap();
-            encode_varint(|b| writer.write_all(b), el.1).unwrap();
+            encode_varint(|b| writer.write_all(b), el.color as u64).unwrap();
+            encode_varint(|b| writer.write_all(b), el.counter as u64).unwrap();
         }
     }
 
@@ -573,13 +592,13 @@ impl SequenceExtraData for UnitigColorDataSerializer {
     }
 }
 
-impl IdentSequenceWriter for UnitigColorDataSerializer {
+impl IdentSequenceWriter for UnitigColorData {
     fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
         for i in self.slice.clone() {
             write!(
                 stream,
                 " C:{:x}:{}",
-                extra_buffer.colors[i].0, extra_buffer.colors[i].1
+                extra_buffer.colors[i].color, extra_buffer.colors[i].counter
             )
             .unwrap();
         }
@@ -591,8 +610,25 @@ impl IdentSequenceWriter for UnitigColorDataSerializer {
     }
 
     #[allow(unused_variables)]
-    fn parse_as_ident<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
-        todo!()
+    fn parse_as_ident<'a>(ident: &[u8], colors_buffer: &mut Self::TempBuffer) -> Option<Self> {
+        let mut colors_count = 0;
+        for col_pos in ident.find_iter(b"C:") {
+            let (color_index, next_pos) = ColorIndexType::from_radix_16(&ident[(col_pos + 2)..]);
+
+            let kmers_count = ColorCounterType::from_radix_10(&ident[(col_pos + next_pos + 3)..]).0;
+            colors_buffer.colors.push(KmerSerializedColor {
+                color: color_index,
+                counter: kmers_count,
+            });
+            colors_count += kmers_count
+        }
+        if colors_count == 0 {
+            println!("Warn: 0 colors for {:?}", std::str::from_utf8(ident));
+        }
+
+        Some(UnitigColorData {
+            slice: 0..colors_count,
+        })
     }
 
     #[allow(unused_variables)]
