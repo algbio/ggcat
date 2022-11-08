@@ -1,5 +1,6 @@
 #![feature(int_log, let_chains)]
 
+use crate::sequences_stream::general::GeneralSequenceBlockData;
 use config::{BucketIndexType, MAX_BUCKETS_COUNT_LOG, MAX_BUCKET_SIZE, MIN_BUCKETS_COUNT_LOG};
 use std::cmp::{max, min};
 use std::path::{Path, PathBuf};
@@ -10,6 +11,7 @@ pub mod concurrent;
 pub mod lines_reader;
 // pub mod reads_writer;
 pub mod sequences_reader;
+pub mod sequences_stream;
 pub mod structs;
 pub mod varint;
 
@@ -57,27 +59,10 @@ pub struct FilesStatsInfo {
     // pub best_lz4_compression_level: u32,
 }
 
-pub fn compute_stats_from_input_files(files: &[PathBuf]) -> FilesStatsInfo {
-    // TODO: Improve this ratio estimation
-    const COMPRESSED_READS_RATIO: f64 = 0.5;
-
+pub fn compute_stats_from_input_blocks(blocks: &[GeneralSequenceBlockData]) -> FilesStatsInfo {
     let mut bases_count = 0;
-
-    for file in files {
-        let length = std::fs::metadata(file)
-            .expect(&format!("Error while opening file {}", file.display()))
-            .len();
-
-        let file_bases_count = if file
-            .extension()
-            .map(|x| x == "gz" || x == "lz4")
-            .unwrap_or(false)
-        {
-            (length as f64 * COMPRESSED_READS_RATIO) as u64
-        } else {
-            length
-        };
-        bases_count += file_bases_count;
+    for block in blocks {
+        bases_count += block.estimated_bases_count();
     }
 
     let buckets_count = bases_count / MAX_BUCKET_SIZE;

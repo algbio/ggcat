@@ -13,7 +13,8 @@ use colors::DefaultColorsSerializer;
 use config::{INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW};
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::sequences_reader::SequencesReader;
-use io::{compute_stats_from_input_files, generate_bucket_names};
+use io::sequences_stream::general::GeneralSequenceBlockData;
+use io::{compute_stats_from_input_blocks, generate_bucket_names};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -85,7 +86,11 @@ pub fn run_query<
         graph_input.with_extension("colors.dat"),
     );
 
-    let file_stats = compute_stats_from_input_files(&[graph_input.clone(), query_input.clone()]);
+    // TODO: Support GFA input
+    let file_stats = compute_stats_from_input_blocks(&[
+        GeneralSequenceBlockData::FASTA(graph_input.clone()),
+        GeneralSequenceBlockData::FASTA(query_input.clone()),
+    ]);
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
 

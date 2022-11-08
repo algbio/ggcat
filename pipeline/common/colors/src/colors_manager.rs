@@ -55,7 +55,7 @@ pub trait MinimizerBucketingSeqColorData:
     where
         Self: 'a;
 
-    fn create(file_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self;
+    fn create(stream_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self;
     fn get_iterator<'a>(&'a self, buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator<'a>;
     fn get_subslice(&self, range: Range<usize>) -> Self;
 

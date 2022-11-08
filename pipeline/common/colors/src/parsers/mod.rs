@@ -2,8 +2,8 @@ pub mod graph;
 pub mod separate;
 
 pub enum SequenceIdent<'a> {
-    Fasta(&'a [u8]),
-    Gfa { colors: &'a [u8] },
+    FASTA(&'a [u8]),
+    GFA { colors: &'a [u8] },
 }
 
 pub struct SingleSequenceInfo<'a> {

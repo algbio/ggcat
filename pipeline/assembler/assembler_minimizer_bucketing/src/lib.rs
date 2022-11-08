@@ -11,7 +11,8 @@ use hashes::MinimizerHashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
-use io::sequences_reader::FastaSequence;
+use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
+use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
@@ -66,7 +67,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecu
     type GlobalData = ();
     type ExtraData = MinimizerBucketingSeqColorDataType<CX>;
     type PreprocessInfo = AssemblerPreprocessInfo<CX>;
-    type FileInfo = InputFileInfo;
+    type StreamInfo = InputFileInfo;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U2;
@@ -88,11 +89,11 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
     MinimizerBucketingExecutor<AssemblerMinimizerBucketingExecutorFactory<H, CX>>
     for AssemblerMinimizerBucketingExecutor<H, CX>
 {
-    fn preprocess_fasta(
+    fn preprocess_dna_sequence(
         &mut self,
-        file_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::FileInfo,
+        stream_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
         _read_index: u64,
-        sequence: &FastaSequence,
+        sequence: &DnaSequence,
         preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
@@ -101,8 +102,18 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
 
         preprocess_info.color_info = MinimizerBucketingSeqColorDataType::<CX>::create(
             SingleSequenceInfo {
-                file_index: file_info.file_index,
-                sequence_ident: SequenceIdent::Fasta(sequence.ident),
+                file_index: stream_info.file_index,
+                sequence_ident: match sequence.format {
+                    DnaSequencesFileType::FASTA | DnaSequencesFileType::FASTQ => {
+                        SequenceIdent::FASTA(sequence.ident_data)
+                    }
+                    DnaSequencesFileType::GFA => SequenceIdent::GFA {
+                        colors: sequence.ident_data,
+                    },
+                    DnaSequencesFileType::BINARY => {
+                        todo!()
+                    }
+                },
             },
             &mut preprocess_info.color_info_buffer,
         );
@@ -208,7 +219,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
     colors::non_colored::NonColoredManager,
 ])]
 pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
-    input_files: Vec<PathBuf>,
+    input_blocks: Vec<GeneralSequenceBlockData>,
     output_path: &Path,
     buckets_count: usize,
     threads_count: usize,
@@ -221,14 +232,20 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
         .write()
         .start_phase("phase: reads bucketing".to_string());
 
-    let input_files: Vec<_> = input_files
+    let mut input_files: Vec<_> = input_blocks
         .into_iter()
         .enumerate()
         .map(|(i, f)| (f, InputFileInfo { file_index: i }))
         .collect();
 
-    GenericMinimizerBucketing::do_bucketing::<AssemblerMinimizerBucketingExecutorFactory<H, CX>>(
-        input_files,
+    input_files.sort_by_cached_key(|(file, _)| file.estimated_bases_count());
+    input_files.reverse();
+
+    GenericMinimizerBucketing::do_bucketing::<
+        AssemblerMinimizerBucketingExecutorFactory<H, CX>,
+        GeneralSequencesStream,
+    >(
+        input_files.into_iter(),
         output_path,
         buckets_count,
         threads_count,

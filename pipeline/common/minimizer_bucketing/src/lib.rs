@@ -20,7 +20,8 @@ use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
-use io::sequences_reader::FastaSequence;
+use io::sequences_reader::DnaSequence;
+use io::sequences_stream::GenericSequencesStream;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
@@ -82,7 +83,7 @@ pub trait MinimizerBucketingExecutorFactory: Sized {
     type GlobalData: Sync + Send + 'static;
     type ExtraData: SequenceExtraData;
     type PreprocessInfo: Default;
-    type FileInfo: Clone + Sync + Send + Default + 'static;
+    type StreamInfo: Clone + Sync + Send + Default + 'static;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT: typenum::uint::Unsigned;
@@ -96,11 +97,11 @@ pub trait MinimizerBucketingExecutorFactory: Sized {
 pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>:
     'static + Sync + Send
 {
-    fn preprocess_fasta(
+    fn preprocess_dna_sequence(
         &mut self,
-        file_info: &Factory::FileInfo,
+        stream_info: &Factory::StreamInfo,
         read_index: u64,
-        sequence: &FastaSequence,
+        sequence: &DnaSequence,
         preprocess_info: &mut Factory::PreprocessInfo,
     );
 
@@ -231,8 +232,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
 
             for (index, x) in input_packet.iter_sequences().enumerate() {
                 total_bases += x.seq.len() as u64;
-                buckets_processor.preprocess_fasta(
-                    &input_packet.file_info,
+                buckets_processor.preprocess_dna_sequence(
+                    &input_packet.stream_info,
                     input_packet.start_read_index + index as u64,
                     &x,
                     &mut preprocess_info,
@@ -330,7 +331,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
 impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
     for MinimizerBucketingExecWriter<E>
 {
-    type InputPacket = MinimizerBucketingQueueData<E::FileInfo>;
+    type InputPacket = MinimizerBucketingQueueData<E::StreamInfo>;
     type OutputPacket = ();
     type GlobalParams = MinimizerBucketingExecutionContext<E::GlobalData>;
     type InitData = ();
@@ -389,8 +390,11 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 // }
 
 impl GenericMinimizerBucketing {
-    pub fn do_bucketing<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static>(
-        mut input_files: Vec<(PathBuf, E::FileInfo)>,
+    pub fn do_bucketing<
+        E: MinimizerBucketingExecutorFactory + Sync + Send + 'static,
+        S: GenericSequencesStream,
+    >(
+        input_blocks: impl ExactSizeIterator<Item = (S::SequenceBlockData, E::StreamInfo)>,
         output_path: &Path,
         buckets_count: usize,
         threads_count: usize,
@@ -413,13 +417,6 @@ impl GenericMinimizerBucketing {
             ),
         ));
 
-        input_files.sort_by_cached_key(|(file, _)| {
-            std::fs::metadata(file)
-                .expect(&format!("Error while opening file {}", file.display()))
-                .len()
-        });
-        input_files.reverse();
-
         let second_buckets_count = max(
             MAXIMUM_SECOND_BUCKETS_COUNT,
             threads_count.next_power_of_two(),
@@ -432,7 +429,7 @@ impl GenericMinimizerBucketing {
                 MinimizerBucketingExecWriter::<E>::generate_new_address(()),
             )),
             processed_files: AtomicUsize::new(0),
-            total_files: input_files.len(),
+            total_files: input_blocks.len(),
             common: Arc::new(MinimizerBucketingCommonData::new(
                 k,
                 m,
@@ -460,11 +457,13 @@ impl GenericMinimizerBucketing {
             let compute_thread_pool =
                 ExecThreadPool::new(&execution_context, compute_threads_count, "mm_comp");
 
-            let mut input_files =
-                ExecutorInput::from_iter(input_files.into_iter(), ExecutorInputAddressMode::Single);
+            let mut input_files = ExecutorInput::from_iter(
+                input_blocks.into_iter(),
+                ExecutorInputAddressMode::Single,
+            );
 
             let reader_executors = disk_thread_pool
-                .register_executors::<MinimizerBucketingFilesReader<E::GlobalData, E::FileInfo>>(
+                .register_executors::<MinimizerBucketingFilesReader<E::GlobalData, E::StreamInfo, S>>(
                     global_context.read_threads_count,
                     PoolAllocMode::Shared {
                         capacity: max_read_buffers_count,
@@ -481,12 +480,11 @@ impl GenericMinimizerBucketing {
                     &global_context,
                 );
 
-            input_files
-                .set_output_executor::<MinimizerBucketingFilesReader<E::GlobalData, E::FileInfo>>(
-                    &execution_context,
-                    (),
-                    PACKETS_PRIORITY_DEFAULT,
-                );
+            input_files.set_output_executor::<MinimizerBucketingFilesReader<E::GlobalData, E::StreamInfo, S>>(
+                &execution_context,
+                (),
+                PACKETS_PRIORITY_DEFAULT,
+            );
 
             execution_context.register_executors_batch(
                 vec![global_context

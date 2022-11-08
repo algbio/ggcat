@@ -1,68 +1,62 @@
-use io::sequences_reader::FastaSequence;
+use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::PacketTrait;
 use std::mem::size_of;
 
-type SequencesType = (usize, usize, usize, usize);
+type SequencesType = (usize, usize, usize, DnaSequencesFileType);
 
 pub struct MinimizerBucketingQueueData<F: Clone + Sync + Send + Default + 'static> {
     data: Vec<u8>,
     pub sequences: Vec<SequencesType>,
-    pub file_info: F,
+    pub stream_info: F,
     pub start_read_index: u64,
 }
 
 impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> {
-    pub fn new(capacity: usize, file_info: F) -> Self {
+    pub fn new(capacity: usize, stream_info: F) -> Self {
         Self {
             data: Vec::with_capacity(capacity),
             sequences: Vec::with_capacity(capacity / 512),
-            file_info,
+            stream_info,
             start_read_index: 0,
         }
     }
 
-    pub fn push_sequences(&mut self, seq: FastaSequence) -> bool {
-        let qual_len = seq.qual.map(|q| q.len()).unwrap_or(0);
-        let ident_len = seq.ident.len();
+    pub fn push_sequences(&mut self, seq: DnaSequence) -> bool {
+        let ident_len = seq.ident_data.len();
         let seq_len = seq.seq.len();
 
-        let tot_len = qual_len + ident_len + seq_len;
+        let tot_len = ident_len + seq_len;
 
         if self.data.len() != 0 && (self.data.capacity() - self.data.len()) < tot_len {
             return false;
         }
 
         let start = self.data.len();
-        self.data.extend_from_slice(seq.ident);
+        self.data.extend_from_slice(seq.ident_data);
         self.data.extend_from_slice(seq.seq);
-        if let Some(qual) = seq.qual {
-            self.data.extend_from_slice(qual);
-        }
 
-        self.sequences.push((start, ident_len, seq_len, qual_len));
+        self.sequences.push((start, ident_len, seq_len, seq.format));
 
         true
     }
 
-    pub fn iter_sequences(&self) -> impl Iterator<Item = FastaSequence> {
+    pub fn iter_sequences(&self) -> impl Iterator<Item = DnaSequence> {
         self.sequences
             .iter()
-            .map(move |&(start, id_len, seq_len, qual_len)| {
+            .map(move |&(start, id_len, seq_len, format)| {
                 let mut start = start;
 
-                let ident = &self.data[start..start + id_len];
+                let ident_data = &self.data[start..start + id_len];
                 start += id_len;
 
                 let seq = &self.data[start..start + seq_len];
-                start += seq_len;
 
-                let qual = match qual_len {
-                    0 => None,
-                    _ => Some(&self.data[start..start + qual_len]),
-                };
-
-                FastaSequence { ident, seq, qual }
+                DnaSequence {
+                    ident_data,
+                    seq,
+                    format,
+                }
             })
     }
 }

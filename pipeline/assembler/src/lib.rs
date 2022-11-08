@@ -18,7 +18,8 @@ use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::concurrent::structured_sequences::binary::StructSeqBinaryWriter;
 use io::concurrent::structured_sequences::fasta::FastaWriter;
 use io::concurrent::structured_sequences::StructuredSequenceWriter;
-use io::{compute_stats_from_input_files, generate_bucket_names};
+use io::sequences_stream::general::GeneralSequenceBlockData;
+use io::{compute_stats_from_input_blocks, generate_bucket_names};
 use kmers_merge::structs::RetType;
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
@@ -81,7 +82,8 @@ pub fn run_assembler<
     m: usize,
     step: AssemblerStartingStep,
     last_step: AssemblerStartingStep,
-    input: Vec<PathBuf>,
+    input_blocks: Vec<GeneralSequenceBlockData>,
+    color_names: Vec<String>,
     output_file: PathBuf,
     temp_dir: PathBuf,
     threads_count: usize,
@@ -95,7 +97,7 @@ pub fn run_assembler<
 ) {
     PHASES_TIMES_MONITOR.write().init();
 
-    let file_stats = compute_stats_from_input_files(&input);
+    let file_stats = compute_stats_from_input_blocks(&input_blocks);
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
 
@@ -105,11 +107,6 @@ pub fn run_assembler<
     }
 
     let buckets_count = 1 << buckets_count_log;
-
-    let color_names: Vec<_> = input
-        .iter()
-        .map(|f| f.file_name().unwrap().to_string_lossy().to_string())
-        .collect();
 
     let global_colors_table = Arc::new(
         AssemblerColorsManager::ColorsMergeManagerType::create_colors_table(
@@ -123,7 +120,7 @@ pub fn run_assembler<
             BucketingHash,
             AssemblerColorsManager,
         >(
-            input,
+            input_blocks,
             temp_dir.as_path(),
             buckets_count,
             threads_count,

@@ -11,7 +11,8 @@ use hashes::MinimizerHashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
-use io::sequences_reader::FastaSequence;
+use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
+use io::sequences_stream::fasta::FastaFileSequencesStream;
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
@@ -104,7 +105,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecu
     type GlobalData = QuerierMinimizerBucketingGlobalData;
     type ExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
     type PreprocessInfo = ReadTypeBuffered<CX>;
-    type FileInfo = FileType;
+    type StreamInfo = FileType;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U0;
@@ -126,23 +127,36 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
     MinimizerBucketingExecutor<QuerierMinimizerBucketingExecutorFactory<H, CX>>
     for QuerierMinimizerBucketingExecutor<H, CX>
 {
-    fn preprocess_fasta(
+    fn preprocess_dna_sequence(
         &mut self,
-        file_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::FileInfo,
+        stream_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
         read_index: u64,
-        sequence: &FastaSequence,
+        sequence: &DnaSequence,
         preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
             &mut preprocess_info.colors_buffer.0,
         );
 
-        preprocess_info.read_type = match file_info {
+        preprocess_info.read_type = match stream_info {
             FileType::Graph => {
                 let color = MinimizerBucketingSeqColorDataType::<CX>::create(
                     SingleSequenceInfo {
                         file_index: 0, // FIXME: Change this to support querying of raw reads
-                        sequence_ident: SequenceIdent::Fasta(sequence.ident),
+                        sequence_ident: match sequence.format {
+                            DnaSequencesFileType::FASTA => {
+                                SequenceIdent::FASTA(sequence.ident_data)
+                            }
+                            DnaSequencesFileType::GFA => SequenceIdent::GFA {
+                                colors: sequence.ident_data,
+                            },
+                            DnaSequencesFileType::FASTQ => {
+                                todo!()
+                            }
+                            DnaSequencesFileType::BINARY => {
+                                todo!()
+                            }
+                        },
                     },
                     &mut preprocess_info.colors_buffer.0,
                 );
@@ -152,7 +166,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                 {
                     println!(
                         "WARN: Sequence does not have enough colors, please check matching k size:\n{}\n{}",
-                        std::str::from_utf8(sequence.ident).unwrap(),
+                        std::str::from_utf8(sequence.ident_data).unwrap(),
                         std::str::from_utf8(sequence.seq).unwrap()
                     );
                 }
@@ -269,8 +283,11 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
     let queries_count = Arc::new(AtomicUsize::new(0));
 
     (
-        GenericMinimizerBucketing::do_bucketing::<QuerierMinimizerBucketingExecutorFactory<H, CX>>(
-            input_files,
+        GenericMinimizerBucketing::do_bucketing::<
+            QuerierMinimizerBucketingExecutorFactory<H, CX>,
+            FastaFileSequencesStream,
+        >(
+            input_files.into_iter(),
             output_path,
             buckets_count,
             threads_count,

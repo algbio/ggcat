@@ -79,6 +79,7 @@ use colors::DefaultColorsSerializer;
 use config::{ColorIndexType, FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
 use hashes::cn_nthash::CanonicalNtHashIteratorFactory;
 use hashes::fw_nthash::ForwardNtHashIteratorFactory;
+use io::sequences_stream::general::GeneralSequenceBlockData;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use static_dispatch::StaticDispatch;
@@ -426,6 +427,16 @@ fn run_assembler_from_args(
         exit(1);
     }
 
+    let color_names: Vec<_> = inputs
+        .iter()
+        .map(|f| f.file_name().unwrap().to_string_lossy().to_string())
+        .collect();
+
+    let inputs = inputs
+        .into_iter()
+        .map(|x| GeneralSequenceBlockData::FASTA(x))
+        .collect();
+
     assembler::dynamic_dispatch::run_assembler(
         generics,
         args.common_args.klen,
@@ -435,6 +446,7 @@ fn run_assembler_from_args(
         convert_assembler_step(args.step),
         convert_assembler_step(args.last_step),
         inputs,
+        color_names,
         args.output_file,
         args.common_args.temp_dir,
         args.common_args.threads_count,

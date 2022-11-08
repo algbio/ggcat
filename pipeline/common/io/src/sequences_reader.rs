@@ -8,17 +8,19 @@ const IDENT_STATE: usize = 0;
 const SEQ_STATE: usize = 1;
 const QUAL_STATE: usize = 2;
 
-enum FileType {
-    Fasta,
-    Fastq,
+#[derive(Copy, Clone)]
+pub enum DnaSequencesFileType {
+    FASTA,
+    FASTQ,
+    GFA,
+    BINARY,
 }
 
-// TODO: Support both fasta and gfa sequences
 #[derive(Copy, Clone)]
-pub struct FastaSequence<'a> {
-    pub ident: &'a [u8],
+pub struct DnaSequence<'a> {
+    pub ident_data: &'a [u8],
     pub seq: &'a [u8],
-    pub qual: Option<&'a [u8]>,
+    pub format: DnaSequencesFileType,
 }
 
 const SEQ_LETTERS_MAPPING: [u8; 256] = {
@@ -51,7 +53,7 @@ impl SequencesReader {
         }
     }
 
-    pub fn process_file_extended<F: FnMut(FastaSequence)>(
+    pub fn process_file_extended<F: FnMut(DnaSequence)>(
         &mut self,
         source: impl AsRef<Path>,
         func: F,
@@ -68,11 +70,11 @@ impl SequencesReader {
 
         while let Some(ext) = path.extension() {
             if FASTQ_EXTS.contains(&ext.to_str().unwrap()) {
-                file_type = Some(FileType::Fastq);
+                file_type = Some(DnaSequencesFileType::FASTQ);
                 break;
             }
             if FASTA_EXTS.contains(&ext.to_str().unwrap()) {
-                file_type = Some(FileType::Fasta);
+                file_type = Some(DnaSequencesFileType::FASTA);
                 break;
             }
             tmp = &tmp[0..tmp.len() - ext.len() - 1];
@@ -85,11 +87,17 @@ impl SequencesReader {
                 source.as_ref().display()
             ),
             Some(ftype) => match ftype {
-                FileType::Fasta => {
+                DnaSequencesFileType::FASTA => {
                     self.process_fasta(source, func, line_split_copyback, copy_ident, remove_file);
                 }
-                FileType::Fastq => {
-                    self.process_fastq(source, func, false, remove_file);
+                DnaSequencesFileType::FASTQ => {
+                    self.process_fastq(source, func, remove_file);
+                }
+                DnaSequencesFileType::GFA => {
+                    todo!()
+                }
+                DnaSequencesFileType::BINARY => {
+                    todo!()
                 }
             },
         }
@@ -98,7 +106,7 @@ impl SequencesReader {
     fn process_fasta(
         &mut self,
         source: impl AsRef<Path>,
-        mut func: impl FnMut(FastaSequence),
+        mut func: impl FnMut(DnaSequence),
         line_split_copyback: Option<usize>,
         copy_ident: bool,
         remove_file: bool,
@@ -123,10 +131,10 @@ impl SequencesReader {
                 else if finished || (new_line && line.len() > 0 && line[0] == b'>') {
                     if intermediate[SEQ_STATE].len() > 0 {
                         Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
-                        func(FastaSequence {
-                            ident: &intermediate[IDENT_STATE],
+                        func(DnaSequence {
+                            ident_data: &intermediate[IDENT_STATE],
                             seq: &intermediate[SEQ_STATE],
-                            qual: None,
+                            format: DnaSequencesFileType::FASTA,
                         });
                     }
 
@@ -154,10 +162,10 @@ impl SequencesReader {
                 if let Some(copyback) = line_split_copyback &&
                     (intermediate[SEQ_STATE].len() >= flush_size) {
                     Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
-                    func(FastaSequence {
-                        ident: &intermediate[IDENT_STATE],
+                    func(DnaSequence {
+                        ident_data: &intermediate[IDENT_STATE],
                         seq: &intermediate[SEQ_STATE],
-                        qual: None,
+                        format: DnaSequencesFileType::FASTQ
                     });
                     let copy_start = intermediate[SEQ_STATE].len() - copyback;
                     intermediate[SEQ_STATE].copy_within(copy_start.., 0);
@@ -173,8 +181,8 @@ impl SequencesReader {
     fn process_fastq(
         &mut self,
         source: impl AsRef<Path>,
-        mut func: impl FnMut(FastaSequence),
-        get_quality: bool,
+        mut func: impl FnMut(DnaSequence),
+        // get_quality: bool,
         remove_file: bool,
     ) {
         let mut state = IDENT_STATE;
@@ -197,20 +205,21 @@ impl SequencesReader {
                         return;
                     }
 
-                    if get_quality {
-                        intermediate[state].extend_from_slice(line);
-                    }
+                    // if get_quality {
+                    //     intermediate[state].extend_from_slice(line);
+                    // }
 
                     if !partial {
                         Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
-                        func(FastaSequence {
-                            ident: &intermediate[IDENT_STATE],
+                        func(DnaSequence {
+                            ident_data: &intermediate[IDENT_STATE],
                             seq: &intermediate[SEQ_STATE],
-                            qual: if get_quality {
-                                Some(&intermediate[QUAL_STATE])
-                            } else {
-                                None
-                            },
+                            // qual: if get_quality {
+                            //     Some(&intermediate[QUAL_STATE])
+                            // } else {
+                            //     None
+                            // },
+                            format: DnaSequencesFileType::FASTQ,
                         });
 
                         intermediate[IDENT_STATE].clear();

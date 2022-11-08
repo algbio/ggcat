@@ -229,8 +229,8 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
     fn create(sequence_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self {
         let buffer_start = buffer.colors.len();
         let colors_subslice = match sequence_info.sequence_ident {
-            SequenceIdent::Fasta(ident) => UnitigColorData::parse_as_ident(ident, buffer).unwrap(),
-            SequenceIdent::Gfa { colors } => UnitigColorData::parse_as_gfa(colors, buffer).unwrap(),
+            SequenceIdent::FASTA(ident) => UnitigColorData::parse_as_ident(ident, buffer).unwrap(),
+            SequenceIdent::GFA { colors } => UnitigColorData::parse_as_gfa(colors, buffer).unwrap(),
         };
 
         Self {

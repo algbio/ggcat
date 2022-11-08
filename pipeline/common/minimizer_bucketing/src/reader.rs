@@ -1,6 +1,6 @@
 use crate::queue_data::MinimizerBucketingQueueData;
 use crate::MinimizerBucketingExecutionContext;
-use io::sequences_reader::SequencesReader;
+use io::sequences_stream::GenericSequencesStream;
 use nightly_quirks::branch_pred::unlikely;
 use parallel_processor::execution_manager::executor::{
     AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
@@ -11,19 +11,36 @@ use std::cmp::max;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
-use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 pub struct MinimizerBucketingFilesReader<
     GlobalData: Sync + Send + 'static,
-    FileInfo: Clone + Sync + Send + Default + 'static,
+    StreamInfo: Sync + Send + Clone + Default + 'static,
+    SequencesStream: GenericSequencesStream,
 > {
     // mem_tracker: MemoryTracker<Self>,
-    _phantom: PhantomData<(FileInfo, GlobalData)>,
+    _phantom: PhantomData<(GlobalData, StreamInfo, SequencesStream)>,
+}
+unsafe impl<
+        GlobalData: Sync + Send + 'static,
+        StreamInfo: Sync + Send + Clone + Default + 'static,
+        SequencesStream: GenericSequencesStream,
+    > Sync for MinimizerBucketingFilesReader<GlobalData, StreamInfo, SequencesStream>
+{
+}
+unsafe impl<
+        GlobalData: Sync + Send + 'static,
+        StreamInfo: Sync + Send + Clone + Default + 'static,
+        SequencesStream: GenericSequencesStream,
+    > Send for MinimizerBucketingFilesReader<GlobalData, StreamInfo, SequencesStream>
+{
 }
 
-impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default + 'static>
-    MinimizerBucketingFilesReader<GlobalData, FileInfo>
+impl<
+        GlobalData: Sync + Send + 'static,
+        StreamInfo: Sync + Send + Clone + Default + 'static,
+        SequencesStream: GenericSequencesStream,
+    > MinimizerBucketingFilesReader<GlobalData, StreamInfo, SequencesStream>
 {
     async fn execute(
         &self,
@@ -32,14 +49,14 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
     ) {
         let packets_pool = ops.pool_alloc_await(0).await;
 
-        let mut sequences_reader = SequencesReader::new();
+        let mut sequences_stream = SequencesStream::new();
 
-        while let Some(input_packet) = ops.receive_packet().await {
+        while let Some(mut input_packet) = ops.receive_packet().await {
             let mut data_packet = packets_pool.alloc_packet().await;
-            let file_info = input_packet.1.clone();
+            let stream_info = input_packet.1.clone();
 
             let data = data_packet.deref_mut();
-            data.file_info = file_info.clone();
+            data.stream_info = stream_info.clone();
             data.start_read_index = 0;
 
             let mut read_index = 0;
@@ -48,19 +65,18 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
 
             let mut max_len = 0;
 
-            sequences_reader.process_file_extended(
-                &input_packet.0,
-                |x| {
+            sequences_stream.read_block(
+                &mut input_packet.0,
+                context.copy_ident,
+                context.partial_read_copyback,
+                |x, _seq_data| {
                     let mut data = data_packet.deref_mut();
 
                     if x.seq.len() < context.common.k {
                         return;
                     }
 
-                    max_len = max(
-                        max_len,
-                        x.ident.len() + x.seq.len() + x.qual.map(|q| q.len()).unwrap_or(0),
-                    );
+                    max_len = max(max_len, x.ident_data.len() + x.seq.len());
 
                     if unlikely(!data.push_sequences(x)) {
                         assert!(
@@ -84,7 +100,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
                         // mem_tracker.update_memory_usage(&[max_len]);
 
                         data = data_packet.deref_mut();
-                        data.file_info = file_info.clone();
+                        data.stream_info = stream_info.clone();
                         data.start_read_index = read_index;
 
                         if !data.push_sequences(x) {
@@ -93,9 +109,6 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
                     }
                     read_index += 1;
                 },
-                context.partial_read_copyback,
-                context.copy_ident,
-                false,
             );
 
             if data_packet.sequences.len() > 0 {
@@ -115,11 +128,14 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
     }
 }
 
-impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default + 'static>
-    AsyncExecutor for MinimizerBucketingFilesReader<GlobalData, FileInfo>
+impl<
+        GlobalData: Sync + Send + 'static,
+        StreamInfo: Sync + Send + Clone + Default + 'static,
+        SequencesStream: GenericSequencesStream,
+    > AsyncExecutor for MinimizerBucketingFilesReader<GlobalData, StreamInfo, SequencesStream>
 {
-    type InputPacket = (PathBuf, FileInfo);
-    type OutputPacket = MinimizerBucketingQueueData<FileInfo>;
+    type InputPacket = (SequencesStream::SequenceBlockData, StreamInfo);
+    type OutputPacket = MinimizerBucketingQueueData<StreamInfo>;
     type GlobalParams = MinimizerBucketingExecutionContext<GlobalData>;
     type InitData = ();
 

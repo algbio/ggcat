@@ -215,9 +215,7 @@ impl ChunksAllocator {
     }
 
     fn allocate_contiguous_chunk(&self, chunks_count: usize) -> impl Iterator<Item = usize> {
-        let chunks_log_size = self.chunks_log_size.load(Ordering::Relaxed);
         let chunk_padded_size = self.chunk_padded_size.load(Ordering::Relaxed);
-        // let chunks_log_size = self.chunks_log_size.load(Ordering::Relaxed);
 
         self.chunks_total_count
             .fetch_add(chunks_count, Ordering::Relaxed);

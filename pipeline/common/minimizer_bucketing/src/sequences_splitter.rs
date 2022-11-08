@@ -1,4 +1,4 @@
-use io::sequences_reader::FastaSequence;
+use io::sequences_reader::DnaSequence;
 use std::ops::Range;
 
 pub struct SequencesSplitter {
@@ -14,7 +14,7 @@ impl SequencesSplitter {
     #[inline]
     pub fn process_sequences(
         &mut self,
-        fasta_seq: &FastaSequence,
+        fasta_seq: &DnaSequence,
         mut process_fn: impl FnMut(&[u8], Range<usize>),
     ) {
         let mut start;
