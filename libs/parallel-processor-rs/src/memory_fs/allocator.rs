@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 const ALLOCATOR_ALIGN: usize = 4096;
+const OUT_OF_MEMORY_ALLOCATION_SIZE: MemoryDataSize = MemoryDataSize::from_mebioctets(256);
 const MAXIMUM_CHUNK_SIZE_LOG: usize = 18;
 const MINIMUM_CHUNK_SIZE_LOG: usize = 8;
 
@@ -183,7 +184,7 @@ impl Drop for AllocatedChunk {
 }
 
 pub struct ChunksAllocator {
-    big_buffer_start_addr: AtomicUsize,
+    buffers_list: Mutex<Vec<(usize, usize)>>,
     chunks_wait_condvar: Condvar,
     chunks: Mutex<Vec<usize>>,
     min_free_chunks: AtomicUsize,
@@ -202,7 +203,7 @@ static USAGE_MAP: Mutex<Option<HashMap<ChunkUsage_, usize>>> =
 impl ChunksAllocator {
     const fn new() -> ChunksAllocator {
         ChunksAllocator {
-            big_buffer_start_addr: AtomicUsize::new(0),
+            buffers_list: Mutex::new(vec![]),
             chunks_wait_condvar: Condvar::new(),
             chunks: Mutex::const_new(parking_lot::RawMutex::INIT, Vec::new()),
             min_free_chunks: AtomicUsize::new(0),
@@ -213,12 +214,51 @@ impl ChunksAllocator {
         }
     }
 
+    fn allocate_contiguous_chunk(&self, chunks_count: usize) -> impl Iterator<Item = usize> {
+        let chunks_log_size = self.chunks_log_size.load(Ordering::Relaxed);
+        let chunk_padded_size = self.chunk_padded_size.load(Ordering::Relaxed);
+        // let chunks_log_size = self.chunks_log_size.load(Ordering::Relaxed);
+
+        self.chunks_total_count
+            .fetch_add(chunks_count, Ordering::Relaxed);
+
+        self.min_free_chunks.store(chunks_count, Ordering::Relaxed);
+
+        let data = unsafe {
+            alloc(Layout::from_size_align_unchecked(
+                chunks_count * chunk_padded_size,
+                ALLOCATOR_ALIGN,
+            ))
+        };
+
+        #[cfg(feature = "memory-guards")]
+        unsafe {
+            let first_guard = data.add(chunk_usable_size.load(Ordering::Relaxed));
+            for i in 0..chunks_count {
+                let guard = first_guard.add(i * ALLOCATED_CHUNK_PADDED_SIZE);
+                libc::mprotect(guard as *mut libc::c_void, 4096, libc::PROT_NONE);
+            }
+        }
+
+        self.buffers_list.lock().push((data as usize, chunks_count));
+
+        (0..chunks_count)
+            .into_iter()
+            .rev()
+            .map(move |c| data as usize + (c * chunk_padded_size))
+    }
+
     pub fn initialize(
         &self,
         memory: MemoryDataSize,
         mut chunks_log_size: usize,
         min_chunks_count: usize,
     ) {
+        if self.buffers_list.lock().len() > 0 {
+            // Already allocated
+            return;
+        }
+
         #[cfg(feature = "track-usage")]
         {
             *USAGE_MAP.lock() = Some(HashMap::new());
@@ -236,48 +276,10 @@ impl ChunksAllocator {
             } else {
                 0
             };
-
         let total_padded_mem_size: MemoryDataSize =
             MemoryDataSize::from_octets(chunk_padded_size as f64);
 
-        if self.big_buffer_start_addr.load(Ordering::Relaxed) != 0 {
-            // Already allocated
-            return;
-        }
-
         let chunks_count = max(min_chunks_count, (memory / total_padded_mem_size) as usize);
-
-        self.chunks_total_count
-            .store(chunks_count, Ordering::Relaxed);
-
-        println!(
-            "Allocator initialized: mem: {} chunks: {} log2: {}",
-            memory, chunks_count, chunks_log_size
-        );
-
-        self.min_free_chunks.store(chunks_count, Ordering::Relaxed);
-
-        let data = unsafe {
-            alloc(Layout::from_size_align_unchecked(
-                chunks_count * chunk_padded_size,
-                ALLOCATOR_ALIGN,
-            ))
-        };
-
-        let free_chunks: Vec<_> = (0..chunks_count)
-            .into_iter()
-            .rev()
-            .map(|c| data as usize + (c * chunk_padded_size))
-            .collect();
-
-        #[cfg(feature = "memory-guards")]
-        unsafe {
-            let first_guard = data.add(chunk_usable_size.load(Ordering::Relaxed));
-            for i in 0..chunks_count {
-                let guard = first_guard.add(i * ALLOCATED_CHUNK_PADDED_SIZE);
-                libc::mprotect(guard as *mut libc::c_void, 4096, libc::PROT_NONE);
-            }
-        }
 
         self.chunk_padded_size
             .store(chunk_padded_size, Ordering::Relaxed);
@@ -286,9 +288,14 @@ impl ChunksAllocator {
         self.chunks_log_size
             .store(chunks_log_size, Ordering::Relaxed);
 
-        self.big_buffer_start_addr
-            .store(data as usize, Ordering::Relaxed);
-        *self.chunks.lock() = free_chunks;
+        let chunks_iter = self.allocate_contiguous_chunk(chunks_count);
+
+        self.chunks.lock().extend(chunks_iter);
+
+        println!(
+            "Allocator initialized: mem: {} chunks: {} log2: {}",
+            memory, chunks_count, chunks_log_size
+        );
     }
 
     pub fn giveback_free_memory(&self) {
@@ -320,12 +327,13 @@ impl ChunksAllocator {
 
         #[cfg(not(target_os = "windows"))]
         unsafe {
-            libc::madvise(
-                self.big_buffer_start_addr.load(Ordering::Relaxed) as *mut libc::c_void,
-                self.chunks_total_count.load(Ordering::Relaxed)
-                    * self.chunk_padded_size.load(Ordering::Relaxed),
-                libc::MADV_DONTNEED,
-            );
+            for (buffer, chunks_count) in self.buffers_list.lock().iter() {
+                libc::madvise(
+                    *buffer as *mut libc::c_void,
+                    chunks_count * self.chunk_padded_size.load(Ordering::Relaxed),
+                    libc::MADV_DONTNEED,
+                );
+            }
         }
     }
 
@@ -374,7 +382,7 @@ impl ChunksAllocator {
                         #[cfg(feature = "track-usage")]
                         {
                             MemoryFileInternal::debug_dump_files();
-                            panic!(
+                            println!(
                                 "Usages: {:?}",
                                 USAGE_MAP
                                     .lock()
@@ -387,7 +395,20 @@ impl ChunksAllocator {
                                     .join("\n")
                             )
                         }
-                        panic!("Out of memory!");
+
+                        // We're out of memory, let's try to allocate another chunk
+                        if let Some(mut free_chunk_pool) = self.chunks.try_lock() {
+                            let extra_chunks_count = OUT_OF_MEMORY_ALLOCATION_SIZE.as_bytes()
+                                / self.chunk_usable_size.load(Ordering::Relaxed);
+                            let chunks_iter = self.allocate_contiguous_chunk(extra_chunks_count);
+                            free_chunk_pool.extend(chunks_iter);
+                            println!(
+                                "Allocated {} extra chunks for temporary files ({})",
+                                extra_chunks_count, OUT_OF_MEMORY_ALLOCATION_SIZE
+                            );
+                        }
+                        // Reset the tries counter
+                        tries_count = 0;
                     }
                 }
                 Some(chunk) => {
@@ -453,10 +474,9 @@ impl ChunksAllocator {
 
         {
             chunks.clear();
-            let chunks_count = self.chunks_total_count.swap(0, Ordering::Relaxed);
+            self.chunks_total_count.swap(0, Ordering::Relaxed);
 
-            let addr = self.big_buffer_start_addr.swap(0, Ordering::Relaxed);
-            if addr != 0 {
+            for (addr, chunks_count) in self.buffers_list.lock().drain(..) {
                 unsafe {
                     dealloc(
                         addr as *mut u8,

@@ -88,7 +88,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
                         data.start_read_index = read_index;
 
                         if !data.push_sequences(x) {
-                            panic!("Out of memory!");
+                            panic!("BUG: Out of memory!");
                         }
                     }
                     read_index += 1;

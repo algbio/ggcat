@@ -132,7 +132,10 @@ struct CommonArgs {
     #[structopt(short = "f", long)]
     pub forward_only: bool,
 
-    /// Maximum memory usage (GB)
+    /// Maximum suggested memory usage (GB)
+    /// The tool will try use only up to this GB of memory to store temporary files
+    /// without writing to disk. This usage does not include the needed memory for the processing steps.
+    /// GGCAT can allocate extra memory for files if the current memory is not enough to complete the current operation
     #[structopt(short = "m", long, default_value = "2")]
     pub memory: f64,
 
