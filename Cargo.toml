@@ -7,6 +7,9 @@ members = [
     # Main crate for the command line tools
     "cmdline",
 
+    # Main library for api usage
+    "api",
+
     # Common libraries
     "libs/libdeflate-rs",
     "libs/parallel-processor-rs",
@@ -42,7 +45,7 @@ members = [
 
 ]
 
-default-members = ["cmdline"]
+default-members = ["cmdline", "api"]
 
 
 [profile.release]

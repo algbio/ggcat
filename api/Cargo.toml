@@ -1,0 +1,45 @@
+[package]
+authors = ["Andrea Cracco <guilucand@gmail.com>"]
+edition = "2021"
+name = "ggcat-api"
+version = "0.1.0"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+#
+## Config
+#config = { path = "../config" }
+#utils = { path = "../utils" }
+#
+## Static dispatch
+#static-dispatch = { path = "../libs/static-dispatch" }
+#
+#
+## Common libraries
+#parallel-processor = { path = "../libs/parallel-processor-rs" }
+##libdeflate-rs = { path = "../libs/libdeflate-rs" }
+##nightly-quirks = { path = "../libs/nightly-quirks" }
+#
+#hashes = { path = "../pipeline/common/hashes" }
+#io = { path = "../pipeline/common/io" }
+#colors = { path = "../pipeline/common/colors" }
+#
+#assembler = { path = "../pipeline/assembler" }
+#instrumenter = { version = "0.1.0", path = "../libs/instrumenter-rs" }
+#querier = { path = "../pipeline/querier" }
+cxx = "1.0.80"
+
+
+[features]
+#mem-analysis = ["parallel-processor/track-usage"]
+#no-stats = ["parallel-processor/no-stats"]
+#process-stats = ["parallel-processor/process-stats"]
+#tracing = ["instrumenter/enabled"]
+#devel-build = ["assembler/devel-build", "querier/devel-build"]
+
+[build-dependencies]
+cxx-build = "1.0.80"
+make-cmd = "0.1.0"
+
