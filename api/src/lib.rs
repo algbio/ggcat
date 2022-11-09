@@ -4,7 +4,7 @@ pub fn initialize(config: GGCATConfig) {}
 
 pub fn build_graph(
     // The input files
-    input: Vec<String>,
+    input_files: Vec<String>,
     // Enable colors
     colors: bool,
 
@@ -45,7 +45,7 @@ mod ffi {
 
     pub struct GGCATConfig {
         /// Specifies the k-mers length
-        klen: usize,
+        kmer_length: usize,
         /// Directory for temporary files
         temp_dir: String,
         /// The threads to be used
@@ -53,7 +53,7 @@ mod ffi {
         /// Treats reverse complementary kmers as different
         forward_only: bool,
         /// Overrides the default m-mers (minimizers) length
-        mlen: usize,
+        minimizer_length: usize,
         /// Maximum suggested memory usage (GB)
         /// The tool will try use only up to this GB of memory to store temporary files
         /// without writing to disk. This usage does not include the needed memory for the processing steps.

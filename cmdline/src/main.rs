@@ -107,12 +107,12 @@ struct MatchesArgs {
 #[derive(StructOpt, Debug)]
 struct CommonArgs {
     /// Specifies the k-mers length
-    #[structopt(short, default_value = "32")]
-    pub klen: usize,
+    #[structopt(short, long = "kmer-length")]
+    pub kmer_length: usize,
 
     /// Overrides the default m-mers (minimizers) length
-    #[structopt(long)]
-    pub mlen: Option<usize>,
+    #[structopt(long = "minimizer-length")]
+    pub minimizer_length: Option<usize>,
 
     /// Directory for temporary files (default .temp_files)
     #[structopt(short = "t", long = "temp-dir", default_value = ".temp_files")]
@@ -300,8 +300,9 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) {
 
     println!(
         "Using m: {} with k: {}",
-        args.mlen.unwrap_or(compute_best_m(args.klen)),
-        args.klen
+        args.minimizer_length
+            .unwrap_or(compute_best_m(args.kmer_length)),
+        args.kmer_length
     )
 
     // #[cfg(feature = "mem-analysis")]
@@ -439,10 +440,10 @@ fn run_assembler_from_args(
 
     assembler::dynamic_dispatch::run_assembler(
         generics,
-        args.common_args.klen,
+        args.common_args.kmer_length,
         args.common_args
-            .mlen
-            .unwrap_or(compute_best_m(args.common_args.klen)),
+            .minimizer_length
+            .unwrap_or(compute_best_m(args.common_args.kmer_length)),
         convert_assembler_step(args.step),
         convert_assembler_step(args.last_step),
         inputs,
@@ -483,10 +484,10 @@ fn run_querier_from_args(
 ) {
     querier::dynamic_dispatch::run_query(
         generics,
-        args.common_args.klen,
+        args.common_args.kmer_length,
         args.common_args
-            .mlen
-            .unwrap_or(compute_best_m(args.common_args.klen)),
+            .minimizer_length
+            .unwrap_or(compute_best_m(args.common_args.kmer_length)),
         convert_querier_step(args.step),
         args.input_graph,
         args.input_query,
@@ -555,7 +556,7 @@ fn main() {
                     bucketing_hash,
                     get_hash_static_id(
                         args.common_args.hash_type,
-                        args.common_args.klen,
+                        args.common_args.kmer_length,
                         args.common_args.forward_only,
                     ),
                     if args.colors {
@@ -605,7 +606,7 @@ fn main() {
                     bucketing_hash,
                     get_hash_static_id(
                         args.common_args.hash_type,
-                        args.common_args.klen,
+                        args.common_args.kmer_length,
                         args.common_args.forward_only,
                     ),
                     if args.colors {

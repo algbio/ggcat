@@ -241,14 +241,14 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             let mut try_extend_function = |output: &mut Vec<u8>,
                                            compute_hash_fw: fn(
                 hash: MH::HashTypeExtendable,
-                klen: usize,
+                kmer_length: usize,
                 out_b: u8,
                 in_b: u8,
             )
                 -> MH::HashTypeExtendable,
                                            compute_hash_bw: fn(
                 hash: MH::HashTypeExtendable,
-                klen: usize,
+                kmer_length: usize,
                 out_b: u8,
                 in_b: u8,
             )

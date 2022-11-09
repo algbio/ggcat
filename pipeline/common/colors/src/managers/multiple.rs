@@ -200,7 +200,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             .buffer
             .extend_from_slice(&data.last_color.to_ne_bytes());
 
-        let klen_dist_flag = if sequence.bases_count() > k {
+        let kmer_length_dist_flag = if sequence.bases_count() > k {
             0
         } else {
             decr_val as u8
@@ -209,7 +209,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         encode_varint_flags::<_, _, typenum::U1>(
             |b| data.sequences[bucket].buffer.extend_from_slice(b),
             sequence.bases_count() as u64,
-            klen_dist_flag,
+            kmer_length_dist_flag,
         );
         sequence.copy_to_buffer(&mut data.sequences[bucket].buffer);
         data.sequences[bucket].flush(&data.temp_dir)
