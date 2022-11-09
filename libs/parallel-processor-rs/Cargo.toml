@@ -16,7 +16,7 @@ rand = "0.8.5"
 rayon = "1.5.3"
 replace_with = "0.1.7"
 unchecked-index = "0.2.2"
-nightly-quirks = { path = "../nightly-quirks" }
+nightly-quirks = "0.1.0"
 
 # Memory tracking
 dashmap = { version = "5.4.0", features = ["serde"] }

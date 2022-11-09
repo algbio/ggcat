@@ -10,7 +10,7 @@ crc32fast = "1.3.2"
 filebuffer = "0.4.0"
 static_assertions = "1.1.0"
 structopt = "0.3.26"
-nightly-quirks = { path = "../nightly-quirks" }
+nightly-quirks = "0.1.0"
 counter-stats = { git = "https://github.com/Guilucand/counter-stats.git" }
 
 [[bin]]

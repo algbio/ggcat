@@ -13,7 +13,7 @@ config = { path = "../../../config" }
 # Common libraries
 parallel-processor = { path = "../../../libs/parallel-processor-rs" }
 libdeflate-rs = { path = "../../../libs/libdeflate-rs" }
-nightly-quirks = { path = "../../../libs/nightly-quirks" }
+nightly-quirks = "0.1.0"
 
 # Pipeline libraries
 hashes = { path = "../hashes" }

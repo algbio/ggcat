@@ -10,10 +10,12 @@ members = [
     # Main library for api usage
     "api",
 
+    # Main c/c++ library for api usage
+    "capi",
+
     # Common libraries
     "libs/libdeflate-rs",
     "libs/parallel-processor-rs",
-    "libs/nightly-quirks",
     "libs/static-dispatch",
     "libs/static-dispatch/static-dispatch-proc-macro",
 

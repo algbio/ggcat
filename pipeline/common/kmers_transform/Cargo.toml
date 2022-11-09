@@ -14,7 +14,7 @@ utils = { path = "../../../utils" }
 # Common libraries
 parallel-processor = { path = "../../../libs/parallel-processor-rs" }
 libdeflate-rs = { path = "../../../libs/libdeflate-rs" }
-nightly-quirks = { path = "../../../libs/nightly-quirks" }
+nightly-quirks = "0.1.0"
 hashes = { path = "../hashes" }
 minimizer_bucketing = { path = "../minimizer_bucketing" }
 
