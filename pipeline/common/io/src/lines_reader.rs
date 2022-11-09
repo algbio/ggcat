@@ -1,6 +1,6 @@
 use bstr::ByteSlice;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
-use libdeflate_rs::decompress_file_buffered;
+use streaming_libdeflate_rs::decompress_file_buffered;
 use parallel_processor::counter_stats::counter::{AtomicCounter, AvgMode, SumMode};
 use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter_i64};
 use std::fs::File;

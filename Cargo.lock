@@ -106,7 +106,6 @@ dependencies = [
  "itertools",
  "kmers_merge",
  "kmers_transform",
- "libdeflate-rs",
  "matchtigs",
  "nightly-quirks",
  "parallel-processor",
@@ -114,6 +113,7 @@ dependencies = [
  "rayon",
  "serde",
  "static-dispatch",
+ "streaming-libdeflate-rs",
  "structs",
  "traitgraph-algo",
  "typenum",
@@ -128,10 +128,10 @@ dependencies = [
  "config",
  "hashes",
  "io",
- "libdeflate-rs",
  "minimizer_bucketing",
  "parallel-processor",
  "static-dispatch",
+ "streaming-libdeflate-rs",
  "structs",
  "typenum",
 ]
@@ -548,7 +548,6 @@ dependencies = [
  "hashes",
  "io",
  "itertools",
- "libdeflate-rs",
  "lz4",
  "nightly-quirks",
  "parallel-processor",
@@ -560,6 +559,7 @@ dependencies = [
  "serde",
  "siphasher",
  "static-dispatch",
+ "streaming-libdeflate-rs",
  "structs",
  "typenum",
 ]
@@ -641,17 +641,6 @@ dependencies = [
  "core-graphics",
  "foreign-types",
  "libc",
-]
-
-[[package]]
-name = "counter-stats"
-version = "0.1.0"
-source = "git+https://github.com/Guilucand/counter-stats.git#cf030095ca28f5e76aa537551b9c97b1e575ace1"
-dependencies = [
- "bytesize",
- "json",
- "lazy_static",
- "parking_lot",
 ]
 
 [[package]]
@@ -1390,13 +1379,13 @@ dependencies = [
  "config",
  "flate2",
  "hashes",
- "libdeflate-rs",
  "lz4",
  "nightly-quirks",
  "parallel-processor",
  "parking_lot",
  "rand",
  "serde",
+ "streaming-libdeflate-rs",
  "typenum",
  "utils",
 ]
@@ -1472,12 +1461,12 @@ dependencies = [
  "instrumenter",
  "io",
  "kmers_transform",
- "libdeflate-rs",
  "minimizer_bucketing",
  "nightly-quirks",
  "parallel-processor",
  "parking_lot",
  "rayon",
+ "streaming-libdeflate-rs",
  "structs",
  "typenum",
  "utils",
@@ -1491,12 +1480,12 @@ dependencies = [
  "hashes",
  "instrumenter",
  "io",
- "libdeflate-rs",
  "minimizer_bucketing",
  "nightly-quirks",
  "parallel-processor",
  "parking_lot",
  "replace_with",
+ "streaming-libdeflate-rs",
  "tokio",
  "typenum",
  "utils",
@@ -1513,19 +1502,6 @@ name = "libc"
 version = "0.2.137"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7fcc620a3bff7cdd7a365be3376c97191aeaccc2a603e600951e452615bf89"
-
-[[package]]
-name = "libdeflate-rs"
-version = "0.1.0"
-dependencies = [
- "counter-stats",
- "crc32fast",
- "filebuffer",
- "nightly-quirks",
- "rayon",
- "static_assertions",
- "structopt",
-]
 
 [[package]]
 name = "libloading"
@@ -1666,12 +1642,12 @@ dependencies = [
  "config",
  "hashes",
  "io",
- "libdeflate-rs",
  "nightly-quirks",
  "parallel-processor",
  "parking_lot",
  "replace_with",
  "serde",
+ "streaming-libdeflate-rs",
  "typenum",
 ]
 
@@ -1691,6 +1667,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b275950c28b37e794e8c55d88aeb5e139d0ce23fdbbeda68f8d7174abdf9e8fa"
 dependencies = [
  "adler",
+]
+
+[[package]]
+name = "mt-debug-counters"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0465b0799568e6f7ec1e868a755a511fa05850b7790404ab55136438b61ed798"
+dependencies = [
+ "bytesize",
+ "json",
+ "lazy_static",
+ "parking_lot",
 ]
 
 [[package]]
@@ -1872,7 +1860,6 @@ dependencies = [
  "backtrace",
  "bincode",
  "byteorder",
- "counter-stats",
  "crossbeam",
  "dashmap",
  "desse",
@@ -1880,6 +1867,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "lz4",
+ "mt-debug-counters",
  "nightly-quirks",
  "parking_lot",
  "rand",
@@ -2126,7 +2114,6 @@ dependencies = [
  "hashes",
  "io",
  "kmers_transform",
- "libdeflate-rs",
  "lz4",
  "minimizer_bucketing",
  "nightly-quirks",
@@ -2134,6 +2121,7 @@ dependencies = [
  "parking_lot",
  "rayon",
  "static-dispatch",
+ "streaming-libdeflate-rs",
  "structs",
  "typenum",
  "utils",
@@ -2526,6 +2514,20 @@ dependencies = [
  "nalgebra",
  "num-traits",
  "rand",
+]
+
+[[package]]
+name = "streaming-libdeflate-rs"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a216dc92d77a5dd0ee5b186c7f809e6f8978fb8b53ef62ca6d518e0fe0a6c51a"
+dependencies = [
+ "crc32fast",
+ "filebuffer",
+ "mt-debug-counters",
+ "nightly-quirks",
+ "static_assertions",
+ "structopt",
 ]
 
 [[package]]

@@ -12,7 +12,7 @@ config = { path = "../../../config" }
 
 # Common libraries
 parallel-processor = { path = "../../../libs/parallel-processor-rs" }
-libdeflate-rs = { path = "../../../libs/libdeflate-rs" }
+streaming-libdeflate-rs = "0.1.0"
 
 # Static dispatch
 static-dispatch = { path = "../../../libs/static-dispatch" }
