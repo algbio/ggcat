@@ -4,7 +4,7 @@ use crate::memory_data_size::MemoryDataSize;
 use crate::memory_fs::file::internal::MemoryFileMode;
 use crate::memory_fs::file::writer::FileWriter;
 use crate::utils::memory_size_to_log2;
-use counter_stats::counter::AtomicCounterGuardSum;
+use mt_debug_counters::counter::AtomicCounterGuardSum;
 use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

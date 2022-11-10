@@ -24,8 +24,6 @@ use parallel_processor::buckets::readers::async_binary_reader::{
 };
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::LockFreeBucket;
-use parallel_processor::counter_stats::counter::{AtomicCounter, SumMode};
-use parallel_processor::counter_stats::declare_counter_i64;
 use parallel_processor::execution_manager::executor::{
     AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
 };
@@ -34,6 +32,8 @@ use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::{PoolObject, PoolObjectTrait};
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait, PacketsPool};
 use parallel_processor::memory_fs::RemoveFileMode;
+use parallel_processor::mt_debug_counters::counter::{AtomicCounter, SumMode};
+use parallel_processor::mt_debug_counters::declare_counter_i64;
 use parallel_processor::utils::replace_with_async::replace_with_async;
 use std::cmp::{max, min, Reverse};
 use std::collections::{BinaryHeap, VecDeque};

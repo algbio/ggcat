@@ -14,14 +14,14 @@ use minimizer_bucketing::{MinimizerBucketingExecutor, MinimizerBucketingExecutor
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
-use parallel_processor::counter_stats::counter::{AtomicCounter, SumMode};
-use parallel_processor::counter_stats::declare_counter_i64;
 use parallel_processor::execution_manager::executor::{
     AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
 };
 use parallel_processor::execution_manager::executor_address::ExecutorAddress;
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::packet::Packet;
+use parallel_processor::mt_debug_counters::counter::{AtomicCounter, SumMode};
+use parallel_processor::mt_debug_counters::declare_counter_i64;
 use std::cmp::{max, min};
 use std::future::Future;
 use std::marker::PhantomData;

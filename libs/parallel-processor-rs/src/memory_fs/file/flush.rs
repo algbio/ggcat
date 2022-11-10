@@ -1,8 +1,8 @@
 use crate::memory_fs::allocator::AllocatedChunk;
 use crate::memory_fs::file::internal::FileChunk;
 use crate::memory_fs::flushable_buffer::{FileFlushMode, FlushableItem};
-use counter_stats::counter::{AtomicCounter, AtomicCounterGuardSum, MaxMode, SumMode};
 use crossbeam::channel::*;
+use mt_debug_counters::counter::{AtomicCounter, AtomicCounterGuardSum, MaxMode, SumMode};
 use parking_lot::lock_api::{RawMutex, RawRwLock};
 use parking_lot::{Mutex, RwLock};
 use std::cmp::max;

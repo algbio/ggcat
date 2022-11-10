@@ -27,4 +27,4 @@ tokio = "1.21.2"
 
 
 # Tracing
-instrumenter = { path = "../../../libs/instrumenter-rs" }
+instrumenter = "0.1.0"

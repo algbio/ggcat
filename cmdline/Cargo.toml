@@ -57,7 +57,8 @@ colors = { path = "../pipeline/common/colors" }
 #structs = { path = "../pipeline/common/structs" }
 
 assembler = { path = "../pipeline/assembler" }
-instrumenter = { version = "0.1.0", path = "../libs/instrumenter-rs" }
+instrumenter = "0.1.0"
+
 querier = { path = "../pipeline/querier" }
 
 

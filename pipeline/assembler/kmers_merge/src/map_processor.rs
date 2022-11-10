@@ -15,11 +15,11 @@ use kmers_transform::processor::KmersTransformProcessor;
 use kmers_transform::{
     GroupProcessStats, KmersTransformExecutorFactory, KmersTransformMapProcessor,
 };
-use parallel_processor::counter_stats::counter::{AtomicCounter, AvgMode, MaxMode};
-use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter_i64};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
+use parallel_processor::mt_debug_counters::counter::{AtomicCounter, AvgMode, MaxMode};
+use parallel_processor::mt_debug_counters::{declare_avg_counter_i64, declare_counter_i64};
 use parking_lot::RwLock;
 use std::cmp::{max, min};
 use std::mem::size_of;

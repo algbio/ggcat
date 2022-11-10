@@ -1,11 +1,11 @@
 use bstr::ByteSlice;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
-use streaming_libdeflate_rs::decompress_file_buffered;
-use parallel_processor::counter_stats::counter::{AtomicCounter, AvgMode, SumMode};
-use parallel_processor::counter_stats::{declare_avg_counter_i64, declare_counter_i64};
+use parallel_processor::mt_debug_counters::counter::{AtomicCounter, AvgMode, SumMode};
+use parallel_processor::mt_debug_counters::{declare_avg_counter_i64, declare_counter_i64};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use streaming_libdeflate_rs::decompress_file_buffered;
 
 pub struct LinesReader {
     buffer: Vec<u8>,

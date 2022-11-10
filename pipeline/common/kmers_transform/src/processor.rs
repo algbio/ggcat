@@ -3,12 +3,12 @@ use crate::{
     KmersTransformContext, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
     KmersTransformMapProcessor,
 };
-use parallel_processor::counter_stats::counter::{AtomicCounter, SumMode};
-use parallel_processor::counter_stats::declare_counter_i64;
 use parallel_processor::execution_manager::executor::{AsyncExecutor, ExecutorReceiver};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
+use parallel_processor::mt_debug_counters::counter::{AtomicCounter, SumMode};
+use parallel_processor::mt_debug_counters::declare_counter_i64;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::path::PathBuf;

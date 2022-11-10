@@ -1,6 +1,6 @@
 use crate::memory_fs::file::writer::FileWriter;
-use counter_stats::counter::{AtomicCounter, SumMode};
 use desse::{Desse, DesseSized};
+use mt_debug_counters::counter::{AtomicCounter, SumMode};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 

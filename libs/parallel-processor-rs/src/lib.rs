@@ -5,9 +5,9 @@
 // #![deny(warnings)]
 
 #[macro_use]
-pub extern crate counter_stats;
+pub extern crate mt_debug_counters;
 
-pub use counter_stats::logging::enable_counters_logging;
+pub use mt_debug_counters::logging::enable_counters_logging;
 
 #[macro_use]
 pub mod memory_fs;

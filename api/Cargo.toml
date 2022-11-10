@@ -27,7 +27,8 @@ crate-type = ["rlib", "staticlib"]
 #colors = { path = "../pipeline/common/colors" }
 #
 #assembler = { path = "../pipeline/assembler" }
-#instrumenter = { version = "0.1.0", path = "../libs/instrumenter-rs" }
+#instrumenter = "0.1.0"
+
 #querier = { path = "../pipeline/querier" }
 cxx = "1.0.80"
 

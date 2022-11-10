@@ -15,7 +15,7 @@ pub fn debug_print() {
 #[macro_export]
 macro_rules! track {
     ($code:expr, $tracker:ident) => {{
-        use parallel_processor::counter_stats::counter::AtomicCounterGuardSum;
+        use parallel_processor::mt_debug_counters::counter::AtomicCounterGuardSum;
         let guard = AtomicCounterGuardSum::new(&$tracker, 1);
         $code
     }};

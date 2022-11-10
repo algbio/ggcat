@@ -37,10 +37,6 @@ members = [
     "pipeline/assembler/kmers_merge",
     "pipeline/assembler",
 
-    # Tracing
-    "libs/instrumenter-rs",
-
-
     # Querier pipeline
     "pipeline/querier"
 
