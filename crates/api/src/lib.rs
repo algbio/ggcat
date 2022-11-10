@@ -264,7 +264,7 @@ impl GGCATInstance {
     }
 
     pub fn dump_colors(
-        // The input graph
+        // The input colormap
         input_colormap: impl AsRef<Path>,
     ) -> impl Iterator<Item = String> {
         use colors::colors_manager::ColorMapReader;
