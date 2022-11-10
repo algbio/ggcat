@@ -1,15 +1,8 @@
-#![feature(type_alias_impl_trait)]
-#![feature(is_sorted, thread_local, panic_info_message)]
-#![feature(slice_group_by)]
-#![feature(trait_alias)]
-#![feature(test)]
-#![feature(slice_partition_dedup)]
-#![feature(int_log)]
-#![feature(new_uninit)]
-// #![deny(warnings)]
-#![allow(dead_code)]
+#![feature(panic_info_message)]
+#![cfg_attr(test, feature(test))]
 
 extern crate alloc;
+#[cfg(test)]
 extern crate test;
 
 mod benchmarks;
@@ -253,6 +246,16 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) -> GGCATInstance {
     });
 
     ggcat_api::debug::DEBUG_KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
+    *ggcat_api::debug::BUCKETS_COUNT_FORCE.lock() = args.buckets_count_log;
+    ggcat_api::debug::DEBUG_ONLY_BSTATS.store(args.only_bstats, Ordering::Relaxed);
+    *ggcat_api::debug::DEBUG_HASH_TYPE.lock() = match args.hash_type {
+        HashType::Auto => ggcat_api::HashType::Auto,
+        HashType::SeqHash => ggcat_api::HashType::SeqHash,
+        HashType::RabinKarp32 => ggcat_api::HashType::RabinKarp32,
+        HashType::RabinKarp64 => ggcat_api::HashType::RabinKarp64,
+        HashType::RabinKarp128 => ggcat_api::HashType::RabinKarp128,
+    };
+
     println!(
         "Using m: {} with k: {}",
         args.minimizer_length
@@ -277,19 +280,6 @@ fn convert_assembler_step(step: AssemblerStartingStep) -> assembler::AssemblerSt
         AssemblerStartingStep::BuildUnitigs => assembler::AssemblerStartingStep::BuildUnitigs,
         AssemblerStartingStep::MaximalUnitigsLinks => {
             assembler::AssemblerStartingStep::MaximalUnitigsLinks
-        }
-    }
-}
-
-fn convert_colored_query_format(
-    format: ColoredQueryOutputFormat,
-) -> querier::ColoredQueryOutputFormat {
-    match format {
-        ColoredQueryOutputFormat::JsonLinesWithNumbers => {
-            querier::ColoredQueryOutputFormat::JsonLinesWithNumbers
-        }
-        ColoredQueryOutputFormat::JsonLinesWithNames => {
-            querier::ColoredQueryOutputFormat::JsonLinesWithNames
         }
     }
 }
@@ -322,9 +312,7 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
 
     *ggcat_api::debug::DEBUG_ASSEMBLER_FIRST_STEP.lock() = convert_assembler_step(args.step);
     *ggcat_api::debug::DEBUG_ASSEMBLER_LAST_STEP.lock() = convert_assembler_step(args.last_step);
-    *ggcat_api::debug::BUCKETS_COUNT_FORCE.lock() = args.common_args.buckets_count_log;
     ggcat_api::debug::DEBUG_LINK_PHASE_ITERATION_START_STEP.store(args.number, Ordering::Relaxed);
-    ggcat_api::debug::DEBUG_ONLY_BSTATS.store(args.common_args.only_bstats, Ordering::Relaxed);
 
     instance.build_graph(
         inputs,
@@ -360,6 +348,8 @@ fn convert_querier_step(step: QuerierStartingStep) -> querier::QuerierStartingSt
 }
 
 fn run_querier_from_args(instance: &GGCATInstance, args: QueryArgs) {
+    *ggcat_api::debug::DEBUG_QUERIER_FIRST_STEP.lock() = convert_querier_step(args.step);
+
     instance.query_graph(
         args.input_graph,
         args.input_query,

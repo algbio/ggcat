@@ -1,7 +1,5 @@
 #![feature(type_alias_impl_trait)]
-#![feature(trait_alias)]
 #![feature(const_type_id)]
-#![feature(int_roundings)]
 
 use dynamic_dispatch::dynamic_dispatch;
 
@@ -24,7 +22,8 @@ use serde::Serialize;
 
 use config::{BucketIndexType, MinimizerType};
 
-pub trait UnextendableHashTraitType = Copy
+pub trait UnextendableHashTraitType:
+    Copy
     + Clone
     + Debug
     + Default
@@ -36,7 +35,27 @@ pub trait UnextendableHashTraitType = Copy
     + Sync
     + Serialize
     + DeserializeOwned
-    + 'static;
+    + 'static
+{
+}
+
+impl<
+        T: Copy
+            + Clone
+            + Debug
+            + Default
+            + Display
+            + Eq
+            + Ord
+            + Hash
+            + Send
+            + Sync
+            + Serialize
+            + DeserializeOwned
+            + 'static,
+    > UnextendableHashTraitType for T
+{
+}
 
 pub trait ExtendableHashTraitType: Copy + Clone + Debug + Eq + Ord + Send + Sync {
     type HashTypeUnextendable: UnextendableHashTraitType;

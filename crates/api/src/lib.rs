@@ -1,5 +1,6 @@
 mod utils;
 
+pub use crate::utils::HashType;
 use colors::colors_manager::ColorsManager;
 use colors::{
     bundles::multifile_building::ColorBundleMultifileBuilding, non_colored::NonColoredManager,

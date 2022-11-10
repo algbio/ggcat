@@ -1,6 +1,4 @@
 
-cargo-features = ["profile-rustflags"]
-
 [patch.crates-io]
 #ggat_cmdline = { path = "crates/cmdline" }
 #ggat_api = { path = "crates/api" }
