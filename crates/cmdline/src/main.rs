@@ -19,22 +19,17 @@ mod utils;
 // mod cmd_utils;
 
 use backtrace::Backtrace;
-use std::cmp::max;
-
+use std::fs::File;
 // use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
 use colors::bundles::multifile_building::ColorBundleMultifileBuilding;
 use colors::colors_manager::{ColorMapReader, ColorsManager};
+use ggcat_api::{GGCATConfig, GGCATInstance};
 use hashes::MinimizerHashFunctionFactory;
-use parallel_processor::enable_counters_logging;
-use parallel_processor::memory_data_size::MemoryDataSize;
-use rayon::ThreadPoolBuilder;
-use std::fs::{create_dir_all, File};
 use std::io::{BufReader, BufWriter, Write};
 use std::panic;
 use std::path::PathBuf;
 use std::process::exit;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 use structopt::StructOpt;
 
 arg_enum! {
@@ -76,13 +71,12 @@ use colors::bundles::graph_querying::ColorBundleGraphQuerying;
 use colors::non_colored::NonColoredManager;
 use colors::storage::deserializer::ColorsDeserializer;
 use colors::DefaultColorsSerializer;
-use config::{ColorIndexType, FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
+use config::{ColorIndexType, KEEP_FILES};
 use dynamic_dispatch::StaticDispatch;
 use hashes::cn_nthash::CanonicalNtHashIteratorFactory;
 use hashes::fw_nthash::ForwardNtHashIteratorFactory;
 use io::sequences_stream::general::GeneralSequenceBlockData;
 use parallel_processor::memory_fs::MemoryFs;
-use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::io::BufRead;
 use structopt::clap::{arg_enum, ArgGroup};
 
@@ -265,39 +259,16 @@ struct QueryArgs {
 // static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
 
 fn initialize(args: &CommonArgs, out_file: &PathBuf) {
-    // Increase the maximum allowed number of open files
-    fdlimit::raise_fd_limit();
+    let _instance = GGCATInstance::create(GGCATConfig {
+        temp_dir: Some(args.temp_dir.clone()),
+        memory: args.memory,
+        prefer_memory: args.prefer_memory,
+        total_threads_count: args.threads_count,
+        stats_file: Some(out_file.with_extension("stats.log")),
+    });
 
-    KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
-
-    PREFER_MEMORY.store(args.prefer_memory, Ordering::Relaxed);
     DEBUG_LEVEL.store(args.debug_level, Ordering::Relaxed);
-
-    ThreadPoolBuilder::new()
-        .num_threads(args.threads_count)
-        .thread_name(|i| format!("rayon-thread-{}", i))
-        .build_global()
-        .unwrap();
-
-    create_dir_all(&args.temp_dir).unwrap();
-
-    enable_counters_logging(
-        out_file.with_extension("stats.log"),
-        Duration::from_millis(1000),
-        |val| {
-            val["phase"] = PHASES_TIMES_MONITOR.read().get_phase_desc().into();
-        },
-    );
-
-    MemoryFs::init(
-        MemoryDataSize::from_bytes(
-            (args.memory * (MemoryDataSize::OCTET_GIBIOCTET_FACTOR as f64)) as usize,
-        ),
-        FLUSH_QUEUE_FACTOR * args.threads_count,
-        max(1, args.threads_count / 4),
-        8192,
-    );
-
+    KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
     println!(
         "Using m: {} with k: {}",
         args.minimizer_length

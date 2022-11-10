@@ -8,39 +8,15 @@ version = "0.1.0"
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
-#
-## Config
-#config = { package = "ggcat_config", path = "../config" }
-#utils = { package = "ggcat_utils", path = "../utils" }
-#
-## Static dispatch
-#dynamic-dispatch = "0.3.0"
-#
-#
-## Common libraries
-#parallel-processor = "0.1.0"
-##streaming-libdeflate-rs = "0.1.0"
-##nightly-quirks = "0.1.0"
-#
-#hashes = { package = "ggcat_hashes", path = "../hashes" }
-#io = { package = "ggcat_io", path = "../io" }
-#colors = { package = "ggcat_colors", path = "../colors" }
-#
-#assembler = { package = "ggcat_assembler", path = "../assembler" }
-#instrumenter = "0.1.0"
 
-#querier = { package = "ggcat_querier", path = "../querier" }
-cxx = "1.0.80"
+# Global config
+config = { package = "ggcat_config", path = "../config" }
 
+# GGCAT main modules
+assembler = { package = "ggcat_assembler", path = "../assembler" }
+querier = { package = "ggcat_querier", path = "../querier" }
 
-[features]
-#mem-analysis = ["parallel-processor/track-usage"]
-#no-stats = ["parallel-processor/no-stats"]
-#process-stats = ["parallel-processor/process-stats"]
-#tracing = ["instrumenter/enabled"]
-#devel-build = ["assembler/devel-build", "querier/devel-build"]
-
-[build-dependencies]
-cxx-build = "1.0.80"
-make-cmd = "0.1.0"
+fdlimit = "0.2.1"
+parallel-processor = "0.1.0"
+rayon = "1.5.3"
 

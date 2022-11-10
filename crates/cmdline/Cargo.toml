@@ -64,6 +64,7 @@ assembler = { package = "ggcat_assembler", path = "../assembler" }
 instrumenter = "0.1.0"
 
 querier = { package = "ggcat_querier", path = "../querier" }
+ggcat-api = { version = "0.1.0", path = "../api" }
 
 
 [features]

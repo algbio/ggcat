@@ -195,7 +195,12 @@ pub fn colored_query_output<
                     })
                 {
                     jsonline_buffer.clear();
-                    write!(jsonline_buffer, "{{\"query_index\":{}, \"matches\":{{", query).unwrap();
+                    write!(
+                        jsonline_buffer,
+                        "{{\"query_index\":{}, \"matches\":{{",
+                        query
+                    )
+                    .unwrap();
 
                     temp_colors_list.clear();
                     while query_colors_list_index != usize::MAX {

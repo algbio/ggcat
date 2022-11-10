@@ -905,9 +905,12 @@ dependencies = [
 name = "ggcat-api"
 version = "0.1.0"
 dependencies = [
- "cxx",
- "cxx-build",
- "make-cmd",
+ "fdlimit",
+ "ggcat_assembler",
+ "ggcat_config",
+ "ggcat_querier",
+ "parallel-processor",
+ "rayon",
 ]
 
 [[package]]
@@ -1002,6 +1005,7 @@ dependencies = [
  "filebuffer",
  "flate2",
  "fs_extra",
+ "ggcat-api",
  "ggcat_assembler",
  "ggcat_colors",
  "ggcat_config",
