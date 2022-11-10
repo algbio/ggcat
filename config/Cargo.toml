@@ -9,4 +9,4 @@ edition = "2021"
 
 
 # Common libraries
-parallel-processor = { path = "../libs/parallel-processor-rs" }
+parallel-processor = "0.1.0"

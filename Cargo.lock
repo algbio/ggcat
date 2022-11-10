@@ -922,12 +922,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1847abb9cb65d566acd5942e94aea9c8f547ad02c98e1649326fc0e8910b8b1e"
 
 [[package]]
-name = "futures-core"
-version = "0.3.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04909a7a7e4633ae6c4a9ab280aeb86da1236243a77b694a49eacd659a4bd3ac"
-
-[[package]]
 name = "fxhash"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1625,6 +1619,8 @@ dependencies = [
 [[package]]
 name = "parallel-processor"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f0323ccd3e45e843bab2a5aa849c471c1d6710ad0c4a80370fd3b7924674cb6"
 dependencies = [
  "backtrace",
  "bincode",
@@ -1639,16 +1635,15 @@ dependencies = [
  "mt-debug-counters",
  "nightly-quirks",
  "parking_lot",
+ "procfs",
  "rand",
  "rayon",
  "replace_with",
  "serde",
  "serde_json",
- "simple-process-stats",
+ "thiserror",
  "tokio",
- "tokio-scoped",
  "unchecked-index",
- "voracious_radix_sort",
 ]
 
 [[package]]
@@ -2112,17 +2107,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "simple-process-stats"
-version = "1.0.0"
-dependencies = [
- "libc",
- "procfs",
- "thiserror",
- "tokio",
- "winapi",
-]
-
-[[package]]
 name = "simplelog"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2426,27 +2410,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-scoped"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4beb8ba13bc53ac53ce1d52b42f02e5d8060f0f42138862869beb769722b256"
-dependencies = [
- "tokio",
- "tokio-stream",
-]
-
-[[package]]
-name = "tokio-stream"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d660770404473ccd7bc9f8b28494a811bc18542b915c0855c51e8f419d5223ce"
-dependencies = [
- "futures-core",
- "pin-project-lite",
- "tokio",
-]
-
-[[package]]
 name = "tracing"
 version = "0.1.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2572,15 +2535,6 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
-
-[[package]]
-name = "voracious_radix_sort"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ca7cc4f89d8aa95b7653c6573f8c4d7fec0574998fad0014d9d1acf777dba57"
-dependencies = [
- "rayon",
-]
 
 [[package]]
 name = "walkdir"

@@ -44,7 +44,7 @@ static-dispatch = { path = "../libs/static-dispatch" }
 
 
 # Common libraries
-parallel-processor = { path = "../libs/parallel-processor-rs" }
+parallel-processor = "0.1.0"
 #streaming-libdeflate-rs = "0.1.0"
 #nightly-quirks = "0.1.0"
 
