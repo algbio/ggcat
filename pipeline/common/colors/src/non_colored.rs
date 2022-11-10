@@ -3,12 +3,12 @@ use crate::colors_manager::{
 };
 use crate::parsers::SingleSequenceInfo;
 use config::{BucketIndexType, ColorCounterType};
+use dynamic_dispatch::dynamic_dispatch;
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
-use static_dispatch::static_dispatch;
 use std::io::{Read, Write};
 use std::ops::Range;
 use std::path::Path;
@@ -18,7 +18,7 @@ use structs::map_entry::MapEntry;
 pub struct NonColoredManager;
 
 /// Dummy colors manager
-#[static_dispatch]
+#[dynamic_dispatch]
 impl ColorsManager for NonColoredManager {
     const COLORS_ENABLED: bool = false;
     type SingleKmerColorDataType = NonColoredManager;

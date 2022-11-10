@@ -1,4 +1,4 @@
-use ::static_dispatch::static_dispatch;
+use ::dynamic_dispatch::dynamic_dispatch;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
@@ -211,7 +211,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
     }
 }
 
-#[static_dispatch(H = [
+#[dynamic_dispatch(H = [
     hashes::cn_nthash::CanonicalNtHashIteratorFactory,
     #[cfg(not(feature = "devel-build"))] hashes::fw_nthash::ForwardNtHashIteratorFactory
 ], CX = [

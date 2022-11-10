@@ -98,6 +98,7 @@ dependencies = [
  "colors",
  "config",
  "crossbeam",
+ "dynamic-dispatch",
  "fs_extra",
  "genome-graph",
  "hashbrown",
@@ -112,7 +113,6 @@ dependencies = [
  "parking_lot",
  "rayon",
  "serde",
- "static-dispatch",
  "streaming-libdeflate-rs",
  "structs",
  "traitgraph-algo",
@@ -126,11 +126,11 @@ version = "0.1.0"
 dependencies = [
  "colors",
  "config",
+ "dynamic-dispatch",
  "hashes",
  "io",
  "minimizer_bucketing",
  "parallel-processor",
- "static-dispatch",
  "streaming-libdeflate-rs",
  "structs",
  "typenum",
@@ -529,6 +529,7 @@ dependencies = [
  "crossbeam",
  "dashmap",
  "desse",
+ "dynamic-dispatch",
  "hashbrown",
  "hashes",
  "io",
@@ -543,7 +544,6 @@ dependencies = [
  "roaring",
  "serde",
  "siphasher",
- "static-dispatch",
  "streaming-libdeflate-rs",
  "structs",
  "typenum",
@@ -811,6 +811,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ccbbca7d6a247007ca2535c616d4bb4a5fcad176ef0218671f96b88c52c3d34"
 
 [[package]]
+name = "dynamic-dispatch"
+version = "0.3.0"
+dependencies = [
+ "dynamic-dispatch-proc-macro",
+]
+
+[[package]]
+name = "dynamic-dispatch-proc-macro"
+version = "0.3.0"
+dependencies = [
+ "proc-macro-error",
+ "proc-macro2 1.0.47",
+ "quote 1.0.21",
+ "regex",
+ "syn 1.0.103",
+]
+
+[[package]]
 name = "either"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -990,6 +1008,7 @@ dependencies = [
  "csv",
  "dashmap",
  "desse",
+ "dynamic-dispatch",
  "fdlimit",
  "filebuffer",
  "flate2",
@@ -1013,7 +1032,6 @@ dependencies = [
  "serde",
  "serde_json",
  "siphasher",
- "static-dispatch",
  "structopt",
  "typenum",
  "utils",
@@ -1056,11 +1074,11 @@ dependencies = [
  "ahash 0.8.1",
  "config",
  "criterion",
+ "dynamic-dispatch",
  "io",
  "pcg_rand",
  "rand",
  "serde",
- "static-dispatch",
  "utils",
 ]
 
@@ -1808,6 +1826,7 @@ dependencies = [
  "colors",
  "config",
  "csv",
+ "dynamic-dispatch",
  "flate2",
  "hashbrown",
  "hashes",
@@ -1819,7 +1838,6 @@ dependencies = [
  "parallel-processor",
  "parking_lot",
  "rayon",
- "static-dispatch",
  "streaming-libdeflate-rs",
  "structs",
  "typenum",
@@ -2128,24 +2146,6 @@ name = "smallvec"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
-
-[[package]]
-name = "static-dispatch"
-version = "0.1.0"
-dependencies = [
- "static-dispatch-proc-macro",
-]
-
-[[package]]
-name = "static-dispatch-proc-macro"
-version = "0.1.0"
-dependencies = [
- "proc-macro-error",
- "proc-macro2 1.0.47",
- "quote 1.0.21",
- "regex",
- "syn 1.0.103",
-]
 
 [[package]]
 name = "static_assertions"

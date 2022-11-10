@@ -7,7 +7,7 @@ use crate::pipeline::colormap_reading::colormap_reading;
 use crate::pipeline::counters_sorting::counters_sorting;
 use crate::pipeline::parallel_kmers_query::parallel_kmers_counting;
 use crate::pipeline::querier_minimizer_bucketing::minimizer_bucketing;
-use ::static_dispatch::static_dispatch;
+use ::dynamic_dispatch::dynamic_dispatch;
 use colors::colors_manager::{ColorMapReader, ColorsManager, ColorsMergeManager};
 use colors::DefaultColorsSerializer;
 use config::{INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW};
@@ -38,7 +38,7 @@ pub enum ColoredQueryOutputFormat {
     JsonLinesWithNames,
 }
 
-#[static_dispatch(BucketingHash = [
+#[dynamic_dispatch(BucketingHash = [
     hashes::cn_nthash::CanonicalNtHashIteratorFactory,
     #[cfg(not(feature = "devel-build"))]  hashes::fw_nthash::ForwardNtHashIteratorFactory
 ], MergingHash = [

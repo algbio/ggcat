@@ -11,7 +11,7 @@ edition = "2021"
 config = { path = "../../../config" }
 
 # Static dispatch
-static-dispatch = { path = "../../../libs/static-dispatch" }
+dynamic-dispatch = "0.3.0"
 
 # Common libraries
 parallel-processor = "0.1.0"

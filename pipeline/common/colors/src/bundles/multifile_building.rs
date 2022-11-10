@@ -2,13 +2,13 @@ use crate::colors_manager::ColorsManager;
 use crate::managers::multiple::MultipleColorsManager;
 use crate::parsers::separate::SeparateColorsParser;
 use config::{BucketIndexType, ColorIndexType, COLORS_SINGLE_BATCH_SIZE};
+use dynamic_dispatch::dynamic_dispatch;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
-use static_dispatch::static_dispatch;
 
 #[derive(Copy, Clone)]
 pub struct ColorBundleMultifileBuilding;
 
-#[static_dispatch]
+#[dynamic_dispatch]
 impl ColorsManager for ColorBundleMultifileBuilding {
     const COLORS_ENABLED: bool = true;
     type SingleKmerColorDataType = ColorIndexType;

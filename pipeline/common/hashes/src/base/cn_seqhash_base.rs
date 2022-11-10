@@ -1,6 +1,6 @@
 use crate::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use config::BucketIndexType;
-use static_dispatch::static_dispatch;
+use dynamic_dispatch::dynamic_dispatch;
 use std::cmp::min;
 use std::mem::size_of;
 
@@ -101,7 +101,7 @@ impl ExtendableHashTraitType for ExtCanonicalSeqHash {
     }
 }
 
-#[static_dispatch]
+#[dynamic_dispatch]
 impl HashFunctionFactory for CanonicalSeqHashFactory {
     type HashTypeUnextendable = HashIntegerType;
     type HashTypeExtendable = ExtCanonicalSeqHash;

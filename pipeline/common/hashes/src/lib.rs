@@ -3,7 +3,7 @@
 #![feature(const_type_id)]
 #![feature(int_roundings)]
 
-use static_dispatch::static_dispatch;
+use dynamic_dispatch::dynamic_dispatch;
 
 pub mod cn_nthash;
 pub mod cn_seqhash;
@@ -45,7 +45,7 @@ pub trait ExtendableHashTraitType: Copy + Clone + Debug + Eq + Ord + Send + Sync
     fn is_rc_symmetric(&self) -> bool;
 }
 
-#[static_dispatch]
+#[dynamic_dispatch]
 pub trait HashFunctionFactory: Sized + Clone + Debug + Send + Sync + 'static {
     type HashTypeUnextendable: UnextendableHashTraitType;
     type HashTypeExtendable: ExtendableHashTraitType<
@@ -109,7 +109,7 @@ pub trait HashFunctionFactory: Sized + Clone + Debug + Send + Sync + 'static {
     fn invert(hash: Self::HashTypeUnextendable) -> Self::SeqType;
 }
 
-#[static_dispatch]
+#[dynamic_dispatch]
 pub trait MinimizerHashFunctionFactory: HashFunctionFactory {
     /// Gets the full minimizer
     fn get_full_minimizer(

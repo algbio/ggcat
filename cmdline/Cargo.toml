@@ -40,7 +40,7 @@ config = { path = "../config" }
 utils = { path = "../utils" }
 
 # Static dispatch
-static-dispatch = { path = "../libs/static-dispatch" }
+dynamic-dispatch = "0.3.0"
 
 
 # Common libraries

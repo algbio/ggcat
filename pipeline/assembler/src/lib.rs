@@ -6,7 +6,7 @@ use crate::pipeline::hashes_sorting::hashes_sorting;
 use crate::pipeline::links_compaction::links_compaction;
 use crate::pipeline::maximal_unitig_links::build_maximal_unitigs_links;
 use crate::pipeline::reorganize_reads::reorganize_reads;
-use ::static_dispatch::static_dispatch;
+use ::dynamic_dispatch::dynamic_dispatch;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
 use config::{
@@ -51,7 +51,7 @@ pub enum AssemblerStartingStep {
     MaximalUnitigsLinks = 6,
 }
 
-#[static_dispatch(BucketingHash = [
+#[dynamic_dispatch(BucketingHash = [
     hashes::cn_nthash::CanonicalNtHashIteratorFactory,
     #[cfg(not(feature = "devel-build"))] hashes::fw_nthash::ForwardNtHashIteratorFactory
 ], MergingHash = [

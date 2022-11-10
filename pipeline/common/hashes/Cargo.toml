@@ -16,7 +16,7 @@ ahash = "0.8.0"
 config = { path = "../../../config" }
 
 # Static dispatch
-static-dispatch = { path = "../../../libs/static-dispatch" }
+dynamic-dispatch = "0.3.0"
 
 [[bench]]
 name = "hashes-bench"

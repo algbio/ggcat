@@ -13,10 +13,6 @@ members = [
     # Main c/c++ library for api usage
     "capi",
 
-    # Common libraries
-    "libs/static-dispatch",
-    "libs/static-dispatch/static-dispatch-proc-macro",
-
     # Global config constants
     "config",
 

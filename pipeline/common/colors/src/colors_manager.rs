@@ -1,11 +1,11 @@
 use crate::parsers::SingleSequenceInfo;
 use config::{BucketIndexType, ColorCounterType, ColorIndexType};
+use dynamic_dispatch::dynamic_dispatch;
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
-use static_dispatch::static_dispatch;
 use std::cmp::min;
 use std::hash::Hash;
 use std::ops::Range;
@@ -205,7 +205,7 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
     );
 }
 
-#[static_dispatch]
+#[dynamic_dispatch]
 pub trait ColorsManager: 'static + Sync + Send + Sized {
     const COLORS_ENABLED: bool;
 

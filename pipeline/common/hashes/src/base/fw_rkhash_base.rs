@@ -3,7 +3,7 @@ use crate::{
     RMMULT_CACHE_SIZE,
 };
 use config::BucketIndexType;
-use static_dispatch::static_dispatch;
+use dynamic_dispatch::dynamic_dispatch;
 use std::mem::size_of;
 
 const FWD_LOOKUP: [HashIntegerType; 256] = {
@@ -123,7 +123,7 @@ fn get_rmmult(k: usize) -> u128 {
     unsafe { RMMULT_CACHE[k % RMMULT_CACHE_SIZE] }
 }
 
-#[static_dispatch]
+#[dynamic_dispatch]
 impl HashFunctionFactory for ForwardRabinKarpHashFactory {
     type HashTypeUnextendable = HashIntegerType;
     type HashTypeExtendable = ExtForwardRabinKarpHash;

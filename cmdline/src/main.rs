@@ -77,12 +77,12 @@ use colors::non_colored::NonColoredManager;
 use colors::storage::deserializer::ColorsDeserializer;
 use colors::DefaultColorsSerializer;
 use config::{ColorIndexType, FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
+use dynamic_dispatch::StaticDispatch;
 use hashes::cn_nthash::CanonicalNtHashIteratorFactory;
 use hashes::fw_nthash::ForwardNtHashIteratorFactory;
 use io::sequences_stream::general::GeneralSequenceBlockData;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use static_dispatch::StaticDispatch;
 use std::io::BufRead;
 use structopt::clap::{arg_enum, ArgGroup};
 
@@ -327,27 +327,27 @@ fn get_hash_static_id(hash_type: HashType, k: usize, forward_only: bool) -> Stat
         HashType::SeqHash => {
             if k <= 8 {
                 if forward_only {
-                    fw_seqhash::u16::ForwardSeqHashFactory::STATIC_DISPATCH_ID
+                    fw_seqhash::u16::ForwardSeqHashFactory::DYNAMIC_DISPATCH_ID
                 } else {
-                    cn_seqhash::u16::CanonicalSeqHashFactory::STATIC_DISPATCH_ID
+                    cn_seqhash::u16::CanonicalSeqHashFactory::DYNAMIC_DISPATCH_ID
                 }
             } else if k <= 16 {
                 if forward_only {
-                    fw_seqhash::u32::ForwardSeqHashFactory::STATIC_DISPATCH_ID
+                    fw_seqhash::u32::ForwardSeqHashFactory::DYNAMIC_DISPATCH_ID
                 } else {
-                    cn_seqhash::u32::CanonicalSeqHashFactory::STATIC_DISPATCH_ID
+                    cn_seqhash::u32::CanonicalSeqHashFactory::DYNAMIC_DISPATCH_ID
                 }
             } else if k <= 32 {
                 if forward_only {
-                    fw_seqhash::u64::ForwardSeqHashFactory::STATIC_DISPATCH_ID
+                    fw_seqhash::u64::ForwardSeqHashFactory::DYNAMIC_DISPATCH_ID
                 } else {
-                    cn_seqhash::u64::CanonicalSeqHashFactory::STATIC_DISPATCH_ID
+                    cn_seqhash::u64::CanonicalSeqHashFactory::DYNAMIC_DISPATCH_ID
                 }
             } else if k <= 64 {
                 if forward_only {
-                    fw_seqhash::u128::ForwardSeqHashFactory::STATIC_DISPATCH_ID
+                    fw_seqhash::u128::ForwardSeqHashFactory::DYNAMIC_DISPATCH_ID
                 } else {
-                    cn_seqhash::u128::CanonicalSeqHashFactory::STATIC_DISPATCH_ID
+                    cn_seqhash::u128::CanonicalSeqHashFactory::DYNAMIC_DISPATCH_ID
                 }
             } else {
                 panic!("Cannot use sequence hash for k > 64!");
@@ -355,23 +355,23 @@ fn get_hash_static_id(hash_type: HashType, k: usize, forward_only: bool) -> Stat
         }
         HashType::RabinKarp32 => {
             if forward_only {
-                fw_rkhash::u32::ForwardRabinKarpHashFactory::STATIC_DISPATCH_ID
+                fw_rkhash::u32::ForwardRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
             } else {
-                cn_rkhash::u32::CanonicalRabinKarpHashFactory::STATIC_DISPATCH_ID
+                cn_rkhash::u32::CanonicalRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
             }
         }
         HashType::RabinKarp64 => {
             if forward_only {
-                fw_rkhash::u64::ForwardRabinKarpHashFactory::STATIC_DISPATCH_ID
+                fw_rkhash::u64::ForwardRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
             } else {
-                cn_rkhash::u64::CanonicalRabinKarpHashFactory::STATIC_DISPATCH_ID
+                cn_rkhash::u64::CanonicalRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
             }
         }
         HashType::RabinKarp128 => {
             if forward_only {
-                fw_rkhash::u128::ForwardRabinKarpHashFactory::STATIC_DISPATCH_ID
+                fw_rkhash::u128::ForwardRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
             } else {
-                cn_rkhash::u128::CanonicalRabinKarpHashFactory::STATIC_DISPATCH_ID
+                cn_rkhash::u128::CanonicalRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
             }
         }
         HashType::Auto => {
@@ -546,9 +546,9 @@ fn main() {
             initialize(&args.common_args, &args.output_file);
 
             let bucketing_hash = if args.common_args.forward_only {
-                <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::STATIC_DISPATCH_ID
+                <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
             } else {
-                <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::STATIC_DISPATCH_ID
+                <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
             };
 
             run_assembler_from_args(
@@ -560,9 +560,9 @@ fn main() {
                         args.common_args.forward_only,
                     ),
                     if args.colors {
-                        ColorBundleMultifileBuilding::STATIC_DISPATCH_ID
+                        ColorBundleMultifileBuilding::DYNAMIC_DISPATCH_ID
                     } else {
-                        NonColoredManager::STATIC_DISPATCH_ID
+                        NonColoredManager::DYNAMIC_DISPATCH_ID
                     },
                 ),
                 args,
@@ -596,9 +596,9 @@ fn main() {
             }
 
             let bucketing_hash = if args.common_args.forward_only {
-                <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::STATIC_DISPATCH_ID
+                <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
             } else {
-                <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::STATIC_DISPATCH_ID
+                <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
             };
 
             run_querier_from_args(
@@ -610,9 +610,9 @@ fn main() {
                         args.common_args.forward_only,
                     ),
                     if args.colors {
-                        ColorBundleGraphQuerying::STATIC_DISPATCH_ID
+                        ColorBundleGraphQuerying::DYNAMIC_DISPATCH_ID
                     } else {
-                        NonColoredManager::STATIC_DISPATCH_ID
+                        NonColoredManager::DYNAMIC_DISPATCH_ID
                     },
                 ),
                 args,

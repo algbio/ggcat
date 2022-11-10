@@ -4,7 +4,7 @@ use crate::dummy_hasher::DummyHasherBuilder;
 use crate::nthash_base::h;
 use crate::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use config::{BucketIndexType, MinimizerType};
-use static_dispatch::static_dispatch;
+use dynamic_dispatch::dynamic_dispatch;
 use std::mem::size_of;
 
 #[derive(Debug, Clone)]
@@ -89,7 +89,7 @@ impl ExtendableHashTraitType for ExtForwardNtHash {
     }
 }
 
-#[static_dispatch]
+#[dynamic_dispatch]
 impl HashFunctionFactory for ForwardNtHashIteratorFactory {
     type HashTypeUnextendable = u64;
     type HashTypeExtendable = ExtForwardNtHash;
@@ -185,7 +185,7 @@ impl HashFunctionFactory for ForwardNtHashIteratorFactory {
     }
 }
 
-#[static_dispatch]
+#[dynamic_dispatch]
 impl crate::MinimizerHashFunctionFactory for ForwardNtHashIteratorFactory {
     #[inline(always)]
     fn get_full_minimizer(
