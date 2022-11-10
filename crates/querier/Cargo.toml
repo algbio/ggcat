@@ -12,7 +12,7 @@ utils = { package = "ggcat_utils", path = "../utils" }
 
 
 # Static dispatch
-dynamic-dispatch = "0.3.0"
+dynamic-dispatch = "0.4.1"
 
 # Common libraries
 parallel-processor = "0.1.0"

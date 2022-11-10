@@ -40,7 +40,7 @@ mod structs;
 
 pub use pipeline::compute_matchtigs::MatchtigMode;
 
-#[derive(PartialEq, PartialOrd)]
+#[derive(Clone, PartialEq, PartialOrd)]
 pub enum AssemblerStartingStep {
     MinimizerBucketing = 0,
     KmersMerge = 1,
@@ -85,7 +85,7 @@ pub fn run_assembler<
     input_blocks: Vec<GeneralSequenceBlockData>,
     color_names: Vec<String>,
     output_file: PathBuf,
-    temp_dir: PathBuf,
+    temp_dir: Option<PathBuf>,
     threads_count: usize,
     min_multiplicity: usize,
     buckets_count_log: Option<usize>,
@@ -95,6 +95,8 @@ pub fn run_assembler<
     compute_tigs_mode: Option<MatchtigMode>,
     only_bstats: bool,
 ) {
+    let temp_dir = temp_dir.unwrap_or(PathBuf::new());
+
     PHASES_TIMES_MONITOR.write().init();
 
     let file_stats = compute_stats_from_input_blocks(&input_blocks);

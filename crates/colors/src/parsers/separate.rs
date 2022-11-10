@@ -56,7 +56,7 @@ impl MinimizerBucketingSeqColorData for MinBkSingleColor {
     type KmerColorIterator<'a> = std::iter::Repeat<ColorIndexType>;
 
     fn create(sequence_info: SingleSequenceInfo, _: &mut ()) -> Self {
-        Self(sequence_info.file_index as ColorIndexType)
+        Self(sequence_info.static_color as ColorIndexType)
     }
 
     fn get_iterator<'a>(&'a self, _: &'a ()) -> Self::KmerColorIterator<'a> {

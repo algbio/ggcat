@@ -44,21 +44,13 @@ config = { package = "ggcat_config", path = "../config" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Static dispatch
-dynamic-dispatch = "0.3.0"
+dynamic-dispatch = "0.4.1"
 
 
 # Common libraries
 parallel-processor = "0.1.0"
-#streaming-libdeflate-rs = "0.1.0"
-#nightly-quirks = "0.1.0"
-
-# TODO
-hashes = { package = "ggcat_hashes", path = "../hashes" }
 io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
-#minimizer_bucketing = { package = "minimizer_bucketing", path = "../minimizer_bucketing" }
-#kmers_transform = { package = "kmers_transform", path = "../kmers_transform" }
-#structs = { package = "structs", path = "../structs" }
 
 assembler = { package = "ggcat_assembler", path = "../assembler" }
 instrumenter = "0.1.0"

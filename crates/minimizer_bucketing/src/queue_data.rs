@@ -1,9 +1,10 @@
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
+use io::sequences_stream::SequenceInfo;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::PacketTrait;
 use std::mem::size_of;
 
-type SequencesType = (usize, usize, usize, DnaSequencesFileType);
+type SequencesType = (usize, usize, usize, DnaSequencesFileType, SequenceInfo);
 
 pub struct MinimizerBucketingQueueData<F: Clone + Sync + Send + Default + 'static> {
     data: Vec<u8>,
@@ -22,7 +23,7 @@ impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> 
         }
     }
 
-    pub fn push_sequences(&mut self, seq: DnaSequence) -> bool {
+    pub fn push_sequences(&mut self, seq: DnaSequence, seq_info: SequenceInfo) -> bool {
         let ident_len = seq.ident_data.len();
         let seq_len = seq.seq.len();
 
@@ -36,15 +37,16 @@ impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> 
         self.data.extend_from_slice(seq.ident_data);
         self.data.extend_from_slice(seq.seq);
 
-        self.sequences.push((start, ident_len, seq_len, seq.format));
+        self.sequences
+            .push((start, ident_len, seq_len, seq.format, seq_info));
 
         true
     }
 
-    pub fn iter_sequences(&self) -> impl Iterator<Item = DnaSequence> {
+    pub fn iter_sequences(&self) -> impl Iterator<Item = (DnaSequence, SequenceInfo)> {
         self.sequences
             .iter()
-            .map(move |&(start, id_len, seq_len, format)| {
+            .map(move |&(start, id_len, seq_len, format, seq_info)| {
                 let mut start = start;
 
                 let ident_data = &self.data[start..start + id_len];
@@ -52,11 +54,14 @@ impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> 
 
                 let seq = &self.data[start..start + seq_len];
 
-                DnaSequence {
-                    ident_data,
-                    seq,
-                    format,
-                }
+                (
+                    DnaSequence {
+                        ident_data,
+                        seq,
+                        format,
+                    },
+                    seq_info,
+                )
             })
     }
 }

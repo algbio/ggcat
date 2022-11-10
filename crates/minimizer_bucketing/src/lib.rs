@@ -21,7 +21,7 @@ use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use io::sequences_reader::DnaSequence;
-use io::sequences_stream::GenericSequencesStream;
+use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
@@ -100,6 +100,7 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
     fn preprocess_dna_sequence(
         &mut self,
         stream_info: &Factory::StreamInfo,
+        sequence_info: SequenceInfo,
         read_index: u64,
         sequence: &DnaSequence,
         preprocess_info: &mut Factory::PreprocessInfo,
@@ -230,10 +231,11 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
             let mut preprocess_info = Default::default();
             let input_packet = input_packet.deref();
 
-            for (index, x) in input_packet.iter_sequences().enumerate() {
+            for (index, (x, seq_info)) in input_packet.iter_sequences().enumerate() {
                 total_bases += x.seq.len() as u64;
                 buckets_processor.preprocess_dna_sequence(
                     &input_packet.stream_info,
+                    seq_info,
                     input_packet.start_read_index + index as u64,
                     &x,
                     &mut preprocess_info,

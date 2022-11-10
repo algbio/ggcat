@@ -24,7 +24,7 @@ use std::sync::atomic::Ordering;
 mod pipeline;
 mod structs;
 
-#[derive(Debug, PartialOrd, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialOrd, PartialEq)]
 pub enum QuerierStartingStep {
     MinimizerBucketing = 0,
     KmersCounting = 1,
@@ -71,12 +71,14 @@ pub fn run_query<
     graph_input: PathBuf,
     query_input: PathBuf,
     output_file_prefix: PathBuf,
-    temp_dir: PathBuf,
+    temp_dir: Option<PathBuf>,
     buckets_count_log: Option<usize>,
     threads_count: usize,
     default_compression_level: Option<u32>,
     colored_query_output_format: ColoredQueryOutputFormat,
 ) {
+    let temp_dir = temp_dir.unwrap_or(PathBuf::new());
+
     PHASES_TIMES_MONITOR.write().init();
 
     BucketingHash::initialize(k);

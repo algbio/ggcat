@@ -13,6 +13,7 @@ use io::concurrent::temp_reads::extra_data::{
 };
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::fasta::FastaFileSequencesStream;
+use io::sequences_stream::SequenceInfo;
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
@@ -130,6 +131,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
     fn preprocess_dna_sequence(
         &mut self,
         stream_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
+        sequence_info: SequenceInfo,
         read_index: u64,
         sequence: &DnaSequence,
         preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -142,7 +144,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
             FileType::Graph => {
                 let color = MinimizerBucketingSeqColorDataType::<CX>::create(
                     SingleSequenceInfo {
-                        file_index: 0, // FIXME: Change this to support querying of raw reads
+                        static_color: sequence_info.color.unwrap_or(0),
                         sequence_ident: match sequence.format {
                             DnaSequencesFileType::FASTA => {
                                 SequenceIdent::FASTA(sequence.ident_data)

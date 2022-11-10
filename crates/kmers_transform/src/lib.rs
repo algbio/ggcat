@@ -350,18 +350,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             bucket_readers_count = execution_context.get_pending_executors_count(bucket_readers);
             bucket_readers_count > 0
         } {
-            self.maybe_log_completed_buckets(|| {
-                let debug_level = utils::DEBUG_LEVEL.load(Ordering::Relaxed);
-
-                if debug_level >= 2 {
-                    // compute_thread_pool.debug_print_queue();
-                }
-
-                if debug_level >= 1 {
-                    // disk_thread_pool.debug_print_memory();
-                    // compute_thread_pool.debug_print_memory();
-                }
-            });
+            self.maybe_log_completed_buckets(|| {});
             std::thread::sleep(Duration::from_millis(300));
         }
 

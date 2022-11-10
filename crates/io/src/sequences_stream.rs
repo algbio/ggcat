@@ -4,8 +4,9 @@ pub mod general;
 use crate::sequences_reader::DnaSequence;
 use config::ColorIndexType;
 
+#[derive(Copy, Clone)]
 pub struct SequenceInfo {
-    color: Option<ColorIndexType>,
+    pub color: Option<ColorIndexType>,
 }
 
 pub trait GenericSequencesStream: 'static {

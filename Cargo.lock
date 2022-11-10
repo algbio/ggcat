@@ -718,18 +718,18 @@ checksum = "4ccbbca7d6a247007ca2535c616d4bb4a5fcad176ef0218671f96b88c52c3d34"
 
 [[package]]
 name = "dynamic-dispatch"
-version = "0.3.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9af31c05a234fcda2b3c5479dfa9bf1ff244cf94f31247dc1e44c44064779f22"
+checksum = "dc3b913d90737167bddbc291a88b05e47cf03c5fd3a688a1a85af1f357f5b976"
 dependencies = [
  "dynamic-dispatch-proc-macro",
 ]
 
 [[package]]
 name = "dynamic-dispatch-proc-macro"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91397f8fd14002258a32884664e81e906c1d5bb743b708a833175d83c0c3d17"
+checksum = "b4f9224888e1db7e66768114ffa08c40651040aa42cbe3fb6c2f0564093225d8"
 dependencies = [
  "proc-macro-error",
  "proc-macro2 1.0.47",
@@ -905,12 +905,19 @@ dependencies = [
 name = "ggcat-api"
 version = "0.1.0"
 dependencies = [
+ "dynamic-dispatch",
  "fdlimit",
  "ggcat_assembler",
+ "ggcat_colors",
  "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_io",
  "ggcat_querier",
+ "ggcat_utils",
  "parallel-processor",
+ "parking_lot",
  "rayon",
+ "uuid",
 ]
 
 [[package]]
@@ -1009,7 +1016,6 @@ dependencies = [
  "ggcat_assembler",
  "ggcat_colors",
  "ggcat_config",
- "ggcat_hashes",
  "ggcat_io",
  "ggcat_querier",
  "ggcat_utils",
@@ -2521,6 +2527,15 @@ name = "unicode-xid"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc72304796d0818e357ead4e000d19c9c174ab23dc11093ac919054d20a6a7fc"
+
+[[package]]
+name = "uuid"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "feb41e78f93363bb2df8b0e86a2ca30eed7806ea16ea0c790d757cf93f79be83"
+dependencies = [
+ "getrandom",
+]
 
 [[package]]
 name = "vec_map"

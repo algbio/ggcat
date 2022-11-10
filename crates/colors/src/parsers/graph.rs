@@ -297,7 +297,7 @@ mod tests {
 
         let colors = MinBkMultipleColors::create(
             SingleSequenceInfo {
-                file_index: 0,
+                static_color: 0,
                 sequence_ident: input_colors.as_bytes(),
             },
             &mut extra_buffer,

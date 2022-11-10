@@ -16,7 +16,16 @@ config = { package = "ggcat_config", path = "../config" }
 assembler = { package = "ggcat_assembler", path = "../assembler" }
 querier = { package = "ggcat_querier", path = "../querier" }
 
+# GGCAT extra modules
+io = { package = "ggcat_io", path = "../io" }
+hashes = { package = "ggcat_hashes", path = "../hashes" }
+colors = { package = "ggcat_colors", path = "../colors" }
+utils = { package = "ggcat_utils", path = "../utils" }
+
 fdlimit = "0.2.1"
 parallel-processor = "0.1.0"
 rayon = "1.5.3"
+dynamic-dispatch = "0.4.1"
+parking_lot = "0.12.1"
+uuid = { version = "1.2.1", features = ["v4"] }
 

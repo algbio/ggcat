@@ -14,17 +14,9 @@ extern crate test;
 
 mod benchmarks;
 
-#[macro_use]
-mod utils;
-// mod cmd_utils;
-
 use backtrace::Backtrace;
+use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance};
 use std::fs::File;
-// use crate::cmd_utils::{process_cmdutils, CmdUtilsArgs};
-use colors::bundles::multifile_building::ColorBundleMultifileBuilding;
-use colors::colors_manager::{ColorMapReader, ColorsManager};
-use ggcat_api::{GGCATConfig, GGCATInstance};
-use hashes::MinimizerHashFunctionFactory;
 use std::io::{BufReader, BufWriter, Write};
 use std::panic;
 use std::path::PathBuf;
@@ -66,15 +58,11 @@ arg_enum! {
     }
 }
 
-use ::utils::{compute_best_m, DEBUG_LEVEL};
-use colors::bundles::graph_querying::ColorBundleGraphQuerying;
-use colors::non_colored::NonColoredManager;
+use ::utils::compute_best_m;
+use colors::colors_manager::ColorMapReader;
 use colors::storage::deserializer::ColorsDeserializer;
 use colors::DefaultColorsSerializer;
-use config::{ColorIndexType, KEEP_FILES};
-use dynamic_dispatch::StaticDispatch;
-use hashes::cn_nthash::CanonicalNtHashIteratorFactory;
-use hashes::fw_nthash::ForwardNtHashIteratorFactory;
+use config::ColorIndexType;
 use io::sequences_stream::general::GeneralSequenceBlockData;
 use parallel_processor::memory_fs::MemoryFs;
 use std::io::BufRead;
@@ -145,10 +133,6 @@ struct CommonArgs {
     /// The level of lz4 compression to be used for the intermediate files
     #[structopt(long = "intermediate-compression-level")]
     pub intermediate_compression_level: Option<u32>,
-
-    /// The level of debugging
-    #[structopt(short = "d", long = "debug-level", default_value = "0", hidden = true)]
-    pub debug_level: usize,
 
     #[structopt(long = "only-bstats", hidden = true)]
     pub only_bstats: bool,
@@ -258,97 +242,27 @@ struct QueryArgs {
 // #[cfg(feature = "mem-analysis")]
 // static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
 
-fn initialize(args: &CommonArgs, out_file: &PathBuf) {
-    let _instance = GGCATInstance::create(GGCATConfig {
+fn initialize(args: &CommonArgs, out_file: &PathBuf) -> GGCATInstance {
+    let instance = GGCATInstance::create(GGCATConfig {
         temp_dir: Some(args.temp_dir.clone()),
         memory: args.memory,
         prefer_memory: args.prefer_memory,
         total_threads_count: args.threads_count,
+        intermediate_compression_level: args.intermediate_compression_level,
         stats_file: Some(out_file.with_extension("stats.log")),
     });
 
-    DEBUG_LEVEL.store(args.debug_level, Ordering::Relaxed);
-    KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
+    ggcat_api::debug::DEBUG_KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
     println!(
         "Using m: {} with k: {}",
         args.minimizer_length
             .unwrap_or(compute_best_m(args.kmer_length)),
         args.kmer_length
-    )
+    );
 
     // #[cfg(feature = "mem-analysis")]
     // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
-}
-
-fn get_hash_static_id(hash_type: HashType, k: usize, forward_only: bool) -> StaticDispatch<()> {
-    let hash_type = match hash_type {
-        HashType::Auto => {
-            if k <= 64 {
-                HashType::SeqHash
-            } else {
-                HashType::RabinKarp128
-            }
-        }
-        x => x,
-    };
-
-    use hashes::*;
-
-    match hash_type {
-        HashType::SeqHash => {
-            if k <= 8 {
-                if forward_only {
-                    fw_seqhash::u16::ForwardSeqHashFactory::DYNAMIC_DISPATCH_ID
-                } else {
-                    cn_seqhash::u16::CanonicalSeqHashFactory::DYNAMIC_DISPATCH_ID
-                }
-            } else if k <= 16 {
-                if forward_only {
-                    fw_seqhash::u32::ForwardSeqHashFactory::DYNAMIC_DISPATCH_ID
-                } else {
-                    cn_seqhash::u32::CanonicalSeqHashFactory::DYNAMIC_DISPATCH_ID
-                }
-            } else if k <= 32 {
-                if forward_only {
-                    fw_seqhash::u64::ForwardSeqHashFactory::DYNAMIC_DISPATCH_ID
-                } else {
-                    cn_seqhash::u64::CanonicalSeqHashFactory::DYNAMIC_DISPATCH_ID
-                }
-            } else if k <= 64 {
-                if forward_only {
-                    fw_seqhash::u128::ForwardSeqHashFactory::DYNAMIC_DISPATCH_ID
-                } else {
-                    cn_seqhash::u128::CanonicalSeqHashFactory::DYNAMIC_DISPATCH_ID
-                }
-            } else {
-                panic!("Cannot use sequence hash for k > 64!");
-            }
-        }
-        HashType::RabinKarp32 => {
-            if forward_only {
-                fw_rkhash::u32::ForwardRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
-            } else {
-                cn_rkhash::u32::CanonicalRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
-            }
-        }
-        HashType::RabinKarp64 => {
-            if forward_only {
-                fw_rkhash::u64::ForwardRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
-            } else {
-                cn_rkhash::u64::CanonicalRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
-            }
-        }
-        HashType::RabinKarp128 => {
-            if forward_only {
-                fw_rkhash::u128::ForwardRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
-            } else {
-                cn_rkhash::u128::CanonicalRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
-            }
-        }
-        HashType::Auto => {
-            unreachable!()
-        }
-    }
+    instance
 }
 
 fn convert_assembler_step(step: AssemblerStartingStep) -> assembler::AssemblerStartingStep {
@@ -380,10 +294,7 @@ fn convert_colored_query_format(
     }
 }
 
-fn run_assembler_from_args(
-    generics: (StaticDispatch<()>, StaticDispatch<()>, StaticDispatch<()>),
-    args: AssemblerArgs,
-) {
+fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
     let mut inputs = args.input.clone();
 
     for list in args.input_lists {
@@ -409,34 +320,33 @@ fn run_assembler_from_args(
         .map(|x| GeneralSequenceBlockData::FASTA(x))
         .collect();
 
-    assembler::dynamic_dispatch::run_assembler(
-        generics,
-        args.common_args.kmer_length,
-        args.common_args
-            .minimizer_length
-            .unwrap_or(compute_best_m(args.common_args.kmer_length)),
-        convert_assembler_step(args.step),
-        convert_assembler_step(args.last_step),
+    *ggcat_api::debug::DEBUG_ASSEMBLER_FIRST_STEP.lock() = convert_assembler_step(args.step);
+    *ggcat_api::debug::DEBUG_ASSEMBLER_LAST_STEP.lock() = convert_assembler_step(args.last_step);
+    *ggcat_api::debug::BUCKETS_COUNT_FORCE.lock() = args.common_args.buckets_count_log;
+    ggcat_api::debug::DEBUG_LINK_PHASE_ITERATION_START_STEP.store(args.number, Ordering::Relaxed);
+    ggcat_api::debug::DEBUG_ONLY_BSTATS.store(args.common_args.only_bstats, Ordering::Relaxed);
+
+    instance.build_graph(
         inputs,
-        color_names,
         args.output_file,
-        args.common_args.temp_dir,
+        Some(color_names),
+        args.common_args.kmer_length,
         args.common_args.threads_count,
+        args.common_args.forward_only,
+        args.common_args.minimizer_length,
+        args.colors,
         args.min_multiplicity,
-        args.common_args.buckets_count_log,
-        Some(args.number),
-        args.common_args.intermediate_compression_level,
-        args.generate_maximal_unitigs_links,
-        if args.greedy_matchtigs {
-            Some(assembler::MatchtigMode::GreedyTigs)
+        if args.generate_maximal_unitigs_links {
+            ExtraElaboration::UnitigLinks
+        } else if args.greedy_matchtigs {
+            ExtraElaboration::GreedyMatchtigs
         } else if args.eulertigs {
-            Some(assembler::MatchtigMode::EulerTigs)
+            ExtraElaboration::Eulertigs
         } else if args.pathtigs {
-            Some(assembler::MatchtigMode::PathTigs)
+            ExtraElaboration::Pathtigs
         } else {
-            None
+            ExtraElaboration::None
         },
-        args.common_args.only_bstats,
     );
 }
 
@@ -449,28 +359,27 @@ fn convert_querier_step(step: QuerierStartingStep) -> querier::QuerierStartingSt
     }
 }
 
-fn run_querier_from_args(
-    generics: (StaticDispatch<()>, StaticDispatch<()>, StaticDispatch<()>),
-    args: QueryArgs,
-) {
-    querier::dynamic_dispatch::run_query(
-        generics,
-        args.common_args.kmer_length,
-        args.common_args
-            .minimizer_length
-            .unwrap_or(compute_best_m(args.common_args.kmer_length)),
-        convert_querier_step(args.step),
+fn run_querier_from_args(instance: &GGCATInstance, args: QueryArgs) {
+    instance.query_graph(
         args.input_graph,
         args.input_query,
         args.output_file_prefix,
-        args.common_args.temp_dir,
-        args.common_args.buckets_count_log,
+        args.common_args.kmer_length,
         args.common_args.threads_count,
-        args.common_args.intermediate_compression_level,
-        convert_colored_query_format(
-            args.colored_query_output_format
-                .unwrap_or(ColoredQueryOutputFormat::JsonLinesWithNumbers),
-        ),
+        args.common_args.forward_only,
+        args.common_args.minimizer_length,
+        args.colors,
+        match args
+            .colored_query_output_format
+            .unwrap_or(ColoredQueryOutputFormat::JsonLinesWithNumbers)
+        {
+            ColoredQueryOutputFormat::JsonLinesWithNumbers => {
+                querier::ColoredQueryOutputFormat::JsonLinesWithNumbers
+            }
+            ColoredQueryOutputFormat::JsonLinesWithNames => {
+                querier::ColoredQueryOutputFormat::JsonLinesWithNames
+            }
+        },
     );
 }
 
@@ -514,30 +423,9 @@ fn main() {
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
 
-            initialize(&args.common_args, &args.output_file);
+            let instance = initialize(&args.common_args, &args.output_file);
 
-            let bucketing_hash = if args.common_args.forward_only {
-                <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
-            } else {
-                <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
-            };
-
-            run_assembler_from_args(
-                (
-                    bucketing_hash,
-                    get_hash_static_id(
-                        args.common_args.hash_type,
-                        args.common_args.kmer_length,
-                        args.common_args.forward_only,
-                    ),
-                    if args.colors {
-                        ColorBundleMultifileBuilding::DYNAMIC_DISPATCH_ID
-                    } else {
-                        NonColoredManager::DYNAMIC_DISPATCH_ID
-                    },
-                ),
-                args,
-            )
+            run_assembler_from_args(&instance, args);
         }
         CliArgs::Matches(args) => {
             let colors_file = args.input_file.with_extension("colors.dat");
@@ -566,45 +454,27 @@ fn main() {
                 println!("Warning: colored query output format is specified, but the graph is not colored");
             }
 
-            let bucketing_hash = if args.common_args.forward_only {
-                <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
-            } else {
-                <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
-            };
+            let _guard = instrumenter::initialize_tracing(
+                args.output_file_prefix.with_extension("tracing.json"),
+                &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
+            );
 
-            run_querier_from_args(
-                (
-                    bucketing_hash,
-                    get_hash_static_id(
-                        args.common_args.hash_type,
-                        args.common_args.kmer_length,
-                        args.common_args.forward_only,
-                    ),
-                    if args.colors {
-                        ColorBundleGraphQuerying::DYNAMIC_DISPATCH_ID
-                    } else {
-                        NonColoredManager::DYNAMIC_DISPATCH_ID
-                    },
-                ),
-                args,
-            )
-        } // CliArgs::Utils(args) => {
-        //     process_cmdutils(args);
-        // }
+            let instance = initialize(&args.common_args, &args.output_file_prefix);
+
+            run_querier_from_args(&instance, args);
+        }
         CliArgs::DumpColors(args) => {
-            let colors_deserializer =
-                ColorsDeserializer::<DefaultColorsSerializer>::new(args.input_colormap, true);
-
             let output_file_name = args.output_file.with_extension("jsonl");
 
             let mut output_file = BufWriter::new(File::create(&output_file_name).unwrap());
 
-            for color_idx in 0..colors_deserializer.colors_count() {
+            for (color_idx, color_name) in
+                GGCATInstance::dump_colors(args.input_colormap).enumerate()
+            {
                 writeln!(
                     output_file,
                     "{{\"color_index\":{}, \"color_name\":\"{}\" }}",
-                    color_idx,
-                    colors_deserializer.get_color_name(color_idx as ColorIndexType, true),
+                    color_idx, color_name,
                 )
                 .unwrap();
             }

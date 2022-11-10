@@ -8,7 +8,7 @@ edition = "2021"
 config = { package = "ggcat_config", path = "../config" }
 
 # Static dispatch
-dynamic-dispatch = "0.3.0"
+dynamic-dispatch = "0.4.1"
 
 # Common libraries
 parallel-processor = "0.1.0"

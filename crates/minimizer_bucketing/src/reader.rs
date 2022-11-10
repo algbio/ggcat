@@ -69,7 +69,7 @@ impl<
                 &mut input_packet.0,
                 context.copy_ident,
                 context.partial_read_copyback,
-                |x, _seq_data| {
+                |x, seq_info| {
                     let mut data = data_packet.deref_mut();
 
                     if x.seq.len() < context.common.k {
@@ -78,7 +78,7 @@ impl<
 
                     max_len = max(max_len, x.ident_data.len() + x.seq.len());
 
-                    if unlikely(!data.push_sequences(x)) {
+                    if unlikely(!data.push_sequences(x, seq_info)) {
                         assert!(
                             data.start_read_index as usize + data.sequences.len()
                                 <= read_index as usize
@@ -103,7 +103,7 @@ impl<
                         data.stream_info = stream_info.clone();
                         data.start_read_index = read_index;
 
-                        if !data.push_sequences(x) {
+                        if !data.push_sequences(x, seq_info) {
                             panic!("BUG: Out of memory!");
                         }
                     }

@@ -13,7 +13,7 @@ ahash = "0.8.0"
 config = { package = "ggcat_config", path = "../config" }
 
 # Static dispatch
-dynamic-dispatch = "0.3.0"
+dynamic-dispatch = "0.4.1"
 
 [[bench]]
 name = "hashes-bench"

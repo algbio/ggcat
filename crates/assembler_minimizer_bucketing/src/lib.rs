@@ -2,7 +2,7 @@ use ::dynamic_dispatch::dynamic_dispatch;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
-use config::BucketIndexType;
+use config::{BucketIndexType, ColorIndexType};
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::rolling::minqueue::RollingMinQueue;
 use hashes::ExtendableHashTraitType;
@@ -13,6 +13,7 @@ use io::concurrent::temp_reads::extra_data::{
 };
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
+use io::sequences_stream::SequenceInfo;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
@@ -53,7 +54,7 @@ impl<CX: ColorsManager> Default for AssemblerPreprocessInfo<CX> {
 
 #[derive(Clone, Default)]
 pub struct InputFileInfo {
-    file_index: usize,
+    file_color: ColorIndexType,
 }
 
 pub struct AssemblerMinimizerBucketingExecutorFactory<
@@ -92,6 +93,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
     fn preprocess_dna_sequence(
         &mut self,
         stream_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
+        sequence_info: SequenceInfo,
         _read_index: u64,
         sequence: &DnaSequence,
         preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -102,7 +104,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
 
         preprocess_info.color_info = MinimizerBucketingSeqColorDataType::<CX>::create(
             SingleSequenceInfo {
-                file_index: stream_info.file_index,
+                static_color: sequence_info.color.unwrap_or(stream_info.file_color),
                 sequence_ident: match sequence.format {
                     DnaSequencesFileType::FASTA | DnaSequencesFileType::FASTQ => {
                         SequenceIdent::FASTA(sequence.ident_data)
@@ -235,7 +237,14 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
     let mut input_files: Vec<_> = input_blocks
         .into_iter()
         .enumerate()
-        .map(|(i, f)| (f, InputFileInfo { file_index: i }))
+        .map(|(i, f)| {
+            (
+                f,
+                InputFileInfo {
+                    file_color: i as ColorIndexType,
+                },
+            )
+        })
         .collect();
 
     input_files.sort_by_cached_key(|(file, _)| file.estimated_bases_count());

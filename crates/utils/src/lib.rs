@@ -6,11 +6,8 @@ pub mod resource_counter;
 pub mod vec_slice;
 
 use std::cmp::max;
-use std::sync::atomic::AtomicUsize;
 
 pub struct Utils;
-
-pub static DEBUG_LEVEL: AtomicUsize = AtomicUsize::new(0);
 
 const C_INV_LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
 
