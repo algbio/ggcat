@@ -1,14 +1,11 @@
 [package]
-name = "colors"
+name = "ggcat_colors"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 
 # Config
-config = { path = "../config" }
+config = { package = "ggcat_config", path = "../config" }
 
 # Static dispatch
 dynamic-dispatch = "0.3.0"
@@ -19,9 +16,9 @@ streaming-libdeflate-rs = "0.1.0"
 nightly-quirks = "0.1.0"
 
 # Common pipeline libraries
-hashes = { path = "../hashes" }
-io = { path = "../io" }
-structs = { path = "../structs" }
+hashes = { package = "ggcat_hashes", path = "../hashes" }
+io = { package = "ggcat_io", path = "../io" }
+structs = { package = "ggcat_structs", path = "../structs" }
 
 # Other libraries
 typenum = "1.15.0"

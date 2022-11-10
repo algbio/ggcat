@@ -1,17 +1,14 @@
 [package]
-name = "assembler"
+name = "ggcat_assembler"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 
 # Config
-config = { path = "../config" }
+config = { package = "ggcat_config", path = "../config" }
 
 # Utils
-utils = { path = "../utils" }
+utils = { package = "ggcat_utils", path = "../utils" }
 
 
 # Static dispatch
@@ -23,16 +20,16 @@ streaming-libdeflate-rs = "0.1.0"
 nightly-quirks = "0.1.0"
 
 # Pipeline crates
-assembler_minimizer_bucketing = { path = "../assembler_minimizer_bucketing" }
-assembler_kmers_merge = { path = "../assembler_kmers_merge" }
-kmers_transform = { path = "../kmers_transform" }
+assembler_minimizer_bucketing = { package = "ggcat_assembler_minimizer_bucketing", path = "../assembler_minimizer_bucketing" }
+assembler_kmers_merge = { package = "ggcat_assembler_kmers_merge", path = "../assembler_kmers_merge" }
+kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
 
 
 # Common pipeline libraries
-hashes = { path = "../hashes" }
-io = { path = "../io" }
-colors = { path = "../colors" }
-structs = { path = "../structs" }
+hashes = { package = "ggcat_hashes", path = "../hashes" }
+io = { package = "ggcat_io", path = "../io" }
+colors = { package = "ggcat_colors", path = "../colors" }
+structs = { package = "ggcat_structs", path = "../structs" }
 
 
 # Matchtigs support

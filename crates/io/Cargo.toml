@@ -1,15 +1,18 @@
 [package]
-name = "io"
+name = "ggcat_io"
 version = "0.1.0"
+authors = ["Andrea Cracco <guilucand@gmail.com>"]
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+categories = []
+description = "GGCAT io crate"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/algbio/ggcat"
 
 [dependencies]
 
 # Config
-config = { path = "../config" }
-utils = { path = "../utils" }
+config = { package = "ggcat_config", path = "../config" }
+utils = { package = "ggcat_utils", path = "../utils" }
 
 
 # Common libraries
@@ -18,7 +21,7 @@ streaming-libdeflate-rs = "0.1.0"
 nightly-quirks = "0.1.0"
 
 # Pipeline libraries
-hashes = { path = "../hashes" }
+hashes = { package = "ggcat_hashes", path = "../hashes" }
 
 parking_lot = "0.12.1"
 byteorder = "1.4.3"

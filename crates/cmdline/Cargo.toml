@@ -1,8 +1,12 @@
 [package]
 authors = ["Andrea Cracco <guilucand@gmail.com>"]
 edition = "2021"
-name = "ggcat"
+name = "ggcat_cmdline"
 version = "0.1.0"
+
+[[bin]]
+name = "ggcat"
+path = "src/main.rs"
 
 [dependencies]
 bincode = "1.3.3"
@@ -36,8 +40,8 @@ fs_extra = "1.2.0"
 atoi = "1.0.0"
 
 # Config
-config = { path = "../config" }
-utils = { path = "../utils" }
+config = { package = "ggcat_config", path = "../config" }
+utils = { package = "ggcat_utils", path = "../utils" }
 
 # Static dispatch
 dynamic-dispatch = "0.3.0"
@@ -49,17 +53,17 @@ parallel-processor = "0.1.0"
 #nightly-quirks = "0.1.0"
 
 # TODO
-hashes = { path = "../hashes" }
-io = { path = "../io" }
-colors = { path = "../colors" }
-#minimizer_bucketing = { path = "../minimizer_bucketing" }
-#kmers_transform = { path = "../kmers_transform" }
-#structs = { path = "../structs" }
+hashes = { package = "ggcat_hashes", path = "../hashes" }
+io = { package = "ggcat_io", path = "../io" }
+colors = { package = "ggcat_colors", path = "../colors" }
+#minimizer_bucketing = { package = "minimizer_bucketing", path = "../minimizer_bucketing" }
+#kmers_transform = { package = "kmers_transform", path = "../kmers_transform" }
+#structs = { package = "structs", path = "../structs" }
 
-assembler = { path = "../assembler" }
+assembler = { package = "ggcat_assembler", path = "../assembler" }
 instrumenter = "0.1.0"
 
-querier = { path = "../querier" }
+querier = { package = "ggcat_querier", path = "../querier" }
 
 
 [features]

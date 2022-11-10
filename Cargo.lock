@@ -89,79 +89,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "assembler"
-version = "0.1.0"
-dependencies = [
- "assembler_kmers_merge",
- "assembler_minimizer_bucketing",
- "bincode",
- "byteorder",
- "colors",
- "config",
- "crossbeam",
- "dynamic-dispatch",
- "fs_extra",
- "genome-graph",
- "hashbrown",
- "hashes",
- "io",
- "itertools",
- "kmers_transform",
- "matchtigs",
- "nightly-quirks",
- "parallel-processor",
- "parking_lot",
- "rayon",
- "serde",
- "streaming-libdeflate-rs",
- "structs",
- "traitgraph-algo",
- "typenum",
- "utils",
-]
-
-[[package]]
-name = "assembler_kmers_merge"
-version = "0.1.0"
-dependencies = [
- "assembler_minimizer_bucketing",
- "colors",
- "config",
- "crossbeam",
- "fdlimit",
- "hashbrown",
- "hashes",
- "instrumenter",
- "io",
- "kmers_transform",
- "minimizer_bucketing",
- "nightly-quirks",
- "parallel-processor",
- "parking_lot",
- "rayon",
- "streaming-libdeflate-rs",
- "structs",
- "typenum",
- "utils",
-]
-
-[[package]]
-name = "assembler_minimizer_bucketing"
-version = "0.1.0"
-dependencies = [
- "colors",
- "config",
- "dynamic-dispatch",
- "hashes",
- "io",
- "minimizer_bucketing",
- "parallel-processor",
- "streaming-libdeflate-rs",
- "structs",
- "typenum",
-]
-
-[[package]]
 name = "atoi"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -536,38 +463,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "colors"
-version = "0.1.0"
-dependencies = [
- "atoi",
- "bincode",
- "bstr 1.0.1",
- "byteorder",
- "config",
- "crossbeam",
- "dashmap",
- "desse",
- "dynamic-dispatch",
- "hashbrown",
- "hashes",
- "io",
- "itertools",
- "lz4",
- "nightly-quirks",
- "parallel-processor",
- "parking_lot",
- "rand",
- "rayon",
- "replace_with",
- "roaring",
- "serde",
- "siphasher",
- "streaming-libdeflate-rs",
- "structs",
- "typenum",
-]
-
-[[package]]
 name = "compact-genome"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -578,13 +473,6 @@ dependencies = [
  "lazy_static",
  "ref-cast",
  "traitsequence",
-]
-
-[[package]]
-name = "config"
-version = "0.1.0"
-dependencies = [
- "parallel-processor",
 ]
 
 [[package]]
@@ -1014,18 +902,97 @@ dependencies = [
 ]
 
 [[package]]
-name = "ggcat"
+name = "ggcat-api"
+version = "0.1.0"
+dependencies = [
+ "cxx",
+ "cxx-build",
+ "make-cmd",
+]
+
+[[package]]
+name = "ggcat_assembler"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "byteorder",
+ "crossbeam",
+ "dynamic-dispatch",
+ "fs_extra",
+ "genome-graph",
+ "ggcat_assembler_kmers_merge",
+ "ggcat_assembler_minimizer_bucketing",
+ "ggcat_colors",
+ "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_io",
+ "ggcat_kmers_transform",
+ "ggcat_structs",
+ "ggcat_utils",
+ "hashbrown",
+ "itertools",
+ "matchtigs",
+ "nightly-quirks",
+ "parallel-processor",
+ "parking_lot",
+ "rayon",
+ "serde",
+ "streaming-libdeflate-rs",
+ "traitgraph-algo",
+ "typenum",
+]
+
+[[package]]
+name = "ggcat_assembler_kmers_merge"
+version = "0.1.0"
+dependencies = [
+ "crossbeam",
+ "fdlimit",
+ "ggcat_assembler_minimizer_bucketing",
+ "ggcat_colors",
+ "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_io",
+ "ggcat_kmers_transform",
+ "ggcat_minimizer_bucketing",
+ "ggcat_structs",
+ "ggcat_utils",
+ "hashbrown",
+ "instrumenter",
+ "nightly-quirks",
+ "parallel-processor",
+ "parking_lot",
+ "rayon",
+ "streaming-libdeflate-rs",
+ "typenum",
+]
+
+[[package]]
+name = "ggcat_assembler_minimizer_bucketing"
+version = "0.1.0"
+dependencies = [
+ "dynamic-dispatch",
+ "ggcat_colors",
+ "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_io",
+ "ggcat_minimizer_bucketing",
+ "ggcat_structs",
+ "parallel-processor",
+ "streaming-libdeflate-rs",
+ "typenum",
+]
+
+[[package]]
+name = "ggcat_cmdline"
 version = "0.1.0"
 dependencies = [
  "ahash 0.8.1",
- "assembler",
  "atoi",
  "backtrace",
  "bincode",
  "bstr 1.0.1",
  "byteorder",
- "colors",
- "config",
  "crossbeam",
  "csv",
  "dashmap",
@@ -1035,10 +1002,15 @@ dependencies = [
  "filebuffer",
  "flate2",
  "fs_extra",
+ "ggcat_assembler",
+ "ggcat_colors",
+ "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_io",
+ "ggcat_querier",
+ "ggcat_utils",
  "hashbrown",
- "hashes",
  "instrumenter",
- "io",
  "itertools",
  "lazy_static",
  "libc",
@@ -1046,7 +1018,6 @@ dependencies = [
  "make-cmd",
  "parallel-processor",
  "parking_lot",
- "querier",
  "rand",
  "rayon",
  "replace_with",
@@ -1056,16 +1027,159 @@ dependencies = [
  "siphasher",
  "structopt",
  "typenum",
- "utils",
 ]
 
 [[package]]
-name = "ggcat-api"
+name = "ggcat_colors"
 version = "0.1.0"
 dependencies = [
- "cxx",
- "cxx-build",
- "make-cmd",
+ "atoi",
+ "bincode",
+ "bstr 1.0.1",
+ "byteorder",
+ "crossbeam",
+ "dashmap",
+ "desse",
+ "dynamic-dispatch",
+ "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_io",
+ "ggcat_structs",
+ "hashbrown",
+ "itertools",
+ "lz4",
+ "nightly-quirks",
+ "parallel-processor",
+ "parking_lot",
+ "rand",
+ "rayon",
+ "replace_with",
+ "roaring",
+ "serde",
+ "siphasher",
+ "streaming-libdeflate-rs",
+ "typenum",
+]
+
+[[package]]
+name = "ggcat_config"
+version = "0.1.0"
+dependencies = [
+ "parallel-processor",
+]
+
+[[package]]
+name = "ggcat_hashes"
+version = "0.1.0"
+dependencies = [
+ "ahash 0.8.1",
+ "criterion",
+ "dynamic-dispatch",
+ "ggcat_config",
+ "ggcat_io",
+ "ggcat_utils",
+ "pcg_rand",
+ "rand",
+ "serde",
+]
+
+[[package]]
+name = "ggcat_io"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "bstr 1.0.1",
+ "byteorder",
+ "flate2",
+ "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_utils",
+ "lz4",
+ "nightly-quirks",
+ "parallel-processor",
+ "parking_lot",
+ "rand",
+ "serde",
+ "streaming-libdeflate-rs",
+ "typenum",
+]
+
+[[package]]
+name = "ggcat_kmers_transform"
+version = "0.1.0"
+dependencies = [
+ "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_io",
+ "ggcat_minimizer_bucketing",
+ "ggcat_utils",
+ "instrumenter",
+ "nightly-quirks",
+ "parallel-processor",
+ "parking_lot",
+ "replace_with",
+ "streaming-libdeflate-rs",
+ "tokio",
+ "typenum",
+]
+
+[[package]]
+name = "ggcat_minimizer_bucketing"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_io",
+ "nightly-quirks",
+ "parallel-processor",
+ "parking_lot",
+ "replace_with",
+ "serde",
+ "streaming-libdeflate-rs",
+ "typenum",
+]
+
+[[package]]
+name = "ggcat_querier"
+version = "0.1.1"
+dependencies = [
+ "byteorder",
+ "csv",
+ "dynamic-dispatch",
+ "flate2",
+ "ggcat_colors",
+ "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_io",
+ "ggcat_kmers_transform",
+ "ggcat_minimizer_bucketing",
+ "ggcat_structs",
+ "ggcat_utils",
+ "hashbrown",
+ "lz4",
+ "nightly-quirks",
+ "parallel-processor",
+ "parking_lot",
+ "rayon",
+ "streaming-libdeflate-rs",
+ "typenum",
+]
+
+[[package]]
+name = "ggcat_structs"
+version = "0.1.0"
+dependencies = [
+ "ggcat_config",
+]
+
+[[package]]
+name = "ggcat_utils"
+version = "0.1.0"
+dependencies = [
+ "parallel-processor",
+ "parking_lot",
+ "rand",
 ]
 
 [[package]]
@@ -1087,21 +1201,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 dependencies = [
  "ahash 0.7.6",
-]
-
-[[package]]
-name = "hashes"
-version = "0.1.0"
-dependencies = [
- "ahash 0.8.1",
- "config",
- "criterion",
- "dynamic-dispatch",
- "io",
- "pcg_rand",
- "rand",
- "serde",
- "utils",
 ]
 
 [[package]]
@@ -1197,27 +1296,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "io"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "bstr 1.0.1",
- "byteorder",
- "config",
- "flate2",
- "hashes",
- "lz4",
- "nightly-quirks",
- "parallel-processor",
- "parking_lot",
- "rand",
- "serde",
- "streaming-libdeflate-rs",
- "typenum",
- "utils",
-]
-
-[[package]]
 name = "io-lifetimes"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1267,25 +1345,6 @@ name = "json"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
-
-[[package]]
-name = "kmers_transform"
-version = "0.1.0"
-dependencies = [
- "config",
- "hashes",
- "instrumenter",
- "io",
- "minimizer_bucketing",
- "nightly-quirks",
- "parallel-processor",
- "parking_lot",
- "replace_with",
- "streaming-libdeflate-rs",
- "tokio",
- "typenum",
- "utils",
-]
 
 [[package]]
 name = "lazy_static"
@@ -1418,23 +1477,6 @@ checksum = "5d3f458a3076e337e027943b8cb5f4f72a6651714f9258fc7dcd3ae3b51f0276"
 dependencies = [
  "libc",
  "winapi",
-]
-
-[[package]]
-name = "minimizer_bucketing"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "config",
- "hashes",
- "io",
- "nightly-quirks",
- "parallel-processor",
- "parking_lot",
- "replace_with",
- "serde",
- "streaming-libdeflate-rs",
- "typenum",
 ]
 
 [[package]]
@@ -1816,32 +1858,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "querier"
-version = "0.1.1"
-dependencies = [
- "byteorder",
- "colors",
- "config",
- "csv",
- "dynamic-dispatch",
- "flate2",
- "hashbrown",
- "hashes",
- "io",
- "kmers_transform",
- "lz4",
- "minimizer_bucketing",
- "nightly-quirks",
- "parallel-processor",
- "parking_lot",
- "rayon",
- "streaming-libdeflate-rs",
- "structs",
- "typenum",
- "utils",
-]
-
-[[package]]
 name = "quote"
 version = "0.6.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2214,13 +2230,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "structs"
-version = "0.1.0"
-dependencies = [
- "config",
-]
-
-[[package]]
 name = "strum"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2508,15 +2517,6 @@ name = "unicode-xid"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc72304796d0818e357ead4e000d19c9c174ab23dc11093ac919054d20a6a7fc"
-
-[[package]]
-name = "utils"
-version = "0.1.0"
-dependencies = [
- "parallel-processor",
- "parking_lot",
- "rand",
-]
 
 [[package]]
 name = "vec_map"

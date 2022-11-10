@@ -10,8 +10,8 @@ crate-type = ["rlib", "staticlib"]
 [dependencies]
 #
 ## Config
-#config = { path = "../config" }
-#utils = { path = "../utils" }
+#config = { package = "ggcat_config", path = "../config" }
+#utils = { package = "ggcat_utils", path = "../utils" }
 #
 ## Static dispatch
 #dynamic-dispatch = "0.3.0"
@@ -22,14 +22,14 @@ crate-type = ["rlib", "staticlib"]
 ##streaming-libdeflate-rs = "0.1.0"
 ##nightly-quirks = "0.1.0"
 #
-#hashes = { path = "../hashes" }
-#io = { path = "../io" }
-#colors = { path = "../colors" }
+#hashes = { package = "ggcat_hashes", path = "../hashes" }
+#io = { package = "ggcat_io", path = "../io" }
+#colors = { package = "ggcat_colors", path = "../colors" }
 #
-#assembler = { path = "../assembler" }
+#assembler = { package = "ggcat_assembler", path = "../assembler" }
 #instrumenter = "0.1.0"
 
-#querier = { path = "../querier" }
+#querier = { package = "ggcat_querier", path = "../querier" }
 cxx = "1.0.80"
 
 

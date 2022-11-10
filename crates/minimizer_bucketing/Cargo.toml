@@ -1,14 +1,11 @@
 [package]
-name = "minimizer_bucketing"
+name = "ggcat_minimizer_bucketing"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 
 # Config
-config = { path = "../config" }
+config = { package = "ggcat_config", path = "../config" }
 
 # Common libraries
 parallel-processor = "0.1.0"
@@ -16,8 +13,8 @@ streaming-libdeflate-rs = "0.1.0"
 nightly-quirks = "0.1.0"
 
 # Pipeline libraries
-hashes = { path = "../hashes" }
-io = { path = "../io" }
+hashes = { package = "ggcat_hashes", path = "../hashes" }
+io = { package = "ggcat_io", path = "../io" }
 
 # Other libraries
 replace_with = "0.1.7"

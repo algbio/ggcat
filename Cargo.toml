@@ -1,6 +1,22 @@
 
 cargo-features = ["profile-rustflags"]
 
+[patch.crates-io]
+#ggat_cmdline = { path = "crates/cmdline" }
+#ggat_api = { path = "crates/api" }
+#ggat_config = { path = "crates/config" }
+#ggat_utils = { path = "crates/utils" }
+#ggat_hashes = { path = "crates/hashes" }
+#ggat_io = { path = "crates/io" }
+#ggat_minimizer_bucketing = { path = "crates/minimizer_bucketing" }
+#ggat_kmers_transform = { path = "crates/kmers_transform" }
+#ggat_colors = { path = "crates/colors" }
+#ggat_structs = { path = "crates/structs" }
+#ggat_assembler_minimizer_bucketing = { path = "crates/assembler_minimizer_bucketing" }
+#ggat_assembler_kmers_merge = { path = "crates/assembler_kmers_merge" }
+#ggat_assembler = { path = "crates/assembler" }
+#ggat_querier = { path = "crates/querier" }
+
 [workspace]
 
 members = [
@@ -34,7 +50,6 @@ members = [
 
     # Querier pipeline
     "crates/querier"
-
 ]
 
 default-members = ["crates/cmdline", "crates/api"]
