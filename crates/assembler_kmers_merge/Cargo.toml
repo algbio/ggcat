@@ -1,5 +1,5 @@
 [package]
-name = "kmers_merge"
+name = "assembler_kmers_merge"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,8 +8,8 @@ edition = "2021"
 [dependencies]
 
 # Config
-config = { path = "../../../config" }
-utils = { path = "../../../utils" }
+config = { path = "../config" }
+utils = { path = "../utils" }
 
 # Common libraries
 parallel-processor = "0.1.0"
@@ -17,12 +17,12 @@ streaming-libdeflate-rs = "0.1.0"
 nightly-quirks = "0.1.0"
 
 # Common pipeline libraries
-hashes = { path = "../../common/hashes" }
-io = { path = "../../common/io" }
-colors = { path = "../../common/colors" }
-structs = { path = "../../common/structs" }
-kmers_transform = { path = "../../common/kmers_transform" }
-minimizer_bucketing = { path = "../../common/minimizer_bucketing" }
+hashes = { path = "../hashes" }
+io = { path = "../io" }
+colors = { path = "../colors" }
+structs = { path = "../structs" }
+kmers_transform = { path = "../kmers_transform" }
+minimizer_bucketing = { path = "../minimizer_bucketing" }
 
 # Dependencies
 assembler_minimizer_bucketing = { path = "../assembler_minimizer_bucketing" }

@@ -8,10 +8,10 @@ edition = "2021"
 [dependencies]
 
 # Config
-config = { path = "../../config" }
+config = { path = "../config" }
 
 # Utils
-utils = { path = "../../utils" }
+utils = { path = "../utils" }
 
 
 # Static dispatch
@@ -23,16 +23,16 @@ streaming-libdeflate-rs = "0.1.0"
 nightly-quirks = "0.1.0"
 
 # Pipeline crates
-assembler_minimizer_bucketing = { path = "assembler_minimizer_bucketing" }
-kmers_merge = { path = "kmers_merge" }
-kmers_transform = { path = "../common/kmers_transform" }
+assembler_minimizer_bucketing = { path = "../assembler_minimizer_bucketing" }
+assembler_kmers_merge = { path = "../assembler_kmers_merge" }
+kmers_transform = { path = "../kmers_transform" }
 
 
 # Common pipeline libraries
-hashes = { path = "../common/hashes" }
-io = { path = "../common/io" }
-colors = { path = "../common/colors" }
-structs = { path = "../common/structs" }
+hashes = { path = "../hashes" }
+io = { path = "../io" }
+colors = { path = "../colors" }
+structs = { path = "../structs" }
 
 
 # Matchtigs support

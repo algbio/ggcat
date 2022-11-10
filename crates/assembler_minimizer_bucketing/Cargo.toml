@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 
 # Config
-config = { path = "../../../config" }
+config = { path = "../config" }
 
 # Common libraries
 parallel-processor = "0.1.0"
@@ -18,11 +18,11 @@ streaming-libdeflate-rs = "0.1.0"
 dynamic-dispatch = "0.3.0"
 
 # Common pipeline libraries
-hashes = { path = "../../common/hashes" }
-io = { path = "../../common/io" }
-colors = { path = "../../common/colors" }
-structs = { path = "../../common/structs" }
-minimizer_bucketing = { path = "../../common/minimizer_bucketing" }
+hashes = { path = "../hashes" }
+io = { path = "../io" }
+colors = { path = "../colors" }
+structs = { path = "../structs" }
+minimizer_bucketing = { path = "../minimizer_bucketing" }
 
 # Other libraries
 typenum = "1.15.0"

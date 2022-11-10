@@ -22,14 +22,14 @@ crate-type = ["rlib", "staticlib"]
 ##streaming-libdeflate-rs = "0.1.0"
 ##nightly-quirks = "0.1.0"
 #
-#hashes = { path = "../pipeline/common/hashes" }
-#io = { path = "../pipeline/common/io" }
-#colors = { path = "../pipeline/common/colors" }
+#hashes = { path = "../hashes" }
+#io = { path = "../io" }
+#colors = { path = "../colors" }
 #
-#assembler = { path = "../pipeline/assembler" }
+#assembler = { path = "../assembler" }
 #instrumenter = "0.1.0"
 
-#querier = { path = "../pipeline/querier" }
+#querier = { path = "../querier" }
 cxx = "1.0.80"
 
 

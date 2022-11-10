@@ -13,7 +13,7 @@ serde = "1.0.145"
 ahash = "0.8.0"
 
 # Config
-config = { path = "../../../config" }
+config = { path = "../config" }
 
 # Static dispatch
 dynamic-dispatch = "0.3.0"
@@ -25,8 +25,8 @@ harness = false
 [dev-dependencies]
 pcg_rand = "0.13.0"
 rand = "0.8.5"
-utils = { path = "../../../utils" }
-io = { path = "../../common/io" }
+utils = { path = "../utils" }
+io = { path = "../io" }
 criterion = "0.4.0"
 
 

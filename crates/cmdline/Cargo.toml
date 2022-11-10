@@ -49,17 +49,17 @@ parallel-processor = "0.1.0"
 #nightly-quirks = "0.1.0"
 
 # TODO
-hashes = { path = "../pipeline/common/hashes" }
-io = { path = "../pipeline/common/io" }
-colors = { path = "../pipeline/common/colors" }
-#minimizer_bucketing = { path = "../pipeline/common/minimizer_bucketing" }
-#kmers_transform = { path = "../pipeline/common/kmers_transform" }
-#structs = { path = "../pipeline/common/structs" }
+hashes = { path = "../hashes" }
+io = { path = "../io" }
+colors = { path = "../colors" }
+#minimizer_bucketing = { path = "../minimizer_bucketing" }
+#kmers_transform = { path = "../kmers_transform" }
+#structs = { path = "../structs" }
 
-assembler = { path = "../pipeline/assembler" }
+assembler = { path = "../assembler" }
 instrumenter = "0.1.0"
 
-querier = { path = "../pipeline/querier" }
+querier = { path = "../querier" }
 
 
 [features]

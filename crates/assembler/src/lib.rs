@@ -7,6 +7,7 @@ use crate::pipeline::links_compaction::links_compaction;
 use crate::pipeline::maximal_unitig_links::build_maximal_unitigs_links;
 use crate::pipeline::reorganize_reads::reorganize_reads;
 use ::dynamic_dispatch::dynamic_dispatch;
+use assembler_kmers_merge::structs::RetType;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
 use config::{
@@ -20,7 +21,6 @@ use io::concurrent::structured_sequences::fasta::FastaWriter;
 use io::concurrent::structured_sequences::StructuredSequenceWriter;
 use io::sequences_stream::general::GeneralSequenceBlockData;
 use io::{compute_stats_from_input_blocks, generate_bucket_names};
-use kmers_merge::structs::RetType;
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
@@ -168,7 +168,7 @@ pub fn run_assembler<
     }
 
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
-        kmers_merge::kmers_merge::<BucketingHash, MergingHash, AssemblerColorsManager, _>(
+        assembler_kmers_merge::kmers_merge::<BucketingHash, MergingHash, AssemblerColorsManager, _>(
             buckets,
             counters,
             global_colors_table.clone(),

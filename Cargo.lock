@@ -92,6 +92,7 @@ dependencies = [
 name = "assembler"
 version = "0.1.0"
 dependencies = [
+ "assembler_kmers_merge",
  "assembler_minimizer_bucketing",
  "bincode",
  "byteorder",
@@ -105,7 +106,6 @@ dependencies = [
  "hashes",
  "io",
  "itertools",
- "kmers_merge",
  "kmers_transform",
  "matchtigs",
  "nightly-quirks",
@@ -116,6 +116,31 @@ dependencies = [
  "streaming-libdeflate-rs",
  "structs",
  "traitgraph-algo",
+ "typenum",
+ "utils",
+]
+
+[[package]]
+name = "assembler_kmers_merge"
+version = "0.1.0"
+dependencies = [
+ "assembler_minimizer_bucketing",
+ "colors",
+ "config",
+ "crossbeam",
+ "fdlimit",
+ "hashbrown",
+ "hashes",
+ "instrumenter",
+ "io",
+ "kmers_transform",
+ "minimizer_bucketing",
+ "nightly-quirks",
+ "parallel-processor",
+ "parking_lot",
+ "rayon",
+ "streaming-libdeflate-rs",
+ "structs",
  "typenum",
  "utils",
 ]
@@ -357,13 +382,6 @@ name = "bytesize"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c58ec36aac5066d5ca17df51b3e70279f5670a72102f5752cb7e7c856adfc70"
-
-[[package]]
-name = "capi"
-version = "0.1.0"
-dependencies = [
- "cxx-build",
-]
 
 [[package]]
 name = "cast"
@@ -813,6 +831,8 @@ checksum = "4ccbbca7d6a247007ca2535c616d4bb4a5fcad176ef0218671f96b88c52c3d34"
 [[package]]
 name = "dynamic-dispatch"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9af31c05a234fcda2b3c5479dfa9bf1ff244cf94f31247dc1e44c44064779f22"
 dependencies = [
  "dynamic-dispatch-proc-macro",
 ]
@@ -820,6 +840,8 @@ dependencies = [
 [[package]]
 name = "dynamic-dispatch-proc-macro"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91397f8fd14002258a32884664e81e906c1d5bb743b708a833175d83c0c3d17"
 dependencies = [
  "proc-macro-error",
  "proc-macro2 1.0.47",
@@ -1245,31 +1267,6 @@ name = "json"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
-
-[[package]]
-name = "kmers_merge"
-version = "0.1.0"
-dependencies = [
- "assembler_minimizer_bucketing",
- "colors",
- "config",
- "crossbeam",
- "fdlimit",
- "hashbrown",
- "hashes",
- "instrumenter",
- "io",
- "kmers_transform",
- "minimizer_bucketing",
- "nightly-quirks",
- "parallel-processor",
- "parking_lot",
- "rayon",
- "streaming-libdeflate-rs",
- "structs",
- "typenum",
- "utils",
-]
 
 [[package]]
 name = "kmers_transform"

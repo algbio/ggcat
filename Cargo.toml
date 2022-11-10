@@ -5,39 +5,39 @@ cargo-features = ["profile-rustflags"]
 
 members = [
     # Main crate for the command line tools
-    "cmdline",
+    "crates/cmdline",
 
     # Main library for api usage
-    "api",
+    "crates/api",
 
     # Main c/c++ library for api usage
-    "capi",
+#    "crates/capi",
 
     # Global config constants
-    "config",
+    "crates/config",
 
     # Global utilities
-    "utils",
+    "crates/utils",
 
     # Common pipeline crates
-    "pipeline/common/hashes",
-    "pipeline/common/io",
-    "pipeline/common/minimizer_bucketing",
-    "pipeline/common/kmers_transform",
-    "pipeline/common/colors",
-    "pipeline/common/structs",
+    "crates/hashes",
+    "crates/io",
+    "crates/minimizer_bucketing",
+    "crates/kmers_transform",
+    "crates/colors",
+    "crates/structs",
 
     # Assembler pipeline
-    "pipeline/assembler/assembler_minimizer_bucketing",
-    "pipeline/assembler/kmers_merge",
-    "pipeline/assembler",
+    "crates/assembler_minimizer_bucketing",
+    "crates/assembler_kmers_merge",
+    "crates/assembler",
 
     # Querier pipeline
-    "pipeline/querier"
+    "crates/querier"
 
 ]
 
-default-members = ["cmdline", "api"]
+default-members = ["crates/cmdline", "crates/api"]
 
 
 [profile.release]
