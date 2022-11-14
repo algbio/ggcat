@@ -67,6 +67,7 @@ fn main() {
         graph_file,
         k,
         None,
+        true,
         threads_count,
         // WARNING: this function is called asynchronously from multiple threads, so it must be thread-safe.
         // Also the same_colors boolean is referred to the previous call of this function from the current thread

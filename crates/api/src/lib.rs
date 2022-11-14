@@ -9,7 +9,9 @@ use colors::{
 use config::ColorIndexType;
 use hashes::MinimizerHashFunctionFactory;
 use hashes::{cn_nthash::CanonicalNtHashIteratorFactory, fw_nthash::ForwardNtHashIteratorFactory};
+use io::sequences_stream::fasta::FastaFileSequencesStream;
 pub use io::sequences_stream::general::GeneralSequenceBlockData;
+use io::sequences_stream::GenericSequencesStream;
 use parallel_processor::enable_counters_logging;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::MemoryFs;
@@ -47,15 +49,18 @@ pub mod debug {
     pub static BUCKETS_COUNT_LOG_FORCE: Mutex<Option<usize>> = Mutex::new(None);
 }
 
+/// Main config of GGCAT. This config is global and should be passed to GGCATInstance::create
 #[derive(Clone)]
 pub struct GGCATConfig {
     /// Directory for temporary files
     pub temp_dir: Option<PathBuf>,
+
     /// Maximum suggested memory usage (GB)
     /// The tool will try use only up to this GB of memory to store temporary files
     /// without writing to disk. This usage does not include the needed memory for the processing steps.
     /// GGCAT can allocate extra memory for files if the current memory is not enough to complete the current operation
     pub memory: f64,
+
     /// Use all the given memory before writing to disk
     pub prefer_memory: bool,
 
@@ -65,6 +70,7 @@ pub struct GGCATConfig {
     /// The default lz4 compression level for the intermediate files
     pub intermediate_compression_level: Option<u32>,
 
+    /// The path to an optional json-formatted real time stats file
     pub stats_file: Option<PathBuf>,
 }
 
@@ -99,7 +105,10 @@ fn remove_tempdir(temp_dir: Option<PathBuf>) {
     }
 }
 
+/// Main GGCAT struct. It's a singleton and can be create by passing a GGCATConfig.
+/// Successive calls to create will return the same instance, ignoring the new configuration.
 impl GGCATInstance {
+    /// Creates a new GGCATInstance. If an instance already exists, it will be returned, ignoring the new config.
     pub fn create(config: GGCATConfig) -> Self {
         let mut instance = INSTANCE.lock();
 
@@ -142,6 +151,7 @@ impl GGCATInstance {
         return instance.clone().unwrap();
     }
 
+    /// Builds a new graph from the given input streams, with the specified parameters
     pub fn build_graph(
         &self,
         // The input files
@@ -220,6 +230,7 @@ impl GGCATInstance {
         output_file
     }
 
+    /// Queries a (optionally) colored graph with a specific set of sequences as queries
     pub fn query_graph(
         &self,
         // The input graph
@@ -285,10 +296,14 @@ impl GGCATInstance {
         output_file
     }
 
+    /// Obtains the standard colormap file path from a graph file path
     pub fn get_colormap_file(graph_file: impl AsRef<Path>) -> PathBuf {
         graph_file.as_ref().with_extension("colors.dat")
     }
 
+    /// Returns an iterator over the color names in the given graph.
+    /// The color indexes returned from the dump_unitigs_with_colors function
+    /// can be used to index this (collected) iterator.
     pub fn dump_colors(
         // The input colormap
         input_colormap: impl AsRef<Path>,
@@ -307,6 +322,9 @@ impl GGCATInstance {
         })
     }
 
+    /// Dumps the unitigs of the given graph, optionally with colors
+    /// It's not guaranteed that maximal unitigs are returned, as only kmers with the same colors subset
+    /// are returned as whole unitigs to speedup colormap reading times
     pub fn dump_unitigs_with_colors(
         &self,
         graph_input: PathBuf,
@@ -314,22 +332,34 @@ impl GGCATInstance {
         kmer_length: usize,
         // Overrides the default m-mers (minimizers) length
         minimizer_length: Option<usize>,
+        colors: bool,
         // The threads to be used
         threads_count: usize,
         output_function: impl Fn(&[u8], &[ColorIndexType], bool) + Send + Sync,
     ) {
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
 
-        dumper::dump_unitigs(
-            kmer_length,
-            minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
-            graph_input,
-            temp_dir.clone(),
-            *debug::BUCKETS_COUNT_LOG_FORCE.lock(),
-            threads_count,
-            self.0.intermediate_compression_level,
-            output_function,
-        );
+        if colors {
+            dumper::dump_unitigs(
+                kmer_length,
+                minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
+                graph_input,
+                temp_dir.clone(),
+                *debug::BUCKETS_COUNT_LOG_FORCE.lock(),
+                threads_count,
+                self.0.intermediate_compression_level,
+                output_function,
+            );
+        } else {
+            FastaFileSequencesStream::new().read_block(
+                &graph_input,
+                false,
+                Some(kmer_length - 1),
+                |seq, _info| {
+                    output_function(seq.ident_data, &[], false);
+                },
+            );
+        }
 
         remove_tempdir(temp_dir);
     }
