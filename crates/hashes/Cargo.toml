@@ -6,8 +6,8 @@ edition = "2021"
 name = "ggcat_hashes"
 
 [dependencies]
-serde = "1.0.145"
-ahash = "0.8.0"
+serde = "1.0.147"
+ahash = "0.8.2"
 
 # Config
 config = { package = "ggcat_config", path = "../config" }

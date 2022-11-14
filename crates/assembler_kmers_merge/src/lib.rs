@@ -1,4 +1,3 @@
-#![feature(int_log)]
 
 use crate::final_executor::ParallelKmersMergeFinalExecutor;
 use crate::map_processor::{ParallelKmersMergeMapProcessor, KMERGE_TEMP_DIR};

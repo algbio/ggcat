@@ -1,4 +1,3 @@
-#![feature(int_log)]
 #![feature(type_alias_impl_trait)]
 #![feature(drain_filter)]
 

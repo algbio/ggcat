@@ -1,5 +1,4 @@
 #![feature(slice_group_by)]
-#![feature(int_log)]
 #![feature(int_roundings)]
 
 use crate::pipeline::dumper_minimizer_bucketing::minimizer_bucketing;

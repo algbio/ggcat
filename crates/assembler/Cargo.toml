@@ -15,7 +15,7 @@ utils = { package = "ggcat_utils", path = "../utils" }
 dynamic-dispatch = "0.4.1"
 
 # Common libraries
-parallel-processor = "0.1.0"
+parallel-processor = "0.1.2"
 streaming-libdeflate-rs = "0.1.0"
 nightly-quirks = "0.1.0"
 
@@ -33,9 +33,9 @@ structs = { package = "ggcat_structs", path = "../structs" }
 
 
 # Matchtigs support
-matchtigs = "1.5.0"
-genome-graph = {version = "5.1.0", features = ["traitgraph-algo"]}
-traitgraph-algo = {version = "5.3.0", features = ["hashbrown_dijkstra_node_weight_array"]}
+matchtigs = "1.5.1"
+genome-graph = { version = "5.1.0", features = ["traitgraph-algo"] }
+traitgraph-algo = { version = "5.3.0", features = ["hashbrown_dijkstra_node_weight_array"] }
 
 
 # Other libraries
@@ -43,7 +43,7 @@ typenum = "1.15.0"
 parking_lot = "0.12.1"
 fs_extra = "1.2.0"
 rayon = "1.5.3"
-hashbrown = "0.12.3"
+hashbrown = "0.13.1"
 itertools = "0.10.5"
 byteorder = "1.4.3"
 serde = "1.0.147"

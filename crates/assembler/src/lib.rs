@@ -1,4 +1,4 @@
-#![feature(slice_group_by, int_log, type_alias_impl_trait)]
+#![feature(slice_group_by, type_alias_impl_trait)]
 
 use crate::pipeline::build_unitigs::build_unitigs;
 use crate::pipeline::compute_matchtigs::{compute_matchtigs_thread, MatchtigsStorageBackend};

@@ -16,18 +16,18 @@ itertools = "0.10.5"
 lazy_static = "1.4.0"
 lz4 = "1.24.0"
 rayon = "1.5.3"
-serde = "1.0.145"
+serde = "1.0.147"
 structopt = "0.3.26"
-hashbrown = "0.12.3"
+hashbrown = "0.13.1"
 rand = "0.8.5"
-libc = "0.2.134"
+libc = "0.2.137"
 filebuffer = "0.4.0"
 crossbeam = "0.8.2"
 fdlimit = "0.2.1"
 parking_lot = "0.12.1"
 dashmap = "5.4.0"
-serde_json = "1.0.85"
-ahash = "0.8.0"
+serde_json = "1.0.87"
+ahash = "0.8.2"
 siphasher = "0.3.10"
 desse = "0.2.1"
 replace_with = "0.1.7"
@@ -37,7 +37,7 @@ csv = "1.1.6"
 flate2 = { default-features = false, features = ["cloudflare_zlib"], version = "1.0.24" }
 typenum = "1.15.0"
 fs_extra = "1.2.0"
-atoi = "1.0.0"
+atoi = "2.0.0"
 
 # Config
 config = { package = "ggcat_config", path = "../config" }
@@ -48,7 +48,7 @@ dynamic-dispatch = "0.4.1"
 
 
 # Common libraries
-parallel-processor = "0.1.0"
+parallel-processor = "0.1.2"
 io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
 
