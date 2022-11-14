@@ -97,7 +97,10 @@ impl CountersAnalyzer {
     }
 
     pub fn serialize_to_file(&self, path: impl AsRef<Path>) {
-        let file = BufWriter::new(File::create(path).unwrap());
+        let file = BufWriter::new(
+            File::create(path.as_ref())
+                .expect(&format!("Cannot open file {}", path.as_ref().display())),
+        );
         bincode::serialize_into(file, self).unwrap();
     }
 }

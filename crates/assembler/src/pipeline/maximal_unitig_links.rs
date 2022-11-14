@@ -60,43 +60,40 @@ pub fn build_maximal_unitigs_links<
     let buckets_count = 1 << DEFAULT_BUCKET_HASHES_SIZE_LOG;
 
     // Hash all the extremities
-    let (step_1_hash_files, unitigs_count) =
-        {
-            let unitigs_count = AtomicU64::new(0);
+    let (step_1_hash_files, unitigs_count) = {
+        let unitigs_count = AtomicU64::new(0);
 
-            PHASES_TIMES_MONITOR
-                .write()
-                .start_phase("phase: maximal unitigs links building [step 1]".to_string());
+        PHASES_TIMES_MONITOR
+            .write()
+            .start_phase("phase: maximal unitigs links building [step 1]".to_string());
 
-            let maximal_unitigs_reader_step1 = CompressedBinaryReader::new(
-                &in_file,
-                RemoveFileMode::Remove { remove_fs: false },
-                DEFAULT_PREFETCH_AMOUNT,
-            );
+        let maximal_unitigs_reader_step1 =
+            CompressedBinaryReader::new(&in_file, RemoveFileMode::Keep, DEFAULT_PREFETCH_AMOUNT);
 
-            let maximal_unitigs_extremities_hashes_buckets =
-                Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
-                    buckets_count,
-                    temp_dir.join("mu-hashes"),
-                    &(
-                        get_memory_mode(SwapPriority::HashBuckets),
-                        CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-                        get_compression_level_info(),
-                    ),
-                ));
+        let maximal_unitigs_extremities_hashes_buckets =
+            Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
+                buckets_count,
+                temp_dir.join("mu-hashes"),
+                &(
+                    get_memory_mode(SwapPriority::HashBuckets),
+                    CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
+                    get_compression_level_info(),
+                ),
+            ));
 
-            rayon::scope(|_s| {
-                (0..rayon::current_num_threads())
-                    .into_par_iter()
-                    .for_each(|_| {
-                        let mut unitigs_partial_count = 0;
+        rayon::scope(|_s| {
+            (0..rayon::current_num_threads())
+                .into_par_iter()
+                .for_each(|_| {
+                    let mut unitigs_partial_count = 0;
 
-                        let mut hashes_tmp = BucketsThreadDispatcher::new(
-                            &maximal_unitigs_extremities_hashes_buckets,
-                            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count),
-                        );
+                    let mut hashes_tmp = BucketsThreadDispatcher::new(
+                        &maximal_unitigs_extremities_hashes_buckets,
+                        BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count),
+                    );
 
-                        while maximal_unitigs_reader_step1
+                    while
+                        maximal_unitigs_reader_step1
                             .decode_bucket_items_parallel::<CompressedReadsBucketHelper<
                             _,
                             typenum::consts::U0,
@@ -191,19 +188,20 @@ pub fn build_maximal_unitigs_links<
                                     );
                                 }
                             },
-                        ) {
-                            continue;
-                        }
+                        )
+                    {
+                        continue;
+                    }
 
-                        unitigs_count.fetch_add(unitigs_partial_count, Ordering::Relaxed);
-                        hashes_tmp.finalize();
-                    });
-            });
-            (
-                maximal_unitigs_extremities_hashes_buckets.finalize(),
-                unitigs_count.into_inner(),
-            )
-        };
+                    unitigs_count.fetch_add(unitigs_partial_count, Ordering::Relaxed);
+                    hashes_tmp.finalize();
+                });
+        });
+        (
+            maximal_unitigs_extremities_hashes_buckets.finalize(),
+            unitigs_count.into_inner(),
+        )
+    };
 
     let entries_per_bucket =
         max(1, unitigs_count.next_power_of_two() / buckets_count as u64) as usize;

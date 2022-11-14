@@ -73,6 +73,10 @@ members = [
 
     # Dumper pipeline
     "crates/dumper",
+
+
+    # Examples
+    "crates/api/example",
 ]
 
 default-members = ["crates/cmdline", "crates/api"]
@@ -81,4 +85,4 @@ default-members = ["crates/cmdline", "crates/api"]
 [profile.release]
 debug = true
 lto = "thin"
-split-debuginfo = "packed"
+# split-debuginfo = "packed"

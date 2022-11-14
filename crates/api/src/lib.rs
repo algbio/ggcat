@@ -84,6 +84,20 @@ static INSTANCE: Mutex<Option<GGCATInstance>> = Mutex::new(None);
 #[derive(Clone)]
 pub struct GGCATInstance(GGCATConfig);
 
+fn create_tempdir(base_path: Option<PathBuf>) -> Option<PathBuf> {
+    base_path.map(|t| {
+        let temp_dir = t.join(&format!("build_graph_{}", uuid::Uuid::new_v4()));
+        let _ = create_dir_all(&temp_dir);
+        temp_dir
+    })
+}
+
+fn remove_tempdir(temp_dir: Option<PathBuf>) {
+    if let Some(temp_dir) = temp_dir {
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+}
+
 impl GGCATInstance {
     pub fn create(config: GGCATConfig) -> Self {
         let mut instance = INSTANCE.lock();
@@ -173,11 +187,7 @@ impl GGCATInstance {
             NonColoredManager::DYNAMIC_DISPATCH_ID
         };
 
-        let temp_dir = self
-            .0
-            .temp_dir
-            .as_ref()
-            .map(|t| t.join(&format!("build_graph_{}", uuid::Uuid::new_v4())));
+        let temp_dir = create_tempdir(self.0.temp_dir.clone());
 
         assembler::dynamic_dispatch::run_assembler(
             (bucketing_hash_dispatch, merging_hash_dispatch, colors_hash),
@@ -188,7 +198,7 @@ impl GGCATInstance {
             input_files,
             color_names.unwrap_or(vec![]),
             output_file,
-            temp_dir,
+            temp_dir.clone(),
             threads_count,
             min_multiplicity,
             *debug::BUCKETS_COUNT_LOG_FORCE.lock(),
@@ -203,6 +213,8 @@ impl GGCATInstance {
             },
             debug::DEBUG_ONLY_BSTATS.load(Ordering::Relaxed),
         );
+
+        remove_tempdir(temp_dir);
     }
 
     pub fn query_graph(
@@ -248,6 +260,8 @@ impl GGCATInstance {
             NonColoredManager::DYNAMIC_DISPATCH_ID
         };
 
+        let temp_dir = create_tempdir(self.0.temp_dir.clone());
+
         querier::dynamic_dispatch::run_query(
             (bucketing_hash_dispatch, merging_hash_dispatch, colors_hash),
             kmer_length,
@@ -256,12 +270,14 @@ impl GGCATInstance {
             input_graph,
             input_query,
             output_file_prefix,
-            self.0.temp_dir.clone(),
+            temp_dir.clone(),
             *debug::BUCKETS_COUNT_LOG_FORCE.lock(),
             threads_count,
             self.0.intermediate_compression_level,
             color_output_format,
-        )
+        );
+
+        remove_tempdir(temp_dir);
     }
 
     pub fn dump_colors(
@@ -290,15 +306,19 @@ impl GGCATInstance {
         threads_count: usize,
         output_function: impl Fn(&[u8], &[ColorIndexType], bool) + Send + Sync,
     ) {
+        let temp_dir = create_tempdir(self.0.temp_dir.clone());
+
         dumper::dump_unitigs(
             k,
             m,
             graph_input,
-            self.0.temp_dir.clone(),
+            temp_dir.clone(),
             *debug::BUCKETS_COUNT_LOG_FORCE.lock(),
             threads_count,
             self.0.intermediate_compression_level,
             output_function,
-        )
+        );
+
+        remove_tempdir(temp_dir);
     }
 }
