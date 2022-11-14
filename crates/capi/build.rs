@@ -1,3 +1,5 @@
+use std::fs::create_dir;
+
 fn main() {
     cxx_build::bridge("src/lib.rs")
         .flag_if_supported("-std=c++11")
@@ -13,6 +15,8 @@ fn main() {
     )
     .unwrap();
 
+    let _ = create_dir("ggcat-cpp-api/lib");
+
     std::fs::copy(
         format!(
             "{}{}",
@@ -21,7 +25,14 @@ fn main() {
         ),
         "ggcat-cpp-api/lib/libggcat_cxx_interop.a",
     )
-    .unwrap();
+    .expect(&format!(
+        "Cannot copy file: '{}'",
+        format!(
+            "{}{}",
+            std::env::var("OUT_DIR").unwrap(),
+            "/libggcat_cxx_interop.a"
+        )
+    ));
 
     println!("cargo:rerun-if-changed=src/lib.rs");
 }
