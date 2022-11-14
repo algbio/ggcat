@@ -1,0 +1,14 @@
+[package]
+name = "ggcat-cpp-bindings"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+cxx = "1.0.81"
+ggcat-api = { version = "0.1.0", path = "../api" }
+
+[build-dependencies]
+cxx-build = "1.0.81"
