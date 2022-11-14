@@ -1,5 +1,5 @@
 use criterion::*;
-use hashes::*;
+use ggcat_hashes::*;
 use io::compressed_read::CompressedRead;
 use rand::{RngCore, SeedableRng};
 use utils::Utils;

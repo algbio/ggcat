@@ -9,8 +9,9 @@ use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use std::io::{Read, Write};
-use std::ops::Range;
+use std::ops::{Range};
 use std::path::Path;
 use structs::map_entry::MapEntry;
 
@@ -78,6 +79,12 @@ impl MinimizerBucketingSeqColorData for NonColoredManager {
 
     fn get_subslice(&self, _range: Range<usize>) -> Self {
         Self
+    }
+}
+
+impl FastSortable for NonColoredManager {
+    fn get_shifted(&self, _rhs: u8) -> u8 {
+        0
     }
 }
 

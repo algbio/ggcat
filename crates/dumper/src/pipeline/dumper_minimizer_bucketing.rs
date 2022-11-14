@@ -1,14 +1,9 @@
-use byteorder::ReadBytesExt;
 use colors::colors_manager::color_types::{
     MinimizerBucketingSeqColorDataType, SingleKmerColorDataType,
 };
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
-use hashes::rolling::minqueue::RollingMinQueue;
-use hashes::ExtendableHashTraitType;
-use hashes::HashFunction;
-use hashes::MinimizerHashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
@@ -19,6 +14,7 @@ use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
 };
+use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
@@ -27,11 +23,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-pub struct DumperKmersReferenceData<CX: SequenceExtraData<TempBuffer = ()> + Clone> {
-    color: CX,
+pub struct DumperKmersReferenceData<CX: SequenceExtraData<TempBuffer = ()> + Clone + FastSortable> {
+    pub(crate) color: CX,
 }
 
-impl<CX: SequenceExtraData<TempBuffer = ()> + Clone> SequenceExtraData
+impl<CX: SequenceExtraData<TempBuffer = ()> + Clone + FastSortable> SequenceExtraData
     for DumperKmersReferenceData<CX>
 {
     type TempBuffer = ();
@@ -83,7 +79,7 @@ pub struct DumperMinimizerBucketingExecutor<CX: ColorsManager> {
     _phantom: PhantomData<CX>,
 }
 
-pub struct DumperMinimizerBucketingExecutorFactory<CX: ColorsManager>(PhantomData<(CX)>);
+pub struct DumperMinimizerBucketingExecutorFactory<CX: ColorsManager>(PhantomData<CX>);
 
 impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
     for DumperMinimizerBucketingExecutorFactory<CX>
@@ -113,9 +109,9 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
 {
     fn preprocess_dna_sequence(
         &mut self,
-        stream_info: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
+        _stream_info: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
         sequence_info: SequenceInfo,
-        read_index: u64,
+        _read_index: u64,
         sequence: &DnaSequence,
         preprocess_info: &mut <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
@@ -164,9 +160,9 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
     fn reprocess_sequence(
         &mut self,
         _flags: u8,
-        extra_data: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-        extra_data_buffer: &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraData>::TempBuffer,
-        preprocess_info: &mut <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        _extra_data: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData,
+        _extra_data_buffer: &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraData>::TempBuffer,
+        _preprocess_info: &mut <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         unimplemented!()
     }

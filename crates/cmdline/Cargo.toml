@@ -69,3 +69,5 @@ devel-build = ["assembler/devel-build", "querier/devel-build"]
 [build-dependencies]
 make-cmd = "0.1.0"
 
+[dev-dependencies]
+hashes = { package = "ggcat_hashes", path = "../hashes" }

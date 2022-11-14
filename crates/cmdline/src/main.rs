@@ -246,7 +246,7 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) -> GGCATInstance {
     });
 
     ggcat_api::debug::DEBUG_KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
-    *ggcat_api::debug::BUCKETS_COUNT_FORCE.lock() = args.buckets_count_log;
+    *ggcat_api::debug::BUCKETS_COUNT_LOG_FORCE.lock() = args.buckets_count_log;
     ggcat_api::debug::DEBUG_ONLY_BSTATS.store(args.only_bstats, Ordering::Relaxed);
     *ggcat_api::debug::DEBUG_HASH_TYPE.lock() = match args.hash_type {
         HashType::Auto => ggcat_api::HashType::Auto,

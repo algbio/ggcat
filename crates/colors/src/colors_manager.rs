@@ -6,6 +6,7 @@ use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use std::cmp::min;
 use std::hash::Hash;
 use std::ops::Range;
@@ -222,6 +223,7 @@ pub trait ColorsManager: 'static + Sync + Send + Sized {
         + Eq
         + Sync
         + Send
+        + FastSortable
         + 'static;
 
     #[inline(always)]

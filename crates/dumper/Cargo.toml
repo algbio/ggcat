@@ -10,10 +10,6 @@ config = { package = "ggcat_config", path = "../config" }
 # Utils
 utils = { package = "ggcat_utils", path = "../utils" }
 
-
-# Static dispatch
-dynamic-dispatch = "0.4.1"
-
 # Common libraries
 parallel-processor = "0.1.2"
 streaming-libdeflate-rs = "0.1.0"

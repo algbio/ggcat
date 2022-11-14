@@ -284,8 +284,9 @@ impl ColorsParser for GraphColorsParser {
 #[cfg(test)]
 mod tests {
     use crate::colors_manager::MinimizerBucketingSeqColorData;
+    use crate::managers::multiple::UnitigsSerializerTempBuffer;
     use crate::parsers::graph::MinBkMultipleColors;
-    use crate::parsers::SingleSequenceInfo;
+    use crate::parsers::{SequenceIdent, SingleSequenceInfo};
     use io::concurrent::temp_reads::extra_data::SequenceExtraData;
     use std::io::Cursor;
 
@@ -293,12 +294,12 @@ mod tests {
     fn graph_multiple_colors_structure() {
         let input_colors = "C:1:12 C:2:1 C:3:3 C:4:23 C:5:7 C:6:24";
 
-        let mut extra_buffer = Vec::new();
+        let mut extra_buffer = UnitigsSerializerTempBuffer { colors: vec![] };
 
         let colors = MinBkMultipleColors::create(
             SingleSequenceInfo {
                 static_color: 0,
-                sequence_ident: input_colors.as_bytes(),
+                sequence_ident: SequenceIdent::FASTA(input_colors.as_bytes()),
             },
             &mut extra_buffer,
         );
@@ -316,7 +317,7 @@ mod tests {
 
                 subset.encode_extended(&extra_buffer, &mut cursor);
 
-                let mut decoded_extra_buffer = vec![];
+                let mut decoded_extra_buffer = UnitigsSerializerTempBuffer { colors: vec![] };
 
                 let decoded = MinBkMultipleColors::decode_extended(
                     &mut decoded_extra_buffer,

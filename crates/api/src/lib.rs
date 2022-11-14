@@ -43,7 +43,7 @@ pub mod debug {
     pub static DEBUG_LINK_PHASE_ITERATION_START_STEP: AtomicUsize = AtomicUsize::new(0);
     pub static DEBUG_ONLY_BSTATS: AtomicBool = AtomicBool::new(false);
 
-    pub static BUCKETS_COUNT_FORCE: Mutex<Option<usize>> = Mutex::new(None);
+    pub static BUCKETS_COUNT_LOG_FORCE: Mutex<Option<usize>> = Mutex::new(None);
 }
 
 #[derive(Clone)]
@@ -191,7 +191,7 @@ impl GGCATInstance {
             temp_dir,
             threads_count,
             min_multiplicity,
-            *debug::BUCKETS_COUNT_FORCE.lock(),
+            *debug::BUCKETS_COUNT_LOG_FORCE.lock(),
             Some(debug::DEBUG_LINK_PHASE_ITERATION_START_STEP.load(Ordering::Relaxed)),
             self.0.intermediate_compression_level,
             extra_elab == ExtraElaboration::UnitigLinks,
@@ -257,7 +257,7 @@ impl GGCATInstance {
             input_query,
             output_file_prefix,
             self.0.temp_dir.clone(),
-            *debug::BUCKETS_COUNT_FORCE.lock(),
+            *debug::BUCKETS_COUNT_LOG_FORCE.lock(),
             threads_count,
             self.0.intermediate_compression_level,
             color_output_format,
@@ -282,12 +282,23 @@ impl GGCATInstance {
         })
     }
 
-    // fn read_graph(
-    //     // The input graph
-    //     input_graph: String,
-    //     // Enable colors
-    //     colors: bool,
-    //     output_file_prefix: String,
-    // ) {
-    // }
+    pub fn dump_unitigs_with_colors(
+        &self,
+        k: usize,
+        m: usize,
+        graph_input: PathBuf,
+        threads_count: usize,
+        output_function: impl Fn(&[u8], &[ColorIndexType], bool) + Send + Sync,
+    ) {
+        dumper::dump_unitigs(
+            k,
+            m,
+            graph_input,
+            self.0.temp_dir.clone(),
+            *debug::BUCKETS_COUNT_LOG_FORCE.lock(),
+            threads_count,
+            self.0.intermediate_compression_level,
+            output_function,
+        )
+    }
 }

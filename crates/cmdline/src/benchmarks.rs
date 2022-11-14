@@ -51,11 +51,6 @@ mod tests {
         assert_ne!(sum, 49999995000000);
     }
 
-    // #[link(name = "test")]
-    extern "C" {
-        fn compute(data: *const u64, len: usize) -> usize;
-    }
-
     #[bench]
     fn bench_iter_vec(b: &mut Bencher) {
         let mut vec = Vec::with_capacity(TEST_SIZE);

@@ -1,4 +1,3 @@
-
 use crate::final_executor::ParallelKmersMergeFinalExecutor;
 use crate::map_processor::{ParallelKmersMergeMapProcessor, KMERGE_TEMP_DIR};
 use crate::preprocessor::ParallelKmersMergePreprocessor;
@@ -239,7 +238,6 @@ mod tests {
     use std::path::Path;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
-    use utils::DEBUG_LEVEL;
 
     #[ignore]
     #[test]
@@ -248,7 +246,7 @@ mod tests {
 
         let buckets_count = 1024;
 
-        let mut buckets =
+        let buckets =
             generate_bucket_names(Path::new(TEMP_DIR).join("bucket"), buckets_count, None);
 
         // let mut buckets = vec![buckets[322]];
@@ -266,8 +264,12 @@ mod tests {
 
         let global_colors_table = Arc::new(
             <<NonColoredManager as ColorsManager>::ColorsMergeManagerType<
-                hashes::cn_seqhash::u128::CanonicalSeqHashFactory,
-            > as ColorsMergeManager<hashes::cn_seqhash::u128::CanonicalSeqHashFactory>>::create_colors_table("", Vec::new()),
+                hashes::cn_nthash::CanonicalNtHashIteratorFactory,
+                hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
+            > as ColorsMergeManager<
+                hashes::cn_nthash::CanonicalNtHashIteratorFactory,
+                hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
+            >>::create_colors_table("", Vec::new()),
         );
 
         let k = 63;
@@ -281,8 +283,6 @@ mod tests {
         KEEP_FILES.store(true, Ordering::Relaxed);
 
         PREFER_MEMORY.store(false, Ordering::Relaxed);
-
-        DEBUG_LEVEL.store(0, Ordering::Relaxed);
 
         ThreadPoolBuilder::new()
             .num_threads(threads_count)
