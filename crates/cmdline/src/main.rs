@@ -235,7 +235,7 @@ struct QueryArgs {
 // #[cfg(feature = "mem-analysis")]
 // static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
 
-fn initialize(args: &CommonArgs, out_file: &PathBuf) -> GGCATInstance {
+fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
     let instance = GGCATInstance::create(GGCATConfig {
         temp_dir: Some(args.temp_dir.clone()),
         memory: args.memory,
@@ -317,7 +317,7 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
     let output_file = instance.build_graph(
         inputs,
         args.output_file,
-        Some(color_names),
+        Some(&color_names),
         args.common_args.kmer_length,
         args.common_args.threads_count,
         args.common_args.forward_only,

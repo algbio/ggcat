@@ -16,7 +16,7 @@ pub struct ColorsMemMapWriter<C: ColorsSerializerTrait> {
 }
 
 impl<C: ColorsSerializerTrait> ColorsMemMapWriter<C> {
-    pub fn new(file: impl AsRef<Path>, color_names: Vec<String>) -> Self {
+    pub fn new(file: impl AsRef<Path>, color_names: &[String]) -> Self {
         let mut rng = thread_rng();
         Self {
             colors: DashMap::with_hasher(DummyHasherBuilder),

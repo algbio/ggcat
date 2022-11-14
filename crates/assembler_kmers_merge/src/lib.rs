@@ -269,7 +269,7 @@ mod tests {
             > as ColorsMergeManager<
                 hashes::cn_nthash::CanonicalNtHashIteratorFactory,
                 hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
-            >>::create_colors_table("", Vec::new()),
+            >>::create_colors_table("", &[]),
         );
 
         let k = 63;

@@ -23,16 +23,12 @@ fn main() {
     // building also bcalm2-style links across maximal unitigs
     let graph_file = instance.build_graph(
         vec![
-            GeneralSequenceBlockData::FASTA(PathBuf::from("input/sal1.fa")),
-            GeneralSequenceBlockData::FASTA(PathBuf::from("input/sal2.fa")),
-            GeneralSequenceBlockData::FASTA(PathBuf::from("input/sal3.fa")),
+            GeneralSequenceBlockData::FASTA(PathBuf::from("../../../example-inputs/sal1.fa")),
+            GeneralSequenceBlockData::FASTA(PathBuf::from("../../../example-inputs/sal2.fa")),
+            GeneralSequenceBlockData::FASTA(PathBuf::from("../../../example-inputs/sal3.fa")),
         ],
         graph_file.clone(),
-        Some(vec![
-            "sal1".to_string(),
-            "sal2".to_string(),
-            "sal3".to_string(),
-        ]),
+        Some(&["sal1".to_string(), "sal2".to_string(), "sal3".to_string()]),
         k,
         threads_count,
         false,
@@ -42,7 +38,7 @@ fn main() {
         ExtraElaboration::UnitigLinks,
     );
 
-    let input_query = PathBuf::from("input/query.fa");
+    let input_query = PathBuf::from("../../../input/query.fa");
 
     let output_query = instance.query_graph(
         graph_file.clone(),

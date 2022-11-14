@@ -126,7 +126,7 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
     /// Creates a new colors table at the given path
     fn create_colors_table(
         path: impl AsRef<Path>,
-        color_names: Vec<String>,
+        color_names: &[String],
     ) -> Self::GlobalColorsTableWriter;
 
     /// Creates a new colors table at the given path

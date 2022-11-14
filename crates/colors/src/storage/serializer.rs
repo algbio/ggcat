@@ -43,7 +43,7 @@ pub struct ColorsSerializer<SI: ColorsSerializerTrait> {
 }
 
 impl<SI: ColorsSerializerTrait> ColorsSerializer<SI> {
-    pub fn new(file: impl AsRef<Path>, color_names: Vec<String>) -> Self {
+    pub fn new(file: impl AsRef<Path>, color_names: &[String]) -> Self {
         let mut colormap_file = File::create(file).unwrap();
 
         colormap_file
@@ -55,7 +55,7 @@ impl<SI: ColorsSerializerTrait> ColorsSerializer<SI> {
                 .level(4)
                 .build(colormap_file)
                 .unwrap();
-            bincode::serialize_into(&mut color_names_stream, &color_names).unwrap();
+            bincode::serialize_into(&mut color_names_stream, color_names).unwrap();
 
             let (cf, res) = color_names_stream.finish();
             res.unwrap();

@@ -1107,6 +1107,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ggcat-cpp-bindings"
+version = "0.1.0"
+dependencies = [
+ "cxx",
+ "cxx-build",
+ "ggcat-api",
+]
+
+[[package]]
 name = "ggcat_assembler"
 version = "0.1.0"
 dependencies = [

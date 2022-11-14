@@ -47,7 +47,7 @@ members = [
     "crates/api",
 
     # Main c/c++ library for api usage
-#    "crates/capi",
+   "crates/capi",
 
     # Global config constants
     "crates/config",

@@ -118,7 +118,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
     fn create_colors_table(
         _path: impl AsRef<Path>,
-        _color_names: Vec<String>,
+        _color_names: &[String],
     ) -> Self::GlobalColorsTableWriter {
         ()
     }

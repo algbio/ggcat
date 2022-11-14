@@ -83,7 +83,7 @@ pub fn run_assembler<
     step: AssemblerStartingStep,
     last_step: AssemblerStartingStep,
     input_blocks: Vec<GeneralSequenceBlockData>,
-    color_names: Vec<String>,
+    color_names: &[String],
     output_file: PathBuf,
     temp_dir: Option<PathBuf>,
     threads_count: usize,

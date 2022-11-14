@@ -50,7 +50,6 @@ pub mod debug {
 }
 
 /// Main config of GGCAT. This config is global and should be passed to GGCATInstance::create
-#[derive(Clone)]
 pub struct GGCATConfig {
     /// Directory for temporary files
     pub temp_dir: Option<PathBuf>,
@@ -87,8 +86,8 @@ pub enum ExtraElaboration {
     Pathtigs,
 }
 
-static INSTANCE: Mutex<Option<GGCATInstance>> = Mutex::new(None);
-#[derive(Clone)]
+static INSTANCE: Mutex<Option<&'static GGCATInstance>> = Mutex::new(None);
+
 pub struct GGCATInstance(GGCATConfig);
 
 fn create_tempdir(base_path: Option<PathBuf>) -> Option<PathBuf> {
@@ -109,11 +108,11 @@ fn remove_tempdir(temp_dir: Option<PathBuf>) {
 /// Successive calls to create will return the same instance, ignoring the new configuration.
 impl GGCATInstance {
     /// Creates a new GGCATInstance. If an instance already exists, it will be returned, ignoring the new config.
-    pub fn create(config: GGCATConfig) -> Self {
+    pub fn create(config: GGCATConfig) -> &'static Self {
         let mut instance = INSTANCE.lock();
 
         if let Some(instance) = instance.deref() {
-            return instance.clone();
+            return instance;
         }
 
         // Increase the maximum allowed number of open files
@@ -147,8 +146,8 @@ impl GGCATInstance {
             max(1, config.total_threads_count / 4),
             8192,
         );
-        *instance = Some(GGCATInstance(config));
-        return instance.clone().unwrap();
+        *instance = Some(Box::leak(Box::new(GGCATInstance(config))));
+        return instance.unwrap();
     }
 
     /// Builds a new graph from the given input streams, with the specified parameters
@@ -161,7 +160,7 @@ impl GGCATInstance {
         output_file: PathBuf,
 
         // The names of the colors, ordered by color index
-        color_names: Option<Vec<String>>,
+        color_names: Option<&[String]>,
 
         // Specifies the k-mers length
         kmer_length: usize,
@@ -207,7 +206,7 @@ impl GGCATInstance {
             debug::DEBUG_ASSEMBLER_FIRST_STEP.lock().clone(),
             debug::DEBUG_ASSEMBLER_LAST_STEP.lock().clone(),
             input_files,
-            color_names.unwrap_or(vec![]),
+            color_names.unwrap_or(&[]),
             output_file,
             temp_dir.clone(),
             threads_count,
