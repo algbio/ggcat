@@ -1,6 +1,7 @@
 mod utils;
 
 pub use crate::utils::HashType;
+use colors::bundles::graph_querying::ColorBundleGraphQuerying;
 use colors::colors_manager::ColorsManager;
 use colors::{
     bundles::multifile_building::ColorBundleMultifileBuilding, non_colored::NonColoredManager,
@@ -14,7 +15,7 @@ use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
-use querier::ColoredQueryOutputFormat;
+pub use querier::ColoredQueryOutputFormat;
 use std::cmp::max;
 use std::fs::create_dir_all;
 use std::ops::Deref;
@@ -168,7 +169,7 @@ impl GGCATInstance {
         min_multiplicity: usize,
 
         extra_elab: ExtraElaboration,
-    ) {
+    ) -> PathBuf {
         let bucketing_hash_dispatch = if forward_only {
             <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
         } else {
@@ -189,7 +190,7 @@ impl GGCATInstance {
 
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
 
-        assembler::dynamic_dispatch::run_assembler(
+        let output_file = assembler::dynamic_dispatch::run_assembler(
             (bucketing_hash_dispatch, merging_hash_dispatch, colors_hash),
             kmer_length,
             minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
@@ -215,6 +216,8 @@ impl GGCATInstance {
         );
 
         remove_tempdir(temp_dir);
+
+        output_file
     }
 
     pub fn query_graph(
@@ -241,7 +244,7 @@ impl GGCATInstance {
 
         // Query output format
         color_output_format: ColoredQueryOutputFormat,
-    ) {
+    ) -> PathBuf {
         let bucketing_hash_dispatch = if forward_only {
             <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
         } else {
@@ -255,14 +258,14 @@ impl GGCATInstance {
         );
 
         let colors_hash = if colors {
-            ColorBundleMultifileBuilding::DYNAMIC_DISPATCH_ID
+            ColorBundleGraphQuerying::DYNAMIC_DISPATCH_ID
         } else {
             NonColoredManager::DYNAMIC_DISPATCH_ID
         };
 
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
 
-        querier::dynamic_dispatch::run_query(
+        let output_file = querier::dynamic_dispatch::run_query(
             (bucketing_hash_dispatch, merging_hash_dispatch, colors_hash),
             kmer_length,
             minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
@@ -278,6 +281,12 @@ impl GGCATInstance {
         );
 
         remove_tempdir(temp_dir);
+
+        output_file
+    }
+
+    pub fn get_colormap_file(graph_file: impl AsRef<Path>) -> PathBuf {
+        graph_file.as_ref().with_extension("colors.dat")
     }
 
     pub fn dump_colors(
@@ -300,17 +309,20 @@ impl GGCATInstance {
 
     pub fn dump_unitigs_with_colors(
         &self,
-        k: usize,
-        m: usize,
         graph_input: PathBuf,
+        // Specifies the k-mers length
+        kmer_length: usize,
+        // Overrides the default m-mers (minimizers) length
+        minimizer_length: Option<usize>,
+        // The threads to be used
         threads_count: usize,
         output_function: impl Fn(&[u8], &[ColorIndexType], bool) + Send + Sync,
     ) {
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
 
         dumper::dump_unitigs(
-            k,
-            m,
+            kmer_length,
+            minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
             graph_input,
             temp_dir.clone(),
             *debug::BUCKETS_COUNT_LOG_FORCE.lock(),

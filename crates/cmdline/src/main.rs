@@ -314,7 +314,7 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
     *ggcat_api::debug::DEBUG_ASSEMBLER_LAST_STEP.lock() = convert_assembler_step(args.last_step);
     ggcat_api::debug::DEBUG_LINK_PHASE_ITERATION_START_STEP.store(args.number, Ordering::Relaxed);
 
-    instance.build_graph(
+    let output_file = instance.build_graph(
         inputs,
         args.output_file,
         Some(color_names),
@@ -336,6 +336,8 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
             ExtraElaboration::None
         },
     );
+
+    println!("Final output saved to: {}", output_file.display());
 }
 
 fn convert_querier_step(step: QuerierStartingStep) -> querier::QuerierStartingStep {
@@ -347,7 +349,7 @@ fn convert_querier_step(step: QuerierStartingStep) -> querier::QuerierStartingSt
     }
 }
 
-fn run_querier_from_args(instance: &GGCATInstance, args: QueryArgs) {
+fn run_querier_from_args(instance: &GGCATInstance, args: QueryArgs) -> PathBuf {
     *ggcat_api::debug::DEBUG_QUERIER_FIRST_STEP.lock() = convert_querier_step(args.step);
 
     instance.query_graph(
@@ -370,7 +372,7 @@ fn run_querier_from_args(instance: &GGCATInstance, args: QueryArgs) {
                 querier::ColoredQueryOutputFormat::JsonLinesWithNames
             }
         },
-    );
+    )
 }
 
 instrumenter::global_setup_instrumenter!();
@@ -451,7 +453,8 @@ fn main() {
 
             let instance = initialize(&args.common_args, &args.output_file_prefix);
 
-            run_querier_from_args(&instance, args);
+            let output_file_name = run_querier_from_args(&instance, args);
+            println!("Final output saved to: {}", output_file_name.display());
         }
         CliArgs::DumpColors(args) => {
             let output_file_name = args.output_file.with_extension("jsonl");

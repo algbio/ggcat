@@ -75,7 +75,7 @@ pub fn run_query<
     threads_count: usize,
     default_compression_level: Option<u32>,
     colored_query_output_format: ColoredQueryOutputFormat,
-) {
+) -> PathBuf {
     let temp_dir = temp_dir.unwrap_or(PathBuf::new());
 
     PHASES_TIMES_MONITOR.write().init();
@@ -194,17 +194,15 @@ pub fn run_query<
         .write()
         .print_stats("Query completed.".to_string());
 
-    println!(
-        "Final output saved to: {}",
-        if output_file_prefix.extension().is_none() {
-            if QuerierColorsManager::COLORS_ENABLED {
-                output_file_prefix.with_extension("jsonl")
-            } else {
-                output_file_prefix.with_extension("csv")
-            }
+    let output_file_name = if output_file_prefix.extension().is_none() {
+        if QuerierColorsManager::COLORS_ENABLED {
+            output_file_prefix.with_extension("jsonl")
         } else {
-            output_file_prefix
+            output_file_prefix.with_extension("csv")
         }
-        .display()
-    );
+    } else {
+        output_file_prefix
+    };
+
+    output_file_name
 }

@@ -95,13 +95,13 @@ pub fn colormap_reading<
         for unitigs_by_color in temp_sequences.group_by_mut(|a, b| a.1 == b.1) {
             let color = unitigs_by_color[0].1.color;
             temp_colors_buffer.clear();
-            temp_decompressed_sequence.clear();
             colormap_decoder.get_color_mappings(color, &mut temp_colors_buffer);
 
             let mut same_color = false;
 
             for unitig in unitigs_by_color {
                 let read = unitig.0.as_reference(&temp_bases);
+                temp_decompressed_sequence.clear();
                 temp_decompressed_sequence.extend(read.as_bases_iter());
                 output_function(&temp_decompressed_sequence, &temp_colors_buffer, same_color);
                 same_color = true;

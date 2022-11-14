@@ -94,7 +94,7 @@ pub fn run_assembler<
     generate_maximal_unitigs_links: bool,
     compute_tigs_mode: Option<MatchtigMode>,
     only_bstats: bool,
-) {
+) -> PathBuf {
     let temp_dir = temp_dir.unwrap_or(PathBuf::new());
 
     PHASES_TIMES_MONITOR.write().init();
@@ -145,7 +145,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Completed minimizer bucketing.".to_string());
-        return;
+        return PathBuf::new();
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -166,7 +166,7 @@ pub fn run_assembler<
                 m,
             );
         });
-        return;
+        return PathBuf::new();
     }
 
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
@@ -191,7 +191,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Completed kmers merge.".to_string());
-        return;
+        return PathBuf::new();
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -210,7 +210,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Hashes sorting.".to_string());
-        return;
+        return PathBuf::new();
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -331,7 +331,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Links Compaction.".to_string());
-        return;
+        return PathBuf::new();
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -400,7 +400,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Reorganize reads.".to_string());
-        return;
+        return PathBuf::new();
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -509,5 +509,5 @@ pub fn run_assembler<
         .write()
         .print_stats("Compacted De Bruijn graph construction completed.".to_string());
 
-    println!("Final output saved to: {}", output_file.display());
+    output_file
 }

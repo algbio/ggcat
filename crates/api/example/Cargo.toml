@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 ggcat-api = { version = "0.1.0", path = ".." }
+itertools = "0.10.5"
