@@ -38,7 +38,7 @@ fn main() {
         ExtraElaboration::UnitigLinks,
     );
 
-    let input_query = PathBuf::from("../../../input/query.fa");
+    let input_query = PathBuf::from("../../../example-inputs/query.fa");
 
     let output_query = instance.query_graph(
         graph_file.clone(),
@@ -59,7 +59,7 @@ fn main() {
     let color_names: Vec<_> =
         GGCATInstance::dump_colors(GGCATInstance::get_colormap_file(&graph_file)).collect();
 
-    instance.dump_unitigs_with_colors(
+    instance.dump_unitigs(
         graph_file,
         k,
         None,

@@ -301,7 +301,7 @@ impl GGCATInstance {
     }
 
     /// Returns an iterator over the color names in the given graph.
-    /// The color indexes returned from the dump_unitigs_with_colors function
+    /// The color indexes returned from the dump_unitigs function
     /// can be used to index this (collected) iterator.
     pub fn dump_colors(
         // The input colormap
@@ -324,7 +324,7 @@ impl GGCATInstance {
     /// Dumps the unitigs of the given graph, optionally with colors
     /// It's not guaranteed that maximal unitigs are returned, as only kmers with the same colors subset
     /// are returned as whole unitigs to speedup colormap reading times
-    pub fn dump_unitigs_with_colors(
+    pub fn dump_unitigs(
         &self,
         graph_input: PathBuf,
         // Specifies the k-mers length

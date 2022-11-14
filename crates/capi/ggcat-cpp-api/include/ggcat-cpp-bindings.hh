@@ -773,11 +773,11 @@ const ::GGCATInstanceFFI &ggcat_create(::GGCATConfigFFI config) noexcept;
 ::rust::String ggcat_get_colormap_file(::rust::String graph_file) noexcept;
 
 // Returns a vector of color names in the given graph.
-// The color indexes returned from the dump_unitigs_with_colors function
+// The color indexes returned from the dump_unitigs function
 // can be used to index this vector.
 ::rust::Vec<::rust::String> ggcat_dump_colors(::rust::String input_colormap) noexcept;
 
 // Dumps the unitigs of the given graph, optionally with colors
 // It's not guaranteed that maximal unitigs are returned, as only kmers with the same colors subset
 // are returned as whole unitigs to speedup colormap reading times
-void ggcat_dump_unitigs_with_colors(const ::GGCATInstanceFFI &instance, ::rust::String graph_input, ::std::size_t kmer_length, ::std::size_t minimizer_length, bool colors, ::std::size_t threads_count, ::std::size_t output_function_ptr) noexcept;
+void ggcat_dump_unitigs(const ::GGCATInstanceFFI &instance, ::rust::String graph_input, ::std::size_t kmer_length, ::std::size_t minimizer_length, bool colors, ::std::size_t threads_count, ::std::size_t output_function_context, ::std::size_t output_function_ptr) noexcept;

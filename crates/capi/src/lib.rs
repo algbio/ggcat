@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{mem::transmute, path::PathBuf};
 
 use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance, GeneralSequenceBlockData};
 
@@ -177,7 +177,7 @@ pub fn ggcat_get_colormap_file(graph_file: String) -> String {
 }
 
 /// Returns a vector of color names in the given graph.
-/// The color indexes returned from the dump_unitigs_with_colors function
+/// The color indexes returned from the dump_unitigs function
 /// can be used to index this vector.
 pub fn ggcat_dump_colors(
     // The input colormap
@@ -189,32 +189,46 @@ pub fn ggcat_dump_colors(
 /// Dumps the unitigs of the given graph, optionally with colors
 /// It's not guaranteed that maximal unitigs are returned, as only kmers with the same colors subset
 /// are returned as whole unitigs to speedup colormap reading times
-fn ggcat_dump_unitigs_with_colors(
+fn ggcat_dump_unitigs(
     instance: &'static GGCATInstanceFFI,
+    // The input graph
     graph_input: String,
     // Specifies the k-mers length
     kmer_length: usize,
     // Overrides the default m-mers (minimizers) length
     minimizer_length: usize,
+    // Enable colors
     colors: bool,
     // The threads to be used
     threads_count: usize,
+
+    output_function_context: usize,
     output_function_ptr: usize,
 ) {
-    // let output_function = output_function_ptr as (extern "C" fn(&[u8], &[u32], bool));
+    let output_function: extern "C" fn(usize, usize, usize, usize, usize, bool) =
+        unsafe { transmute(output_function_ptr) };
 
-    // instance.0.dump_unitigs_with_colors(
-    //     PathBuf::from(graph_input),
-    //     kmer_length,
-    //     if minimizer_length == usize::MAX {
-    //         None
-    //     } else {
-    //         Some(minimizer_length)
-    //     },
-    //     colors,
-    //     threads_count,
-    //     output_function_ptr,
-    // )
+    instance.0.dump_unitigs(
+        PathBuf::from(graph_input),
+        kmer_length,
+        if minimizer_length == usize::MAX {
+            None
+        } else {
+            Some(minimizer_length)
+        },
+        colors,
+        threads_count,
+        |sequence, colors, same_colors| {
+            output_function(
+                output_function_context,
+                sequence.as_ptr() as usize,
+                sequence.len(),
+                colors.as_ptr() as usize,
+                colors.len(),
+                same_colors,
+            );
+        },
+    )
 }
 
 #[cxx::bridge]
@@ -316,7 +330,7 @@ mod ffi {
         fn ggcat_get_colormap_file(graph_file: String) -> String;
 
         /// Returns a vector of color names in the given graph.
-        /// The color indexes returned from the dump_unitigs_with_colors function
+        /// The color indexes returned from the dump_unitigs function
         /// can be used to index this vector.
         pub fn ggcat_dump_colors(
             // The input colormap
@@ -326,17 +340,20 @@ mod ffi {
         /// Dumps the unitigs of the given graph, optionally with colors
         /// It's not guaranteed that maximal unitigs are returned, as only kmers with the same colors subset
         /// are returned as whole unitigs to speedup colormap reading times
-        fn ggcat_dump_unitigs_with_colors(
+        fn ggcat_dump_unitigs(
             instance: &'static GGCATInstanceFFI,
+            // The input graph
             graph_input: String,
             // Specifies the k-mers length
             kmer_length: usize,
             // Overrides the default m-mers (minimizers) length
             minimizer_length: usize,
+            // Enable colors
             colors: bool,
             // The threads to be used
             threads_count: usize,
-            // extern "C" fn(&[u8], &[u32], bool),
+            output_function_context: usize,
+            // extern "C" fn(context: usize, seq_ptr: usize, seq_len: usize, col_ptr: usize, col_len: usize, same_colors: bool),
             output_function_ptr: usize,
         );
     }
