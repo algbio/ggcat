@@ -349,7 +349,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
         let map_struct_ref = map_struct.deref();
 
         for (query_index, kmer_hash) in &map_struct_ref.query_reads {
-            if let Some(entry_color) = map_struct_ref.phmap.get(&kmer_hash) {
+            if let Some(entry_color) = map_struct_ref.phmap.get(kmer_hash) {
                 *self
                     .query_map
                     .entry((*query_index, entry_color.clone()))
