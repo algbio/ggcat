@@ -1,5 +1,16 @@
 
 [patch.crates-io]
+dynamic-dispatch-proc-macro = { path = "libs-crates/dynamic-dispatch-rs/dynamic-dispatch-proc-macro/" } 
+dynamic-dispatch = { path = "libs-crates/dynamic-dispatch-rs/" } 
+mt-debug-counters = { path = "libs-crates/mt-debug-counters-rs/" } 
+streaming-libdeflate-rs = { path = "libs-crates/streaming-libdeflate-rs/" } 
+papi-bindings = { path = "libs-crates/papi-bindings-rs/" } 
+nightly-quirks = { path = "libs-crates/nightly-quirks-rs/" } 
+instrumenter-proc-macro = { path = "libs-crates/instrumenter-rs/instrumenter-proc-macro-rs/" } 
+instrumenter = { path = "libs-crates/instrumenter-rs/" } 
+parallel-processor = { path = "libs-crates/parallel-processor-rs/" } 
+
+
 #ggat_cmdline = { path = "crates/cmdline" }
 #ggat_api = { path = "crates/api" }
 #ggat_config = { path = "crates/config" }
@@ -59,4 +70,4 @@ default-members = ["crates/cmdline", "crates/api"]
 [profile.release]
 debug = true
 lto = "thin"
-#rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+split-debuginfo = "packed"

@@ -719,8 +719,6 @@ checksum = "4ccbbca7d6a247007ca2535c616d4bb4a5fcad176ef0218671f96b88c52c3d34"
 [[package]]
 name = "dynamic-dispatch"
 version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc3b913d90737167bddbc291a88b05e47cf03c5fd3a688a1a85af1f357f5b976"
 dependencies = [
  "dynamic-dispatch-proc-macro",
 ]
@@ -728,8 +726,6 @@ dependencies = [
 [[package]]
 name = "dynamic-dispatch-proc-macro"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4f9224888e1db7e66768114ffa08c40651040aa42cbe3fb6c2f0564093225d8"
 dependencies = [
  "proc-macro-error",
  "proc-macro2 1.0.47",
@@ -1307,8 +1303,6 @@ dependencies = [
 [[package]]
 name = "instrumenter"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6dba830b715cef7d3c70aeef069015086403b6dce5c24a910a8808d6d63aa47"
 dependencies = [
  "dashmap",
  "instrumenter-proc-macro",
@@ -1324,8 +1318,6 @@ dependencies = [
 [[package]]
 name = "instrumenter-proc-macro"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ad45e3631b2a5529a202860f189651471d865dac3b6ce9cb6c07a9d6046c081"
 dependencies = [
  "proc-macro2 1.0.47",
  "quote 1.0.21",
@@ -1528,8 +1520,6 @@ dependencies = [
 [[package]]
 name = "mt-debug-counters"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0465b0799568e6f7ec1e868a755a511fa05850b7790404ab55136438b61ed798"
 dependencies = [
  "bytesize",
  "json",
@@ -1600,8 +1590,6 @@ dependencies = [
 [[package]]
 name = "nightly-quirks"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b14b9208bb2d716369119b3b30d56fcf9cc00c11e97016d57c0381748ec6d48"
 dependencies = [
  "parking_lot",
 ]
@@ -1704,8 +1692,6 @@ checksum = "3baf96e39c5359d2eb0dd6ccb42c62b91d9678aa68160d261b9e0ccbf9e9dea9"
 [[package]]
 name = "papi-bindings"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c70475f3f74dbaefe962fa616f9f3becabf1131f7f2370bc0e63db4effcaaf5"
 dependencies = [
  "libc",
 ]
@@ -2219,8 +2205,6 @@ dependencies = [
 [[package]]
 name = "streaming-libdeflate-rs"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a216dc92d77a5dd0ee5b186c7f809e6f8978fb8b53ef62ca6d518e0fe0a6c51a"
 dependencies = [
  "crc32fast",
  "filebuffer",
@@ -2762,3 +2746,7 @@ checksum = "129e027ad65ce1453680623c3fb5163cbf7107bfe1aa32257e7d0e63f9ced188"
 dependencies = [
  "tap",
 ]
+
+[[patch.unused]]
+name = "parallel-processor"
+version = "0.1.1"

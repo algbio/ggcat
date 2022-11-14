@@ -49,56 +49,56 @@ pub fn colormap_reading<CX: ColorsManager, CD: ColorsSerializerTrait>(
     let tlocal_colormap_decoder =
         ScopedThreadLocal::new(move || ColorsDeserializer::<CD>::new(&colormap_file, false));
 
-    colored_unitigs_buckets.par_iter().for_each(|input| {
-        let mut colormap_decoder = tlocal_colormap_decoder.get();
-
-        let mut temp_bases = Vec::new();
-        let mut temp_sequences = Vec::new();
-
-        CompressedBinaryReader::new(
-            input,
-            RemoveFileMode::Remove {
-                remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-            },
-            DEFAULT_PREFETCH_AMOUNT,
-        )
-        .decode_all_bucket_items::<CompressedReadsBucketHelper<
-            DumperKmersReferenceData<SingleKmerColor<CX>>,
-            typenum::consts::U0,
-            false,
-        >, _>((), &mut (), |(_, _, color_extra, read), _| {
-            let new_read = read.copy_to_buffer(&mut temp_sequences);
-            temp_sequences.push((new_read, color_extra));
-        });
-
-        struct ColoredUnitigsCompare;
-        impl SortKey<(CompressedReadIndipendent, ColorIndexType)> for ColoredUnitigsCompare {
-            type KeyType = u32;
-            const KEY_BITS: usize = std::mem::size_of::<u32>() * 8;
-
-            fn compare(
-                left: &(CounterEntry<ColorIndexType>, ColorIndexType),
-                right: &(CounterEntry<ColorIndexType>, ColorIndexType),
-            ) -> std::cmp::Ordering {
-                left.1.cmp(&right.1)
-            }
-
-            fn get_shifted(value: &(CounterEntry<ColorIndexType>, ColorIndexType), rhs: u8) -> u8 {
-                (value.1 >> rhs) as u8
-            }
-        }
-
-        fast_smart_radix_sort::<_, ColoredUnitigsCompare, false>(&mut counters_vec[..]);
-
-        for queries_by_color in counters_vec.group_by_mut(|a, b| a.1 == b.1) {
-            let color = queries_by_color[0].1;
-            temp_colors_buffer.clear();
-            colormap_decoder.get_color_mappings(color, &mut temp_colors_buffer);
-
-            todo!("Call the callback!")
-        }
-        thread_buffer.put_back(colored_buckets_writer.finalize().0);
-    });
+    // colored_unitigs_buckets.par_iter().for_each(|input| {
+    //     let mut colormap_decoder = tlocal_colormap_decoder.get();
+    //
+    //     let mut temp_bases = Vec::new();
+    //     let mut temp_sequences = Vec::new();
+    //
+    //     CompressedBinaryReader::new(
+    //         input,
+    //         RemoveFileMode::Remove {
+    //             remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+    //         },
+    //         DEFAULT_PREFETCH_AMOUNT,
+    //     )
+    //     .decode_all_bucket_items::<CompressedReadsBucketHelper<
+    //         DumperKmersReferenceData<SingleKmerColor<CX>>,
+    //         typenum::consts::U0,
+    //         false,
+    //     >, _>((), &mut (), |(_, _, color_extra, read), _| {
+    //         let new_read = read.copy_to_buffer(&mut temp_sequences);
+    //         temp_sequences.push((new_read, color_extra));
+    //     });
+    //
+    //     struct ColoredUnitigsCompare;
+    //     impl SortKey<(CompressedReadIndipendent, ColorIndexType)> for ColoredUnitigsCompare {
+    //         type KeyType = u32;
+    //         const KEY_BITS: usize = std::mem::size_of::<u32>() * 8;
+    //
+    //         fn compare(
+    //             left: &(CounterEntry<ColorIndexType>, ColorIndexType),
+    //             right: &(CounterEntry<ColorIndexType>, ColorIndexType),
+    //         ) -> std::cmp::Ordering {
+    //             left.1.cmp(&right.1)
+    //         }
+    //
+    //         fn get_shifted(value: &(CounterEntry<ColorIndexType>, ColorIndexType), rhs: u8) -> u8 {
+    //             (value.1 >> rhs) as u8
+    //         }
+    //     }
+    //
+    //     fast_smart_radix_sort::<_, ColoredUnitigsCompare, false>(&mut counters_vec[..]);
+    //
+    //     for queries_by_color in counters_vec.group_by_mut(|a, b| a.1 == b.1) {
+    //         let color = queries_by_color[0].1;
+    //         temp_colors_buffer.clear();
+    //         colormap_decoder.get_color_mappings(color, &mut temp_colors_buffer);
+    //
+    //         todo!("Call the callback!")
+    //     }
+    //     thread_buffer.put_back(colored_buckets_writer.finalize().0);
+    // });
 
     correct_color_buckets.finalize()
 }
