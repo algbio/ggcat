@@ -15,6 +15,7 @@ config = { package = "ggcat_config", path = "../config" }
 # GGCAT main modules
 assembler = { package = "ggcat_assembler", path = "../assembler" }
 querier = { package = "ggcat_querier", path = "../querier" }
+dumper = { package = "ggcat_dumper", path = "../dumper" }
 
 # GGCAT extra modules
 io = { package = "ggcat_io", path = "../io" }

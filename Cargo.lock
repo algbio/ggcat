@@ -910,6 +910,7 @@ dependencies = [
  "ggcat_assembler",
  "ggcat_colors",
  "ggcat_config",
+ "ggcat_dumper",
  "ggcat_hashes",
  "ggcat_io",
  "ggcat_querier",
@@ -1076,6 +1077,32 @@ name = "ggcat_config"
 version = "0.1.0"
 dependencies = [
  "parallel-processor",
+]
+
+[[package]]
+name = "ggcat_dumper"
+version = "0.1.1"
+dependencies = [
+ "byteorder",
+ "csv",
+ "dynamic-dispatch",
+ "flate2",
+ "ggcat_colors",
+ "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_io",
+ "ggcat_kmers_transform",
+ "ggcat_minimizer_bucketing",
+ "ggcat_structs",
+ "ggcat_utils",
+ "hashbrown",
+ "lz4",
+ "nightly-quirks",
+ "parallel-processor",
+ "parking_lot",
+ "rayon",
+ "streaming-libdeflate-rs",
+ "typenum",
 ]
 
 [[package]]

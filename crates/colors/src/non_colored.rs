@@ -14,7 +14,7 @@ use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::MapEntry;
 
-#[derive(Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Default)]
+#[derive(Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Copy, Clone, Default)]
 pub struct NonColoredManager;
 
 /// Dummy colors manager

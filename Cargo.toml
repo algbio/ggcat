@@ -47,7 +47,10 @@ members = [
     "crates/assembler",
 
     # Querier pipeline
-    "crates/querier"
+    "crates/querier",
+
+    # Dumper pipeline
+    "crates/dumper",
 ]
 
 default-members = ["crates/cmdline", "crates/api"]

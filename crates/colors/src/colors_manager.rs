@@ -86,7 +86,8 @@ impl ColorMapReader for () {
 
 /// Helper trait to manage colors parsing from different sources (actually 2, color from file or color from annotated dbg graph)
 pub trait ColorsParser: Sized {
-    type SingleKmerColorDataType: Clone
+    type SingleKmerColorDataType: Copy
+        + Clone
         + Eq
         + PartialEq
         + Ord
@@ -106,7 +107,8 @@ pub trait ColorsParser: Sized {
 pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory>:
     Sized
 {
-    type SingleKmerColorDataType: Clone
+    type SingleKmerColorDataType: Copy
+        + Clone
         + Eq
         + PartialEq
         + Ord
@@ -209,7 +211,8 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
 pub trait ColorsManager: 'static + Sync + Send + Sized {
     const COLORS_ENABLED: bool;
 
-    type SingleKmerColorDataType: Clone
+    type SingleKmerColorDataType: Copy
+        + Clone
         + Eq
         + PartialEq
         + Ord
