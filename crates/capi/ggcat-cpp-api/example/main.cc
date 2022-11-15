@@ -33,7 +33,7 @@ public:
                      .seq = Slice<char>((char *)seq, strlen(seq)),
                  },
                  SequenceInfo{
-                    // This is the index of the color of the current sequence, the color is used to 
+                    // This is the index of the color of the current sequence
                      .color = (color_idx++) % 3,
                  });
     }
