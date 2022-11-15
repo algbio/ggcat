@@ -1113,6 +1113,7 @@ dependencies = [
  "cxx",
  "cxx-build",
  "ggcat-api",
+ "static_assertions",
 ]
 
 [[package]]
