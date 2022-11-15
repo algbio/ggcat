@@ -1,4 +1,4 @@
-use std::fs::create_dir;
+use std::fs::create_dir_all;
 
 fn main() {
     cxx_build::bridge("src/lib.rs")
@@ -11,11 +11,11 @@ fn main() {
             std::env::var("OUT_DIR").unwrap(),
             "/cxxbridge/include/ggcat-cpp-bindings/src/lib.rs.h"
         ),
-        "ggcat-cpp-api/include/ggcat-cpp-bindings.hh",
+        "ggcat-cpp-api/src/ggcat-cpp-bindings.hh",
     )
     .unwrap();
 
-    let _ = create_dir("ggcat-cpp-api/lib");
+    let _ = create_dir_all("ggcat-cpp-api/lib");
 
     std::fs::copy(
         format!(

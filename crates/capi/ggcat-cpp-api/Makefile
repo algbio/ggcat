@@ -1,11 +1,17 @@
 
 .PHONY: all ggcat-capi ggcat-source
 
-all: ggcat-capi
+all: lib/libggcat_api.a
 
-ggcat-capi: lib/libggcat_cpp_bindings.a
-	g++ -std=c++11 -I./include -I./include -L./lib src/ggcat.cc -lggcat_cpp_bindings -lggcat_cxx_interop -o ggcat-capi
+clean:
+	cargo clean
+	rm -r build/ lib/
 
-lib/libggcat_cpp_bindings.a: ggcat-source
+lib/libggcat_api.a: ./lib/libggcat_cpp_bindings.a
+	g++ -std=c++11 -O3 -I./include -I./src -c ./src/ggcat.cc -lggcat_cpp_bindings -lggcat_cxx_interop -o build/ggcat.o
+	mkdir build/ -p
+	ar cr lib/libggcat_api.a build/ggcat.o
+
+./lib/libggcat_cpp_bindings.a: ggcat-source
 	cargo build --release --package ggcat-cpp-bindings
-	cp ../../../target/release/libggcat_cpp_bindings.a lib/
+	cp ../../../target/release/libggcat_cpp_bindings.a ./lib/

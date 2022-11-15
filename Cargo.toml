@@ -83,6 +83,7 @@ default-members = ["crates/cmdline", "crates/api"]
 
 
 [profile.release]
-debug = true
+debug = false
+strip = true
 lto = "thin"
 # split-debuginfo = "packed"
