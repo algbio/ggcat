@@ -173,6 +173,17 @@ the binary is automatically copied to `$HOME/.cargo/bin`
 
 To launch the tool directly from the command line, the above directory should be added to the `$PATH` variable.
 
+## Experimental API
+GGCAT has an experimental API for Rust and C++.
+
+### Rust
+Add a dependency to the crates/api/ crate to use it in your project.
+Check crates/api/example for usage examples.
+
+### C++
+Run the makefile inside crates/capi/ggcat-cpp-api to build the library.
+Check crates/capi/ggcat-cpp-api/example for usage examples.
+
 ## Citing
 If you use GGCAT in your research, please cite the following article:
 ### [GGCAT](https://doi.org/10.1101/2022.10.24.513174)

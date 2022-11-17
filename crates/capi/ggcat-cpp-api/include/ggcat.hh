@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <string>
 #include <vector>
+#include <memory>
 
 namespace ggcat
 {
@@ -15,7 +16,9 @@ namespace ggcat
             return Slice<T>{nullptr, 0};
         }
 
-        Slice(T *data, size_t size) : data(data), size(size) {}
+        Slice(T *data, size_t size) : 
+        // Avoid passing a null pointer to rust, as slices pointers are not allowed to be null
+        data(data ? data : UINTPTR_MAX), size(size) {}
     };
 
     enum ExtraElaborationStep
@@ -35,6 +38,39 @@ namespace ggcat
     {
         ColoredQueryOutputFormat_JsonLinesWithNumbers = 0,
         ColoredQueryOutputFormat_JsonLinesWithNames = 1,
+    };
+
+    enum DnaSequencesFileType
+    {
+        DnaSequencesFileType_FASTA = 0,
+        DnaSequencesFileType_FASTQ = 1,
+        DnaSequencesFileType_GFA = 2,
+        DnaSequencesFileType_BINARY = 3,
+    };
+
+    struct DnaSequence
+    {
+        Slice<char> ident_data;
+        Slice<char> seq;
+        DnaSequencesFileType format;
+    };
+
+    struct SequenceInfo
+    {
+        uint32_t color; // ColorIndexType
+    };
+
+    class StreamReader
+    {
+    public:
+        virtual void read_block(
+            void *block,
+            bool copy_ident_data,
+            size_t partial_read_copyback,
+            void (*callback)(DnaSequence sequence, SequenceInfo info)) = 0;
+
+        // Non virtual
+        // void estimated_base_count(void *block);
     };
 
     // Main config of GGCAT. This config is global and should be passed to GGCATInstance::create
@@ -59,6 +95,22 @@ namespace ggcat
         bool use_stats_file;
         // The path to an optional json-formatted real time stats file
         std::string stats_file;
+    };
+
+    struct __InputStreamBlockData
+    {
+        void (*read_block)(
+            uintptr_t block,
+            bool copy_ident_data,
+            size_t partial_read_copyback,
+            void (*callback)(
+                uintptr_t callback_context,
+                DnaSequence sequence,
+                SequenceInfo info),
+            uintptr_t callback_context);
+
+        uint64_t (*estimated_base_count)(uintptr_t block);
+        uintptr_t block_data;
     };
 
     class GGCATInstance
@@ -90,6 +142,18 @@ namespace ggcat
                 Slice<uint32_t>((uint32_t *)col_ptr, col_len),
                 same_color);
         }
+
+        std::string build_graph_internal_ffi(
+            Slice<__InputStreamBlockData> input_streams,
+            std::string output_file,
+            size_t kmer_length,
+            size_t threads_count,
+            bool forward_only,
+            size_t min_multiplicity,
+            ExtraElaborationStep extra_elab,
+            bool colors,
+            Slice<std::string> color_names,
+            size_t minimizer_length);
 
     public:
         static GGCATInstance *create(GGCATConfig config);
@@ -125,6 +189,82 @@ namespace ggcat
 
             // Overrides the default m-mers (minimizers) length
             size_t minimizer_length = -1);
+
+        /// Builds a new graph from the given input streams, with the specified parameters
+        template <typename S>
+        std::string build_graph_from_streams(
+            // The input streams
+            Slice<void *> input_streams,
+
+            // The output file
+            std::string output_file,
+
+            // Specifies the k-mers length
+            size_t kmer_length,
+
+            // The threads to be used
+            size_t threads_count,
+
+            // Treats reverse complementary kmers as different
+            bool forward_only = false,
+
+            // Minimum multiplicity required to keep a kmer
+            size_t min_multiplicity = 1,
+
+            // Extra elaboration step
+            ExtraElaborationStep extra_elab = ExtraElaborationStep_None,
+
+            // Enable colors
+            bool colors = false,
+
+            // The names of the colors, ordered by color index
+            Slice<std::string> color_names = Slice<std::string>::empty(),
+
+            // Overrides the default m-mers (minimizers) length
+            size_t minimizer_length = -1)
+        {
+
+            thread_local std::unique_ptr<StreamReader> stream_reader = nullptr;
+            thread_local std::pair<void (*)(uintptr_t, DnaSequence, SequenceInfo), uintptr_t> callback_data;
+
+            std::vector<__InputStreamBlockData> input_stream_blocks;
+
+            for (int i = 0; i < input_streams.size; i++)
+            {
+                input_stream_blocks.push_back({[](uintptr_t block, bool copy_ident_data, size_t partial_read_copyback, void (*callback)(uintptr_t callback_context, DnaSequence sequence, SequenceInfo info), uintptr_t callback_context)
+                                               {
+                                                   callback_data.first = callback;
+                                                   callback_data.second = callback_context;
+
+                                                   if (stream_reader == nullptr)
+                                                   {
+                                                       stream_reader = std::unique_ptr<S>(new S());
+                                                   }
+
+                                                   StreamReader *local_stream_reader = stream_reader.get();
+
+                                                   local_stream_reader->read_block((void *)block, copy_ident_data, partial_read_copyback, [](DnaSequence sequence, SequenceInfo info)
+                                                                                   { callback_data.first(callback_data.second, sequence, info); });
+                                               },
+                                               [](uintptr_t block) -> uint64_t
+                                               {
+                                                   return S::estimated_base_count((void *)block);
+                                               },
+                                               (uintptr_t)input_streams.data[i]});
+            }
+
+            return build_graph_internal_ffi(Slice<__InputStreamBlockData>(input_stream_blocks.data(),
+                                                                          input_stream_blocks.size()),
+                                            output_file,
+                                            kmer_length,
+                                            threads_count,
+                                            forward_only,
+                                            min_multiplicity,
+                                            extra_elab,
+                                            colors,
+                                            color_names,
+                                            minimizer_length);
+        }
 
         /// Queries a (optionally) colored graph with a specific set of sequences as queries
         std::string query_graph(

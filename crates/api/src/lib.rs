@@ -1,29 +1,34 @@
 mod utils;
 
-pub use crate::utils::HashType;
 use colors::bundles::graph_querying::ColorBundleGraphQuerying;
 use colors::colors_manager::ColorsManager;
 use colors::{
     bundles::multifile_building::ColorBundleMultifileBuilding, non_colored::NonColoredManager,
 };
-use config::ColorIndexType;
 use hashes::MinimizerHashFunctionFactory;
 use hashes::{cn_nthash::CanonicalNtHashIteratorFactory, fw_nthash::ForwardNtHashIteratorFactory};
 use io::sequences_stream::fasta::FastaFileSequencesStream;
-pub use io::sequences_stream::general::GeneralSequenceBlockData;
 use io::sequences_stream::GenericSequencesStream;
 use parallel_processor::enable_counters_logging;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
-pub use querier::ColoredQueryOutputFormat;
 use std::cmp::max;
 use std::fs::create_dir_all;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+
+pub use crate::utils::HashType;
+pub use config::ColorIndexType;
+pub use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
+pub use io::sequences_stream::{
+    general::{DynamicSequencesStream, GeneralSequenceBlockData},
+    SequenceInfo,
+};
+pub use querier::ColoredQueryOutputFormat;
 
 pub mod debug {
     use crate::utils::HashType;
@@ -153,8 +158,8 @@ impl GGCATInstance {
     /// Builds a new graph from the given input streams, with the specified parameters
     pub fn build_graph(
         &self,
-        // The input files
-        input_files: Vec<GeneralSequenceBlockData>,
+        // The input streams
+        input_streams: Vec<GeneralSequenceBlockData>,
 
         // The output file
         output_file: PathBuf,
@@ -205,7 +210,7 @@ impl GGCATInstance {
             minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
             debug::DEBUG_ASSEMBLER_FIRST_STEP.lock().clone(),
             debug::DEBUG_ASSEMBLER_LAST_STEP.lock().clone(),
-            input_files,
+            input_streams,
             color_names.unwrap_or(&[]),
             output_file,
             temp_dir.clone(),

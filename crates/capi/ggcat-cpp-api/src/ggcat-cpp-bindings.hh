@@ -717,6 +717,7 @@ std::size_t align_of() {
 } // namespace rust
 
 struct GGCATConfigFFI;
+struct InputStreamFFI;
 struct GGCATInstanceFFI;
 
 #ifndef CXXBRIDGE1_STRUCT_GGCATConfigFFI
@@ -747,6 +748,17 @@ struct GGCATConfigFFI final {
 };
 #endif // CXXBRIDGE1_STRUCT_GGCATConfigFFI
 
+#ifndef CXXBRIDGE1_STRUCT_InputStreamFFI
+#define CXXBRIDGE1_STRUCT_InputStreamFFI
+struct InputStreamFFI final {
+  ::std::size_t virtual_read_block;
+  ::std::size_t virtual_estimated_base_count;
+  ::std::size_t block_data;
+
+  using IsRelocatable = ::std::true_type;
+};
+#endif // CXXBRIDGE1_STRUCT_InputStreamFFI
+
 #ifndef CXXBRIDGE1_STRUCT_GGCATInstanceFFI
 #define CXXBRIDGE1_STRUCT_GGCATInstanceFFI
 struct GGCATInstanceFFI final : public ::rust::Opaque {
@@ -766,6 +778,9 @@ const ::GGCATInstanceFFI &ggcat_create(::GGCATConfigFFI config) noexcept;
 
 // Builds a new graph from the given input files, with the specified parameters
 ::rust::String ggcat_build_from_files(const ::GGCATInstanceFFI &instance, ::rust::Slice<const ::rust::String> input_files, ::rust::String output_file, ::rust::Slice<const ::rust::String> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab) noexcept;
+
+// Builds a new graph from the given input streams, with the specified parameters
+::rust::String ggcat_build_from_streams(const ::GGCATInstanceFFI &instance, ::rust::Slice<const ::InputStreamFFI> input_streams, ::rust::String output_file, ::rust::Slice<const ::rust::String> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab) noexcept;
 
 // Queries a (optionally) colored graph with a specific set of sequences as queries
 ::rust::String ggcat_query_graph(const ::GGCATInstanceFFI &instance, ::rust::String input_graph, ::rust::String input_query, ::rust::String output_file_prefix, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t color_output_format) noexcept;

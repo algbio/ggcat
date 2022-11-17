@@ -44,20 +44,65 @@ std::string GGCATInstance::build_graph_from_files(
 {
     std::vector<rust::String> ffi_input_files;
 
-    for (int i = 0; i < input_files.size; i++)
+    for (size_t i = 0; i < input_files.size; i++)
     {
         ffi_input_files.push_back(rust::String(input_files.data[i].c_str()));
     }
 
     std::vector<rust::String> ffi_color_names;
 
-    for (int i = 0; i < color_names.size; i++)
+    for (size_t i = 0; i < color_names.size; i++)
     {
         ffi_color_names.push_back(rust::String(color_names.data[i].c_str()));
     }
 
     auto rust_str = ggcat_build_from_files(*ffi_instance,
                                            rust::Slice<const rust::String>(ffi_input_files.data(), ffi_input_files.size()),
+                                           rust::String(output_file.c_str()),
+                                           rust::Slice<const rust::String>(ffi_color_names.data(), ffi_color_names.size()),
+                                           kmer_length,
+                                           threads_count,
+                                           forward_only,
+                                           minimizer_length,
+                                           colors,
+                                           min_multiplicity,
+                                           extra_elab);
+    return std::string(rust_str.c_str());
+}
+
+std::string GGCATInstance::build_graph_internal_ffi(
+    Slice<__InputStreamBlockData> input_streams,
+    std::string output_file,
+    size_t kmer_length,
+    size_t threads_count,
+    bool forward_only,
+    size_t min_multiplicity,
+    ExtraElaborationStep extra_elab,
+    bool colors,
+    Slice<std::string> color_names,
+    size_t minimizer_length)
+{
+    std::vector<InputStreamFFI> ffi_input_streams;
+
+    for (size_t i = 0; i < input_streams.size; i++)
+    {
+        InputStreamFFI ffi_input_stream;
+        ffi_input_stream.block_data = input_streams.data[i].block_data;
+        ffi_input_stream.virtual_read_block = (uintptr_t)input_streams.data[i].read_block;
+        ffi_input_stream.virtual_estimated_base_count = (uintptr_t)input_streams.data[i].estimated_base_count;
+
+        ffi_input_streams.push_back(ffi_input_stream);
+    }
+
+    std::vector<rust::String> ffi_color_names;
+
+    for (size_t i = 0; i < color_names.size; i++)
+    {
+        ffi_color_names.push_back(rust::String(color_names.data[i].c_str()));
+    }
+
+    auto rust_str = ggcat_build_from_streams(*ffi_instance,
+                                           rust::Slice<const InputStreamFFI>(ffi_input_streams.data(), ffi_input_streams.size()),
                                            rust::String(output_file.c_str()),
                                            rust::Slice<const rust::String>(ffi_color_names.data(), ffi_color_names.size()),
                                            kmer_length,

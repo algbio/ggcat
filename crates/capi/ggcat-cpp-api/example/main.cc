@@ -1,8 +1,43 @@
 #include <iostream>
 #include <ggcat.hh>
 #include <mutex>
+#include <string.h>
 
 using namespace ggcat;
+
+class MemorySequencesReader : public ggcat::StreamReader
+{
+public:
+    MemorySequencesReader() {}
+
+    static uint64_t estimated_base_count(void *block)
+    {
+        return 10;
+    }
+
+    // This is a toy example where the block corresponds to a single sequence.
+    // In practice a block should be a chunk of sequences, e.g. a pointer to a file descriptor
+    // that can be read to retrieve the sequences.
+    void read_block(
+        void *block,
+        bool copy_ident_data,
+        size_t partial_read_copyback,
+        void (*callback)(DnaSequence sequence, SequenceInfo info)) override
+    {
+        const char *seq = (const char *)block;
+        static uint32_t color_idx = 0;
+
+        callback(DnaSequence{
+                    // To build a graph the ident_data can be empty
+                     .ident_data = Slice<char>(nullptr, 0),
+                     .seq = Slice<char>((char *)seq, strlen(seq)),
+                 },
+                 SequenceInfo{
+                    // This is the index of the color of the current sequence
+                     .color = (color_idx++) % 3,
+                 });
+    }
+};
 
 int main(int argc, char const *argv[])
 {
@@ -103,6 +138,20 @@ int main(int argc, char const *argv[])
             std::cout << "] same_colors: " << same_colors << std::endl;
         },
         true);
+
+    const char *sequences[] = {"AAAAACACACATATACAGTGTGTGAGTAGTATGATGT", "AAAATTTTTTTTTTTGGGGGGGGGGACACACATATACA", "AAAAACACACATATACACCCCCGGGAAAAAC", "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT"};
+
+    // Advanced building using in-memory data
+    instance->build_graph_from_streams<MemorySequencesReader>(
+        Slice<void *>((void **)sequences, 4),
+        "/tmp/advanced-building.fa",
+        k,
+        threads_count,
+        false,
+        1,
+        ExtraElaborationStep_None,
+        true,
+        Slice<std::string>(color_names.data(), color_names.size()));
 
     return 0;
 }
