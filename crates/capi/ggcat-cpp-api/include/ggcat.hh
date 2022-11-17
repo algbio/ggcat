@@ -18,7 +18,7 @@ namespace ggcat
 
         Slice(T *data, size_t size) : 
         // Avoid passing a null pointer to rust, as slices pointers are not allowed to be null
-        data(data ? data : UINTPTR_MAX), size(size) {}
+        data(data ? data : reinterpret_cast<T*>(UINTPTR_MAX)), size(size) {}
     };
 
     enum ExtraElaborationStep
