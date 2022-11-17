@@ -317,12 +317,13 @@ namespace ggcat
             // Overrides the default m-mers (minimizers) length
             size_t minimizer_length = -1)
         {
+            auto bridge_ptr = GGCATInstance::output_function_bridge<F>;
             this->dump_unitigs_internal(graph_input,
                                         kmer_length,
                                         minimizer_length,
                                         colors,
                                         threads_count,
-                                        (uintptr_t)&output_function, (uintptr_t)GGCATInstance::output_function_bridge<F>);
+                                        (uintptr_t)&output_function, reinterpret_cast<uintptr_t>(bridge_ptr));
         }
     };
 }
