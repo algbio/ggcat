@@ -164,7 +164,7 @@ The building process was not tested on windows, but it should work with minor tw
 Then the tool can be installed with the commands:
 
 ```
-git clone https://github.com/Guilucand/ggcat --recursive
+git clone https://github.com/algbio/ggcat --recursive
 cd ggcat/
 cargo install --path cmdline/ --locked
 ```
