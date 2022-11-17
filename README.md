@@ -166,7 +166,7 @@ Then the tool can be installed with the commands:
 ```
 git clone https://github.com/Guilucand/ggcat --recursive
 cd ggcat/
-cargo install --path crates/cmdline/
+cargo install --path crates/cmdline/ --locked
 ```
 
 the binary is automatically copied to `$HOME/.cargo/bin`
