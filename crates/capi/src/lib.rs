@@ -376,6 +376,10 @@ fn ggcat_dump_unitigs(
     // The threads to be used
     threads_count: usize,
 
+    // Call the output function from a single thread at a time,
+    // avoiding the need for synchronization in the user code
+    single_thread_output_function: bool,
+
     output_function_context: usize,
     output_function_ptr: usize,
 ) {
@@ -392,6 +396,7 @@ fn ggcat_dump_unitigs(
         },
         colors,
         threads_count,
+        single_thread_output_function,
         |sequence, colors, same_colors| {
             output_function(
                 output_function_context,
@@ -591,6 +596,10 @@ mod ffi {
             colors: bool,
             // The threads to be used
             threads_count: usize,
+            // Call the output function from a single thread at a time,
+            // avoiding the need for synchronization in the user code
+            single_thread_output_function: bool,
+
             output_function_context: usize,
             // extern "C" fn(context: usize, seq_ptr: usize, seq_len: usize, col_ptr: usize, col_len: usize, same_colors: bool),
             output_function_ptr: usize,

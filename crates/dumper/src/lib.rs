@@ -39,6 +39,7 @@ pub fn dump_unitigs(
     temp_dir: Option<PathBuf>,
     buckets_count_log: Option<usize>,
     threads_count: usize,
+    single_thread_output_function: bool,
     default_compression_level: Option<u32>,
     output_function: impl Fn(&[u8], &[ColorIndexType], bool) + Send + Sync,
 ) {
@@ -79,6 +80,7 @@ pub fn dump_unitigs(
     colormap_reading::<ColorBundleGraphQuerying, DefaultColorsSerializer>(
         colormap_file,
         reorganized_unitigs,
+        single_thread_output_function,
         output_function,
     );
 }
