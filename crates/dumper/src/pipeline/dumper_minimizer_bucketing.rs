@@ -194,14 +194,14 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
             if kmer_color != last_color {
                 push_sequence(
                     CX::get_bucket_from_color(
-                        &kmer_color,
+                        &last_color,
                         self.global_data.global_data.colors_count,
                         self.global_data.global_data.buckets_count_log,
                     ),
                     0,
                     sequence.get_subslice(last_index..(index + self.global_data.k)),
                     0,
-                    DumperKmersReferenceData { color: kmer_color },
+                    DumperKmersReferenceData { color: last_color },
                     &(),
                 );
 
