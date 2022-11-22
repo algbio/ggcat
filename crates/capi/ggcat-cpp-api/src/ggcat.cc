@@ -178,7 +178,7 @@ void GGCATInstance::dump_unitigs_internal(
                        minimizer_length,
                        colors,
                        threads_count,
-                       context,
                        single_thread_output_function,
+                       context,
                        output_function);
 }
