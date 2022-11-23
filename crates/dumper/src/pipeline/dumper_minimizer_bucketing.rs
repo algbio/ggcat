@@ -256,5 +256,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         },
         None,
         CX::COLORS_ENABLED,
+        k,
     )
 }
