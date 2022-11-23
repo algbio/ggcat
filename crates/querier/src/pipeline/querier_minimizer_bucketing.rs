@@ -300,6 +300,7 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
             },
             None,
             CX::COLORS_ENABLED,
+            0,
         ),
         queries_count.load(Ordering::Relaxed) as u64,
     )

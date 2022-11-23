@@ -1,6 +1,6 @@
 # GGCAT - compacted and colored de Bruijn graph construction and querying
 
-GGCAT is a tool for building compacted (and optinally colored) de Bruijn graphs from raw sequencing data or for merging multiple existing cDBG in a single graph. It also supports sequence queryies to either a colored or non-colored graph (i.e. number/percentage of present kmers).
+GGCAT is a tool for building compacted (and optionally colored) de Bruijn graphs from raw sequencing data or for merging multiple existing cDBG in a single graph. It also supports sequence queryies to either a colored or non-colored graph (i.e. number/percentage of present kmers).
 
 ## Tool usage
 
@@ -19,10 +19,15 @@ ggcat build -k <k_value> -j <threads_count> -l <input_files_list> -o <output_fil
 ```
 
 #### Building a colored graph
+
 To build a colored graph, add the `-c` flag to the above commands
+
 #### Building links
-To build links between maximal unitigs in BCALM2 like format, use the `-l` flag
+
+To build links between maximal unitigs in BCALM2 like format, use the `-e` flag
+
 #### Building matchtigs
+
 To build greedy matchtigs, use the `-g` flag, also both `--eulertigs` and `--pathtigs` are supported
 
 Here are all listed the available options for graph building:
@@ -164,7 +169,7 @@ The building process was not tested on windows, but it should work with minor tw
 Then the tool can be installed with the commands:
 
 ```
-git clone https://github.com/Guilucand/ggcat --recursive
+git clone https://github.com/algbio/ggcat --recursive
 cd ggcat/
 cargo install --path crates/cmdline/ --locked
 ```
@@ -174,30 +179,39 @@ the binary is automatically copied to `$HOME/.cargo/bin`
 To launch the tool directly from the command line, the above directory should be added to the `$PATH` variable.
 
 ## Experimental API
+
 GGCAT has an experimental API for Rust and C++.
 
 ### Rust
+
 Add a dependency to the crates/api/ crate to use it in your project.
 Check crates/api/example for usage examples.
 
 ### C++
+
 Run the makefile inside crates/capi/ggcat-cpp-api to build the library.
 Check crates/capi/ggcat-cpp-api/example for usage examples.
 
 ## Citing
+
 If you use GGCAT in your research, please cite the following article:
+
 ### [GGCAT](https://doi.org/10.1101/2022.10.24.513174)
+
 > Extremely-fast construction and querying of compacted and colored de Bruijn graphs with GGCAT
-Andrea Cracco, Alexandru I. Tomescu
-bioRxiv 2022.10.24.513174; doi: https://doi.org/10.1101/2022.10.24.513174
+> Andrea Cracco, Alexandru I. Tomescu
+> bioRxiv 2022.10.24.513174; doi: https://doi.org/10.1101/2022.10.24.513174
 
 If you use a matchtigs/eulertigs output, please also cite the following articles:
+
 #### [Matchtigs](https://doi.org/10.1101/2021.12.15.472871)
+
 > Matchtigs: minimum plain text representation of kmer sets
-Sebastian Schmidt, Shahbaz Khan, Jarno Alanko, Alexandru I. Tomescu
-bioRxiv 2021.12.15.472871; doi: https://doi.org/10.1101/2021.12.15.472871
+> Sebastian Schmidt, Shahbaz Khan, Jarno Alanko, Alexandru I. Tomescu
+> bioRxiv 2021.12.15.472871; doi: https://doi.org/10.1101/2021.12.15.472871
 
 #### [Eulertigs](https://doi.org/10.4230/LIPIcs.WABI.2022.2)
+
 > Eulertigs: minimum plain text representation of k-mer sets without repetitions in linear time
-Sebastian Schmidt and Jarno N. Alanko
-WABI 2022. [10.4230/LIPIcs.WABI.2022.2](https://doi.org/10.4230/LIPIcs.WABI.2022.2).
+> Sebastian Schmidt and Jarno N. Alanko
+> WABI 2022. [10.4230/LIPIcs.WABI.2022.2](https://doi.org/10.4230/LIPIcs.WABI.2022.2).

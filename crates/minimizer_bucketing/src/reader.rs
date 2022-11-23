@@ -72,7 +72,7 @@ impl<
                 |x, seq_info| {
                     let mut data = data_packet.deref_mut();
 
-                    if x.seq.len() < context.common.k {
+                    if x.seq.len() < context.common.ignored_length {
                         return;
                     }
 

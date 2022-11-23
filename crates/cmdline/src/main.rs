@@ -218,7 +218,7 @@ struct QueryArgs {
     #[structopt(short = "o", long = "output-file-prefix", default_value = "output")]
     pub output_file_prefix: PathBuf,
 
-    #[structopt(short = "f", long = "colored-query-output-format")]
+    #[structopt(long = "colored-query-output-format")]
     pub colored_query_output_format: Option<ColoredQueryOutputFormat>,
 
     #[structopt(short = "x", long, default_value = "MinimizerBucketing")]
