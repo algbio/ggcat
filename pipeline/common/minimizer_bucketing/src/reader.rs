@@ -53,7 +53,7 @@ impl<GlobalData: Sync + Send + 'static, FileInfo: Clone + Sync + Send + Default 
                 |x| {
                     let mut data = data_packet.deref_mut();
 
-                    if x.seq.len() < context.common.k {
+                    if x.seq.len() < context.common.ignored_length {
                         return;
                     }
 
