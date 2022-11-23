@@ -137,6 +137,7 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
 pub struct MinimizerBucketingCommonData<GlobalData> {
     pub k: usize,
     pub m: usize,
+    pub ignored_length: usize,
     pub buckets_count: usize,
     pub buckets_count_bits: usize,
     pub max_second_buckets_count: usize,
@@ -150,12 +151,14 @@ impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
         k: usize,
         m: usize,
         buckets_count: usize,
+        ignored_length: usize,
         max_second_buckets_count: usize,
         global_data: GlobalData,
     ) -> Self {
         Self {
             k,
             m,
+            ignored_length,
             buckets_count,
             buckets_count_bits: buckets_count.ilog2() as usize,
             max_second_buckets_count,
@@ -399,6 +402,7 @@ impl GenericMinimizerBucketing {
         global_data: E::GlobalData,
         partial_read_copyback: Option<usize>,
         copy_ident: bool,
+        ignored_length: usize,
     ) -> (Vec<PathBuf>, PathBuf) {
         let read_threads_count = max(1, threads_count / 2);
         let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count / 4));
@@ -437,6 +441,7 @@ impl GenericMinimizerBucketing {
                 k,
                 m,
                 buckets_count,
+                ignored_length,
                 second_buckets_count,
                 global_data,
             )),
