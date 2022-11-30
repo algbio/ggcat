@@ -339,6 +339,10 @@ impl GGCATInstance {
         colors: bool,
         // The threads to be used
         threads_count: usize,
+
+        // Call the output function from a single thread at a time,
+        // avoiding the need for synchronization in the user code
+        single_thread_output_function: bool,
         output_function: impl Fn(&[u8], &[ColorIndexType], bool) + Send + Sync,
     ) {
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
@@ -351,6 +355,7 @@ impl GGCATInstance {
                 temp_dir.clone(),
                 *debug::BUCKETS_COUNT_LOG_FORCE.lock(),
                 threads_count,
+                single_thread_output_function,
                 self.0.intermediate_compression_level,
                 output_function,
             );

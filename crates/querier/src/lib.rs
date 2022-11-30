@@ -149,7 +149,7 @@ pub fn run_query<
         SequencesReader::new().process_file_extended(
             &query_input,
             |seq| {
-                sequences_lengths.push((seq.seq.len() - k + 1) as u64);
+                sequences_lengths.push((seq.seq.len().saturating_sub(k - 1)) as u64);
             },
             None,
             false,

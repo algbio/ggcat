@@ -416,6 +416,7 @@ pub fn parallel_kmers_counting<
                 min(m, 2)
             }, // m
             buckets_count,
+            0,
             1,
             QuerierMinimizerBucketingGlobalData {
                 queries_count: Default::default(),

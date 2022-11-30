@@ -12,6 +12,7 @@ use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, FastSort
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
+use parking_lot::Mutex;
 use rayon::prelude::*;
 use std::marker::PhantomData;
 use std::path::PathBuf;
@@ -23,6 +24,7 @@ pub fn colormap_reading<
 >(
     colormap_file: PathBuf,
     colored_unitigs_buckets: Vec<PathBuf>,
+    single_thread_output_function: bool,
     output_function: impl Fn(&[u8], &[ColorIndexType], bool) + Send + Sync,
 ) {
     PHASES_TIMES_MONITOR
@@ -31,6 +33,8 @@ pub fn colormap_reading<
 
     let tlocal_colormap_decoder =
         ScopedThreadLocal::new(move || ColorsDeserializer::<CD>::new(&colormap_file, false));
+
+    let single_thread_lock = Mutex::new(());
 
     colored_unitigs_buckets.par_iter().for_each(|input| {
         let mut colormap_decoder = tlocal_colormap_decoder.get();
@@ -98,6 +102,12 @@ pub fn colormap_reading<
             colormap_decoder.get_color_mappings(color, &mut temp_colors_buffer);
 
             let mut same_color = false;
+
+            let _lock = if single_thread_output_function {
+                Some(single_thread_lock.lock())
+            } else {
+                None
+            };
 
             for unitig in unitigs_by_color {
                 let read = unitig.0.as_reference(&temp_bases);

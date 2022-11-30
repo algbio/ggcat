@@ -207,6 +207,8 @@ pub fn counters_sorting<CX: ColorsManager>(
             .zip(final_counters.iter())
             .enumerate()
         {
+            let match_fraction = counter.load(Ordering::Relaxed) as f64 / *info as f64;
+
             writer
                 .write_record(&[
                     query_index.to_string(),
@@ -214,7 +216,11 @@ pub fn counters_sorting<CX: ColorsManager>(
                     info.to_string(),
                     format!(
                         "{:.2}",
-                        (counter.load(Ordering::Relaxed) as f64 / *info as f64)
+                        if match_fraction.is_nan() {
+                            0.0
+                        } else {
+                            match_fraction
+                        }
                     ),
                 ])
                 .unwrap();

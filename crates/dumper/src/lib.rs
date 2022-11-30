@@ -10,6 +10,7 @@ use config::{
 };
 use io::compute_stats_from_input_blocks;
 use io::sequences_stream::general::GeneralSequenceBlockData;
+use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use pipeline::dumper_colormap_reading::colormap_reading;
 use std::fs::remove_file;
@@ -39,6 +40,7 @@ pub fn dump_unitigs(
     temp_dir: Option<PathBuf>,
     buckets_count_log: Option<usize>,
     threads_count: usize,
+    single_thread_output_function: bool,
     default_compression_level: Option<u32>,
     output_function: impl Fn(&[u8], &[ColorIndexType], bool) + Send + Sync,
 ) {
@@ -75,10 +77,14 @@ pub fn dump_unitigs(
     );
     let _ = remove_file(buckets_stats);
 
+    MemoryFs::flush_all_to_disk();
+    MemoryFs::free_memory();
+
     let colormap_file = graph_input.with_extension("colors.dat");
     colormap_reading::<ColorBundleGraphQuerying, DefaultColorsSerializer>(
         colormap_file,
         reorganized_unitigs,
+        single_thread_output_function,
         output_function,
     );
 }

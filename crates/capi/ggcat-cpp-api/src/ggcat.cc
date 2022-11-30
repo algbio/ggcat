@@ -102,16 +102,16 @@ std::string GGCATInstance::build_graph_internal_ffi(
     }
 
     auto rust_str = ggcat_build_from_streams(*ffi_instance,
-                                           rust::Slice<const InputStreamFFI>(ffi_input_streams.data(), ffi_input_streams.size()),
-                                           rust::String(output_file.c_str()),
-                                           rust::Slice<const rust::String>(ffi_color_names.data(), ffi_color_names.size()),
-                                           kmer_length,
-                                           threads_count,
-                                           forward_only,
-                                           minimizer_length,
-                                           colors,
-                                           min_multiplicity,
-                                           extra_elab);
+                                             rust::Slice<const InputStreamFFI>(ffi_input_streams.data(), ffi_input_streams.size()),
+                                             rust::String(output_file.c_str()),
+                                             rust::Slice<const rust::String>(ffi_color_names.data(), ffi_color_names.size()),
+                                             kmer_length,
+                                             threads_count,
+                                             forward_only,
+                                             minimizer_length,
+                                             colors,
+                                             min_multiplicity,
+                                             extra_elab);
     return std::string(rust_str.c_str());
 }
 
@@ -166,6 +166,7 @@ void GGCATInstance::dump_unitigs_internal(
     size_t minimizer_length,
     bool colors,
     size_t threads_count,
+    bool single_thread_output_function,
     uintptr_t context,
     uintptr_t output_function)
 
@@ -177,5 +178,7 @@ void GGCATInstance::dump_unitigs_internal(
                        minimizer_length,
                        colors,
                        threads_count,
-                       context, output_function);
+                       single_thread_output_function,
+                       context,
+                       output_function);
 }

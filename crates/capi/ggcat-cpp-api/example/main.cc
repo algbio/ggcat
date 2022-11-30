@@ -28,12 +28,12 @@ public:
         static uint32_t color_idx = 0;
 
         callback(DnaSequence{
-                    // To build a graph the ident_data can be empty
+                     // To build a graph the ident_data can be empty
                      .ident_data = Slice<char>(nullptr, 0),
                      .seq = Slice<char>((char *)seq, strlen(seq)),
                  },
                  SequenceInfo{
-                    // This is the index of the color of the current sequence
+                     // This is the index of the color of the current sequence
                      .color = (color_idx++) % 3,
                  });
     }
@@ -106,6 +106,7 @@ int main(int argc, char const *argv[])
         graph_file,
         k,
         threads_count,
+        false,
         // WARNING: this function is called asynchronously from multiple threads, so it must be thread-safe.
         // Also the same_colors boolean is referred to the previous call of this function from the current thread
         [&](Slice<char> read, Slice<uint32_t> colors, bool same_colors)

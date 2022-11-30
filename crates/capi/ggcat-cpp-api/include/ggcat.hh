@@ -16,9 +16,10 @@ namespace ggcat
             return Slice<T>{nullptr, 0};
         }
 
-        Slice(T *data, size_t size) : 
-        // Avoid passing a null pointer to rust, as slices pointers are not allowed to be null
-        data(data ? data : UINTPTR_MAX), size(size) {}
+        Slice(T *data, size_t size) : // Avoid passing a null pointer to rust, as slices pointers are not allowed to be null
+                                      data(data ? data : reinterpret_cast<T *>(UINTPTR_MAX)), size(size)
+        {
+        }
     };
 
     enum ExtraElaborationStep
@@ -125,6 +126,7 @@ namespace ggcat
             size_t minimizer_length,
             bool colors,
             size_t threads_count,
+            bool single_thread_output_function,
             uintptr_t context,
             uintptr_t output_function);
 
@@ -310,6 +312,11 @@ namespace ggcat
 
             // The threads to be used
             size_t threads_count,
+
+            // Call the output function from a single thread at a time,
+            // avoiding the need for synchronization in the user code
+            bool single_thread_output_function,
+
             // The callback to be called for each unitig, arguments: (Slice<char> seq, Slice<uint32_t> colors, bool same_color)
             F output_function,
             // Enable colors
@@ -317,12 +324,14 @@ namespace ggcat
             // Overrides the default m-mers (minimizers) length
             size_t minimizer_length = -1)
         {
+            auto bridge_ptr = GGCATInstance::output_function_bridge<F>;
             this->dump_unitigs_internal(graph_input,
                                         kmer_length,
                                         minimizer_length,
                                         colors,
                                         threads_count,
-                                        (uintptr_t)&output_function, (uintptr_t)GGCATInstance::output_function_bridge<F>);
+                                        single_thread_output_function,
+                                        (uintptr_t)&output_function, reinterpret_cast<uintptr_t>(bridge_ptr));
         }
     };
 }
