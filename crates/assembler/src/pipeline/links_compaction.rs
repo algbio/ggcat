@@ -1,10 +1,10 @@
-use crate::structs::link_mapping::LinkMapping;
+use crate::structs::link_mapping::{LinkMapping, LinkMappingSerializer};
 use config::{
     get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
 };
 use io::get_bucket_index;
-use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
-use parallel_processor::buckets::bucket_writer::BucketItem;
+use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink, UnitigLinkSerializer};
+use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::single::SingleBucketThreadDispatcher;
@@ -50,8 +50,11 @@ pub fn links_compaction(
         let bucket_index = get_bucket_index(input);
 
         let mut link_buffers = link_thread_buffers.get();
-        let mut links_tmp = BucketsThreadDispatcher::new(&links_buckets, link_buffers.take());
-        let mut final_links_tmp = SingleBucketThreadDispatcher::new(
+        let mut links_tmp = BucketsThreadDispatcher::<_, UnitigLinkSerializer>::new(
+            &links_buckets,
+            link_buffers.take(),
+        );
+        let mut final_links_tmp = SingleBucketThreadDispatcher::<_, UnitigLinkSerializer>::new(
             DEFAULT_PER_CPU_BUFFER_SIZE,
             bucket_index,
             &final_buckets,
@@ -59,8 +62,10 @@ pub fn links_compaction(
         // let mut thread_links_manager = ThreadUnitigsLinkManager::new(links_manager, bucket_index);
 
         let mut result_buffers = result_thread_buffers.get();
-        let mut results_tmp =
-            BucketsThreadDispatcher::new(&result_map_buckets, result_buffers.take());
+        let mut results_tmp = BucketsThreadDispatcher::<_, LinkMappingSerializer>::new(
+            &result_map_buckets,
+            result_buffers.take(),
+        );
 
         let mut rand_bool = FastRandBool::<1>::new();
 
@@ -80,7 +85,9 @@ pub fn links_compaction(
         let mut current_unitigs_vec = Vec::new();
         let mut final_unitigs_vec = Vec::new();
 
-        while let Some(entry) = UnitigLink::read_from(&mut stream, &mut last_unitigs_vec, &mut ()) {
+        let mut deserializer = UnitigLinkSerializer::new();
+        while let Some(entry) = deserializer.read_from(&mut stream, &mut last_unitigs_vec, &mut ())
+        {
             vec.push(entry);
         }
 

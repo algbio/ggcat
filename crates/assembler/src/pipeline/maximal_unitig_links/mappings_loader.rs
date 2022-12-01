@@ -2,7 +2,7 @@ use crate::pipeline::maximal_unitig_links::maximal_unitig_index::{
     DoubleMaximalUnitigLinks, MaximalUnitigIndex, MaximalUnitigLink,
 };
 use config::{DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
-use parallel_processor::buckets::bucket_writer::BucketItem;
+use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parking_lot::{Mutex, RwLock};
@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use utils::vec_slice::VecSlice;
+
+use super::maximal_unitig_index::MaximalUnitigLinkSerializer;
 
 pub struct MaximalUnitigLinksMapping {
     start_index: u64,
@@ -50,8 +52,10 @@ impl MaximalUnitigLinksMapping {
 
         let mut stream = reader.get_single_stream();
 
+        let mut deserializer = MaximalUnitigLinkSerializer::new();
+
         while let Some(item) =
-            MaximalUnitigLink::read_from(&mut stream, &mut self_.mappings_data, &mut ())
+            deserializer.read_from(&mut stream, &mut self_.mappings_data, &mut ())
         {
             let index = item.index() - self_.start_index;
 

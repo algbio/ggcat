@@ -7,7 +7,7 @@ use hashes::{
     MinimizerHashFunctionFactory,
 };
 use io::compressed_read::CompressedRead;
-use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
+use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
 use parallel_processor::buckets::readers::async_binary_reader::{
     AsyncBinaryReader, AsyncReaderThread,
 };
@@ -65,7 +65,7 @@ pub fn compute_stats_for_bucket<H: MinimizerHashFunctionFactory, MH: HashFunctio
         .map(|_| HashSet::new())
         .collect::<Vec<_>>();
 
-    let mut items_iterator = reader.get_items_stream::<CompressedReadsBucketHelper<
+    let mut items_iterator = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
         (),
         typenum::U2,
         { USE_SECOND_BUCKET },

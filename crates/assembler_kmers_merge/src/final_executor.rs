@@ -9,9 +9,8 @@ use hashes::HashFunction;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory, MinimizerHashFunctionFactory};
 use instrumenter::local_setup_instrumenter;
 use io::compressed_read::CompressedRead;
-use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
-use io::structs::hash_entry::Direction;
+use io::structs::hash_entry::{Direction, HashEntrySerializer};
 use io::varint::decode_varint;
 use kmers_transform::{KmersTransformExecutorFactory, KmersTransformFinalExecutor};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
@@ -29,14 +28,17 @@ pub struct ParallelKmersMergeFinalExecutor<
     MH: HashFunctionFactory,
     CX: ColorsManager,
 > {
-    hashes_tmp: BucketsThreadDispatcher<LockFreeBinaryWriter>,
+    hashes_tmp: BucketsThreadDispatcher<
+        LockFreeBinaryWriter,
+        HashEntrySerializer<MH::HashTypeUnextendable>,
+    >,
 
     forward_seq: Vec<u8>,
     backward_seq: Vec<u8>,
     unitigs_temp_colors: color_types::TempUnitigColorStructure<H, MH, CX>,
     current_bucket: Option<ResultsBucket<color_types::PartialUnitigsColorStructure<H, MH, CX>>>,
     temp_color_buffer:
-        <color_types::PartialUnitigsColorStructure<H, MH, CX> as SequenceExtraData>::TempBuffer,
+        <color_types::PartialUnitigsColorStructure<H, MH, CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
     bucket_counter: usize,
     bucket_change_threshold: usize,
     _phantom: PhantomData<H>,

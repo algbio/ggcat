@@ -9,7 +9,7 @@ use hashes::ExtendableHashTraitType;
 use hashes::HashFunction;
 use hashes::MinimizerHashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+    HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::fasta::FastaFileSequencesStream;
@@ -44,7 +44,7 @@ impl Default for FileType {
 }
 
 pub struct ReadTypeBuffered<CX: ColorsManager> {
-    colors_buffer: <QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraData>::TempBuffer,
+    colors_buffer: <QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer,
     read_type: ReadType<CX>,
 }
 
@@ -66,9 +66,8 @@ impl<CX: ColorsManager> Default for ReadTypeBuffered<CX> {
     }
 }
 
+impl HasEmptyExtraBuffer for KmersQueryData {}
 impl SequenceExtraData for KmersQueryData {
-    type TempBuffer = ();
-
     #[inline(always)]
     fn decode_extended(_: &mut (), reader: &mut impl Read) -> Option<Self> {
         Some(Self(decode_varint(|| reader.read_u8().ok())?))
@@ -190,7 +189,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         &mut self,
         _flags: u8,
         extra_data: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-        extra_data_buffer: &<<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraData>::TempBuffer,
+        extra_data_buffer: &<<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
         preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::copy_temp_buffer(
@@ -208,7 +207,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraData>::TempBuffer),
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer),
     >(
         &mut self,
         preprocess_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,

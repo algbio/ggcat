@@ -11,7 +11,9 @@ use config::{
     MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME, PACKETS_PRIORITY_FILES,
 };
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
-use io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use io::concurrent::temp_reads::extra_data::{
+    SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
+};
 use io::get_bucket_index;
 use minimizer_bucketing::counters_analyzer::CountersAnalyzer;
 use minimizer_bucketing::MinimizerBucketingExecutorFactory;
@@ -42,7 +44,7 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
         ExtraData = Self::AssociatedExtraData,
     >;
     type GlobalExtraData: Sync + Send;
-    type AssociatedExtraData: SequenceExtraData;
+    type AssociatedExtraData: SequenceExtraDataConsecutiveCompression;
     type PreprocessorType: KmersTransformPreprocessor<Self>;
     type MapProcessorType: KmersTransformMapProcessor<
         Self,
@@ -99,7 +101,7 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
         &mut self,
         global_data: &F::GlobalExtraData,
         batch: &Vec<(u8, F::AssociatedExtraData, CompressedReadIndipendent)>,
-        extra_data_buffer: &<F::AssociatedExtraData as SequenceExtraData>::TempBuffer,
+        extra_data_buffer: &<F::AssociatedExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ref_sequences: &Vec<u8>,
     ) -> GroupProcessStats;
     fn process_group_finalize(

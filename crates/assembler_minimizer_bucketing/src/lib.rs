@@ -8,9 +8,7 @@ use hashes::rolling::minqueue::RollingMinQueue;
 use hashes::ExtendableHashTraitType;
 use hashes::HashFunction;
 use hashes::MinimizerHashFunctionFactory;
-use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
-};
+use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
 use io::sequences_stream::SequenceInfo;
@@ -33,7 +31,7 @@ pub struct AssemblerMinimizerBucketingExecutor<H: MinimizerHashFunctionFactory, 
 
 pub struct AssemblerPreprocessInfo<CX: ColorsManager> {
     color_info: MinimizerBucketingSeqColorDataType<CX>,
-    color_info_buffer: <MinimizerBucketingSeqColorDataType<CX> as SequenceExtraData>::TempBuffer,
+    color_info_buffer: <MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
     include_first: bool,
     include_last: bool,
 }
@@ -43,9 +41,7 @@ impl<CX: ColorsManager> Default for AssemblerPreprocessInfo<CX> {
         Self {
             color_info: MinimizerBucketingSeqColorDataType::<CX>::default(),
             color_info_buffer:
-                <MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement<
-                    <MinimizerBucketingSeqColorDataType<CX> as SequenceExtraData>::TempBuffer,
-                >>::new_temp_buffer(),
+                    <MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::new_temp_buffer(),
             include_first: false,
             include_last: false,
         }
@@ -128,7 +124,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         &mut self,
         flags: u8,
         extra_data: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-        extra_data_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraData>::TempBuffer,
+        extra_data_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
         preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
@@ -145,7 +141,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraData>::TempBuffer),
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer),
     >(
         &mut self,
         preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,

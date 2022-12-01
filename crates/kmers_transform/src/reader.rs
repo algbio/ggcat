@@ -14,11 +14,13 @@ use config::{
 };
 use instrumenter::local_setup_instrumenter;
 use io::compressed_read::CompressedReadIndipendent;
-use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
+use io::concurrent::temp_reads::creads_utils::{
+    CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+};
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
 use minimizer_bucketing::MinimizerBucketingExecutorFactory;
-use parallel_processor::buckets::bucket_writer::BucketItem;
+use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::readers::async_binary_reader::{
     AsyncBinaryReader, AsyncReaderThread,
 };
@@ -321,23 +323,36 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         rewrite_buffer: &mut Vec<u8>,
     ) {
         assert_eq!(rewrite_buffer.len(), 0);
+
+        let mut serializer = CompressedReadsBucketDataSerializer::<
+            _,
+            <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,
+            false,
+        >::new();
+
         for (flags, extra, bases) in &input_buffer.reads {
             // sequences_count[input_packet.sub_bucket] += 1;
 
-            let element_to_write = CompressedReadsBucketHelper::<
-                _,
-                <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,
-                false,
-            >::new_packed(
-                bases.as_reference(&input_buffer.reads_buffer), *flags, 0
+            let element_to_write = CompressedReadsBucketData::new_packed(
+                bases.as_reference(&input_buffer.reads_buffer),
+                *flags,
+                0,
             );
 
-            if element_to_write.get_size(extra) + rewrite_buffer.len() > rewrite_buffer.capacity() {
+            if serializer.get_size(&element_to_write, extra) + rewrite_buffer.len()
+                > rewrite_buffer.capacity()
+            {
                 writer.write_data(&rewrite_buffer[..]);
                 rewrite_buffer.clear();
+                serializer.reset();
             }
 
-            element_to_write.write_to(rewrite_buffer, extra, &input_buffer.extra_buffer);
+            serializer.write_to(
+                &element_to_write,
+                rewrite_buffer,
+                extra,
+                &input_buffer.extra_buffer,
+            );
         }
         seq_count.fetch_add(input_buffer.reads.len() as u64, Ordering::Relaxed);
 
@@ -382,7 +397,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
         let mut items_iterator = bucket_info
             .reader
-            .get_items_stream::<CompressedReadsBucketHelper<
+            .get_items_stream::<CompressedReadsBucketDataSerializer<
                 F::AssociatedExtraData,
                 F::FLAGS_COUNT,
                 { USE_SECOND_BUCKET },

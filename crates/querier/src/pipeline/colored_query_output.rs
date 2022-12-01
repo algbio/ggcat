@@ -1,4 +1,4 @@
-use crate::structs::query_colored_counters::{ColorsRange, QueryColoredCounters};
+use crate::structs::query_colored_counters::{ColorsRange, QueryColoredCountersSerializer};
 use crate::ColoredQueryOutputFormat;
 use colors::colors_manager::ColorMapReader;
 use colors::colors_manager::{ColorsManager, ColorsMergeManager};
@@ -139,7 +139,7 @@ pub fn colored_query_output<
                     },
                     DEFAULT_PREFETCH_AMOUNT,
                 )
-                .decode_all_bucket_items::<QueryColoredCounters, _>(
+                .decode_all_bucket_items::<QueryColoredCountersSerializer, _>(
                     (Vec::new(), Vec::new()),
                     &mut (),
                     |counters, _| {

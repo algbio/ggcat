@@ -6,8 +6,8 @@ use config::{
     get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
 };
 use hashes::HashFunctionFactory;
-use io::structs::hash_entry::{Direction, HashCompare, HashEntry};
-use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
+use io::structs::hash_entry::{Direction, HashCompare, HashEntrySerializer};
+use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink, UnitigLinkSerializer};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
@@ -49,7 +49,7 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
         .for_each(|input| {
 
             let mut buffers = buckets_thread_buffers.get();
-            let mut links_tmp = BucketsThreadDispatcher::new(
+            let mut links_tmp = BucketsThreadDispatcher::<_, UnitigLinkSerializer>::new(
                 &links_buckets,
                 buffers.take()
             );
@@ -60,7 +60,7 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
 
             LockFreeBinaryReader::new(input, RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed)
-            }, DEFAULT_PREFETCH_AMOUNT).decode_all_bucket_items::<HashEntry<H::HashTypeUnextendable>, _>((), &mut (), |h, _| {
+            }, DEFAULT_PREFETCH_AMOUNT).decode_all_bucket_items::<HashEntrySerializer<H::HashTypeUnextendable>, _>((), &mut (), |h, _| {
                 hashes_vec.push(h);
             });
 

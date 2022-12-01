@@ -9,7 +9,7 @@ use hashes::HashFunction;
 use hashes::HashableSequence;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
-use io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::varint::encode_varint;
 use kmers_transform::processor::KmersTransformProcessor;
 use kmers_transform::{
@@ -167,7 +167,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             MinimizerBucketingSeqColorDataType<CX>,
             CompressedReadIndipendent,
         )>,
-        extra_data_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraData>::TempBuffer,
+        extra_data_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ref_sequences: &Vec<u8>,
     ) -> GroupProcessStats {
         let k = global_data.k;

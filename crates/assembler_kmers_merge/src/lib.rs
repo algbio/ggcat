@@ -14,11 +14,12 @@ use config::{
 use crossbeam::queue::*;
 use hashes::HashFunctionFactory;
 use hashes::MinimizerHashFunctionFactory;
-use io::structs::hash_entry::Direction;
 use io::structs::hash_entry::HashEntry;
+use io::structs::hash_entry::{Direction, HashEntrySerializer};
 use kmers_transform::processor::KmersTransformProcessor;
 use kmers_transform::{KmersTransform, KmersTransformExecutorFactory};
 use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory};
+use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
@@ -106,7 +107,10 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 {
     #[inline(always)]
     fn write_hashes(
-        hashes_tmp: &mut BucketsThreadDispatcher<LockFreeBinaryWriter>,
+        hashes_tmp: &mut BucketsThreadDispatcher<
+            LockFreeBinaryWriter,
+            HashEntrySerializer<MH::HashTypeUnextendable>,
+        >,
         hash: MH::HashTypeUnextendable,
         bucket: BucketIndexType,
         entry: u64,
@@ -177,6 +181,7 @@ pub fn kmers_merge<
             temp_buffer: Vec::with_capacity(256),
             bucket_index: index as BucketIndexType,
             _phantom: PhantomData,
+            serializer: BucketItemSerializer::new(),
         };
         sequences.push(bucket_read.reads_writer.get_path());
         let res = output_results_buckets.push(bucket_read).is_ok();

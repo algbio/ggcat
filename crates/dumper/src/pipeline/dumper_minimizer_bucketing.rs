@@ -5,7 +5,8 @@ use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+    HasEmptyExtraBuffer, SequenceExtraDataConsecutiveCompression,
+    SequenceExtraDataTempBufferManagement,
 };
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::fasta::FastaFileSequencesStream;
@@ -23,35 +24,55 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-pub struct DumperKmersReferenceData<CX: SequenceExtraData<TempBuffer = ()> + Clone + FastSortable> {
+pub struct DumperKmersReferenceData<
+    CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + FastSortable,
+> {
     pub(crate) color: CX,
 }
 
-impl<CX: SequenceExtraData<TempBuffer = ()> + Clone + FastSortable> SequenceExtraData
-    for DumperKmersReferenceData<CX>
+impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + FastSortable>
+    HasEmptyExtraBuffer for DumperKmersReferenceData<CX>
 {
-    type TempBuffer = ();
+}
+
+impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + FastSortable>
+    SequenceExtraDataConsecutiveCompression for DumperKmersReferenceData<CX>
+{
+    type LastData = CX::LastData;
 
     #[inline(always)]
-    fn decode_extended(_buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
+    fn decode_extended(
+        _buffer: &mut Self::TempBuffer,
+        reader: &mut impl Read,
+        last_data: CX::LastData,
+    ) -> Option<Self> {
         Some(Self {
-            color: CX::decode_extended(&mut (), reader)?,
+            color: CX::decode_extended(&mut (), reader, last_data)?,
         })
     }
 
     #[inline(always)]
-    fn encode_extended(&self, _buffer: &Self::TempBuffer, writer: &mut impl Write) {
-        CX::encode_extended(&self.color, &(), writer);
+    fn encode_extended(
+        &self,
+        _buffer: &Self::TempBuffer,
+        writer: &mut impl Write,
+        last_data: CX::LastData,
+    ) {
+        CX::encode_extended(&self.color, &(), writer, last_data);
     }
 
     #[inline(always)]
     fn max_size(&self) -> usize {
         self.color.max_size()
     }
+
+    fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
+        self.color.obtain_last_data(last_data)
+    }
 }
 
 pub struct ReadTypeBuffered<CX: ColorsManager> {
-    colors_buffer: (<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraData>::TempBuffer,),
+    colors_buffer: (<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,),
     read_data: Option<ReadData<CX>>,
 }
 
@@ -161,7 +182,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
         &mut self,
         _flags: u8,
         _extra_data: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-        _extra_data_buffer: &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraData>::TempBuffer,
+        _extra_data_buffer: &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
         _preprocess_info: &mut <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         unimplemented!()
@@ -169,7 +190,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraData>::TempBuffer),
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer),
     >(
         &mut self,
         preprocess_info: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,

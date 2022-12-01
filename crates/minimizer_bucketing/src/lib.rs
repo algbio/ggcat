@@ -17,8 +17,12 @@ use config::{
 use config::{MAXIMUM_SECOND_BUCKETS_COUNT, USE_SECOND_BUCKET};
 use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
-use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
-use io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use io::concurrent::temp_reads::creads_utils::{
+    CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+};
+use io::concurrent::temp_reads::extra_data::{
+    SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
+};
 use io::sequences_reader::DnaSequence;
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
@@ -80,7 +84,7 @@ impl MinimizerInputSequence for &[u8] {
 
 pub trait MinimizerBucketingExecutorFactory: Sized {
     type GlobalData: Sync + Send + 'static;
-    type ExtraData: SequenceExtraData;
+    type ExtraData: SequenceExtraDataConsecutiveCompression;
     type PreprocessInfo: Default;
     type StreamInfo: Clone + Sync + Send + Default + 'static;
 
@@ -109,7 +113,7 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
         &mut self,
         flags: u8,
         intermediate_data: &Factory::ExtraData,
-        intermediate_data_buffer: &<Factory::ExtraData as SequenceExtraData>::TempBuffer,
+        intermediate_data_buffer: &<Factory::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
         preprocess_info: &mut Factory::PreprocessInfo,
     );
 
@@ -121,7 +125,7 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
             S,
             u8,
             Factory::ExtraData,
-            &<Factory::ExtraData as SequenceExtraData>::TempBuffer,
+            &<Factory::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ),
     >(
         &mut self,
@@ -213,7 +217,14 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
         let mut counters: Vec<u8> =
             vec![0; context.common.max_second_buckets_count * context.common.buckets_count];
 
-        let mut tmp_reads_buffer = BucketsThreadDispatcher::new(
+        let mut tmp_reads_buffer = BucketsThreadDispatcher::<
+            _,
+            CompressedReadsBucketDataSerializer<
+                E::ExtraData,
+                E::FLAGS_COUNT,
+                { USE_SECOND_BUCKET },
+            >,
+        >::new(
             &context.buckets,
             BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, context.buckets.count()),
         );
@@ -265,13 +276,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                                 bucket,
                                 &extra,
                                 extra_buffer,
-                                &CompressedReadsBucketHelper::<
-                                    _,
-                                    E::FLAGS_COUNT,
-                                    { USE_SECOND_BUCKET },
-                                >::new(
-                                    seq, flags, next_bucket as u8
-                                ),
+                                &CompressedReadsBucketData::new(seq, flags, next_bucket as u8),
                             );
                         },
                     );

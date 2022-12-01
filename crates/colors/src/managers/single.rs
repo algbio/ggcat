@@ -120,7 +120,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     fn join_structures<const REVERSE: bool>(
         _dest: &mut Self::TempUnitigColorStructure,
         _src: &Self::PartialUnitigsColorStructure,
-        _src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
+        _src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         _skip: ColorCounterType,
     ) {
         panic!("Unsupported!");
@@ -132,7 +132,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
     fn encode_part_unitigs_colors(
         _ts: &mut Self::TempUnitigColorStructure,
-        _colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
+        _colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
     ) -> Self::PartialUnitigsColorStructure {
         panic!("Unsupported!");
     }
@@ -143,7 +143,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
     fn debug_colors(
         _color: &Self::PartialUnitigsColorStructure,
-        _colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
+        _colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         _seq: &[u8],
         _hmap: &HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
     ) {
@@ -170,9 +170,9 @@ pub struct UnitigColorDataSerializer {
     slice: Range<usize>,
 }
 
-impl SequenceExtraDataTempBufferManagement<UnitigsSerializerTempBuffer>
-    for UnitigColorDataSerializer
-{
+impl SequenceExtraDataTempBufferManagement for UnitigColorDataSerializer {
+    type TempBuffer = UnitigsSerializerTempBuffer;
+
     fn new_temp_buffer() -> UnitigsSerializerTempBuffer {
         UnitigsSerializerTempBuffer { colors: Vec::new() }
     }
@@ -200,8 +200,6 @@ impl SequenceExtraDataTempBufferManagement<UnitigsSerializerTempBuffer>
 }
 
 impl SequenceExtraData for UnitigColorDataSerializer {
-    type TempBuffer = UnitigsSerializerTempBuffer;
-
     fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
         let start = buffer.colors.len();
 

@@ -5,7 +5,7 @@ use colors::storage::deserializer::ColorsDeserializer;
 use colors::storage::ColorsSerializerTrait;
 use config::{ColorIndexType, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use io::compressed_read::CompressedReadIndipendent;
-use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
+use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, FastSortable, SortKey};
@@ -51,7 +51,7 @@ pub fn colormap_reading<
             },
             DEFAULT_PREFETCH_AMOUNT,
         )
-        .decode_all_bucket_items::<CompressedReadsBucketHelper<
+        .decode_all_bucket_items::<CompressedReadsBucketDataSerializer<
             DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
             typenum::consts::U0,
             false,

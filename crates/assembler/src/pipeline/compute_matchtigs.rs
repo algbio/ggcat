@@ -14,9 +14,7 @@ use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffe
 use io::concurrent::structured_sequences::{
     IdentSequenceWriter, StructuredSequenceBackend, StructuredSequenceWriter,
 };
-use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
-};
+use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use libmatchtigs::{
     EulertigAlgorithm, EulertigAlgorithmConfiguration, MatchtigEdgeData, PathtigAlgorithm,
 };
@@ -142,7 +140,7 @@ pub struct StructuredUnitigsStorage<ColorInfo: IdentSequenceWriter> {
     )>,
 
     sequences_buffer: Vec<u8>,
-    links_buffer: <DoubleMaximalUnitigLinks as SequenceExtraData>::TempBuffer,
+    links_buffer: <DoubleMaximalUnitigLinks as SequenceExtraDataTempBufferManagement>::TempBuffer,
     color_buffer: ColorInfo::TempBuffer,
 }
 
@@ -194,7 +192,7 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
         links_info: DoubleMaximalUnitigLinks,
         extra_buffers: &(
             ColorInfo::TempBuffer,
-            <DoubleMaximalUnitigLinks as SequenceExtraData>::TempBuffer,
+            <DoubleMaximalUnitigLinks as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ),
     ) {
         if buffer.first_sequence_index == usize::MAX {

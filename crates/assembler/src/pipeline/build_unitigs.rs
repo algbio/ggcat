@@ -8,11 +8,11 @@ use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
-use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
+use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::get_bucket_index;
-use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink};
-use parallel_processor::buckets::bucket_writer::BucketItem;
+use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLinkSerializer};
+use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
@@ -56,42 +56,7 @@ impl FastaCompatibleRead for [u8] {
     }
 }
 
-// #[allow(unused_variables)]
-// pub fn write_fasta_entry<
-//     H: MinimizerHashFunctionFactory,
-//     MH: HashFunctionFactory,
-//     CX: ColorsManager,
-//     R: FastaCompatibleRead + ?Sized,
-//     // I: Iterator<Item = (bool, bool, usize)>,
-// >(
-//     temp_buffer: &mut Vec<u8>,
-//     writer: &mut FastaWriterConcurrentBuffer,
-//     color: color_types::PartialUnitigsColorStructure<H, MH, CX>,
-//     color_buffer: &<color_types::PartialUnitigsColorStructure<H, MH, CX> as SequenceExtraData>::TempBuffer,
-//     read: &R,
-//     index: usize,
-//     // links_iterator: I,
-// ) {
-//     // KC:i:{} km:f:
-//     temp_buffer.clear();
-//     write!(temp_buffer, ">{} LN:i:{}", index, read.get_length()).unwrap();
-//
-//     CX::ColorsMergeManagerType::<H, MH>::print_color_data(&color, color_buffer, temp_buffer);
-//
-//     let ident_buffer_size = temp_buffer.len();
-//
-//     let int_data = read.write_unpacked_to_buffer(temp_buffer);
-//     let read_slice = read.as_slice_from_buffer(temp_buffer, int_data);
-//
-//     writer.add_read(FastaSequence {
-//         ident: &temp_buffer[..ident_buffer_size],
-//         seq: read_slice,
-//         qual: None,
-//     });
-// }
-
-type CompressedReadsHelperUnitigsBuilding<'a, H, MH, CX> = CompressedReadsBucketHelper<
-    'a,
+type CompressedReadsDataSerializerUnitigsBuilding<H, MH, CX> = CompressedReadsBucketDataSerializer<
     ReorganizedReadsExtraData<PartialUnitigsColorStructure<H, MH, CX>>,
     typenum::U0,
     false,
@@ -149,9 +114,11 @@ pub fn build_unitigs<
                 let mut unitigs_hashmap = HashMap::new();
                 let mut unitigs_tmp_vec = Vec::new();
 
+                let mut deserializer = UnitigLinkSerializer::new();
+
                 let mut counter: usize = 0;
                 while let Some(link) =
-                    UnitigLink::read_from(&mut unitigs_map_stream, &mut unitigs_tmp_vec, &mut ())
+                                deserializer.read_from(&mut unitigs_map_stream, &mut unitigs_tmp_vec, &mut ())
                 {
                     let start_unitig = UnitigIndex::new(
                         bucket_index,
@@ -225,7 +192,7 @@ pub fn build_unitigs<
                     },
                     DEFAULT_PREFETCH_AMOUNT,
                 )
-                .decode_all_bucket_items::<CompressedReadsHelperUnitigsBuilding<H, MH, CX>, _>(
+                .decode_all_bucket_items::<CompressedReadsDataSerializerUnitigsBuilding<H, MH, CX>, _>(
                     Vec::new(),
                     &mut color_extra_buffer,
                     |(_, _, index, seq), _color_extra_buffer| {

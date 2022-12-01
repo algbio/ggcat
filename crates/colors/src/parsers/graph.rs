@@ -86,7 +86,9 @@ fn decode_minbk_color(
     })
 }
 
-impl SequenceExtraDataTempBufferManagement<UnitigsSerializerTempBuffer> for MinBkMultipleColors {
+impl SequenceExtraDataTempBufferManagement for MinBkMultipleColors {
+    type TempBuffer = UnitigsSerializerTempBuffer;
+
     #[inline(always)]
     fn new_temp_buffer() -> UnitigsSerializerTempBuffer {
         UnitigsSerializerTempBuffer { colors: Vec::new() }
@@ -142,8 +144,6 @@ impl SequenceExtraDataTempBufferManagement<UnitigsSerializerTempBuffer> for MinB
 }
 
 impl SequenceExtraData for MinBkMultipleColors {
-    type TempBuffer = UnitigsSerializerTempBuffer;
-
     fn decode_from_slice_extended(buffer: &mut Self::TempBuffer, slice: &[u8]) -> Option<Self> {
         let mut index = 0;
         decode_minbk_color(buffer, || {

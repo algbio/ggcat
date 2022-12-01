@@ -18,7 +18,7 @@ use hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
 };
 use io::varint::{decode_varint, encode_varint};
 use kmers_transform::processor::KmersTransformProcessor;
@@ -43,15 +43,19 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use super::counters_sorting::CounterEntrySerializer;
+
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub enum QueryKmersReferenceData<CX: MinimizerBucketingSeqColorData> {
     Graph(CX),
     Query(NonZeroU64),
 }
 
-impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataTempBufferManagement<(CX::TempBuffer,)>
+impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataTempBufferManagement
     for QueryKmersReferenceData<CX>
 {
+    type TempBuffer = (CX::TempBuffer,);
+
     #[inline(always)]
     fn new_temp_buffer() -> (CX::TempBuffer,) {
         (CX::new_temp_buffer(),)
@@ -77,13 +81,23 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataTempBufferManagement<(
     }
 }
 
-impl<CX: MinimizerBucketingSeqColorData> SequenceExtraData for QueryKmersReferenceData<CX> {
-    type TempBuffer = (CX::TempBuffer,);
+impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataConsecutiveCompression
+    for QueryKmersReferenceData<CX>
+{
+    type LastData = CX::LastData;
 
     #[inline(always)]
-    fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
+    fn decode_extended(
+        buffer: &mut Self::TempBuffer,
+        reader: &mut impl Read,
+        last_data: Self::LastData,
+    ) -> Option<Self> {
         match reader.read_u8().ok()? {
-            0 => Some(Self::Graph(CX::decode_extended(&mut buffer.0, reader)?)),
+            0 => Some(Self::Graph(CX::decode_extended(
+                &mut buffer.0,
+                reader,
+                last_data,
+            )?)),
             _ => Some(Self::Query(
                 NonZeroU64::new(decode_varint(|| reader.read_u8().ok())? + 1).unwrap(),
             )),
@@ -91,11 +105,16 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraData for QueryKmersReferen
     }
 
     #[inline(always)]
-    fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write) {
+    fn encode_extended(
+        &self,
+        buffer: &Self::TempBuffer,
+        writer: &mut impl Write,
+        last_data: Self::LastData,
+    ) {
         match self {
             Self::Graph(cx) => {
                 writer.write_u8(0).unwrap();
-                CX::encode_extended(cx, &buffer.0, writer);
+                CX::encode_extended(cx, &buffer.0, writer, last_data);
             }
             Self::Query(val) => {
                 writer.write_u8(1).unwrap();
@@ -109,6 +128,13 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraData for QueryKmersReferen
         match self {
             Self::Graph(cx) => cx.max_size() + 1,
             Self::Query(_) => 10 + 1,
+        }
+    }
+
+    fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
+        match self {
+            Self::Graph(cx) => cx.obtain_last_data(last_data),
+            Self::Query(_) => Self::LastData::default(),
         }
     }
 }
@@ -279,7 +305,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>,
             CompressedReadIndipendent,
         )>,
-        extra_data_buffer: &<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraData>::TempBuffer,
+        extra_data_buffer: &<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ref_sequences: &Vec<u8>,
     ) -> GroupProcessStats {
         let k = global_data.k;
@@ -330,7 +356,10 @@ struct ParallelKmersQueryFinalExecutor<
     MH: HashFunctionFactory,
     CX: ColorsManager,
 > {
-    counters_tmp: BucketsThreadDispatcher<LockFreeBinaryWriter>,
+    counters_tmp: BucketsThreadDispatcher<
+        LockFreeBinaryWriter,
+        CounterEntrySerializer<SingleKmerColorDataType<CX>>,
+    >,
     query_map: HashMap<(u64, SingleKmerColorDataType<CX>), u64>,
     _phantom: PhantomData<(H, MH, CX)>,
 }

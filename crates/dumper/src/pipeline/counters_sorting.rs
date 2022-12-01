@@ -7,7 +7,6 @@ use config::{
 };
 use io::concurrent::temp_reads::extra_data::{SequenceExtraData, SequenceExtraDataOwned};
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
-use parallel_processor::buckets::bucket_writer::BucketItem;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;

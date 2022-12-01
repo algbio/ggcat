@@ -1,10 +1,10 @@
 use byteorder::ReadBytesExt;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+    HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
-use parallel_processor::buckets::bucket_writer::BucketItem;
+use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -59,9 +59,8 @@ impl PartialEq for MaximalUnitigIndex {
     }
 }
 
+impl HasEmptyExtraBuffer for MaximalUnitigIndex {}
 impl SequenceExtraData for MaximalUnitigIndex {
-    type TempBuffer = ();
-
     fn decode_extended(_: &mut (), reader: &mut impl Read) -> Option<Self> {
         let index = decode_varint(|| reader.read_u8().ok())?;
         let flags = reader.read_u8().ok()?;
@@ -115,17 +114,34 @@ impl MaximalUnitigLink {
     }
 }
 
-impl BucketItem for MaximalUnitigLink {
+pub struct MaximalUnitigLinkSerializer;
+
+impl BucketItemSerializer for MaximalUnitigLinkSerializer {
+    type InputElementType<'a> = MaximalUnitigLink;
     type ExtraData = Vec<MaximalUnitigIndex>;
     type ReadBuffer = Vec<MaximalUnitigIndex>;
     type ExtraDataBuffer = ();
-    type ReadType<'a> = Self;
+    type ReadType<'a> = MaximalUnitigLink;
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Vec<u8>, extra_data: &Self::ExtraData, _: &()) {
-        encode_varint(|b| bucket.write_all(b), self.index()).unwrap();
+    fn new() -> Self {
+        Self
+    }
 
-        let entries = self.entries.get_slice(extra_data);
+    #[inline(always)]
+    fn reset(&mut self) {}
+
+    #[inline(always)]
+    fn write_to(
+        &mut self,
+        element: &Self::InputElementType<'_>,
+        bucket: &mut Vec<u8>,
+        extra_data: &Self::ExtraData,
+        _: &(),
+    ) {
+        encode_varint(|b| bucket.write_all(b), element.index()).unwrap();
+
+        let entries = element.entries.get_slice(extra_data);
         encode_varint(|b| bucket.write_all(b), entries.len() as u64).unwrap();
 
         for entry in entries {
@@ -135,6 +151,7 @@ impl BucketItem for MaximalUnitigLink {
     }
 
     fn read_from<'a, S: Read>(
+        &mut self,
         mut stream: S,
         read_buffer: &'a mut Self::ReadBuffer,
         _: &mut (),
@@ -150,11 +167,11 @@ impl BucketItem for MaximalUnitigLink {
             read_buffer.push(MaximalUnitigIndex::new(index, MaximalUnitigFlags(flags)));
         }
 
-        Some(Self::new(entry, VecSlice::new(start, len)))
+        Some(MaximalUnitigLink::new(entry, VecSlice::new(start, len)))
     }
 
-    fn get_size(&self, _: &Vec<MaximalUnitigIndex>) -> usize {
-        16 + self.entries.len() * (VARINT_MAX_SIZE + 1)
+    fn get_size(&self, element: &Self::InputElementType<'_>, _: &Vec<MaximalUnitigIndex>) -> usize {
+        16 + element.entries.len() * (VARINT_MAX_SIZE + 1)
     }
 }
 
@@ -168,7 +185,9 @@ impl DoubleMaximalUnitigLinks {
     ]);
 }
 
-impl SequenceExtraDataTempBufferManagement<Vec<MaximalUnitigIndex>> for DoubleMaximalUnitigLinks {
+impl SequenceExtraDataTempBufferManagement for DoubleMaximalUnitigLinks {
+    type TempBuffer = Vec<MaximalUnitigIndex>;
+
     fn new_temp_buffer() -> Vec<MaximalUnitigIndex> {
         vec![]
     }
@@ -207,8 +226,6 @@ impl SequenceExtraDataTempBufferManagement<Vec<MaximalUnitigIndex>> for DoubleMa
 }
 
 impl SequenceExtraData for DoubleMaximalUnitigLinks {
-    type TempBuffer = Vec<MaximalUnitigIndex>;
-
     fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl Read) -> Option<Self> {
         unimplemented!()
     }

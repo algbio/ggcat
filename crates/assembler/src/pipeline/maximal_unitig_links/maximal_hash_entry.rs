@@ -1,6 +1,6 @@
 use bincode::{deserialize_from, serialize_into};
 use hashes::HashFunctionFactory;
-use parallel_processor::buckets::bucket_writer::BucketItem;
+use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::fast_smart_bucket_sort::SortKey;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -60,18 +60,37 @@ impl<H: Copy> MaximalHashEntry<H> {
     }
 }
 
-impl<H: Serialize + DeserializeOwned + Copy> BucketItem for MaximalHashEntry<H> {
+pub struct MaximalHashEntrySerializer<H: Serialize + DeserializeOwned + Copy>(PhantomData<H>);
+impl<H: Serialize + DeserializeOwned + Copy> BucketItemSerializer
+    for MaximalHashEntrySerializer<H>
+{
+    type InputElementType<'a> = MaximalHashEntry<H>;
     type ExtraData = ();
     type ReadBuffer = ();
     type ExtraDataBuffer = ();
-    type ReadType<'a> = Self;
+    type ReadType<'a> = MaximalHashEntry<H>;
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Vec<u8>, _extra_data: &Self::ExtraData, _: &()) {
-        serialize_into(bucket, self).unwrap();
+    fn new() -> Self {
+        Self(PhantomData)
+    }
+
+    #[inline(always)]
+    fn reset(&mut self) {}
+
+    #[inline(always)]
+    fn write_to(
+        &mut self,
+        element: &Self::InputElementType<'_>,
+        bucket: &mut Vec<u8>,
+        _extra_data: &Self::ExtraData,
+        _: &(),
+    ) {
+        serialize_into(bucket, element).unwrap();
     }
 
     fn read_from<'a, S: Read>(
+        &mut self,
         stream: S,
         _read_buffer: &'a mut Self::ReadBuffer,
         _: &mut (),
@@ -80,7 +99,7 @@ impl<H: Serialize + DeserializeOwned + Copy> BucketItem for MaximalHashEntry<H> 
     }
 
     #[inline(always)]
-    fn get_size(&self, _: &()) -> usize {
+    fn get_size(&self, _element: &Self::InputElementType<'_>, _: &()) -> usize {
         size_of::<H>() + 8 + 1
     }
 }

@@ -8,7 +8,9 @@ use config::{
 };
 use hashes::HashableSequence;
 use instrumenter::local_setup_instrumenter;
-use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
+use io::concurrent::temp_reads::creads_utils::{
+    CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+};
 use minimizer_bucketing::counters_analyzer::BucketCounter;
 use minimizer_bucketing::{MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
@@ -115,7 +117,14 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
         ops: &ExecutorAddressOperations<'_, Self>,
     ) {
         let mut resplitter = F::new_resplitter(&global_context.global_extra_data);
-        let mut thread_local_buffers = BucketsThreadDispatcher::new(
+        let mut thread_local_buffers = BucketsThreadDispatcher::<
+            _,
+            CompressedReadsBucketDataSerializer<
+                _,
+                <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,
+                false,
+            >,
+        >::new(
             &resplit_info.buckets,
             BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, resplit_info.buckets.count()),
         );
@@ -141,34 +150,31 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                 );
 
                 resplitter.process_sequence::<_, _>(
-                            &preprocess_info,
-                            sequence,
-                            0..sequence.bases_count(),
-                            0, resplit_info.subsplit_buckets_count_log, 0,
-                            |bucket, _next_bucket, seq, flags, extra, extra_buffer| {
+                    &preprocess_info,
+                    sequence,
+                    0..sequence.bases_count(),
+                    0,
+                    resplit_info.subsplit_buckets_count_log,
+                    0,
+                    |bucket, _next_bucket, seq, flags, extra, extra_buffer| {
+                        let bucket = bucket as usize;
 
-                                let bucket = bucket as usize;
+                        let counter = &mut local_counters[bucket];
 
-                                let counter = &mut local_counters[bucket];
+                        *counter = counter.wrapping_add(1);
+                        if *counter == 0 {
+                            resplit_info.global_counters[bucket as usize]
+                                .fetch_add(256, Ordering::Relaxed);
+                        }
 
-                                *counter = counter.wrapping_add(1);
-                                if *counter == 0 {
-                                    resplit_info.global_counters[bucket as usize]
-                                        .fetch_add(256, Ordering::Relaxed);
-                                }
-
-                                thread_local_buffers.add_element_extended(
-                                    bucket as BucketIndexType,
-                                    &extra,
-                                    extra_buffer,
-                                    &CompressedReadsBucketHelper::<
-                                        _,
-                                        <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,
-                                        false,
-                                    >::new_packed(seq, flags, 0),
-                                );
-                            },
+                        thread_local_buffers.add_element_extended(
+                            bucket as BucketIndexType,
+                            &extra,
+                            extra_buffer,
+                            &CompressedReadsBucketData::new_packed(seq, flags, 0),
                         );
+                    },
+                );
             }
         }
 

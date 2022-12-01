@@ -6,10 +6,11 @@ use crate::pipeline::maximal_unitig_links::mappings_loader::{
     MaximalUnitigLinksMapping, MaximalUnitigLinksMappingsLoader,
 };
 use crate::pipeline::maximal_unitig_links::maximal_hash_entry::{
-    MaximalHashCompare, MaximalHashEntry, MaximalUnitigPosition,
+    MaximalHashCompare, MaximalHashEntry, MaximalHashEntrySerializer, MaximalUnitigPosition,
 };
 use crate::pipeline::maximal_unitig_links::maximal_unitig_index::{
     DoubleMaximalUnitigLinks, MaximalUnitigFlags, MaximalUnitigIndex, MaximalUnitigLink,
+    MaximalUnitigLinkSerializer,
 };
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::ColorsManager;
@@ -21,7 +22,7 @@ use hashes::ExtendableHashTraitType;
 use hashes::{HashFunction, HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
-use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
+use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
@@ -87,14 +88,17 @@ pub fn build_maximal_unitigs_links<
                 .for_each(|_| {
                     let mut unitigs_partial_count = 0;
 
-                    let mut hashes_tmp = BucketsThreadDispatcher::new(
+                    let mut hashes_tmp = BucketsThreadDispatcher::<
+                        _,
+                        MaximalHashEntrySerializer<MH::HashTypeUnextendable>,
+                    >::new(
                         &maximal_unitigs_extremities_hashes_buckets,
                         BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count),
                     );
 
                     while
                         maximal_unitigs_reader_step1
-                            .decode_bucket_items_parallel::<CompressedReadsBucketHelper<
+                            .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
                             _,
                             typenum::consts::U0,
                             false,
@@ -229,8 +233,10 @@ pub fn build_maximal_unitigs_links<
 
         step_1_hash_files.par_iter().for_each(|input| {
             let mut buffers = buckets_thread_buffers.get();
-            let mut links_tmp =
-                BucketsThreadDispatcher::new(&maximal_links_buckets, buffers.take());
+            let mut links_tmp = BucketsThreadDispatcher::<_, MaximalUnitigLinkSerializer>::new(
+                &maximal_links_buckets,
+                buffers.take(),
+            );
 
             let mut hashes_vec = Vec::new();
             let mut tmp_links_vec = Vec::new();
@@ -242,7 +248,7 @@ pub fn build_maximal_unitigs_links<
                 },
                 DEFAULT_PREFETCH_AMOUNT,
             )
-            .decode_all_bucket_items::<MaximalHashEntry<MH::HashTypeUnextendable>, _>(
+            .decode_all_bucket_items::<MaximalHashEntrySerializer<MH::HashTypeUnextendable>, _>(
                 (),
                 &mut (),
                 |h, _| {
@@ -329,7 +335,7 @@ pub fn build_maximal_unitigs_links<
 
                     while
                         maximal_unitigs_reader_step3
-                            .decode_bucket_items_parallel::<CompressedReadsBucketHelper<
+                            .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
                             _,
                             typenum::consts::U0,
                             false,

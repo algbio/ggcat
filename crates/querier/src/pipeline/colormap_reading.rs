@@ -1,5 +1,7 @@
-use crate::pipeline::counters_sorting::CounterEntry;
-use crate::structs::query_colored_counters::{ColorsRange, QueryColorDesc, QueryColoredCounters};
+use crate::pipeline::counters_sorting::{CounterEntry, CounterEntrySerializer};
+use crate::structs::query_colored_counters::{
+    ColorsRange, QueryColorDesc, QueryColoredCounters, QueryColoredCountersSerializer,
+};
 use colors::storage::deserializer::ColorsDeserializer;
 use colors::storage::ColorsSerializerTrait;
 use config::{
@@ -59,7 +61,10 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
 
         let mut thread_buffer = thread_buffers.get();
         let mut colored_buckets_writer =
-            BucketsThreadDispatcher::new(&correct_color_buckets, thread_buffer.take());
+            BucketsThreadDispatcher::<_, QueryColoredCountersSerializer>::new(
+                &correct_color_buckets,
+                thread_buffer.take(),
+            );
 
         let mut counters_vec: Vec<(CounterEntry<ColorIndexType>, ColorIndexType)> = Vec::new();
         CompressedBinaryReader::new(
@@ -69,9 +74,13 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             },
             DEFAULT_PREFETCH_AMOUNT,
         )
-        .decode_all_bucket_items::<CounterEntry<ColorIndexType>, _>((), &mut (), |h, _| {
-            counters_vec.push(h);
-        });
+        .decode_all_bucket_items::<CounterEntrySerializer<ColorIndexType>, _>(
+            (),
+            &mut (),
+            |h, _| {
+                counters_vec.push(h);
+            },
+        );
 
         struct CountersCompare;
         impl SortKey<(CounterEntry<ColorIndexType>, ColorIndexType)> for CountersCompare {

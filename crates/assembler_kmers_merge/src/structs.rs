@@ -1,25 +1,29 @@
 use config::BucketIndexType;
-use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
-use io::concurrent::temp_reads::extra_data::SequenceExtraData;
-use parallel_processor::buckets::bucket_writer::BucketItem;
+use io::concurrent::temp_reads::creads_utils::{
+    CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+};
+use io::concurrent::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
+use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::LockFreeBucket;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use utils::owned_drop::OwnedDrop;
 
-pub struct ResultsBucket<X: SequenceExtraData> {
+pub struct ResultsBucket<X: SequenceExtraDataConsecutiveCompression> {
     pub read_index: u64,
     pub reads_writer: OwnedDrop<CompressedBinaryWriter>,
     pub temp_buffer: Vec<u8>,
     pub bucket_index: BucketIndexType,
+    pub serializer: CompressedReadsBucketDataSerializer<X, typenum::U0, false>,
     pub _phantom: PhantomData<X>,
 }
 
-impl<X: SequenceExtraData> ResultsBucket<X> {
+impl<X: SequenceExtraDataConsecutiveCompression> ResultsBucket<X> {
     pub fn add_read(&mut self, el: X, read: &[u8], extra_buffer: &X::TempBuffer) -> u64 {
         self.temp_buffer.clear();
-        CompressedReadsBucketHelper::<X, typenum::U0, false>::new(read, 0, 0).write_to(
+        self.serializer.write_to(
+            &CompressedReadsBucketData::new(read, 0, 0),
             &mut self.temp_buffer,
             &el,
             extra_buffer,
@@ -36,7 +40,7 @@ impl<X: SequenceExtraData> ResultsBucket<X> {
     }
 }
 
-impl<X: SequenceExtraData> Drop for ResultsBucket<X> {
+impl<X: SequenceExtraDataConsecutiveCompression> Drop for ResultsBucket<X> {
     fn drop(&mut self) {
         unsafe { self.reads_writer.take().finalize() }
     }

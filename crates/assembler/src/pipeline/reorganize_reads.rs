@@ -3,16 +3,19 @@ use config::{
     DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
 };
 use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
+use io::concurrent::temp_reads::creads_utils::{
+    CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+};
 
-use crate::structs::link_mapping::LinkMapping;
+use crate::structs::link_mapping::{LinkMapping, LinkMappingSerializer};
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::{color_types, ColorsManager};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
-use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketHelper;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataOwned, SequenceExtraDataTempBufferManagement,
+    SequenceExtraData, SequenceExtraDataConsecutiveCompression, SequenceExtraDataOwned,
+    SequenceExtraDataTempBufferManagement,
 };
 use io::get_bucket_index;
 use io::structs::unitig_link::UnitigIndex;
@@ -35,14 +38,14 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
-pub struct ReorganizedReadsExtraData<CX: SequenceExtraData> {
+pub struct ReorganizedReadsExtraData<CX: SequenceExtraDataConsecutiveCompression> {
     pub unitig: UnitigIndex,
     pub color: CX,
 }
 
 #[repr(transparent)]
-pub struct ReorganizedReadsBuffer<CX: SequenceExtraData>(pub CX::TempBuffer);
-impl<CX: SequenceExtraData> ReorganizedReadsBuffer<CX> {
+pub struct ReorganizedReadsBuffer<CX: SequenceExtraDataConsecutiveCompression>(pub CX::TempBuffer);
+impl<CX: SequenceExtraDataConsecutiveCompression> ReorganizedReadsBuffer<CX> {
     #[allow(dead_code)]
     pub fn from_inner_mut(inner: &mut CX::TempBuffer) -> &mut Self {
         unsafe { transmute(inner) }
@@ -52,9 +55,11 @@ impl<CX: SequenceExtraData> ReorganizedReadsBuffer<CX> {
     }
 }
 
-impl<CX: SequenceExtraData> SequenceExtraDataTempBufferManagement<ReorganizedReadsBuffer<CX>>
+impl<CX: SequenceExtraDataConsecutiveCompression> SequenceExtraDataTempBufferManagement
     for ReorganizedReadsExtraData<CX>
 {
+    type TempBuffer = ReorganizedReadsBuffer<CX>;
+
     #[inline(always)]
     fn new_temp_buffer() -> ReorganizedReadsBuffer<CX> {
         ReorganizedReadsBuffer(CX::new_temp_buffer())
@@ -83,26 +88,42 @@ impl<CX: SequenceExtraData> SequenceExtraDataTempBufferManagement<ReorganizedRea
     }
 }
 
-impl<CX: SequenceExtraData> SequenceExtraData for ReorganizedReadsExtraData<CX> {
-    type TempBuffer = ReorganizedReadsBuffer<CX>;
+impl<CX: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCompression
+    for ReorganizedReadsExtraData<CX>
+{
+    type LastData = CX::LastData;
 
     #[inline(always)]
-    fn decode_extended(buffer: &mut Self::TempBuffer, mut reader: &mut impl Read) -> Option<Self> {
+    fn decode_extended(
+        buffer: &mut Self::TempBuffer,
+        mut reader: &mut impl Read,
+        last_data: Self::LastData,
+    ) -> Option<Self> {
         Some(Self {
-            unitig: UnitigIndex::decode(&mut reader)?,
-            color: CX::decode_extended(&mut buffer.0, &mut reader)?,
+            unitig: UnitigIndex::decode(&mut reader, ())?,
+            color: CX::decode_extended(&mut buffer.0, &mut reader, last_data)?,
         })
     }
 
     #[inline(always)]
-    fn encode_extended(&self, buffer: &Self::TempBuffer, mut writer: &mut impl Write) {
-        self.unitig.encode(&mut writer);
-        self.color.encode_extended(&buffer.0, &mut writer);
+    fn encode_extended(
+        &self,
+        buffer: &Self::TempBuffer,
+        mut writer: &mut impl Write,
+        last_data: Self::LastData,
+    ) {
+        self.unitig.encode(&mut writer, ());
+        self.color
+            .encode_extended(&buffer.0, &mut writer, last_data);
     }
 
     #[inline(always)]
     fn max_size(&self) -> usize {
-        self.unitig.max_size() + self.color.max_size()
+        SequenceExtraData::max_size(&self.unitig) + self.color.max_size()
+    }
+
+    fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
+        self.color.obtain_last_data(last_data)
     }
 }
 
@@ -144,7 +165,14 @@ pub fn reorganize_reads<
     inputs.par_iter().for_each(|(read_file, mapping_file)| {
         let mut buffers = reads_thread_buffers.get();
 
-        let mut tmp_reads_buffer = BucketsThreadDispatcher::new(&buckets, buffers.take());
+        let mut tmp_reads_buffer = BucketsThreadDispatcher::<
+            _,
+            CompressedReadsBucketDataSerializer<
+                ReorganizedReadsExtraData<color_types::PartialUnitigsColorStructure<H, MH, CX>>,
+                typenum::U0,
+                false,
+            >,
+        >::new(&buckets, buffers.take());
 
         let mut tmp_lonely_unitigs_buffer =
             FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
@@ -162,7 +190,7 @@ pub fn reorganize_reads<
             },
             DEFAULT_PREFETCH_AMOUNT,
         )
-        .decode_all_bucket_items::<LinkMapping, _>((), &mut (), |link, _| {
+        .decode_all_bucket_items::<LinkMappingSerializer, _>((), &mut (), |link, _| {
             mappings.push(link);
         });
 
@@ -184,7 +212,7 @@ pub fn reorganize_reads<
             },
             DEFAULT_PREFETCH_AMOUNT,
         )
-        .decode_all_bucket_items::<CompressedReadsBucketHelper<
+        .decode_all_bucket_items::<CompressedReadsBucketDataSerializer<
             color_types::PartialUnitigsColorStructure<H, MH, CX>,
             typenum::U0,
             false,
@@ -208,13 +236,7 @@ pub fn reorganize_reads<
                             color,
                         },
                         ReorganizedReadsBuffer::from_inner(color_buffer),
-                        &CompressedReadsBucketHelper::<
-                            ReorganizedReadsExtraData<
-                                color_types::PartialUnitigsColorStructure<H, MH, CX>,
-                            >,
-                            typenum::U0,
-                            false,
-                        >::new(seq, 0, 0),
+                        &CompressedReadsBucketData::new(seq, 0, 0),
                     );
                     map_index += 1;
                 } else {

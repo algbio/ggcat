@@ -15,6 +15,7 @@ use std::panic;
 use std::path::PathBuf;
 use std::process::exit;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 use structopt::StructOpt;
 
 arg_enum! {
@@ -479,5 +480,10 @@ fn main() {
         }
     }
 
+    // Ensure termination
+    std::thread::spawn(|| {
+        std::thread::sleep(Duration::from_secs(5));
+        std::process::exit(0);
+    });
     MemoryFs::terminate();
 }

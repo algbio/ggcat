@@ -1,4 +1,4 @@
-use crate::concurrent::temp_reads::extra_data::SequenceExtraData;
+use super::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
 use parking_lot::{Condvar, Mutex};
 use std::io::Write;
 use std::marker::PhantomData;
@@ -8,7 +8,7 @@ pub mod binary;
 pub mod concurrent;
 pub mod fasta;
 
-pub trait IdentSequenceWriter: SequenceExtraData {
+pub trait IdentSequenceWriter: SequenceExtraDataConsecutiveCompression + Sized {
     fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer);
     fn write_as_gfa(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer);
 

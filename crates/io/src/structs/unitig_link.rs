@@ -1,8 +1,8 @@
-use crate::concurrent::temp_reads::extra_data::SequenceExtraData;
+use crate::concurrent::temp_reads::extra_data::{HasEmptyExtraBuffer, SequenceExtraData};
 use crate::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use byteorder::ReadBytesExt;
 use config::BucketIndexType;
-use parallel_processor::buckets::bucket_writer::BucketItem;
+use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -162,9 +162,8 @@ impl PartialEq for UnitigIndex {
     }
 }
 
+impl HasEmptyExtraBuffer for UnitigIndex {}
 impl SequenceExtraData for UnitigIndex {
-    type TempBuffer = ();
-
     fn decode_extended(_: &mut (), reader: &mut impl Read) -> Option<Self> {
         let bucket = decode_varint(|| reader.read_u8().ok())? as BucketIndexType;
         let index = decode_varint(|| reader.read_u8().ok())?;
@@ -267,18 +266,35 @@ impl UnitigLink {
     }
 }
 
-impl BucketItem for UnitigLink {
+pub struct UnitigLinkSerializer;
+
+impl BucketItemSerializer for UnitigLinkSerializer {
+    type InputElementType<'a> = UnitigLink;
     type ExtraData = Vec<UnitigIndex>;
     type ReadBuffer = Vec<UnitigIndex>;
     type ExtraDataBuffer = ();
-    type ReadType<'a> = Self;
+    type ReadType<'a> = UnitigLink;
 
     #[inline(always)]
-    fn write_to(&self, bucket: &mut Vec<u8>, extra_data: &Self::ExtraData, _: &()) {
-        encode_varint(|b| bucket.write_all(b), self.entry()).unwrap();
-        bucket.write_all(&[self.flags().0]).unwrap();
+    fn new() -> Self {
+        Self
+    }
 
-        let entries = self.entries.get_slice(extra_data);
+    #[inline(always)]
+    fn reset(&mut self) {}
+
+    #[inline(always)]
+    fn write_to(
+        &mut self,
+        element: &UnitigLink,
+        bucket: &mut Vec<u8>,
+        extra_data: &Self::ExtraData,
+        _: &(),
+    ) {
+        encode_varint(|b| bucket.write_all(b), element.entry()).unwrap();
+        bucket.write_all(&[element.flags().0]).unwrap();
+
+        let entries = element.entries.get_slice(extra_data);
         encode_varint(|b| bucket.write_all(b), entries.len() as u64).unwrap();
 
         for entry in entries {
@@ -292,6 +308,7 @@ impl BucketItem for UnitigLink {
     }
 
     fn read_from<'a, S: Read>(
+        &mut self,
         mut stream: S,
         read_buffer: &'a mut Self::ReadBuffer,
         _: &mut (),
@@ -308,14 +325,14 @@ impl BucketItem for UnitigLink {
             read_buffer.push(UnitigIndex::new_raw(bucket, index as usize));
         }
 
-        Some(Self::new(
+        Some(UnitigLink::new(
             entry,
             UnitigFlags(flags),
             VecSlice::new(start, len),
         ))
     }
 
-    fn get_size(&self, _: &Vec<UnitigIndex>) -> usize {
-        16 + self.entries.len() * VARINT_MAX_SIZE * 2
+    fn get_size(&self, element: &UnitigLink, _: &Vec<UnitigIndex>) -> usize {
+        16 + element.entries.len() * VARINT_MAX_SIZE * 2
     }
 }

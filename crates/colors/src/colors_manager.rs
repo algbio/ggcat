@@ -5,7 +5,9 @@ use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
-use io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use io::concurrent::temp_reads::extra_data::{
+    SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
+};
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use std::cmp::min;
 use std::hash::Hash;
@@ -49,7 +51,7 @@ pub mod color_types {
 
 /// Encoded color(s) of a minimizer bucketing step sequence
 pub trait MinimizerBucketingSeqColorData:
-    Default + Clone + SequenceExtraData + Send + Sync + 'static
+    Default + Clone + SequenceExtraDataConsecutiveCompression + Send + Sync + 'static
 {
     type KmerColor;
     type KmerColorIterator<'a>: Iterator<Item = Self::KmerColor>
@@ -93,7 +95,7 @@ pub trait ColorsParser: Sized {
         + PartialEq
         + Ord
         + PartialOrd
-        + SequenceExtraData<TempBuffer = ()>
+        + SequenceExtraDataConsecutiveCompression<TempBuffer = ()>
         + Hash
         + Eq
         + Sync
@@ -114,7 +116,7 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
         + PartialEq
         + Ord
         + PartialOrd
-        + SequenceExtraData<TempBuffer = ()>
+        + SequenceExtraDataConsecutiveCompression<TempBuffer = ()>
         + Hash
         + Eq
         + Sync
@@ -187,7 +189,7 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
     fn join_structures<const REVERSE: bool>(
         dest: &mut Self::TempUnitigColorStructure,
         src: &Self::PartialUnitigsColorStructure,
-        src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
+        src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         skip: ColorCounterType,
     );
 
@@ -196,13 +198,13 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
     /// Encodes partial unitig colors into the extra data structure
     fn encode_part_unitigs_colors(
         ts: &mut Self::TempUnitigColorStructure,
-        colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
+        colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
     ) -> Self::PartialUnitigsColorStructure;
 
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]);
     fn debug_colors(
         color: &Self::PartialUnitigsColorStructure,
-        colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraData>::TempBuffer,
+        colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         seq: &[u8],
         hmap: &HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
     );
@@ -218,7 +220,7 @@ pub trait ColorsManager: 'static + Sync + Send + Sized {
         + PartialEq
         + Ord
         + PartialOrd
-        + SequenceExtraData<TempBuffer = ()>
+        + SequenceExtraDataConsecutiveCompression<TempBuffer = ()>
         + Hash
         + Eq
         + Sync

@@ -2,7 +2,7 @@ use byteorder::ReadBytesExt;
 use colors::storage::run_length::ColorIndexSerializer;
 use config::ColorIndexType;
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
-use parallel_processor::buckets::bucket_writer::BucketItem;
+use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use std::io::Read;
 use std::ops::Range;
 
@@ -34,29 +34,43 @@ pub struct QueryColoredCounters<'a> {
     pub colors: &'a [ColorIndexType],
 }
 
-impl<'a> BucketItem for QueryColoredCounters<'a> {
+pub struct QueryColoredCountersSerializer;
+
+impl BucketItemSerializer for QueryColoredCountersSerializer {
+    type InputElementType<'a> = QueryColoredCounters<'a>;
     type ExtraData = ();
     type ReadBuffer = (Vec<QueryColorDesc>, Vec<ColorIndexType>);
     type ExtraDataBuffer = ();
     type ReadType<'b> = QueryColoredCounters<'b>;
 
+    fn new() -> Self {
+        Self
+    }
+
+    fn reset(&mut self) {}
+
     fn write_to(
-        &self,
+        &mut self,
+        element: &QueryColoredCounters<'_>,
         bucket: &mut Vec<u8>,
         _extra_data: &Self::ExtraData,
         _extra_read_buffer: &Self::ExtraDataBuffer,
     ) {
-        encode_varint(|b| bucket.extend_from_slice(b), self.queries.len() as u64);
-        for query in self.queries.iter() {
+        encode_varint(
+            |b| bucket.extend_from_slice(b),
+            element.queries.len() as u64,
+        );
+        for query in element.queries.iter() {
             encode_varint(|b| bucket.extend_from_slice(b), query.query_index);
             encode_varint(|b| bucket.extend_from_slice(b), query.count);
         }
 
-        assert_eq!(self.colors.len() % 2, 0);
-        ColorIndexSerializer::serialize_colors(bucket, &self.colors);
+        assert_eq!(element.colors.len() % 2, 0);
+        ColorIndexSerializer::serialize_colors(bucket, &element.colors);
     }
 
     fn read_from<'b, S: Read>(
+        &mut self,
         mut stream: S,
         read_buffer: &'b mut Self::ReadBuffer,
         _extra_read_buffer: &mut Self::ExtraDataBuffer,
@@ -78,7 +92,7 @@ impl<'a> BucketItem for QueryColoredCounters<'a> {
         })
     }
 
-    fn get_size(&self, _extra: &Self::ExtraData) -> usize {
-        (self.colors.len() + self.queries.len() + 1) * VARINT_MAX_SIZE * 4
+    fn get_size(&self, element: &Self::InputElementType<'_>, _extra: &Self::ExtraData) -> usize {
+        (element.colors.len() + element.queries.len() + 1) * VARINT_MAX_SIZE * 4
     }
 }
