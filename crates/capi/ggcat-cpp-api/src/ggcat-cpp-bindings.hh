@@ -774,16 +774,16 @@ private:
 #endif // CXXBRIDGE1_STRUCT_GGCATInstanceFFI
 
 // Creates a new GGCATInstance. If an instance already exists, it will be returned, ignoring the new config.
-const ::GGCATInstanceFFI &ggcat_create(::GGCATConfigFFI config) noexcept;
+::GGCATInstanceFFI const &ggcat_create(::GGCATConfigFFI config) noexcept;
 
 // Builds a new graph from the given input files, with the specified parameters
-::rust::String ggcat_build_from_files(const ::GGCATInstanceFFI &instance, ::rust::Slice<const ::rust::String> input_files, ::rust::String output_file, ::rust::Slice<const ::rust::String> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab) noexcept;
+::rust::String ggcat_build_from_files(::GGCATInstanceFFI const &instance, ::rust::Slice<::rust::String const> input_files, ::rust::String output_file, ::rust::Slice<::rust::String const> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab) noexcept;
 
 // Builds a new graph from the given input streams, with the specified parameters
-::rust::String ggcat_build_from_streams(const ::GGCATInstanceFFI &instance, ::rust::Slice<const ::InputStreamFFI> input_streams, ::rust::String output_file, ::rust::Slice<const ::rust::String> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab) noexcept;
+::rust::String ggcat_build_from_streams(::GGCATInstanceFFI const &instance, ::rust::Slice<::InputStreamFFI const> input_streams, ::rust::String output_file, ::rust::Slice<::rust::String const> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab) noexcept;
 
 // Queries a (optionally) colored graph with a specific set of sequences as queries
-::rust::String ggcat_query_graph(const ::GGCATInstanceFFI &instance, ::rust::String input_graph, ::rust::String input_query, ::rust::String output_file_prefix, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t color_output_format) noexcept;
+::rust::String ggcat_query_graph(::GGCATInstanceFFI const &instance, ::rust::String input_graph, ::rust::String input_query, ::rust::String output_file_prefix, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t color_output_format) noexcept;
 
 ::rust::String ggcat_get_colormap_file(::rust::String graph_file) noexcept;
 
@@ -795,4 +795,4 @@ const ::GGCATInstanceFFI &ggcat_create(::GGCATConfigFFI config) noexcept;
 // Dumps the unitigs of the given graph, optionally with colors
 // It's not guaranteed that maximal unitigs are returned, as only kmers with the same colors subset
 // are returned as whole unitigs to speedup colormap reading times
-void ggcat_dump_unitigs(const ::GGCATInstanceFFI &instance, ::rust::String graph_input, ::std::size_t kmer_length, ::std::size_t minimizer_length, bool colors, ::std::size_t threads_count, bool single_thread_output_function, ::std::size_t output_function_context, ::std::size_t output_function_ptr) noexcept;
+void ggcat_dump_unitigs(::GGCATInstanceFFI const &instance, ::rust::String graph_input, ::std::size_t kmer_length, ::std::size_t minimizer_length, bool colors, ::std::size_t threads_count, bool single_thread_output_function, ::std::size_t output_function_context, ::std::size_t output_function_ptr) noexcept;

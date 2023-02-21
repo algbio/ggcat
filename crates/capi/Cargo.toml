@@ -7,9 +7,9 @@ edition = "2021"
 crate-type = ["staticlib"]
 
 [dependencies]
-cxx = "1.0.81"
+cxx = "1.0.91"
 ggcat-api = { version = "0.1.0", path = "../api" }
 static_assertions = "1.1.0"
 
 [build-dependencies]
-cxx-build = "1.0.81"
+cxx-build = "1.0.91"

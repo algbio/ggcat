@@ -9,9 +9,9 @@ config = { package = "ggcat_config", path = "../config" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Common libraries
-parallel-processor = "0.1.3"
-streaming-libdeflate-rs = "0.1.0"
-nightly-quirks = "0.1.0"
+parallel-processor = "0.1.5"
+streaming-libdeflate-rs = "0.1.2"
+nightly-quirks = "0.1.1"
 
 # Common pipeline libraries
 hashes = { package = "ggcat_hashes", path = "../hashes" }
@@ -26,15 +26,15 @@ assembler_minimizer_bucketing = { package = "ggcat_assembler_minimizer_bucketing
 
 
 # Other crates
-hashbrown = "0.13.1"
-typenum = "1.15.0"
+hashbrown = "0.13.2"
+typenum = "1.16.0"
 crossbeam = "0.8.2"
 
 # Profiler
-instrumenter = "0.1.0"
+instrumenter = "0.1.1"
 parking_lot = "0.12.1"
 
 [dev-dependencies]
 fdlimit = "0.2.1"
-rayon = "1.5.3"
+rayon = "1.6.1"
 
