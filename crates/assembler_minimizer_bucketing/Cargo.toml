@@ -1,0 +1,28 @@
+[package]
+name = "ggcat_assembler_minimizer_bucketing"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+
+# Config
+config = { package = "ggcat_config", path = "../config" }
+
+# Common libraries
+parallel-processor = "0.1.6"
+streaming-libdeflate-rs = "0.1.3"
+
+# Static dispatch
+dynamic-dispatch = "0.4.1"
+
+# Common pipeline libraries
+hashes = { package = "ggcat_hashes", path = "../hashes" }
+io = { package = "ggcat_io", path = "../io" }
+colors = { package = "ggcat_colors", path = "../colors" }
+structs = { package = "ggcat_structs", path = "../structs" }
+minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
+
+# Other libraries
+typenum = "1.16.0"
+
+[features]
+devel-build = []

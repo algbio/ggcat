@@ -1,0 +1,6 @@
+[package]
+name = "ggcat_structs"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+config = { package = "ggcat_config", path = "../config" }

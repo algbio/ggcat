@@ -1,0 +1,40 @@
+[package]
+name = "ggcat_assembler_kmers_merge"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+
+# Config
+config = { package = "ggcat_config", path = "../config" }
+utils = { package = "ggcat_utils", path = "../utils" }
+
+# Common libraries
+parallel-processor = "0.1.6"
+streaming-libdeflate-rs = "0.1.3"
+nightly-quirks = "0.1.2"
+
+# Common pipeline libraries
+hashes = { package = "ggcat_hashes", path = "../hashes" }
+io = { package = "ggcat_io", path = "../io" }
+colors = { package = "ggcat_colors", path = "../colors" }
+structs = { package = "ggcat_structs", path = "../structs" }
+kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
+minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
+
+# Dependencies
+assembler_minimizer_bucketing = { package = "ggcat_assembler_minimizer_bucketing", path = "../assembler_minimizer_bucketing" }
+
+
+# Other crates
+hashbrown = "0.13.2"
+typenum = "1.16.0"
+crossbeam = "0.8.2"
+
+# Profiler
+instrumenter = "0.1.1"
+parking_lot = "0.12.1"
+
+[dev-dependencies]
+fdlimit = "0.2.1"
+rayon = "1.6.1"
+

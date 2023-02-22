@@ -1,0 +1,54 @@
+[package]
+name = "ggcat_assembler"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+
+# Config
+config = { package = "ggcat_config", path = "../config" }
+
+# Utils
+utils = { package = "ggcat_utils", path = "../utils" }
+
+
+# Static dispatch
+dynamic-dispatch = "0.4.1"
+
+# Common libraries
+parallel-processor = "0.1.6"
+streaming-libdeflate-rs = "0.1.3"
+nightly-quirks = "0.1.2"
+
+# Pipeline crates
+assembler_minimizer_bucketing = { package = "ggcat_assembler_minimizer_bucketing", path = "../assembler_minimizer_bucketing" }
+assembler_kmers_merge = { package = "ggcat_assembler_kmers_merge", path = "../assembler_kmers_merge" }
+kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
+
+
+# Common pipeline libraries
+hashes = { package = "ggcat_hashes", path = "../hashes" }
+io = { package = "ggcat_io", path = "../io" }
+colors = { package = "ggcat_colors", path = "../colors" }
+structs = { package = "ggcat_structs", path = "../structs" }
+
+
+# Matchtigs support
+matchtigs = "1.5.5"
+genome-graph = { version = "5.1.1", features = ["traitgraph-algo"] }
+traitgraph-algo = { version = "5.3.0", features = ["hashbrown_dijkstra_node_weight_array"] }
+
+
+# Other libraries
+typenum = "1.16.0"
+parking_lot = "0.12.1"
+fs_extra = "1.3.0"
+rayon = "1.6.1"
+hashbrown = "0.13.2"
+itertools = "0.10.5"
+byteorder = "1.4.3"
+serde = "1.0.152"
+bincode = "1.3.3"
+crossbeam = "0.8.2"
+
+[features]
+devel-build = ["assembler_minimizer_bucketing/devel-build"]

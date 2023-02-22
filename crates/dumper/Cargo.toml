@@ -1,0 +1,35 @@
+[package]
+name = "ggcat_dumper"
+version = "0.1.1"
+edition = "2021"
+[dependencies]
+
+# Config
+config = { package = "ggcat_config", path = "../config" }
+
+# Utils
+utils = { package = "ggcat_utils", path = "../utils" }
+
+# Common libraries
+parallel-processor = "0.1.6"
+streaming-libdeflate-rs = "0.1.3"
+nightly-quirks = "0.1.2"
+
+# Common pipeline libraries
+hashes = { package = "ggcat_hashes", path = "../hashes" }
+io = { package = "ggcat_io", path = "../io" }
+colors = { package = "ggcat_colors", path = "../colors" }
+structs = { package = "ggcat_structs", path = "../structs" }
+minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
+kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
+typenum = "1.16.0"
+rayon = "1.6.1"
+byteorder = "1.4.3"
+hashbrown = "0.13.2"
+csv = "1.2.0"
+parking_lot = "0.12.1"
+lz4 = "1.24.0"
+flate2 = "1.0.25"
+
+[features]
+devel-build = []

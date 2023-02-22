@@ -1,0 +1,21 @@
+[submodule "libs-crates/nightly-quirks-rs"]
+	path = libs-crates/nightly-quirks-rs
+	url = ../../Guilucand/nightly-quirks-rs.git
+[submodule "libs-crates/mt-debug-counters-rs"]
+	path = libs-crates/mt-debug-counters-rs
+	url = ../../Guilucand/mt-debug-counters-rs.git
+[submodule "libs-crates/streaming-libdeflate-rs"]
+	path = libs-crates/streaming-libdeflate-rs
+	url = ../../Guilucand/streaming-libdeflate-rs.git
+[submodule "libs-crates/papi-bindings-rs"]
+	path = libs-crates/papi-bindings-rs
+	url = ../../Guilucand/papi-bindings-rs.git
+[submodule "libs-crates/instrumenter-rs"]
+	path = libs-crates/instrumenter-rs
+	url = ../../Guilucand/instrumenter-rs.git
+[submodule "libs-crates/dynamic-dispatch-rs"]
+	path = libs-crates/dynamic-dispatch-rs
+	url = ../../Guilucand/dynamic-dispatch-rs.git
+[submodule "libs-crates/parallel-processor-rs"]
+	path = libs-crates/parallel-processor-rs
+	url = ../../Guilucand/parallel-processor-rs.git

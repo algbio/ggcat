@@ -1,0 +1,41 @@
+[package]
+name = "ggcat_colors"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+
+# Config
+config = { package = "ggcat_config", path = "../config" }
+
+# Static dispatch
+dynamic-dispatch = "0.4.1"
+
+# Common libraries
+parallel-processor = "0.1.6"
+streaming-libdeflate-rs = "0.1.3"
+nightly-quirks = "0.1.2"
+
+# Common pipeline libraries
+hashes = { package = "ggcat_hashes", path = "../hashes" }
+io = { package = "ggcat_io", path = "../io" }
+structs = { package = "ggcat_structs", path = "../structs" }
+
+# Other libraries
+typenum = "1.16.0"
+hashbrown = "0.13.2"
+dashmap = "5.4.0"
+byteorder = "1.4.3"
+siphasher = "0.3.10"
+desse = "0.2.1"
+replace_with = "0.1.7"
+bstr = "1.3.0"
+atoi = "2.0.0"
+crossbeam = "0.8.2"
+rayon = "1.6.1"
+rand = "0.8.5"
+roaring = "0.10.1"
+parking_lot = "0.12.1"
+serde = "1.0.152"
+lz4 = "1.24.0"
+bincode = "1.3.3"
+itertools = "0.10.5"

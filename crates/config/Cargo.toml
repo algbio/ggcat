@@ -1,0 +1,9 @@
+[package]
+name = "ggcat_config"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+
+
+# Common libraries
+parallel-processor = "0.1.6"
