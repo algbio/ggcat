@@ -86,4 +86,12 @@ default-members = ["crates/cmdline", "crates/api"]
 debug = false
 strip = true
 lto = "thin"
+
+
+[profile.with_debug]
+inherits = "release"
+debug = true
+strip = false
+lto = "thin"
+
 # split-debuginfo = "packed"
