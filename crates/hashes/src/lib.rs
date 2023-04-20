@@ -1,5 +1,6 @@
 #![feature(type_alias_impl_trait)]
 #![feature(const_type_id)]
+#![feature(impl_trait_in_assoc_type)]
 
 use dynamic_dispatch::dynamic_dispatch;
 

@@ -1,5 +1,6 @@
 #![feature(type_alias_impl_trait)]
 #![feature(drain_filter)]
+#![feature(impl_trait_in_assoc_type)]
 
 mod reader;
 
