@@ -65,7 +65,7 @@ impl<T: Copy, P: ChunksWriter<TargetData = T>> AsyncSliceQueue<T, P> {
     ) -> Self {
         let (sender, receiver) = crossbeam::channel::bounded(max_slices_buffers_count);
 
-        for _ in 1..max_slices_buffers_count {
+        for _ in 0..max_slices_buffers_count {
             sender
                 .send(Vec::with_capacity(slices_buffers_size))
                 .unwrap();

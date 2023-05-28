@@ -12,7 +12,7 @@ use parallel_processor::mt_debug_counters::declare_counter_i64;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use utils::track;
 
 pub struct KmersTransformProcessor<F: KmersTransformExecutorFactory>(PhantomData<F>);
@@ -95,7 +95,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
 
                 packet = map_processor.process_group_finalize(&global_context.global_extra_data);
 
-                static MAX_PACKET_SIZE: AtomicUsize = AtomicUsize::new(0);
+                // static MAX_PACKET_SIZE: AtomicUsize = AtomicUsize::new(0);
                 let current_size = packet.get_size();
 
                 if real_size != proc_info.sequences_count {

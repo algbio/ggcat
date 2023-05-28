@@ -26,9 +26,9 @@ To build a colored graph, add the `-c` flag to the above commands
 
 To build links between maximal unitigs in BCALM2 like format, use the `-e` flag
 
-#### Building matchtigs
+#### Building minimum-plain text representations of kmer sets
 
-To build greedy matchtigs, use the `-g` flag, also both `--eulertigs` and `--pathtigs` are supported
+Unitigs are a plain-text representation of the set of kmers in the input reads / genomes, but not of minimum size. GGCAT integrates the [matchtigs & eulertigs](https://github.com/algbio/matchtigs) libraries. These libraries assume a set of maximal unitigs as input, and compute such minimum representations, allowing or forbidding repetitions of kmers, respectively. To build greedy matchtigs, use the `-g` flag; to build eulertigs, use the `--eulertigs` flag; to build a greedy version of eulertigs, use the `--pathtigs` flag.
 
 Here are all listed the available options for graph building:
 

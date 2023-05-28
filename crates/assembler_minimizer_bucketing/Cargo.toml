@@ -8,11 +8,11 @@ edition = "2021"
 config = { package = "ggcat_config", path = "../config" }
 
 # Common libraries
-parallel-processor = "0.1.6"
-streaming-libdeflate-rs = "0.1.3"
+parallel-processor = "0.1.8"
+streaming-libdeflate-rs = "0.1.5"
 
 # Static dispatch
-dynamic-dispatch = "0.4.1"
+dynamic-dispatch = "0.4.3"
 
 # Common pipeline libraries
 hashes = { package = "ggcat_hashes", path = "../hashes" }
