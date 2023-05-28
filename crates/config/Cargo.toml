@@ -6,4 +6,4 @@ edition = "2021"
 
 
 # Common libraries
-parallel-processor = "0.1.7"
+parallel-processor = "0.1.8"

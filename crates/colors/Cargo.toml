@@ -8,11 +8,11 @@ edition = "2021"
 config = { package = "ggcat_config", path = "../config" }
 
 # Static dispatch
-dynamic-dispatch = "0.4.1"
+dynamic-dispatch = "0.4.3"
 
 # Common libraries
-parallel-processor = "0.1.7"
-streaming-libdeflate-rs = "0.1.3"
+parallel-processor = "0.1.8"
+streaming-libdeflate-rs = "0.1.5"
 nightly-quirks = "0.1.2"
 
 # Common pipeline libraries
@@ -28,14 +28,14 @@ byteorder = "1.4.3"
 siphasher = "0.3.10"
 desse = "0.2.1"
 replace_with = "0.1.7"
-bstr = "1.3.0"
+bstr = "1.4.0"
 atoi = "2.0.0"
 crossbeam = "0.8.2"
-rayon = "1.6.1"
+rayon = "1.7.0"
 rand = "0.8.5"
 roaring = "0.10.1"
 parking_lot = "0.12.1"
-serde = "1.0.152"
+serde = "1.0.160"
 lz4 = "1.24.0"
 bincode = "1.3.3"
 itertools = "0.10.5"
