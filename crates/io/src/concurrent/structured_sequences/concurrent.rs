@@ -3,6 +3,8 @@ use crate::concurrent::structured_sequences::{
 };
 use utils::vec_slice::VecSlice;
 
+use super::SequenceAbundance;
+
 pub struct FastaWriterConcurrentBuffer<
     'a,
     ColorInfo: IdentSequenceWriter,
@@ -10,7 +12,7 @@ pub struct FastaWriterConcurrentBuffer<
     Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
 > {
     target: &'a StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>,
-    sequences: Vec<(VecSlice<u8>, ColorInfo, LinksInfo)>,
+    sequences: Vec<(VecSlice<u8>, ColorInfo, LinksInfo, SequenceAbundance)>,
     seq_buf: Vec<u8>,
     extra_buffers: (ColorInfo::TempBuffer, LinksInfo::TempBuffer),
     temp_buffer: Backend::SequenceTempBuffer,
@@ -51,7 +53,9 @@ impl<
             self.current_index.map(|c| c - self.sequences.len() as u64),
             self.sequences
                 .drain(..)
-                .map(|(slice, col, link)| (slice.get_slice(&self.seq_buf), col, link)),
+                .map(|(slice, col, link, abundance)| {
+                    (slice.get_slice(&self.seq_buf), col, link, abundance)
+                }),
             &self.extra_buffers,
         );
 
@@ -75,6 +79,7 @@ impl<
         color_extra_buffer: &ColorInfo::TempBuffer,
         links: LinksInfo,
         links_extra_buffer: &LinksInfo::TempBuffer,
+        abundance: SequenceAbundance,
     ) -> Option<u64> {
         let mut result = None;
 
@@ -96,6 +101,7 @@ impl<
             VecSlice::new_extend(&mut self.seq_buf, sequence),
             color,
             links,
+            abundance,
         ));
 
         if let Some(current_index) = &mut self.current_index {

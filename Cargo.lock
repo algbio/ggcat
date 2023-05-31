@@ -1449,6 +1449,7 @@ name = "ggcat_structs"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "byteorder",
  "ggcat_config",
  "ggcat_io",
  "parallel-processor",
@@ -2042,7 +2043,7 @@ dependencies = [
 
 [[package]]
 name = "parallel-processor"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "backtrace",
  "bincode",

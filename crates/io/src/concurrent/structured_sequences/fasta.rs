@@ -8,6 +8,8 @@ use std::io::{BufWriter, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
+use super::SequenceAbundance;
+
 pub struct FastaWriter<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> {
     writer: Box<dyn Write>,
     path: PathBuf,
@@ -87,6 +89,7 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
     }
 
     fn write_sequence(
+        k: usize,
         buffer: &mut Self::SequenceTempBuffer,
         sequence_index: u64,
         sequence: &[u8],
@@ -94,8 +97,18 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
         color_info: ColorInfo,
         links_info: LinksInfo,
         extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
+
+        abundance: SequenceAbundance,
     ) {
-        write!(buffer, ">{} LN:i:{}", sequence_index, sequence.len()).unwrap();
+        write!(
+            buffer,
+            ">{} LN:i:{} KC:i:{} km:f:{:.1}",
+            sequence_index,
+            sequence.len(),
+            abundance.sum,
+            abundance.sum as f64 / (sequence.len() - k + 1) as f64
+        )
+        .unwrap();
         color_info.write_as_ident(buffer, &extra_buffers.0);
         links_info.write_as_ident(buffer, &extra_buffers.1);
         buffer.extend_from_slice(b"\n");

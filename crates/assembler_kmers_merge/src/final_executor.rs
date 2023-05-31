@@ -1,4 +1,5 @@
 use crate::map_processor::ParallelKmersMergeMapPacket;
+use crate::structs::PartialUnitigExtraData;
 use crate::{GlobalMergeData, ParallelKmersMergeFactory, ResultsBucket};
 use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::{color_types, ColorsManager};
@@ -19,6 +20,7 @@ use parallel_processor::execution_manager::packet::Packet;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use structs::map_entry::MapEntry;
+use structs::unitigs_counters::UnitigsCounters;
 use utils::Utils;
 
 local_setup_instrumenter!();
@@ -240,6 +242,12 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             );
             rhentry.set_used();
 
+            let mut counters = UnitigsCounters {
+                first: 0,
+                sum: 0,
+                last: 0,
+            };
+
             let mut try_extend_function = |output: &mut Vec<u8>,
                                            compute_hash_fw: fn(
                 hash: MH::HashTypeExtendable,
@@ -265,6 +273,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                 return 'ext_loop: loop {
                     let mut count = 0;
                     current_hash = temp_data.0;
+                    let mut multiplicity = 0;
                     for idx in 0..4 {
                         let new_hash = compute_hash_fw(
                             current_hash,
@@ -275,6 +284,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                         if let Some(hash) = map_struct.rhash_map.get(&new_hash.to_unextendable()) {
                             if hash.get_kmer_multiplicity() >= global_data.min_multiplicity {
                                 // println!("Forward match extend read {:x?}!", new_hash);
+                                multiplicity = hash.get_kmer_multiplicity() as u64;
                                 count += 1;
                                 temp_data = (new_hash, idx);
                             }
@@ -323,6 +333,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                         entryref.set_used();
 
                         output.push(Utils::decompress_base(temp_data.1));
+                        if counters.first == 0 {
+                            counters.first = multiplicity;
+                        }
+                        counters.sum += multiplicity;
+                        counters.last = multiplicity;
 
                         // Found a continuation into another bucket
                         let contig_break = (entryref.get_flags() == READ_FLAG_INCL_BEGIN)
@@ -376,7 +391,9 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                     &mut self.temp_color_buffer,
                 );
 
-            let read_index = current_bucket.add_read(colors, out_seq, &self.temp_color_buffer);
+            let extra_data = PartialUnitigExtraData { colors, counters };
+
+            let read_index = current_bucket.add_read(extra_data, out_seq, &self.temp_color_buffer);
 
             color_types::PartialUnitigsColorStructure::<H, MH, CX>::clear_temp_buffer(
                 &mut self.temp_color_buffer,

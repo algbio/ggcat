@@ -1,4 +1,4 @@
-#![feature(slice_group_by, type_alias_impl_trait)]
+#![feature(slice_group_by)]
 #![feature(impl_trait_in_assoc_type)]
 
 use crate::pipeline::build_unitigs::build_unitigs;
@@ -338,26 +338,32 @@ pub fn run_assembler<
         MemoryFs::free_memory();
     }
 
-    let final_unitigs_file = StructuredSequenceWriter::new(match output_file.extension() {
-        Some(ext) => match ext.to_string_lossy().to_string().as_str() {
-            "lz4" => FastaWriter::new_compressed_lz4(&output_file, 2),
-            "gz" => FastaWriter::new_compressed_gzip(&output_file, 2),
-            _ => FastaWriter::new_plain(&output_file),
+    let final_unitigs_file = StructuredSequenceWriter::new(
+        match output_file.extension() {
+            Some(ext) => match ext.to_string_lossy().to_string().as_str() {
+                "lz4" => FastaWriter::new_compressed_lz4(&output_file, 2),
+                "gz" => FastaWriter::new_compressed_gzip(&output_file, 2),
+                _ => FastaWriter::new_plain(&output_file),
+            },
+            None => FastaWriter::new_plain(&output_file),
         },
-        None => FastaWriter::new_plain(&output_file),
-    });
+        k,
+    );
 
     // Temporary file to store maximal unitigs data without links info, if further processing is requested
     let compressed_temp_unitigs_file =
         if generate_maximal_unitigs_links || compute_tigs_mode.is_some() {
-            Some(StructuredSequenceWriter::new(StructSeqBinaryWriter::new(
-                temp_dir.join("maximal_unitigs.tmp"),
-                &(
-                    get_memory_mode(SwapPriority::FinalMaps as usize),
-                    CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
-                    get_compression_level_info(),
+            Some(StructuredSequenceWriter::new(
+                StructSeqBinaryWriter::new(
+                    temp_dir.join("maximal_unitigs.tmp"),
+                    &(
+                        get_memory_mode(SwapPriority::FinalMaps as usize),
+                        CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
+                        get_compression_level_info(),
+                    ),
                 ),
-            )))
+                k,
+            ))
         } else {
             None
         };
@@ -471,7 +477,7 @@ pub fn run_assembler<
                 >(
                     temp_path,
                     temp_dir.as_path(),
-                    &StructuredSequenceWriter::new(matchtigs_backend),
+                    &StructuredSequenceWriter::new(matchtigs_backend, k),
                     k,
                 );
 
@@ -479,15 +485,17 @@ pub fn run_assembler<
             } else if generate_maximal_unitigs_links {
                 final_unitigs_file.finalize();
 
-                let final_unitigs_file =
-                    StructuredSequenceWriter::new(match output_file.extension() {
+                let final_unitigs_file = StructuredSequenceWriter::new(
+                    match output_file.extension() {
                         Some(ext) => match ext.to_string_lossy().to_string().as_str() {
                             "lz4" => FastaWriter::new_compressed_lz4(&output_file, 2),
                             "gz" => FastaWriter::new_compressed_gzip(&output_file, 2),
                             _ => FastaWriter::new_plain(&output_file),
                         },
                         None => FastaWriter::new_plain(&output_file),
-                    });
+                    },
+                    k,
+                );
 
                 build_maximal_unitigs_links::<
                     BucketingHash,

@@ -1,3 +1,4 @@
+use assembler_kmers_merge::structs::PartialUnitigExtraData;
 use config::{
     get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
     DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
@@ -6,13 +7,16 @@ use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory
 use io::concurrent::temp_reads::creads_utils::{
     CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
 };
+use structs::unitigs_counters::UnitigsCounters;
 
 use crate::structs::link_mapping::{LinkMapping, LinkMappingSerializer};
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::{color_types, ColorsManager};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
-use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
+use io::concurrent::structured_sequences::{
+    SequenceAbundance, StructuredSequenceBackend, StructuredSequenceWriter,
+};
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataConsecutiveCompression, SequenceExtraDataOwned,
     SequenceExtraDataTempBufferManagement,
@@ -40,7 +44,8 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub struct ReorganizedReadsExtraData<CX: SequenceExtraDataConsecutiveCompression> {
     pub unitig: UnitigIndex,
-    pub color: CX,
+    pub colors: CX,
+    pub counters: UnitigsCounters,
 }
 
 #[repr(transparent)]
@@ -80,10 +85,11 @@ impl<CX: SequenceExtraDataConsecutiveCompression> SequenceExtraDataTempBufferMan
         src: &ReorganizedReadsBuffer<CX>,
         dst: &mut ReorganizedReadsBuffer<CX>,
     ) -> Self {
-        let changed_color = CX::copy_extra_from(extra.color, &src.0, &mut dst.0);
+        let changed_color = CX::copy_extra_from(extra.colors, &src.0, &mut dst.0);
         Self {
             unitig: extra.unitig,
-            color: changed_color,
+            colors: changed_color,
+            counters: extra.counters,
         }
     }
 }
@@ -101,7 +107,8 @@ impl<CX: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCo
     ) -> Option<Self> {
         Some(Self {
             unitig: UnitigIndex::decode(&mut reader, ())?,
-            color: CX::decode_extended(&mut buffer.0, &mut reader, last_data)?,
+            colors: CX::decode_extended(&mut buffer.0, &mut reader, last_data)?,
+            counters: <UnitigsCounters as SequenceExtraData>::decode_extended(&mut (), reader)?,
         })
     }
 
@@ -113,17 +120,24 @@ impl<CX: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCo
         last_data: Self::LastData,
     ) {
         self.unitig.encode(&mut writer, ());
-        self.color
+        self.colors
             .encode_extended(&buffer.0, &mut writer, last_data);
+        <UnitigsCounters as SequenceExtraData>::encode_extended(
+            &self.counters,
+            &mut (),
+            &mut writer,
+        );
     }
 
     #[inline(always)]
     fn max_size(&self) -> usize {
-        SequenceExtraData::max_size(&self.unitig) + self.color.max_size()
+        SequenceExtraData::max_size(&self.unitig)
+            + self.colors.max_size()
+            + <UnitigsCounters as SequenceExtraData>::max_size(&self.counters)
     }
 
     fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
-        self.color.obtain_last_data(last_data)
+        self.colors.obtain_last_data(last_data)
     }
 }
 
@@ -213,13 +227,13 @@ pub fn reorganize_reads<
             DEFAULT_PREFETCH_AMOUNT,
         )
         .decode_all_bucket_items::<CompressedReadsBucketDataSerializer<
-            color_types::PartialUnitigsColorStructure<H, MH, CX>,
+            PartialUnitigExtraData<color_types::PartialUnitigsColorStructure<H, MH, CX>>,
             typenum::U0,
             false,
         >, _>(
             Vec::new(),
             &mut colors_buffer,
-            |(_, _, color, seq), color_buffer| {
+            |(_, _, PartialUnitigExtraData { colors, counters }, seq), color_buffer| {
                 if seq.bases_count() > decompress_buffer.len() {
                     decompress_buffer.resize(seq.bases_count(), 0);
                 }
@@ -233,7 +247,8 @@ pub fn reorganize_reads<
                         mappings[map_index].bucket,
                         &ReorganizedReadsExtraData {
                             unitig: UnitigIndex::new(bucket_index, index as usize, false),
-                            color,
+                            colors,
+                            counters,
                         },
                         ReorganizedReadsBuffer::from_inner(color_buffer),
                         &CompressedReadsBucketData::new(seq, 0, 0),
@@ -242,7 +257,19 @@ pub fn reorganize_reads<
                 } else {
                     // No mapping, write unitig to file
 
-                    tmp_lonely_unitigs_buffer.add_read(seq, None, color, color_buffer, (), &());
+                    tmp_lonely_unitigs_buffer.add_read(
+                        seq,
+                        None,
+                        colors,
+                        color_buffer,
+                        (),
+                        &(),
+                        SequenceAbundance {
+                            first: counters.first,
+                            sum: counters.sum,
+                            last: counters.last,
+                        },
+                    );
 
                     // write_fasta_entry::<H, MH, CX, _>(
                     //     &mut fasta_temp_buffer,

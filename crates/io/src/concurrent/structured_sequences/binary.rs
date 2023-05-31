@@ -19,6 +19,8 @@ use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
+use super::SequenceAbundance;
+
 pub struct StructSeqBinaryWriter<
     ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
     LinksInfo: IdentSequenceWriter + SequenceExtraData,
@@ -62,7 +64,7 @@ impl<
 }
 
 impl<CX: SequenceExtraDataTempBufferManagement, LX: SequenceExtraDataTempBufferManagement>
-    SequenceExtraDataTempBufferManagement for (u64, CX, LX)
+    SequenceExtraDataTempBufferManagement for (u64, CX, LX, SequenceAbundance)
 {
     type TempBuffer = (CX::TempBuffer, LX::TempBuffer);
 
@@ -85,15 +87,15 @@ impl<CX: SequenceExtraDataTempBufferManagement, LX: SequenceExtraDataTempBufferM
         src: &(CX::TempBuffer, LX::TempBuffer),
         dst: &mut Self::TempBuffer,
     ) -> Self {
-        let (index, cx, lx) = extra;
+        let (index, cx, lx, abundance) = extra;
         let cx = CX::copy_extra_from(cx, &src.0, &mut dst.0);
         let lx = LX::copy_extra_from(lx, &src.1, &mut dst.1);
-        (index, cx, lx)
+        (index, cx, lx, abundance)
     }
 }
 
 impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
-    SequenceExtraDataConsecutiveCompression for (u64, CX, LX)
+    SequenceExtraDataConsecutiveCompression for (u64, CX, LX, SequenceAbundance)
 {
     type LastData = CX::LastData;
 
@@ -103,11 +105,19 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
         last_data: Self::LastData,
     ) -> Option<Self> {
         let index = decode_varint(|| reader.read_u8().ok())?;
+        let abundance_first = decode_varint(|| reader.read_u8().ok())?;
+        let abundance_sum = decode_varint(|| reader.read_u8().ok())?;
+        let abundance_last = decode_varint(|| reader.read_u8().ok())?;
 
         Some((
             index,
             CX::decode_extended(&mut buffer.0, reader, last_data)?,
             LX::decode_extended(&mut buffer.1, reader)?,
+            SequenceAbundance {
+                first: abundance_first,
+                sum: abundance_sum,
+                last: abundance_last,
+            },
         ))
     }
 
@@ -118,12 +128,16 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
         last_data: Self::LastData,
     ) {
         encode_varint(|b| writer.write_all(b).ok(), self.0).unwrap();
+        encode_varint(|b| writer.write_all(b).ok(), self.3.first).unwrap();
+        encode_varint(|b| writer.write_all(b).ok(), self.3.sum).unwrap();
+        encode_varint(|b| writer.write_all(b).ok(), self.3.last).unwrap();
+
         self.1.encode_extended(&buffer.0, writer, last_data);
         self.2.encode_extended(&buffer.1, writer);
     }
 
     fn max_size(&self) -> usize {
-        VARINT_MAX_SIZE + self.1.max_size() + self.2.max_size()
+        VARINT_MAX_SIZE * 4 + self.1.max_size() + self.2.max_size()
     }
 
     fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
@@ -140,7 +154,7 @@ impl<
     type SequenceTempBuffer = (
         Vec<u8>,
         CompressedReadsBucketDataSerializer<
-            (u64, ColorInfo, LinksInfo),
+            (u64, ColorInfo, LinksInfo, SequenceAbundance),
             typenum::consts::U0,
             false,
         >,
@@ -154,6 +168,7 @@ impl<
     }
 
     fn write_sequence(
+        _k: usize,
         buffer: &mut Self::SequenceTempBuffer,
         sequence_index: u64,
         sequence: &[u8],
@@ -161,11 +176,13 @@ impl<
         color_info: ColorInfo,
         links_info: LinksInfo,
         extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
+
+        abundance: SequenceAbundance,
     ) {
         buffer.1.write_to(
             &CompressedReadsBucketData::new(sequence, 0, 0),
             &mut buffer.0,
-            &(sequence_index, color_info, links_info),
+            &(sequence_index, color_info, links_info, abundance),
             &extra_buffers,
         );
     }

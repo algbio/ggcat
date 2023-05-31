@@ -1,12 +1,16 @@
-use io::concurrent::temp_reads::extra_data::{HasEmptyExtraBuffer, SequenceExtraData};
+use byteorder::ReadBytesExt;
+use io::{
+    concurrent::temp_reads::extra_data::{HasEmptyExtraBuffer, SequenceExtraData},
+    varint::{decode_varint, encode_varint, VARINT_MAX_SIZE},
+};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct UnitigsCounters {
-    first: u64,
-    sum: u64,
-    last: u64,
+    pub first: u64,
+    pub sum: u64,
+    pub last: u64,
 }
 
 impl UnitigsCounters {
@@ -29,43 +33,28 @@ impl UnitigsCounters {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct UnitigsCountersSerializer;
+impl HasEmptyExtraBuffer for UnitigsCounters {}
 
-impl HasEmptyExtraBuffer for UnitigsCountersSerializer {}
-
-impl SequenceExtraData for UnitigsCountersSerializer {
-    fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
-        // let start = buffer.colors.len();
-
-        // let colors_count = decode_varint(|| reader.read_u8().ok())?;
-
-        // for _ in 0..colors_count {
-        //     buffer.colors.push((
-        //         decode_varint(|| reader.read_u8().ok())? as ColorIndexType,
-        //         decode_varint(|| reader.read_u8().ok())?,
-        //     ));
-        // }
-        // Some(Self {
-        //     slice: start..buffer.colors.len(),
-        // })
-        todo!()
+impl SequenceExtraData for UnitigsCounters {
+    fn decode_extended(_: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
+        // let first = decode_varint(|| reader.read_u8().ok())?;
+        let sum = decode_varint(|| reader.read_u8().ok())?;
+        let last = decode_varint(|| reader.read_u8().ok())?;
+        Some(Self {
+            first: 0,
+            sum: 0,
+            last: 0,
+        })
     }
 
-    fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write) {
-        // let colors_count = self.slice.end - self.slice.start;
-        // encode_varint(|b| writer.write_all(b), colors_count as u64).unwrap();
-
-        // for i in self.slice.clone() {
-        //     let el = buffer.colors[i];
-        //     encode_varint(|b| writer.write_all(b), el.0 as u64).unwrap();
-        //     encode_varint(|b| writer.write_all(b), el.1).unwrap();
-        // }
+    fn encode_extended(&self, _: &Self::TempBuffer, writer: &mut impl Write) {
+        // encode_varint(|b| writer.write(b).ok(), self.first).unwrap();
+        encode_varint(|b| writer.write(b).ok(), self.sum).unwrap();
+        encode_varint(|b| writer.write(b).ok(), self.last).unwrap();
     }
 
     #[inline(always)]
     fn max_size(&self) -> usize {
-        todo!()
-        // (2 * (self.slice.end - self.slice.start) + 1) * VARINT_MAX_SIZE
+        3 * VARINT_MAX_SIZE
     }
 }

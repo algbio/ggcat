@@ -7,7 +7,9 @@ use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
-use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
+use io::concurrent::structured_sequences::{
+    SequenceAbundance, StructuredSequenceBackend, StructuredSequenceWriter,
+};
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::get_bucket_index;
@@ -200,7 +202,8 @@ pub fn build_unitigs<
                         final_sequences[findex] = Some((
                             CompressedReadIndipendent::from_read(&seq, &mut temp_storage),
                             unitig_info,
-                            index.color,
+                            index.colors,
+                            index.counters,
                         ));
                     },
                 );
@@ -220,6 +223,11 @@ pub fn build_unitigs<
                     CX::ColorsMergeManagerType::<H, MH>::reset_unitig_color_structure(
                         &mut final_unitig_color,
                     );
+                    let mut abundance = SequenceAbundance {
+                        first: 0,
+                        sum: 0,
+                        last: 0,
+                    };
 
                     let mut is_first = true;
 
@@ -228,7 +236,7 @@ pub fn build_unitigs<
                     } else {
                         itertools::Either::Left(sequence.iter())
                     } {
-                        let (read, FinalUnitigInfo { flags, .. }, color) = upart.as_ref().unwrap();
+                        let (read, FinalUnitigInfo { flags, .. }, color, counters) = upart.as_ref().unwrap();
 
                         let compr_read = read.as_reference(&temp_storage);
                         if compr_read.bases_count() == 0 {
@@ -252,6 +260,8 @@ pub fn build_unitigs<
                                     0,
                                 );
                             }
+                            abundance.first = counters.first;
+                            abundance.sum += counters.sum;
                             is_first = false;
                         } else {
                             if flags.is_reverse_complemented() {
@@ -267,6 +277,7 @@ pub fn build_unitigs<
                                     &color_extra_buffer.0,
                                     1,
                                 );
+                                abundance.sum += counters.sum - counters.last;
                             } else {
                                 temp_sequence.extend(
                                     compr_read
@@ -280,8 +291,10 @@ pub fn build_unitigs<
                                     &color_extra_buffer.0,
                                     1,
                                 );
+                                abundance.sum += counters.sum - counters.first;
                             }
                         }
+                        abundance.last = counters.last;
                     }
 
                     // In case of circular unitigs, remove an extra ending base
@@ -303,6 +316,7 @@ pub fn build_unitigs<
                         &final_color_extra_buffer,
                         (),
                         &(),
+                        abundance,
                     );
 
                     // write_fasta_entry::<H, MH, CX, _>(

@@ -31,6 +31,13 @@ impl IdentSequenceWriter for () {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct SequenceAbundance {
+    pub first: u64,
+    pub sum: u64,
+    pub last: u64,
+}
+
 pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>:
     Sync + Send
 {
@@ -39,6 +46,7 @@ pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: I
     fn alloc_temp_buffer() -> Self::SequenceTempBuffer;
 
     fn write_sequence(
+        k: usize,
         buffer: &mut Self::SequenceTempBuffer,
         sequence_index: u64,
         sequence: &[u8],
@@ -46,6 +54,8 @@ pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: I
         color_info: ColorInfo,
         links_info: LinksInfo,
         extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
+
+        abundance: SequenceAbundance,
     );
 
     fn get_path(&self) -> PathBuf;
@@ -61,6 +71,7 @@ pub struct StructuredSequenceWriter<
     Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
 > {
     current_index: Mutex<(u64, u64)>,
+    k: usize,
     backend: Mutex<Backend>,
     index_condvar: Condvar,
     _phantom: PhantomData<(ColorInfo, LinksInfo, Backend)>,
@@ -72,9 +83,10 @@ impl<
         Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
     > StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>
 {
-    pub fn new(backend: Backend) -> Self {
+    pub fn new(backend: Backend, k: usize) -> Self {
         Self {
             current_index: Mutex::new((0, 0)),
+            k,
             backend: Mutex::new(backend),
             index_condvar: Condvar::new(),
             _phantom: PhantomData,
@@ -85,7 +97,7 @@ impl<
         &self,
         buffer: &mut Backend::SequenceTempBuffer,
         first_index: Option<u64>,
-        sequences: impl ExactSizeIterator<Item = (&'a [u8], ColorInfo, LinksInfo)>,
+        sequences: impl ExactSizeIterator<Item = (&'a [u8], ColorInfo, LinksInfo, SequenceAbundance)>,
         extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
     ) -> u64 {
         let sequences_count = sequences.len() as u64;
@@ -104,14 +116,16 @@ impl<
 
         let mut current_index = start_sequence_index;
         // Write the sequences to a temporary buffer
-        for (sequence, color_info, links_info) in sequences {
+        for (sequence, color_info, links_info, abundance) in sequences {
             Backend::write_sequence(
+                self.k,
                 buffer,
                 current_index,
                 sequence,
                 color_info,
                 links_info,
                 extra_buffers,
+                abundance,
             );
             current_index += 1;
         }
