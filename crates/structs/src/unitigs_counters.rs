@@ -37,18 +37,14 @@ impl HasEmptyExtraBuffer for UnitigsCounters {}
 
 impl SequenceExtraData for UnitigsCounters {
     fn decode_extended(_: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
-        // let first = decode_varint(|| reader.read_u8().ok())?;
+        let first = decode_varint(|| reader.read_u8().ok())?;
         let sum = decode_varint(|| reader.read_u8().ok())?;
         let last = decode_varint(|| reader.read_u8().ok())?;
-        Some(Self {
-            first: 0,
-            sum: 0,
-            last: 0,
-        })
+        Some(Self { first, sum, last })
     }
 
     fn encode_extended(&self, _: &Self::TempBuffer, writer: &mut impl Write) {
-        // encode_varint(|b| writer.write(b).ok(), self.first).unwrap();
+        encode_varint(|b| writer.write(b).ok(), self.first).unwrap();
         encode_varint(|b| writer.write(b).ok(), self.sum).unwrap();
         encode_varint(|b| writer.write(b).ok(), self.last).unwrap();
     }
