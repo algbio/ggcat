@@ -1,4 +1,3 @@
-#![feature(panic_info_message)]
 #![cfg_attr(test, feature(test))]
 
 extern crate alloc;
@@ -396,9 +395,6 @@ fn main() {
 
         if let Some(location) = info.location() {
             let _ = writeln!(err_lock, "Thread panicked at location: {}", location);
-        }
-        if let Some(message) = info.message() {
-            let _ = writeln!(err_lock, "Error message: {}", message);
         }
         if let Some(s) = info.payload().downcast_ref::<&str>() {
             let _ = writeln!(err_lock, "Panic payload: {:?}", s);
