@@ -9,6 +9,7 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataOwned,
 };
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
@@ -190,12 +191,13 @@ pub fn counters_sorting<CX: ColorsManager>(
 
         fast_smart_radix_sort::<_, CountersCompare, false>(&mut counters_vec[..]);
 
-        for query_results in counters_vec.group_by_mut(|a, b| a.0.query_index == b.0.query_index) {
+        for query_results in counters_vec.nq_group_by_mut(|a, b| a.0.query_index == b.0.query_index)
+        {
             query_results.sort_unstable_by(|x, y| x.1.cmp(&y.1));
             let query_index = query_results[0].0.query_index;
 
             if CX::COLORS_ENABLED {
-                for entry in query_results.group_by(|a, b| a.1 == b.1) {
+                for entry in query_results.nq_group_by(|a, b| a.1 == b.1) {
                     let color = entry[0].1.clone();
                     colored_buckets_writer.add_element(
                         CX::get_bucket_from_color(&color, colors_count, buckets_count_log),

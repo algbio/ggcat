@@ -12,6 +12,7 @@ use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerialize
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::get_bucket_index;
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLinkSerializer};
+use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
@@ -211,7 +212,7 @@ pub fn build_unitigs<
                     CX::ColorsMergeManagerType::<H, MH>::alloc_unitig_color_structure();
 
                 'uloop: for sequence in
-                    final_sequences.group_by(|_a, b| !b.as_ref().unwrap().1.is_start)
+                    final_sequences.nq_group_by(|_a, b| !b.as_ref().unwrap().1.is_start)
                 {
                     let is_backwards = !sequence[0].as_ref().unwrap().1.flags.is_forward();
                     let is_circular = sequence[0].as_ref().unwrap().1.is_circular;

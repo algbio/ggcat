@@ -9,6 +9,7 @@ use config::{
 use flate2::Compression;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::get_bucket_index;
+use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
@@ -210,7 +211,7 @@ pub fn colored_query_output<
                     }
                     temp_colors_list.sort_unstable_by_key(|r| r.0);
 
-                    for (i, qc) in temp_colors_list.group_by(|a, b| a.0 == b.0).enumerate() {
+                    for (i, qc) in temp_colors_list.nq_group_by(|a, b| a.0 == b.0).enumerate() {
                         let color_index = qc[0].0;
                         let color_presence = qc.iter().map(|x| x.1).sum::<u64>();
 

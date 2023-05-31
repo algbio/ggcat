@@ -24,6 +24,7 @@ use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffe
 use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
@@ -258,7 +259,7 @@ pub fn build_maximal_unitigs_links<
 
             fast_smart_radix_sort::<_, MaximalHashCompare<MH>, false>(&mut hashes_vec[..]);
 
-            for x in hashes_vec.group_by_mut(|a, b| a.hash == b.hash) {
+            for x in hashes_vec.nq_group_by_mut(|a, b| a.hash == b.hash) {
                 if x.len() == 1 {
                     continue;
                 }

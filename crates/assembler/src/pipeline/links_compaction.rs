@@ -4,6 +4,7 @@ use config::{
 };
 use io::get_bucket_index;
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink, UnitigLinkSerializer};
+use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
@@ -113,7 +114,7 @@ pub fn links_compaction(
 
         let mut rem_links = 0;
 
-        for x in vec.group_by_mut(|a, b| a.entry() == b.entry()) {
+        for x in vec.nq_group_by_mut(|a, b| a.entry() == b.entry()) {
             current_unitigs_vec.clear();
 
             let (link1, link2) =

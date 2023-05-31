@@ -1,4 +1,4 @@
-#![feature(slice_group_by, type_alias_impl_trait)]
+#![feature(type_alias_impl_trait)]
 #![feature(impl_trait_in_assoc_type)]
 
 use crate::pipeline::build_unitigs::build_unitigs;

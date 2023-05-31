@@ -6,6 +6,7 @@ use colors::storage::ColorsSerializerTrait;
 use config::{ColorIndexType, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
+use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, FastSortable, SortKey};
@@ -96,7 +97,7 @@ pub fn colormap_reading<
 
         fast_smart_radix_sort::<_, ColoredUnitigsCompare<CX>, false>(&mut temp_sequences[..]);
 
-        for unitigs_by_color in temp_sequences.group_by_mut(|a, b| a.1 == b.1) {
+        for unitigs_by_color in temp_sequences.nq_group_by_mut(|a, b| a.1 == b.1) {
             let color = unitigs_by_color[0].1.color;
             temp_colors_buffer.clear();
             colormap_decoder.get_color_mappings(color, &mut temp_colors_buffer);

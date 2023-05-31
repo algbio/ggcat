@@ -1,4 +1,3 @@
-#![feature(slice_group_by)]
 #![feature(int_roundings)]
 
 use crate::pipeline::colored_query_output::colored_query_output;
