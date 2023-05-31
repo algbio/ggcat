@@ -77,13 +77,18 @@ impl<
         links_extra_buffer: &LinksInfo::TempBuffer,
     ) -> Option<u64> {
         let mut result = None;
+        let mut different_index = false;
 
-        if let Some(sequence_index) = sequence_index
-            && Some(sequence_index) != self.current_index {
-            result = Some(self.flush());
-            self.current_index = Some(sequence_index);
+        if let Some(sequence_index) = sequence_index {
+            if Some(sequence_index) != self.current_index {
+                result = Some(self.flush());
+                self.current_index = Some(sequence_index);
+                different_index = true;
+            }
         }
-        else if self.auto_flush && Self::will_overflow(&self.seq_buf, sequence.len()) {
+
+        if !different_index && self.auto_flush && Self::will_overflow(&self.seq_buf, sequence.len())
+        {
             result = Some(self.flush());
         }
 

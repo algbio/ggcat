@@ -159,19 +159,19 @@ impl SequencesReader {
                     intermediate[SEQ_STATE].extend_from_slice(line);
                 }
 
-                if let Some(copyback) = line_split_copyback &&
-                    (intermediate[SEQ_STATE].len() >= flush_size) {
-                    Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
-                    func(DnaSequence {
-                        ident_data: &intermediate[IDENT_STATE],
-                        seq: &intermediate[SEQ_STATE],
-                        format: DnaSequencesFileType::FASTQ
-                    });
-                    let copy_start = intermediate[SEQ_STATE].len() - copyback;
-                    intermediate[SEQ_STATE].copy_within(copy_start.., 0);
-                    intermediate[SEQ_STATE].truncate(copyback);
+                if let Some(copyback) = line_split_copyback {
+                    if intermediate[SEQ_STATE].len() >= flush_size {
+                        Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
+                        func(DnaSequence {
+                            ident_data: &intermediate[IDENT_STATE],
+                            seq: &intermediate[SEQ_STATE],
+                            format: DnaSequencesFileType::FASTQ,
+                        });
+                        let copy_start = intermediate[SEQ_STATE].len() - copyback;
+                        intermediate[SEQ_STATE].copy_within(copy_start.., 0);
+                        intermediate[SEQ_STATE].truncate(copyback);
+                    }
                 }
-
                 new_line = !partial;
             },
             remove_file,
