@@ -8,7 +8,7 @@ edition = "2021"
 config = { package = "ggcat_config", path = "../config" }
 
 # Common libraries
-parallel-processor = "0.1.8"
+parallel-processor = "0.1.10"
 streaming-libdeflate-rs = "0.1.5"
 nightly-quirks = "0.1.2"
 
