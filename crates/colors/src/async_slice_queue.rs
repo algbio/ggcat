@@ -2,6 +2,7 @@ use config::ColorIndexType;
 use crossbeam::channel::*;
 use crossbeam::queue::*;
 use io::chunks_writer::ChunksWriter;
+use nightly_quirks::utils::NightlyUtils;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use std::cell::UnsafeCell;
 use std::cmp::max;
@@ -88,7 +89,7 @@ impl<T: Copy, P: ChunksWriter<TargetData = T>> AsyncSliceQueue<T, P> {
 
     fn alloc_buffer(&self, min_length: usize) -> Arc<AsyncBuffer<T, P>> {
         let buffer = self.available_buffers.pop().unwrap_or_else(|| unsafe {
-            Box::new_zeroed_slice(max(min_length, self.buffer_min_size)).assume_init()
+            NightlyUtils::box_new_zeroed_slice_assume_init(max(min_length, self.buffer_min_size))
         });
 
         Arc::new(AsyncBuffer {

@@ -1,5 +1,4 @@
 #![feature(thread_local)]
-#![feature(new_uninit)]
 #![feature(slice_partition_dedup)]
 
 use crate::storage::run_length::RunLengthColorsSerializer;
