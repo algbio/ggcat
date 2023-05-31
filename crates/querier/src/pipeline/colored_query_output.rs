@@ -9,7 +9,7 @@ use config::{
 use flate2::Compression;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::get_bucket_index;
-use nightly_quirks::slice_group_by::SliceGroupBy;
+use nightly_quirks::prelude::*;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
@@ -68,7 +68,7 @@ pub fn colored_query_output<
     let buckets_count = colored_query_buckets.len();
 
     let max_bucket_queries_count = (((query_kmers_count.len() + 1) as u64)
-        .div_ceil(QUERIES_COUNT_MIN_BATCH)
+        .nq_div_ceil(QUERIES_COUNT_MIN_BATCH)
         * QUERIES_COUNT_MIN_BATCH) as usize;
 
     static OPS_COUNT: AtomicUsize = AtomicUsize::new(0);

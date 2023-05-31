@@ -9,6 +9,7 @@ use config::{
     DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE, QUERIES_COUNT_MIN_BATCH,
 };
+use nightly_quirks::prelude::*;
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
@@ -144,7 +145,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             // );
 
             let rounded_queries_count =
-                (queries_count + 1).div_ceil(QUERIES_COUNT_MIN_BATCH) * QUERIES_COUNT_MIN_BATCH;
+                (queries_count + 1).nq_div_ceil(QUERIES_COUNT_MIN_BATCH) * QUERIES_COUNT_MIN_BATCH;
 
             let get_query_bucket = |query_index: u64| {
                 ((query_index - 1) * (buckets_count as u64) / rounded_queries_count)

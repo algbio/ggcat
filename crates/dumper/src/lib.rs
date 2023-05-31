@@ -1,5 +1,3 @@
-#![feature(int_roundings)]
-
 use crate::pipeline::dumper_minimizer_bucketing::minimizer_bucketing;
 use colors::bundles::graph_querying::ColorBundleGraphQuerying;
 use colors::colors_manager::{ColorMapReader, ColorsManager, ColorsMergeManager};

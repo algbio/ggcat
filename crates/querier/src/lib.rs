@@ -1,5 +1,3 @@
-#![feature(int_roundings)]
-
 use crate::pipeline::colored_query_output::colored_query_output;
 use crate::pipeline::colormap_reading::colormap_reading;
 use crate::pipeline::counters_sorting::counters_sorting;
