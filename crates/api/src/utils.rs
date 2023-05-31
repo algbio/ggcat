@@ -31,27 +31,27 @@ pub(crate) fn get_hash_static_id(
         HashType::SeqHash => {
             if k <= 8 {
                 if forward_only {
-                    fw_seqhash::u16::ForwardSeqHashFactory::DYNAMIC_DISPATCH_ID
+                    fw_seqhash::u16::ForwardSeqHashFactory::dynamic_dispatch_id()
                 } else {
-                    cn_seqhash::u16::CanonicalSeqHashFactory::DYNAMIC_DISPATCH_ID
+                    cn_seqhash::u16::CanonicalSeqHashFactory::dynamic_dispatch_id()
                 }
             } else if k <= 16 {
                 if forward_only {
-                    fw_seqhash::u32::ForwardSeqHashFactory::DYNAMIC_DISPATCH_ID
+                    fw_seqhash::u32::ForwardSeqHashFactory::dynamic_dispatch_id()
                 } else {
-                    cn_seqhash::u32::CanonicalSeqHashFactory::DYNAMIC_DISPATCH_ID
+                    cn_seqhash::u32::CanonicalSeqHashFactory::dynamic_dispatch_id()
                 }
             } else if k <= 32 {
                 if forward_only {
-                    fw_seqhash::u64::ForwardSeqHashFactory::DYNAMIC_DISPATCH_ID
+                    fw_seqhash::u64::ForwardSeqHashFactory::dynamic_dispatch_id()
                 } else {
-                    cn_seqhash::u64::CanonicalSeqHashFactory::DYNAMIC_DISPATCH_ID
+                    cn_seqhash::u64::CanonicalSeqHashFactory::dynamic_dispatch_id()
                 }
             } else if k <= 64 {
                 if forward_only {
-                    fw_seqhash::u128::ForwardSeqHashFactory::DYNAMIC_DISPATCH_ID
+                    fw_seqhash::u128::ForwardSeqHashFactory::dynamic_dispatch_id()
                 } else {
-                    cn_seqhash::u128::CanonicalSeqHashFactory::DYNAMIC_DISPATCH_ID
+                    cn_seqhash::u128::CanonicalSeqHashFactory::dynamic_dispatch_id()
                 }
             } else {
                 panic!("Cannot use sequence hash for k > 64!");
@@ -59,23 +59,23 @@ pub(crate) fn get_hash_static_id(
         }
         HashType::RabinKarp32 => {
             if forward_only {
-                fw_rkhash::u32::ForwardRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
+                fw_rkhash::u32::ForwardRabinKarpHashFactory::dynamic_dispatch_id()
             } else {
-                cn_rkhash::u32::CanonicalRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
+                cn_rkhash::u32::CanonicalRabinKarpHashFactory::dynamic_dispatch_id()
             }
         }
         HashType::RabinKarp64 => {
             if forward_only {
-                fw_rkhash::u64::ForwardRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
+                fw_rkhash::u64::ForwardRabinKarpHashFactory::dynamic_dispatch_id()
             } else {
-                cn_rkhash::u64::CanonicalRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
+                cn_rkhash::u64::CanonicalRabinKarpHashFactory::dynamic_dispatch_id()
             }
         }
         HashType::RabinKarp128 => {
             if forward_only {
-                fw_rkhash::u128::ForwardRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
+                fw_rkhash::u128::ForwardRabinKarpHashFactory::dynamic_dispatch_id()
             } else {
-                cn_rkhash::u128::CanonicalRabinKarpHashFactory::DYNAMIC_DISPATCH_ID
+                cn_rkhash::u128::CanonicalRabinKarpHashFactory::dynamic_dispatch_id()
             }
         }
         HashType::Auto => {

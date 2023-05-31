@@ -362,11 +362,17 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     ) {
         let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
 
-        if let Some(back_ts) = ts.colors.back_mut() && back_ts.color == kmer_color {
-            back_ts.counter += 1;
-        } else {
-            ts.colors.push_back(KmerSerializedColor { color: kmer_color, counter: 1 });
+        if let Some(back_ts) = ts.colors.back_mut() {
+            if back_ts.color == kmer_color {
+                back_ts.counter += 1;
+                return;
+            }
         }
+
+        ts.colors.push_back(KmerSerializedColor {
+            color: kmer_color,
+            counter: 1,
+        });
     }
 
     fn extend_backward(
@@ -375,12 +381,17 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     ) {
         let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
 
-        if let Some(front_ts) = ts.colors.front_mut()
-            && front_ts.color == kmer_color {
-            front_ts.counter += 1;
-        } else {
-            ts.colors.push_front(KmerSerializedColor { color: kmer_color, counter: 1 });
+        if let Some(front_ts) = ts.colors.front_mut() {
+            if front_ts.color == kmer_color {
+                front_ts.counter += 1;
+                return;
+            }
         }
+
+        ts.colors.push_front(KmerSerializedColor {
+            color: kmer_color,
+            counter: 1,
+        });
     }
 
     fn join_structures<const REVERSE: bool>(

@@ -44,7 +44,7 @@ config = { package = "ggcat_config", path = "../config" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Static dispatch
-dynamic-dispatch = "0.4.3"
+dynamic-dispatch = "0.5.3"
 
 
 # Common libraries
