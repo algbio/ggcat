@@ -12,11 +12,11 @@ utils = { package = "ggcat_utils", path = "../utils" }
 
 
 # Static dispatch
-dynamic-dispatch = "0.4.1"
+dynamic-dispatch = "0.4.3"
 
 # Common libraries
-parallel-processor = "0.1.7"
-streaming-libdeflate-rs = "0.1.3"
+parallel-processor = "0.1.8"
+streaming-libdeflate-rs = "0.1.5"
 nightly-quirks = "0.1.2"
 
 # Pipeline crates
@@ -42,11 +42,11 @@ traitgraph-algo = { version = "5.3.0", features = ["hashbrown_dijkstra_node_weig
 typenum = "1.16.0"
 parking_lot = "0.12.1"
 fs_extra = "1.3.0"
-rayon = "1.6.1"
+rayon = "1.7.0"
 hashbrown = "0.13.2"
 itertools = "0.10.5"
 byteorder = "1.4.3"
-serde = "1.0.152"
+serde = "1.0.160"
 bincode = "1.3.3"
 crossbeam = "0.8.2"
 

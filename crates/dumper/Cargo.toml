@@ -11,8 +11,8 @@ config = { package = "ggcat_config", path = "../config" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Common libraries
-parallel-processor = "0.1.7"
-streaming-libdeflate-rs = "0.1.3"
+parallel-processor = "0.1.8"
+streaming-libdeflate-rs = "0.1.5"
 nightly-quirks = "0.1.2"
 
 # Common pipeline libraries
@@ -23,13 +23,13 @@ structs = { package = "ggcat_structs", path = "../structs" }
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
 kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
 typenum = "1.16.0"
-rayon = "1.6.1"
+rayon = "1.7.0"
 byteorder = "1.4.3"
 hashbrown = "0.13.2"
-csv = "1.2.0"
+csv = "1.2.1"
 parking_lot = "0.12.1"
 lz4 = "1.24.0"
-flate2 = "1.0.25"
+flate2 = "1.0.26"
 
 [features]
 devel-build = []
