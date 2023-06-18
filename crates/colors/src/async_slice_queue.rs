@@ -7,13 +7,15 @@ use std::cell::UnsafeCell;
 use std::cmp::max;
 use std::mem::{swap, take};
 use std::ops::{Deref, DerefMut, Range};
+use std::ptr::null_mut;
+use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 struct AsyncBuffer<T, P: ChunksWriter<TargetData = T>> {
     data: Option<UnsafeCell<Box<[T]>>>,
     position: AtomicUsize,
-    reference: *const AsyncSliceQueue<T, P>,
+    reference: Arc<AtomicPtr<AsyncSliceQueue<T, P>>>,
 }
 
 unsafe impl<T, P: ChunksWriter<TargetData = T>> Sync for AsyncBuffer<T, P> {}
@@ -34,9 +36,12 @@ struct SliceReference<T, P: ChunksWriter<TargetData = T>> {
 impl<T, P: ChunksWriter<TargetData = T>> Drop for AsyncBuffer<T, P> {
     fn drop(&mut self) {
         unsafe {
-            (&*self.reference)
-                .available_buffers
-                .push(self.data.take().unwrap().into_inner());
+            let ptr = self.reference.load(Ordering::Relaxed) as *const AsyncSliceQueue<T, P>;
+            if !ptr.is_null() {
+                (&*(ptr))
+                    .available_buffers
+                    .push(self.data.take().unwrap().into_inner());
+            }
         }
     }
 }
@@ -51,6 +56,7 @@ pub struct AsyncSliceQueue<T, P: ChunksWriter<TargetData = T>> {
     push_lock: Mutex<(u64, (ColorIndexType, Vec<SliceReference<T, P>>))>,
     current_slice: RwLock<Option<Arc<AsyncBuffer<T, P>>>>,
     buffer_min_size: usize,
+    self_ref: Arc<AtomicPtr<AsyncSliceQueue<T, P>>>,
     pub async_processor: P,
 }
 
@@ -78,6 +84,7 @@ impl<T: Copy, P: ChunksWriter<TargetData = T>> AsyncSliceQueue<T, P> {
             push_lock: Mutex::new((0, (0, Vec::with_capacity(slices_buffers_size)))),
             current_slice: RwLock::new(None),
             buffer_min_size,
+            self_ref: Arc::new(AtomicPtr::new(std::ptr::null_mut())),
             async_processor,
         }
     }
@@ -91,10 +98,12 @@ impl<T: Copy, P: ChunksWriter<TargetData = T>> AsyncSliceQueue<T, P> {
             Box::new_zeroed_slice(max(min_length, self.buffer_min_size)).assume_init()
         });
 
+        self.self_ref
+            .store(self as *const _ as *mut _, Ordering::Relaxed);
         Arc::new(AsyncBuffer {
             data: Some(UnsafeCell::new(buffer)),
             position: AtomicUsize::new(0),
-            reference: self as *const _,
+            reference: self.self_ref.clone(),
         })
     }
 
@@ -174,6 +183,7 @@ impl<T: Copy, P: ChunksWriter<TargetData = T>> AsyncSliceQueue<T, P> {
     }
 
     pub fn finish(self) -> P {
+        self.self_ref.store(null_mut(), Ordering::SeqCst);
         let mut push_lock = self.push_lock.lock();
         self.slices_queue.push(take(&mut push_lock.1));
 
