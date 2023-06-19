@@ -232,6 +232,8 @@ pub fn build_unitigs<
                         sum: 0,
                         last: 0,
                     };
+                    #[cfg(feature = "support_kmer_counters")]
+                    let mut prev_last = 0;
 
                     let mut is_first = true;
 
@@ -315,6 +317,7 @@ pub fn build_unitigs<
                             }
                         }
                         #[cfg(feature = "support_kmer_counters")] {
+                            prev_last = abundance.last;
                             abundance.last = counters.last;
                         }
                     }
@@ -323,8 +326,8 @@ pub fn build_unitigs<
                     if is_circular {
                         temp_sequence.pop();
                         #[cfg(feature = "support_kmer_counters")] {
-                            abundance.sum -= 1;
-                            abundance.last -= 1;
+                            abundance.sum -= abundance.last;
+                            abundance.last = prev_last;
                         }
 
                         CX::ColorsMergeManagerType::<H, MH>::pop_base(&mut final_unitig_color);
