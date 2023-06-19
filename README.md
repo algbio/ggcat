@@ -164,6 +164,11 @@ https://rustup.rs/
 
 The building process was not tested on windows, but it should work with minor tweaks.
 
+### Additional opt-in features
+Additional features can be enabled by specifying them in the command line while building/installing GGCAT (ex. --features "feature1,feature2"):
+* **kmer-counters**: Adds kmer abundance for each unitig, in a BCALM2 compatible format. If enabled GGCAT consumes more memory while building colored graphs
+
+
 ### Building
 
 Then the tool can be installed with the commands:

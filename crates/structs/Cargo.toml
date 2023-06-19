@@ -7,5 +7,9 @@ bincode = "1.3.3"
 byteorder = "1.4.3"
 config = { package = "ggcat_config", path = "../config" }
 io = { package = "ggcat_io", path = "../io" }
-parallel-processor = "0.1.7"
+parallel-processor = "0.1.10"
 serde = { version = "1.0.163", features = ["derive"] }
+
+
+[features]
+support_kmer_counters = []

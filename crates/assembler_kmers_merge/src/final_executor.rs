@@ -1,4 +1,5 @@
 use crate::map_processor::ParallelKmersMergeMapPacket;
+use crate::structs::PartialUnitigExtraData;
 use crate::{GlobalMergeData, ParallelKmersMergeFactory, ResultsBucket};
 use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::{color_types, ColorsManager};
@@ -19,6 +20,8 @@ use parallel_processor::execution_manager::packet::Packet;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use structs::map_entry::MapEntry;
+#[cfg(feature = "support_kmer_counters")]
+use structs::unitigs_counters::UnitigsCounters;
 use utils::Utils;
 
 local_setup_instrumenter!();
@@ -240,101 +243,130 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
             );
             rhentry.set_used();
 
-            let mut try_extend_function = |output: &mut Vec<u8>,
-                                           compute_hash_fw: fn(
-                hash: MH::HashTypeExtendable,
-                kmer_length: usize,
-                out_b: u8,
-                in_b: u8,
-            )
-                -> MH::HashTypeExtendable,
-                                           compute_hash_bw: fn(
-                hash: MH::HashTypeExtendable,
-                kmer_length: usize,
-                out_b: u8,
-                in_b: u8,
-            )
-                -> MH::HashTypeExtendable,
-                                           colors_function: fn(
-                ts: &mut color_types::TempUnitigColorStructure<H, MH, CX>,
-                entry: &MapEntry<color_types::HashMapTempColorIndex<H, MH, CX>>,
-            )| {
-                let mut temp_data = (hash, 0);
-                let mut current_hash;
+            #[cfg(feature = "support_kmer_counters")]
+            let first_count = rhentry.get_kmer_multiplicity() as u64;
 
-                return 'ext_loop: loop {
-                    let mut count = 0;
-                    current_hash = temp_data.0;
-                    for idx in 0..4 {
-                        let new_hash = compute_hash_fw(
-                            current_hash,
-                            k,
-                            Utils::compress_base(output[output.len() - k]),
-                            idx,
-                        );
-                        if let Some(hash) = map_struct.rhash_map.get(&new_hash.to_unextendable()) {
-                            if hash.get_kmer_multiplicity() >= global_data.min_multiplicity {
-                                // println!("Forward match extend read {:x?}!", new_hash);
-                                count += 1;
-                                temp_data = (new_hash, idx);
-                            }
-                        }
-                    }
+            #[cfg(feature = "support_kmer_counters")]
+            let mut counters = UnitigsCounters {
+                first: first_count,
+                sum: first_count,
+                last: first_count,
+            };
 
-                    if count == 1 {
-                        // Test for backward branches
-                        {
-                            let mut ocount = 0;
-                            let new_hash = temp_data.0;
-                            for idx in 0..4 {
-                                let bw_hash = compute_hash_bw(new_hash, k, temp_data.1, idx);
-                                if let Some(hash) =
-                                    map_struct.rhash_map.get(&bw_hash.to_unextendable())
-                                {
-                                    if hash.get_kmer_multiplicity() >= global_data.min_multiplicity
+            let mut try_extend_function =
+                |output: &mut Vec<u8>,
+                 compute_hash_fw: fn(
+                    hash: MH::HashTypeExtendable,
+                    kmer_length: usize,
+                    out_b: u8,
+                    in_b: u8,
+                ) -> MH::HashTypeExtendable,
+                 compute_hash_bw: fn(
+                    hash: MH::HashTypeExtendable,
+                    kmer_length: usize,
+                    out_b: u8,
+                    in_b: u8,
+                ) -> MH::HashTypeExtendable,
+                 colors_function: fn(
+                    ts: &mut color_types::TempUnitigColorStructure<H, MH, CX>,
+                    entry: &MapEntry<color_types::HashMapTempColorIndex<H, MH, CX>>,
+                ),
+                 #[cfg(feature = "support_kmer_counters")] is_forward: bool| {
+                    let mut temp_data = (hash, 0);
+                    let mut current_hash;
+
+                    return 'ext_loop: loop {
+                        let mut count = 0;
+                        current_hash = temp_data.0;
+                        #[cfg(feature = "support_kmer_counters")]
+                        let mut multiplicity = 0;
+                        for idx in 0..4 {
+                            let new_hash = compute_hash_fw(
+                                current_hash,
+                                k,
+                                Utils::compress_base(output[output.len() - k]),
+                                idx,
+                            );
+                            if let Some(hash) =
+                                map_struct.rhash_map.get(&new_hash.to_unextendable())
+                            {
+                                if hash.get_kmer_multiplicity() >= global_data.min_multiplicity {
+                                    // println!("Forward match extend read {:x?}!", new_hash);
+                                    #[cfg(feature = "support_kmer_counters")]
                                     {
-                                        if ocount > 0 {
-                                            break 'ext_loop (current_hash, false);
-                                        }
-                                        ocount += 1;
+                                        multiplicity = hash.get_kmer_multiplicity() as u64;
                                     }
+                                    count += 1;
+                                    temp_data = (new_hash, idx);
                                 }
                             }
-                            assert_eq!(ocount, 1);
                         }
 
-                        let entryref = map_struct
-                            .rhash_map
-                            .get(&temp_data.0.to_unextendable())
-                            .unwrap();
+                        if count == 1 {
+                            // Test for backward branches
+                            {
+                                let mut ocount = 0;
+                                let new_hash = temp_data.0;
+                                for idx in 0..4 {
+                                    let bw_hash = compute_hash_bw(new_hash, k, temp_data.1, idx);
+                                    if let Some(hash) =
+                                        map_struct.rhash_map.get(&bw_hash.to_unextendable())
+                                    {
+                                        if hash.get_kmer_multiplicity()
+                                            >= global_data.min_multiplicity
+                                        {
+                                            if ocount > 0 {
+                                                break 'ext_loop (current_hash, false);
+                                            }
+                                            ocount += 1;
+                                        }
+                                    }
+                                }
+                                assert_eq!(ocount, 1);
+                            }
 
-                        let already_used = entryref.is_used();
+                            let entryref = map_struct
+                                .rhash_map
+                                .get(&temp_data.0.to_unextendable())
+                                .unwrap();
 
-                        // Found a cycle unitig
-                        if already_used {
-                            break (temp_data.0, false);
+                            let already_used = entryref.is_used();
+
+                            // Found a cycle unitig
+                            if already_used {
+                                break (temp_data.0, false);
+                            }
+
+                            if CX::COLORS_ENABLED {
+                                colors_function(&mut self.unitigs_temp_colors, entryref);
+                            }
+
+                            // Flag the entry as already used
+                            entryref.set_used();
+
+                            output.push(Utils::decompress_base(temp_data.1));
+
+                            #[cfg(feature = "support_kmer_counters")]
+                            {
+                                counters.sum += multiplicity;
+                                if is_forward {
+                                    counters.last = multiplicity;
+                                } else {
+                                    counters.first = multiplicity;
+                                }
+                            }
+
+                            // Found a continuation into another bucket
+                            let contig_break = (entryref.get_flags() == READ_FLAG_INCL_BEGIN)
+                                || (entryref.get_flags() == READ_FLAG_INCL_END);
+                            if contig_break {
+                                break (temp_data.0, true);
+                            }
+                        } else {
+                            break (current_hash, false);
                         }
-
-                        if CX::COLORS_ENABLED {
-                            colors_function(&mut self.unitigs_temp_colors, entryref);
-                        }
-
-                        // Flag the entry as already used
-                        entryref.set_used();
-
-                        output.push(Utils::decompress_base(temp_data.1));
-
-                        // Found a continuation into another bucket
-                        let contig_break = (entryref.get_flags() == READ_FLAG_INCL_BEGIN)
-                            || (entryref.get_flags() == READ_FLAG_INCL_END);
-                        if contig_break {
-                            break (temp_data.0, true);
-                        }
-                    } else {
-                        break (current_hash, false);
-                    }
+                    };
                 };
-            };
 
             let (fw_hash, fw_merge) = {
                 if end_ignored {
@@ -345,6 +377,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                         MH::manual_roll_forward,
                         MH::manual_roll_reverse,
                         CX::ColorsMergeManagerType::<H, MH>::extend_forward,
+                        #[cfg(feature = "support_kmer_counters")]
+                        true,
                     );
                     (fw_hash, end_ignored)
                 }
@@ -359,6 +393,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                         MH::manual_roll_reverse,
                         MH::manual_roll_forward,
                         CX::ColorsMergeManagerType::<H, MH>::extend_backward,
+                        #[cfg(feature = "support_kmer_counters")]
+                        false,
                     );
                     (bw_hash, begin_ignored)
                 }
@@ -376,7 +412,14 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                     &mut self.temp_color_buffer,
                 );
 
-            let read_index = current_bucket.add_read(colors, out_seq, &self.temp_color_buffer);
+            let extra_data = PartialUnitigExtraData {
+                colors,
+
+                #[cfg(feature = "support_kmer_counters")]
+                counters,
+            };
+
+            let read_index = current_bucket.add_read(extra_data, out_seq, &self.temp_color_buffer);
 
             color_types::PartialUnitigsColorStructure::<H, MH, CX>::clear_temp_buffer(
                 &mut self.temp_color_buffer,

@@ -65,6 +65,7 @@ no-stats = ["parallel-processor/no-stats"]
 process-stats = ["parallel-processor/process-stats"]
 tracing = ["instrumenter/enabled"]
 devel-build = ["assembler/devel-build", "querier/devel-build"]
+kmer-counters = ["assembler/support_kmer_counters"]
 
 [build-dependencies]
 make-cmd = "0.1.0"

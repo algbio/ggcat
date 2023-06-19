@@ -22,15 +22,6 @@ impl UnitigsCounters {
             last: 0,
         }
     }
-
-    #[inline]
-    pub fn add_counter(&mut self, counter: u64) {
-        if self.first == 0 {
-            self.first = counter;
-        }
-        self.sum += counter;
-        self.last = counter;
-    }
 }
 
 impl HasEmptyExtraBuffer for UnitigsCounters {}
