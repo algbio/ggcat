@@ -18,11 +18,11 @@ use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
     DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
 };
-use hashes::ExtendableHashTraitType;
-use hashes::{HashFunction, HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
+use hashes::{ExtendableHashTraitType, HashFunction, HashableSequence};
+use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{
-    SequenceAbundance, StructuredSequenceBackend, StructuredSequenceWriter,
+    SequenceAbundanceType, StructuredSequenceBackend, StructuredSequenceWriter,
 };
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
@@ -105,12 +105,12 @@ pub fn build_maximal_unitigs_links<
                         false,
                     >, _>(
                         Vec::new(),
-                        <(u64, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundance)>::new_temp_buffer(
+                        <(u64, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType)>::new_temp_buffer(
                         ),
                         |(_, _, (index, _, _, _), read): (
                             _,
                             _,
-                            (_, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundance),
+                            (_, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType),
                             _,
                         ),
                          _extra_buffer| {
@@ -333,12 +333,12 @@ pub fn build_maximal_unitigs_links<
                         false,
                     >, _>(
                         Vec::new(),
-                        <(u64, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundance)>::new_temp_buffer(
+                        <(u64, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType)>::new_temp_buffer(
                         ),
-                        |(_, _, (index, color, _, abundance), read): (
+                        |(_, _, (index, color, _, _abundance), read): (
                             _,
                             _,
-                            (_, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundance),
+                            (_, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType),
                             _,
                         ),
                          extra_buffer| {
@@ -359,7 +359,8 @@ pub fn build_maximal_unitigs_links<
                                 &extra_buffer.0,
                                 links,
                                 links_buffer,
-                                abundance,
+                                #[cfg(feature = "support_kmer_counters")]
+                                _abundance,
                             );
                         },
                     ) {

@@ -7,6 +7,7 @@ use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory
 use io::concurrent::temp_reads::creads_utils::{
     CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
 };
+#[cfg(feature = "support_kmer_counters")]
 use structs::unitigs_counters::UnitigsCounters;
 
 use crate::structs::link_mapping::{LinkMapping, LinkMappingSerializer};
@@ -14,9 +15,7 @@ use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::{color_types, ColorsManager};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
-use io::concurrent::structured_sequences::{
-    SequenceAbundance, StructuredSequenceBackend, StructuredSequenceWriter,
-};
+use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataConsecutiveCompression, SequenceExtraDataOwned,
     SequenceExtraDataTempBufferManagement,
@@ -41,10 +40,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+#[cfg(feature = "support_kmer_counters")]
+use io::concurrent::structured_sequences::SequenceAbundance;
+
 #[derive(Clone, Debug)]
 pub struct ReorganizedReadsExtraData<CX: SequenceExtraDataConsecutiveCompression> {
     pub unitig: UnitigIndex,
     pub colors: CX,
+    #[cfg(feature = "support_kmer_counters")]
     pub counters: UnitigsCounters,
 }
 
@@ -89,6 +92,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression> SequenceExtraDataTempBufferMan
         Self {
             unitig: extra.unitig,
             colors: changed_color,
+            #[cfg(feature = "support_kmer_counters")]
             counters: extra.counters,
         }
     }
@@ -108,6 +112,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCo
         Some(Self {
             unitig: UnitigIndex::decode(&mut reader, ())?,
             colors: CX::decode_extended(&mut buffer.0, &mut reader, last_data)?,
+            #[cfg(feature = "support_kmer_counters")]
             counters: <UnitigsCounters as SequenceExtraData>::decode_extended(&mut (), reader)?,
         })
     }
@@ -122,6 +127,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCo
         self.unitig.encode(&mut writer, ());
         self.colors
             .encode_extended(&buffer.0, &mut writer, last_data);
+        #[cfg(feature = "support_kmer_counters")]
         <UnitigsCounters as SequenceExtraData>::encode_extended(
             &self.counters,
             &mut (),
@@ -133,7 +139,12 @@ impl<CX: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCo
     fn max_size(&self) -> usize {
         SequenceExtraData::max_size(&self.unitig)
             + self.colors.max_size()
-            + <UnitigsCounters as SequenceExtraData>::max_size(&self.counters)
+            + match () {
+                #[cfg(feature = "support_kmer_counters")]
+                () => <UnitigsCounters as SequenceExtraData>::max_size(&self.counters),
+                #[cfg(not(feature = "support_kmer_counters"))]
+                () => 0,
+            }
     }
 
     fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
@@ -233,7 +244,7 @@ pub fn reorganize_reads<
         >, _>(
             Vec::new(),
             &mut colors_buffer,
-            |(_, _, PartialUnitigExtraData { colors, counters }, seq), color_buffer| {
+            |(_, _, extra_data, seq), color_buffer| {
                 if seq.bases_count() > decompress_buffer.len() {
                     decompress_buffer.resize(seq.bases_count(), 0);
                 }
@@ -247,8 +258,9 @@ pub fn reorganize_reads<
                         mappings[map_index].bucket,
                         &ReorganizedReadsExtraData {
                             unitig: UnitigIndex::new(bucket_index, index as usize, false),
-                            colors,
-                            counters,
+                            colors: extra_data.colors,
+                            #[cfg(feature = "support_kmer_counters")]
+                            counters: extra_data.counters,
                         },
                         ReorganizedReadsBuffer::from_inner(color_buffer),
                         &CompressedReadsBucketData::new(seq, 0, 0),
@@ -260,14 +272,15 @@ pub fn reorganize_reads<
                     tmp_lonely_unitigs_buffer.add_read(
                         seq,
                         None,
-                        colors,
+                        extra_data.colors,
                         color_buffer,
                         (),
                         &(),
+                        #[cfg(feature = "support_kmer_counters")]
                         SequenceAbundance {
-                            first: counters.first,
-                            sum: counters.sum,
-                            last: counters.last,
+                            first: extra_data.counters.first,
+                            sum: extra_data.counters.sum,
+                            last: extra_data.counters.last,
                         },
                     );
 

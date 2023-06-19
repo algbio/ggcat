@@ -19,7 +19,7 @@ use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
-use super::SequenceAbundance;
+use super::SequenceAbundanceType;
 
 pub struct StructSeqBinaryWriter<
     ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
@@ -64,7 +64,7 @@ impl<
 }
 
 impl<CX: SequenceExtraDataTempBufferManagement, LX: SequenceExtraDataTempBufferManagement>
-    SequenceExtraDataTempBufferManagement for (u64, CX, LX, SequenceAbundance)
+    SequenceExtraDataTempBufferManagement for (u64, CX, LX, SequenceAbundanceType)
 {
     type TempBuffer = (CX::TempBuffer, LX::TempBuffer);
 
@@ -95,7 +95,7 @@ impl<CX: SequenceExtraDataTempBufferManagement, LX: SequenceExtraDataTempBufferM
 }
 
 impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
-    SequenceExtraDataConsecutiveCompression for (u64, CX, LX, SequenceAbundance)
+    SequenceExtraDataConsecutiveCompression for (u64, CX, LX, SequenceAbundanceType)
 {
     type LastData = CX::LastData;
 
@@ -105,18 +105,28 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
         last_data: Self::LastData,
     ) -> Option<Self> {
         let index = decode_varint(|| reader.read_u8().ok())?;
-        let abundance_first = decode_varint(|| reader.read_u8().ok())?;
-        let abundance_sum = decode_varint(|| reader.read_u8().ok())?;
-        let abundance_last = decode_varint(|| reader.read_u8().ok())?;
+        #[cfg(feature = "support_kmer_counters")]
+        let (abundance_first, abundance_sum, abundance_last) = {
+            (
+                decode_varint(|| reader.read_u8().ok())?,
+                decode_varint(|| reader.read_u8().ok())?,
+                decode_varint(|| reader.read_u8().ok())?,
+            )
+        };
 
         Some((
             index,
             CX::decode_extended(&mut buffer.0, reader, last_data)?,
             LX::decode_extended(&mut buffer.1, reader)?,
-            SequenceAbundance {
-                first: abundance_first,
-                sum: abundance_sum,
-                last: abundance_last,
+            match () {
+                #[cfg(feature = "support_kmer_counters")]
+                () => SequenceAbundanceType {
+                    first: abundance_first,
+                    sum: abundance_sum,
+                    last: abundance_last,
+                },
+                #[cfg(not(feature = "support_kmer_counters"))]
+                () => (),
             },
         ))
     }
@@ -128,9 +138,12 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
         last_data: Self::LastData,
     ) {
         encode_varint(|b| writer.write_all(b).ok(), self.0).unwrap();
-        encode_varint(|b| writer.write_all(b).ok(), self.3.first).unwrap();
-        encode_varint(|b| writer.write_all(b).ok(), self.3.sum).unwrap();
-        encode_varint(|b| writer.write_all(b).ok(), self.3.last).unwrap();
+        #[cfg(feature = "support_kmer_counters")]
+        {
+            encode_varint(|b| writer.write_all(b).ok(), self.3.first).unwrap();
+            encode_varint(|b| writer.write_all(b).ok(), self.3.sum).unwrap();
+            encode_varint(|b| writer.write_all(b).ok(), self.3.last).unwrap();
+        }
 
         self.1.encode_extended(&buffer.0, writer, last_data);
         self.2.encode_extended(&buffer.1, writer);
@@ -154,7 +167,7 @@ impl<
     type SequenceTempBuffer = (
         Vec<u8>,
         CompressedReadsBucketDataSerializer<
-            (u64, ColorInfo, LinksInfo, SequenceAbundance),
+            (u64, ColorInfo, LinksInfo, SequenceAbundanceType),
             typenum::consts::U0,
             false,
         >,
@@ -176,13 +189,22 @@ impl<
         color_info: ColorInfo,
         links_info: LinksInfo,
         extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
-
-        abundance: SequenceAbundance,
+        #[cfg(feature = "support_kmer_counters")] abundance: SequenceAbundanceType,
     ) {
         buffer.1.write_to(
             &CompressedReadsBucketData::new(sequence, 0, 0),
             &mut buffer.0,
-            &(sequence_index, color_info, links_info, abundance),
+            &(
+                sequence_index,
+                color_info,
+                links_info,
+                match () {
+                    #[cfg(feature = "support_kmer_counters")]
+                    () => abundance,
+                    #[cfg(not(feature = "support_kmer_counters"))]
+                    () => (),
+                },
+            ),
             &extra_buffers,
         );
     }

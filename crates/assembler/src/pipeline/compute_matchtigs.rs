@@ -12,7 +12,7 @@ use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{
-    IdentSequenceWriter, SequenceAbundance, StructuredSequenceBackend, StructuredSequenceWriter,
+    IdentSequenceWriter, SequenceAbundanceType, StructuredSequenceBackend, StructuredSequenceWriter,
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use libmatchtigs::{
@@ -25,6 +25,9 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 use traitgraph_algo::dijkstra::DijkstraWeightedEdgeData;
+
+#[cfg(feature = "support_kmer_counters")]
+use io::concurrent::structured_sequences::SequenceAbundance;
 
 const DUMMY_EDGE_VALUE: usize = usize::MAX;
 
@@ -41,7 +44,7 @@ impl<ColorInfo: IdentSequenceWriter> SequenceHandle<ColorInfo> {
         &(
             CompressedReadIndipendent,
             ColorInfo,
-            SequenceAbundance,
+            SequenceAbundanceType,
             DoubleMaximalUnitigLinks,
             bool,
         ),
@@ -136,7 +139,7 @@ pub struct StructuredUnitigsStorage<ColorInfo: IdentSequenceWriter> {
     sequences: Vec<(
         CompressedReadIndipendent,
         ColorInfo,
-        SequenceAbundance,
+        SequenceAbundanceType,
         DoubleMaximalUnitigLinks,
         bool,
     )>,
@@ -197,7 +200,7 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
             ColorInfo::TempBuffer,
             <DoubleMaximalUnitigLinks as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ),
-        abundance: SequenceAbundance,
+        #[cfg(feature = "support_kmer_counters")] abundance: SequenceAbundanceType,
     ) {
         if buffer.first_sequence_index == usize::MAX {
             buffer.first_sequence_index = sequence_index as usize;
@@ -232,7 +235,12 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
         buffer.sequences.push((
             sequence,
             color_info,
-            abundance,
+            match () {
+                #[cfg(feature = "support_kmer_counters")]
+                () => abundance,
+                #[cfg(not(feature = "support_kmer_counters"))]
+                () => (),
+            },
             links_info,
             self_complemental,
         ));
@@ -438,6 +446,7 @@ pub fn compute_matchtigs_thread<
                 0,
             );
         }
+        #[cfg(feature = "support_kmer_counters")]
         let mut abundance = SequenceAbundance {
             first: handle.2.first,
             sum: handle.2.sum,
@@ -474,8 +483,11 @@ pub fn compute_matchtigs_thread<
                     &storage.color_buffer,
                     kmer_offset,
                 );
-                abundance.sum += handle.2.sum - handle.2.first;
-                abundance.last = handle.2.last;
+                #[cfg(feature = "support_kmer_counters")]
+                {
+                    abundance.sum += handle.2.sum - handle.2.first;
+                    abundance.last = handle.2.last;
+                }
             } else {
                 read_buffer.extend(
                     next_sequence
@@ -488,8 +500,11 @@ pub fn compute_matchtigs_thread<
                     &storage.color_buffer,
                     kmer_offset,
                 );
-                abundance.sum += handle.2.sum - handle.2.last;
-                abundance.last = handle.2.last;
+                #[cfg(feature = "support_kmer_counters")]
+                {
+                    abundance.sum += handle.2.sum - handle.2.last;
+                    abundance.last = handle.2.last;
+                }
             }
         }
 
@@ -506,6 +521,7 @@ pub fn compute_matchtigs_thread<
             &final_color_extra_buffer,
             (),
             &(),
+            #[cfg(feature = "support_kmer_counters")]
             abundance,
         );
     }

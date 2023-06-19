@@ -3,7 +3,7 @@ use crate::concurrent::structured_sequences::{
 };
 use utils::vec_slice::VecSlice;
 
-use super::SequenceAbundance;
+use super::SequenceAbundanceType;
 
 pub struct FastaWriterConcurrentBuffer<
     'a,
@@ -12,7 +12,7 @@ pub struct FastaWriterConcurrentBuffer<
     Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
 > {
     target: &'a StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>,
-    sequences: Vec<(VecSlice<u8>, ColorInfo, LinksInfo, SequenceAbundance)>,
+    sequences: Vec<(VecSlice<u8>, ColorInfo, LinksInfo, SequenceAbundanceType)>,
     seq_buf: Vec<u8>,
     extra_buffers: (ColorInfo::TempBuffer, LinksInfo::TempBuffer),
     temp_buffer: Backend::SequenceTempBuffer,
@@ -79,7 +79,7 @@ impl<
         color_extra_buffer: &ColorInfo::TempBuffer,
         links: LinksInfo,
         links_extra_buffer: &LinksInfo::TempBuffer,
-        abundance: SequenceAbundance,
+        #[cfg(feature = "support_kmer_counters")] abundance: SequenceAbundanceType,
     ) -> Option<u64> {
         let mut result = None;
 
@@ -101,7 +101,12 @@ impl<
             VecSlice::new_extend(&mut self.seq_buf, sequence),
             color,
             links,
-            abundance,
+            match () {
+                #[cfg(feature = "support_kmer_counters")]
+                () => abundance,
+                #[cfg(not(feature = "support_kmer_counters"))]
+                () => (),
+            },
         ));
 
         if let Some(current_index) = &mut self.current_index {

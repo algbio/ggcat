@@ -9,3 +9,7 @@ config = { package = "ggcat_config", path = "../config" }
 io = { package = "ggcat_io", path = "../io" }
 parallel-processor = "0.1.9"
 serde = { version = "1.0.163", features = ["derive"] }
+
+
+[features]
+support_kmer_counters = []

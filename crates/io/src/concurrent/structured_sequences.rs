@@ -32,11 +32,18 @@ impl IdentSequenceWriter for () {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(feature = "support_kmer_counters")]
 pub struct SequenceAbundance {
     pub first: u64,
     pub sum: u64,
     pub last: u64,
 }
+
+#[cfg(feature = "support_kmer_counters")]
+pub type SequenceAbundanceType = SequenceAbundance;
+
+#[cfg(not(feature = "support_kmer_counters"))]
+pub type SequenceAbundanceType = ();
 
 pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>:
     Sync + Send
@@ -55,7 +62,7 @@ pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: I
         links_info: LinksInfo,
         extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
 
-        abundance: SequenceAbundance,
+        #[cfg(feature = "support_kmer_counters")] abundance: SequenceAbundance,
     );
 
     fn get_path(&self) -> PathBuf;
@@ -97,7 +104,9 @@ impl<
         &self,
         buffer: &mut Backend::SequenceTempBuffer,
         first_index: Option<u64>,
-        sequences: impl ExactSizeIterator<Item = (&'a [u8], ColorInfo, LinksInfo, SequenceAbundance)>,
+        sequences: impl ExactSizeIterator<
+            Item = (&'a [u8], ColorInfo, LinksInfo, SequenceAbundanceType),
+        >,
         extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
     ) -> u64 {
         let sequences_count = sequences.len() as u64;
@@ -116,7 +125,7 @@ impl<
 
         let mut current_index = start_sequence_index;
         // Write the sequences to a temporary buffer
-        for (sequence, color_info, links_info, abundance) in sequences {
+        for (sequence, color_info, links_info, _abundance) in sequences {
             Backend::write_sequence(
                 self.k,
                 buffer,
@@ -125,7 +134,8 @@ impl<
                 color_info,
                 links_info,
                 extra_buffers,
-                abundance,
+                #[cfg(feature = "support_kmer_counters")]
+                _abundance,
             );
             current_index += 1;
         }

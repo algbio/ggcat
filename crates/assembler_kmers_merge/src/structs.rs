@@ -10,6 +10,7 @@ use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBi
 use parallel_processor::buckets::LockFreeBucket;
 use std::marker::PhantomData;
 use std::path::PathBuf;
+#[cfg(feature = "support_kmer_counters")]
 use structs::unitigs_counters::UnitigsCounters;
 use utils::owned_drop::OwnedDrop;
 
@@ -25,6 +26,7 @@ pub struct ResultsBucket<X: SequenceExtraDataConsecutiveCompression> {
 
 #[derive(Clone, Debug)]
 pub struct PartialUnitigExtraData<X: SequenceExtraDataConsecutiveCompression> {
+    #[cfg(feature = "support_kmer_counters")]
     pub counters: UnitigsCounters,
     pub colors: X,
 }
@@ -49,6 +51,7 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataTempBufferMana
     fn copy_extra_from(extra: Self, src: &Self::TempBuffer, dst: &mut Self::TempBuffer) -> Self {
         Self {
             colors: X::copy_extra_from(extra.colors, src, dst),
+            #[cfg(feature = "support_kmer_counters")]
             counters: extra.counters,
         }
     }
@@ -65,9 +68,11 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
         last_data: Self::LastData,
     ) -> Option<Self> {
         let color = X::decode_extended(buffer, reader, last_data)?;
+        #[cfg(feature = "support_kmer_counters")]
         let counter = UnitigsCounters::decode_extended(&mut (), reader, ())?;
         Some(Self {
             colors: color,
+            #[cfg(feature = "support_kmer_counters")]
             counters: counter,
         })
     }
@@ -79,6 +84,7 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
         last_data: Self::LastData,
     ) {
         self.colors.encode_extended(buffer, writer, last_data);
+        #[cfg(feature = "support_kmer_counters")]
         self.counters.encode_extended(&(), writer, ());
     }
 
@@ -87,7 +93,13 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
     }
 
     fn max_size(&self) -> usize {
-        self.colors.max_size() + self.counters.max_size()
+        self.colors.max_size()
+            + match () {
+                #[cfg(feature = "support_kmer_counters")]
+                () => self.counters.max_size(),
+                #[cfg(not(feature = "support_kmer_counters"))]
+                () => 0,
+            }
     }
 }
 
