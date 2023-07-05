@@ -1,3 +1,4 @@
+/* clang-format off */
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -231,7 +232,7 @@ namespace ggcat
 
             std::vector<__InputStreamBlockData> input_stream_blocks;
 
-            for (int i = 0; i < input_streams.size; i++)
+            for (size_t i = 0; i < input_streams.size; i++)
             {
                 input_stream_blocks.push_back({[](uintptr_t block, bool copy_ident_data, size_t partial_read_copyback, void (*callback)(uintptr_t callback_context, DnaSequence sequence, SequenceInfo info), uintptr_t callback_context)
                                                {
@@ -335,3 +336,4 @@ namespace ggcat
         }
     };
 }
+/* clang-format on */
