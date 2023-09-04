@@ -63,18 +63,23 @@ pub struct ParallelKmersMergeFactory<
     H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
+    const COMPUTE_SIMPLITIGS: bool,
 >(PhantomData<(H, MH, CX)>);
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    KmersTransformExecutorFactory for ParallelKmersMergeFactory<H, MH, CX>
+impl<
+        H: MinimizerHashFunctionFactory,
+        MH: HashFunctionFactory,
+        CX: ColorsManager,
+        const COMPUTE_SIMPLITIGS: bool,
+    > KmersTransformExecutorFactory for ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS>
 {
     type SequencesResplitterFactory = AssemblerMinimizerBucketingExecutorFactory<H, CX>;
     type GlobalExtraData = GlobalMergeData<H, MH, CX>;
     type AssociatedExtraData = MinimizerBucketingSeqColorDataType<CX>;
 
-    type PreprocessorType = ParallelKmersMergePreprocessor<H, MH, CX>;
-    type MapProcessorType = ParallelKmersMergeMapProcessor<H, MH, CX>;
-    type FinalExecutorType = ParallelKmersMergeFinalExecutor<H, MH, CX>;
+    type PreprocessorType = ParallelKmersMergePreprocessor<H, MH, CX, COMPUTE_SIMPLITIGS>;
+    type MapProcessorType = ParallelKmersMergeMapProcessor<H, MH, CX, COMPUTE_SIMPLITIGS>;
+    type FinalExecutorType = ParallelKmersMergeFinalExecutor<H, MH, CX, COMPUTE_SIMPLITIGS>;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U2;
@@ -102,8 +107,12 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     }
 }
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    ParallelKmersMergeFinalExecutor<H, MH, CX>
+impl<
+        H: MinimizerHashFunctionFactory,
+        MH: HashFunctionFactory,
+        CX: ColorsManager,
+        const COMPUTE_SIMPLITIGS: bool,
+    > ParallelKmersMergeFinalExecutor<H, MH, CX, COMPUTE_SIMPLITIGS>
 {
     #[inline(always)]
     fn write_hashes(
@@ -142,6 +151,7 @@ pub fn kmers_merge<
     out_directory: P,
     k: usize,
     m: usize,
+    compute_simplitigs: bool,
     threads_count: usize,
 ) -> RetType {
     PHASES_TIMES_MONITOR
@@ -213,17 +223,31 @@ pub fn kmers_merge<
         kmer_batches_count: AtomicU64::new(0),
     });
 
-    KmersTransform::<ParallelKmersMergeFactory<H, MH, CX>>::new(
-        file_inputs,
-        out_directory.as_ref(),
-        buckets_counters_path,
-        buckets_count,
-        global_data,
-        threads_count,
-        k,
-        MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
-    )
-    .parallel_kmers_transform();
+    if compute_simplitigs {
+        KmersTransform::<ParallelKmersMergeFactory<H, MH, CX, true>>::new(
+            file_inputs,
+            out_directory.as_ref(),
+            buckets_counters_path,
+            buckets_count,
+            global_data,
+            threads_count,
+            k,
+            MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
+        )
+        .parallel_kmers_transform();
+    } else {
+        KmersTransform::<ParallelKmersMergeFactory<H, MH, CX, false>>::new(
+            file_inputs,
+            out_directory.as_ref(),
+            buckets_counters_path,
+            buckets_count,
+            global_data,
+            threads_count,
+            k,
+            MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
+        )
+        .parallel_kmers_transform();
+    }
 
     RetType {
         sequences,

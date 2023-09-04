@@ -30,6 +30,7 @@ pub struct ParallelKmersMergeFinalExecutor<
     H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
+    const COMPUTE_SIMPLITIGS: bool,
 > {
     hashes_tmp: BucketsThreadDispatcher<
         LockFreeBinaryWriter,
@@ -47,8 +48,12 @@ pub struct ParallelKmersMergeFinalExecutor<
     _phantom: PhantomData<H>,
 }
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    ParallelKmersMergeFinalExecutor<H, MH, CX>
+impl<
+        H: MinimizerHashFunctionFactory,
+        MH: HashFunctionFactory,
+        CX: ColorsManager,
+        const COMPUTE_SIMPLITIGS: bool,
+    > ParallelKmersMergeFinalExecutor<H, MH, CX, COMPUTE_SIMPLITIGS>
 {
     pub fn new(global_data: &GlobalMergeData<H, MH, CX>) -> Self {
         let hashes_buffer =
@@ -70,7 +75,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     }
 
     fn get_kmers(
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
         map_struct: &ParallelKmersMergeMapPacket<H, MH, CX>,
         mut callback: impl FnMut(
             MH::HashTypeExtendable,
@@ -169,16 +174,20 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 
 // static DEBUG_MAPS_HOLDER: Mutex<Vec<Box<dyn Any + Sync + Send>>> = const_mutex(Vec::new());
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    KmersTransformFinalExecutor<ParallelKmersMergeFactory<H, MH, CX>>
-    for ParallelKmersMergeFinalExecutor<H, MH, CX>
+impl<
+        H: MinimizerHashFunctionFactory,
+        MH: HashFunctionFactory,
+        CX: ColorsManager,
+        const COMPUTE_SIMPLITIGS: bool,
+    > KmersTransformFinalExecutor<ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS>>
+    for ParallelKmersMergeFinalExecutor<H, MH, CX, COMPUTE_SIMPLITIGS>
 {
     type MapStruct = ParallelKmersMergeMapPacket<H, MH, CX>;
 
     #[instrumenter::track(fields(map_capacity = map_struct_packet.rhash_map.capacity(), map_size = map_struct_packet.rhash_map.len()))]
     fn process_map(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
         mut map_struct_packet: Packet<Self::MapStruct>,
     ) -> Packet<Self::MapStruct> {
         if self.current_bucket.is_none() {
@@ -298,13 +307,18 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
                                     }
                                     count += 1;
                                     temp_data = (new_hash, idx);
+
+                                    if COMPUTE_SIMPLITIGS {
+                                        break;
+                                    }
                                 }
                             }
                         }
 
                         if count == 1 {
                             // Test for backward branches
-                            {
+
+                            if !COMPUTE_SIMPLITIGS {
                                 let mut ocount = 0;
                                 let new_hash = temp_data.0;
                                 for idx in 0..4 {
@@ -459,7 +473,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 
     fn finalize(
         self,
-        _global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+        _global_data: &<ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) {
         self.hashes_tmp.finalize();
     }

@@ -1,6 +1,7 @@
 #![feature(impl_trait_in_assoc_type)]
 
 use crate::pipeline::build_unitigs::build_unitigs;
+use crate::pipeline::compute_matchtigs::MatchtigHelperTrait;
 use crate::pipeline::compute_matchtigs::{compute_matchtigs_thread, MatchtigsStorageBackend};
 use crate::pipeline::hashes_sorting::hashes_sorting;
 use crate::pipeline::links_compaction::links_compaction;
@@ -179,6 +180,7 @@ pub fn run_assembler<
             temp_dir.as_path(),
             k,
             m,
+            compute_tigs_mode.is_simplitigs(),
             threads_count,
         )
     } else {
@@ -351,7 +353,7 @@ pub fn run_assembler<
 
     // Temporary file to store maximal unitigs data without links info, if further processing is requested
     let compressed_temp_unitigs_file =
-        if generate_maximal_unitigs_links || compute_tigs_mode.is_some() {
+        if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
             Some(StructuredSequenceWriter::new(
                 StructSeqBinaryWriter::new(
                     temp_dir.join("maximal_unitigs.tmp"),
@@ -370,7 +372,7 @@ pub fn run_assembler<
     let (reorganized_reads, _final_unitigs_bucket) = if step
         <= AssemblerStartingStep::ReorganizeReads
     {
-        if generate_maximal_unitigs_links || compute_tigs_mode.is_some() {
+        if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
             reorganize_reads::<
                 BucketingHash,
                 MergingHash,
@@ -415,7 +417,7 @@ pub fn run_assembler<
     // links_manager.compute_id_offsets();
 
     if step <= AssemblerStartingStep::BuildUnitigs {
-        if generate_maximal_unitigs_links || compute_tigs_mode.is_some() {
+        if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
             build_unitigs::<
                 BucketingHash,
                 MergingHash,
@@ -440,12 +442,12 @@ pub fn run_assembler<
     }
 
     if step <= AssemblerStartingStep::MaximalUnitigsLinks {
-        if generate_maximal_unitigs_links || compute_tigs_mode.is_some() {
+        if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
             let compressed_temp_unitigs_file = compressed_temp_unitigs_file.unwrap();
             let temp_path = compressed_temp_unitigs_file.get_path();
             compressed_temp_unitigs_file.finalize();
 
-            if let Some(compute_tigs_mode) = compute_tigs_mode {
+            if let Some(compute_tigs_mode) = compute_tigs_mode.get_matchtigs_mode() {
                 let matchtigs_backend = MatchtigsStorageBackend::new();
 
                 let matchtigs_receiver = matchtigs_backend.get_receiver();

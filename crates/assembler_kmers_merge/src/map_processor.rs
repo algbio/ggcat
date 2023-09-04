@@ -117,21 +117,32 @@ pub struct ParallelKmersMergeMapProcessor<
     H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
+    const COMPUTE_SIMPLITIGS: bool,
 > {
     map_packet: Option<
         Packet<
-            <Self as KmersTransformMapProcessor<ParallelKmersMergeFactory<H, MH, CX>>>::MapStruct,
+            <Self as KmersTransformMapProcessor<
+                ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS>,
+            >>::MapStruct,
         >,
     >,
     last_saved_len: usize,
-    mem_tracker: MemoryTracker<KmersTransformProcessor<ParallelKmersMergeFactory<H, MH, CX>>>,
+    mem_tracker: MemoryTracker<
+        KmersTransformProcessor<ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS>>,
+    >,
 }
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    ParallelKmersMergeMapProcessor<H, MH, CX>
+impl<
+        H: MinimizerHashFunctionFactory,
+        MH: HashFunctionFactory,
+        CX: ColorsManager,
+        const COMPUTE_SIMPLITIGS: bool,
+    > ParallelKmersMergeMapProcessor<H, MH, CX, COMPUTE_SIMPLITIGS>
 {
     pub fn new(
-        mem_tracker: MemoryTracker<KmersTransformProcessor<ParallelKmersMergeFactory<H, MH, CX>>>,
+        mem_tracker: MemoryTracker<
+            KmersTransformProcessor<ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS>>,
+        >,
     ) -> Self {
         Self {
             map_packet: None,
@@ -141,9 +152,13 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     }
 }
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    KmersTransformMapProcessor<ParallelKmersMergeFactory<H, MH, CX>>
-    for ParallelKmersMergeMapProcessor<H, MH, CX>
+impl<
+        H: MinimizerHashFunctionFactory,
+        MH: HashFunctionFactory,
+        CX: ColorsManager,
+        const COMPUTE_SIMPLITIGS: bool,
+    > KmersTransformMapProcessor<ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS>>
+    for ParallelKmersMergeMapProcessor<H, MH, CX, COMPUTE_SIMPLITIGS>
 {
     type MapStruct = ParallelKmersMergeMapPacket<H, MH, CX>;
     const MAP_SIZE: usize = size_of::<MH::HashTypeUnextendable>()
@@ -152,7 +167,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     fn process_group_start(
         &mut self,
         map_struct: Packet<Self::MapStruct>,
-        _global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+        _global_data: &<ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) {
         self.map_packet = Some(map_struct);
         self.last_saved_len = 0;
@@ -161,7 +176,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     #[instrumenter::track]
     fn process_group_batch_sequences(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
         batch: &Vec<(
             u8,
             MinimizerBucketingSeqColorDataType<CX>,
@@ -261,7 +276,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     #[instrumenter::track]
     fn process_group_finalize(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) -> Packet<Self::MapStruct> {
         static COUNTER_KMERS_MAX: AtomicCounter<MaxMode> =
             declare_counter_i64!("kmers_cardinality_max", MaxMode, false);

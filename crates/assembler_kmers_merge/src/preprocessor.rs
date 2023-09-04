@@ -13,12 +13,17 @@ pub struct ParallelKmersMergePreprocessor<
     H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
+    const COMPUTE_SIMPLITIGS: bool,
 > {
     _phantom: PhantomData<(H, MH, CX)>,
 }
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    ParallelKmersMergePreprocessor<H, MH, CX>
+impl<
+        H: MinimizerHashFunctionFactory,
+        MH: HashFunctionFactory,
+        CX: ColorsManager,
+        const COMPUTE_SIMPLITIGS: bool,
+    > ParallelKmersMergePreprocessor<H, MH, CX, COMPUTE_SIMPLITIGS>
 {
     pub fn new() -> Self {
         Self {
@@ -27,13 +32,17 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     }
 }
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    KmersTransformPreprocessor<ParallelKmersMergeFactory<H, MH, CX>>
-    for ParallelKmersMergePreprocessor<H, MH, CX>
+impl<
+        H: MinimizerHashFunctionFactory,
+        MH: HashFunctionFactory,
+        CX: ColorsManager,
+        const COMPUTE_SIMPLITIGS: bool,
+    > KmersTransformPreprocessor<ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS>>
+    for ParallelKmersMergePreprocessor<H, MH, CX, COMPUTE_SIMPLITIGS>
 {
     fn get_sequence_bucket<C>(
         &self,
-        global_data: &<ParallelKmersMergeFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+        global_data: &<ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
         seq_data: &(u8, u8, C, CompressedRead),
         used_hash_bits: usize,
         bucket_bits_count: usize,
