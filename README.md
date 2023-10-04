@@ -23,7 +23,7 @@ ggcat build -k <k_value> -j <threads_count> -l <input_files_list> -o <output_fil
 To build a colored graph, add the `-c` flag to the above commands
 
 By default the color name is equal to the file name, this behavior can be overridden
-by specifying color names with associated input files in a separate file, and by passing it to ggcat with the `-d` flag. The color and file in each line should be separated by one <TAB> character.
+by specifying color names with associated input files in a separate file, and by passing it to ggcat with the `-d` flag. The color and file in each line should be separated by one `<TAB>` character.
 
 Example `color_mapping.in`:
 
