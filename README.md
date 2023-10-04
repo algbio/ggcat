@@ -200,7 +200,7 @@ If you use GGCAT in your research, please cite the following article:
 
 > Extremely-fast construction and querying of compacted and colored de Bruijn graphs with GGCAT
 > Andrea Cracco, Alexandru I. Tomescu
-> bioRxiv 2022.10.24.513174; doi: https://doi.org/10.1101/2022.10.24.513174
+> Genome Research gr.277615.122; doi: https://doi.org/10.1101/gr.277615.122
 
 If you use a matchtigs/eulertigs output, please also cite the following articles:
 
