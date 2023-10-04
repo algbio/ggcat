@@ -259,7 +259,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         .write()
         .start_phase("phase: unitigs reorganization".to_string());
 
-    let input_files = vec![(graph_file, ())];
+    let input_files = vec![((graph_file, None), ())];
 
     GenericMinimizerBucketing::do_bucketing::<
         DumperMinimizerBucketingExecutorFactory<CX>,

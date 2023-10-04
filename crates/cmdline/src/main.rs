@@ -6,6 +6,7 @@ extern crate test;
 
 mod benchmarks;
 
+use ahash::HashMap;
 use backtrace::Backtrace;
 use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance};
 use std::fs::File;
@@ -140,6 +141,10 @@ struct AssemblerArgs {
     /// The lists of input files
     #[structopt(short = "l", long = "input-lists")]
     pub input_lists: Vec<PathBuf>,
+
+    /// The lists of input files with colors in format <COLOR_NAME><TAB><FILE_PATH>
+    #[structopt(short = "d", long = "colored-input-lists")]
+    pub colored_input_lists: Vec<PathBuf>,
 
     /// Enable colors
     #[structopt(short, long)]
@@ -285,25 +290,77 @@ fn convert_assembler_step(step: AssemblerStartingStep) -> assembler::AssemblerSt
 }
 
 fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
-    let mut inputs = args.input.clone();
+    let mut inputs: Vec<_> = args.input.iter().cloned().map(|f| (f, None)).collect();
+
+    if (args.input_lists.len() > 0 || args.input.len() > 0) && args.colored_input_lists.len() > 0 {
+        println!("Cannot specify both colored input lists and other files/lists");
+        exit(1);
+    }
 
     for list in args.input_lists {
         for input in BufReader::new(File::open(list).unwrap()).lines() {
             if let Ok(input) = input {
-                inputs.push(PathBuf::from(input));
+                if input.trim().is_empty() {
+                    continue;
+                }
+                inputs.push((PathBuf::from(input), None));
             }
         }
     }
+
+    let color_names: Vec<_> = if args.colored_input_lists.is_empty() {
+        // Standard colors (input file names)
+        inputs
+            .iter()
+            .map(|f| f.0.file_name().unwrap().to_string_lossy().to_string())
+            .collect()
+    } else {
+        // Mapped colors
+        let mut colors = HashMap::default();
+        let mut next_index = 0;
+
+        for list in args.colored_input_lists {
+            for input in BufReader::new(File::open(list).unwrap()).lines() {
+                if let Ok(input) = input {
+                    if input.trim().is_empty() {
+                        continue;
+                    }
+
+                    let parts = input.split("\t").collect::<Vec<_>>();
+                    if parts.len() < 2 {
+                        println!("Invalid line in colored input list: {}", input);
+                        exit(1);
+                    }
+
+                    let color_name = parts[0..parts.len() - 1].join("\t");
+                    let file_name = parts.last().unwrap().to_string();
+
+                    let index = *colors.entry(color_name).or_insert_with(|| {
+                        let index = next_index;
+                        next_index += 1;
+                        index
+                    });
+
+                    println!(
+                        "Add index with color {} => {}",
+                        parts[0..parts.len() - 1].join("\t"),
+                        index
+                    );
+
+                    inputs.push((PathBuf::from(file_name), Some(index)));
+                }
+            }
+        }
+        let mut colors: Vec<_> = colors.into_iter().collect();
+        colors.sort_by_key(|(_, i)| *i);
+
+        colors.into_iter().map(|(c, _)| c).collect()
+    };
 
     if inputs.is_empty() {
         println!("ERROR: No input files specified!");
         exit(1);
     }
-
-    let color_names: Vec<_> = inputs
-        .iter()
-        .map(|f| f.file_name().unwrap().to_string_lossy().to_string())
-        .collect();
 
     let inputs = inputs
         .into_iter()

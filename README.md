@@ -22,6 +22,25 @@ ggcat build -k <k_value> -j <threads_count> -l <input_files_list> -o <output_fil
 
 To build a colored graph, add the `-c` flag to the above commands
 
+By default the color name is equal to the file name, this behavior can be overridden
+by specifying color names with associated input files in a separate file, and by passing it to ggcat with the `-d` flag. The color and file in each line should be separated by one <TAB> character.
+
+Example `color_mapping.in`:
+
+```
+color1	file1.fa
+color2	file2.fa
+color2	file3.fa
+color1	dir/file4.fa
+color3	dir2/file5.fa
+```
+
+Then the graph can be built with the command:
+
+```
+ggcat build -k <k_value> -j <threads_count> -c -d color_mapping.in -o <output_file>
+```
+
 #### Building links
 
 To build links between maximal unitigs in BCALM2 like format, use the `-e` flag
@@ -35,48 +54,49 @@ Here are all listed the available options for graph building:
 ```
 > ggcat build --help
 USAGE:
-    ggcat build [FLAGS] [OPTIONS] [--] [input]...
+	ggcat build [FLAGS] [OPTIONS] [--] [input]...
 
 FLAGS:
-    -c, --colors                            Enable colors
-        --eulertigs                         Generate eulertigs instead of maximal unitigs
-    -f, --forward-only                      Treats reverse complementary kmers as different
-    -e, --generate-maximal-unitigs-links    Generate maximal unitigs connections references, in BCALM2 format
-                                            L:<+/->:<other id>:<+/->
-    -g, --greedy-matchtigs                  Generate greedy matchtigs instead of maximal unitigs
-    -h, --help                              Prints help information
-        --keep-temp-files                   Keep intermediate temporary files for debugging purposes
-        --pathtigs                          Generate pathtigs instead of maximal unitigs
-    -p, --prefer-memory                     Use all the given memory before writing to disk
-    -V, --version                           Prints version information
+	-c, --colors                            Enable colors
+		--eulertigs                         Generate eulertigs instead of maximal unitigs
+	-f, --forward-only                      Treats reverse complementary kmers as different
+	-e, --generate-maximal-unitigs-links    Generate maximal unitigs connections references, in BCALM2 format
+											L:<+/->:<other id>:<+/->
+	-g, --greedy-matchtigs                  Generate greedy matchtigs instead of maximal unitigs
+	-h, --help                              Prints help information
+		--keep-temp-files                   Keep intermediate temporary files for debugging purposes
+		--pathtigs                          Generate pathtigs instead of maximal unitigs
+	-p, --prefer-memory                     Use all the given memory before writing to disk
+	-V, --version                           Prints version information
 
 OPTIONS:
-    -b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
-    -w, --hash-type <hash-type>
-            Hash type used to identify kmers [default: Auto]
+	-b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
+	-d, --colored-input-lists <colored-input-lists>...
+	-w, --hash-type <hash-type>
+			Hash type used to identify kmers [default: Auto]
 
-    -l, --input-lists <input-lists>...                                       The lists of input files
-        --intermediate-compression-level <intermediate-compression-level>
-            The level of lz4 compression to be used for the intermediate files
+	-l, --input-lists <input-lists>...                                       The lists of input files
+		--intermediate-compression-level <intermediate-compression-level>
+			The level of lz4 compression to be used for the intermediate files
 
-    -k <klen>                                                                Specifies the k-mers length [default: 32]
-        --last-step <last-step>                                               [default: BuildUnitigs]
-    -m, --memory <memory>                                                    Maximum memory usage (GB) [default: 2]
-    -s, --min-multiplicity <min-multiplicity>
-            Minimum multiplicity required to keep a kmer [default: 2]
+	-k <klen>                                                                Specifies the k-mers length [default: 32]
+		--last-step <last-step>                                               [default: BuildUnitigs]
+	-m, --memory <memory>                                                    Maximum memory usage (GB) [default: 2]
+	-s, --min-multiplicity <min-multiplicity>
+			Minimum multiplicity required to keep a kmer [default: 2]
 
-        --mlen <mlen>
-            Overrides the default m-mers (minimizers) length
+		--mlen <mlen>
+			Overrides the default m-mers (minimizers) length
 
-    -o, --output-file <output-file>                                           [default: output.fasta.lz4]
-        --step <step>                                                         [default: MinimizerBucketing]
-    -t, --temp-dir <temp-dir>
-            Directory for temporary files (default .temp_files) [default: .temp_files]
+	-o, --output-file <output-file>                                           [default: output.fasta.lz4]
+		--step <step>                                                         [default: MinimizerBucketing]
+	-t, --temp-dir <temp-dir>
+			Directory for temporary files (default .temp_files) [default: .temp_files]
 
-    -j, --threads-count <threads-count>                                       [default: 16]
+	-j, --threads-count <threads-count>                                       [default: 16]
 
 ARGS:
-    <input>...    The input files
+	<input>...    The input files
 ```
 
 ### Querying a graph
@@ -108,40 +128,40 @@ Here are listed all the available options for graph querying:
 ```
 > ggcat query --help
 USAGE:
-    ggcat query [FLAGS] [OPTIONS] <input-graph> <input-query>
+	ggcat query [FLAGS] [OPTIONS] <input-graph> <input-query>
 
 FLAGS:
-    -c, --colors             Enable colors
-    -f, --forward-only       Treats reverse complementary kmers as different
-    -h, --help               Prints help information
-        --keep-temp-files    Keep intermediate temporary files for debugging purposes
-    -p, --prefer-memory      Use all the given memory before writing to disk
-    -V, --version            Prints version information
+	-c, --colors             Enable colors
+	-f, --forward-only       Treats reverse complementary kmers as different
+	-h, --help               Prints help information
+		--keep-temp-files    Keep intermediate temporary files for debugging purposes
+	-p, --prefer-memory      Use all the given memory before writing to disk
+	-V, --version            Prints version information
 
 OPTIONS:
-    -b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
-    -f, --colored-query-output-format <colored-query-output-format>
-    -w, --hash-type <hash-type>
-            Hash type used to identify kmers [default: Auto]
+	-b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
+	-f, --colored-query-output-format <colored-query-output-format>
+	-w, --hash-type <hash-type>
+			Hash type used to identify kmers [default: Auto]
 
-        --intermediate-compression-level <intermediate-compression-level>
-            The level of lz4 compression to be used for the intermediate files
+		--intermediate-compression-level <intermediate-compression-level>
+			The level of lz4 compression to be used for the intermediate files
 
-    -k <klen>                                                                Specifies the k-mers length [default: 32]
-    -m, --memory <memory>                                                    Maximum memory usage (GB) [default: 2]
-        --mlen <mlen>
-            Overrides the default m-mers (minimizers) length
+	-k <klen>                                                                Specifies the k-mers length [default: 32]
+	-m, --memory <memory>                                                    Maximum memory usage (GB) [default: 2]
+		--mlen <mlen>
+			Overrides the default m-mers (minimizers) length
 
-    -o, --output-file-prefix <output-file-prefix>                             [default: output]
-    -x, --step <step>                                                         [default: MinimizerBucketing]
-    -t, --temp-dir <temp-dir>
-            Directory for temporary files (default .temp_files) [default: .temp_files]
+	-o, --output-file-prefix <output-file-prefix>                             [default: output]
+	-x, --step <step>                                                         [default: MinimizerBucketing]
+	-t, --temp-dir <temp-dir>
+			Directory for temporary files (default .temp_files) [default: .temp_files]
 
-    -j, --threads-count <threads-count>                                       [default: 16]
+	-j, --threads-count <threads-count>                                       [default: 16]
 
 ARGS:
-    <input-graph>    The input graph
-    <input-query>    The input query as a .fasta file
+	<input-graph>    The input graph
+	<input-query>    The input query as a .fasta file
 ```
 
 ## Installation
@@ -165,9 +185,10 @@ https://rustup.rs/
 The building process was not tested on windows, but it should work with minor tweaks.
 
 ### Additional opt-in features
-Additional features can be enabled by specifying them in the command line while building/installing GGCAT (ex. --features "feature1,feature2"):
-* **kmer-counters**: Adds kmer abundance for each unitig, in a BCALM2 compatible format. If enabled GGCAT consumes more memory while building colored graphs
 
+Additional features can be enabled by specifying them in the command line while building/installing GGCAT (ex. --features "feature1,feature2"):
+
+- **kmer-counters**: Adds kmer abundance for each unitig, in a BCALM2 compatible format. If enabled GGCAT uses more memory while building colored graphs
 
 ### Building
 

@@ -361,7 +361,7 @@ impl GGCATInstance {
             );
         } else {
             FastaFileSequencesStream::new().read_block(
-                &graph_input,
+                &(graph_input, None),
                 false,
                 Some(kmer_length - 1),
                 |seq, _info| {

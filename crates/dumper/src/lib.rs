@@ -51,8 +51,10 @@ pub fn dump_unitigs(
     >::open_colors_table(graph_input.with_extension("colors.dat"));
 
     // TODO: Support GFA input
-    let file_stats =
-        compute_stats_from_input_blocks(&[GeneralSequenceBlockData::FASTA(graph_input.clone())]);
+    let file_stats = compute_stats_from_input_blocks(&[GeneralSequenceBlockData::FASTA((
+        graph_input.clone(),
+        None,
+    ))]);
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
 
