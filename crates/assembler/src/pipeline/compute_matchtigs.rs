@@ -7,6 +7,7 @@ use genome_graph::bigraph::implementation::node_bigraph_wrapper::NodeBigraphWrap
 use genome_graph::bigraph::interface::BidirectedData;
 use genome_graph::bigraph::traitgraph::implementation::petgraph_impl::PetGraph;
 use genome_graph::bigraph::traitgraph::interface::ImmutableGraphContainer;
+use genome_graph::bigraph::traitgraph::interface::MutableGraphContainer;
 use genome_graph::generic::{GenericEdge, GenericNode};
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
@@ -95,6 +96,14 @@ impl<ColorInfo: IdentSequenceWriter> BidirectedData for UnitigEdgeData<ColorInfo
         }
     }
 }
+
+/*impl<ColorInfo: IdentSequenceWriter> BidirectedData for UnitigEdgeData<ColorInfo> {
+
+}
+
+impl<ColorInfo: IdentSequenceWriter> DijkstraWeightedEdgeData<usize> for UnitigEdgeData<ColorInfo> {
+
+}*/
 
 // SequenceHandle is the type that points to a sequence, e.g. just an integer.
 impl<ColorInfo: IdentSequenceWriter> MatchtigEdgeData<SequenceHandle<ColorInfo>>
@@ -340,7 +349,7 @@ pub fn compute_matchtigs_thread<
         .start_phase(format!("phase: {} building [step1]", phase_name));
 
     /* assign weight to each edge */
-    for edge_index in graph.edge_indices() {
+    for edge_index in graph.edge_indices_copied() {
         let edge_data: &mut UnitigEdgeData<_> = graph.edge_data_mut(edge_index);
 
         // length (in characters) of the sequence associated with edge_data
