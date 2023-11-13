@@ -44,6 +44,7 @@ impl<CHI> MapEntry<CHI> {
         self.count_flags.get() & COUNTER_MASK
     }
 
+    #[track_caller]
     pub fn set_counter_after_check(&mut self, value: usize) {
         self.count_flags
             .set((self.count_flags.get() & !COUNTER_MASK) | (value & COUNTER_MASK));

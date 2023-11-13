@@ -1,0 +1,32 @@
+{% set name = "ggcat" %}
+{% set version = "1.0_beta.1" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+build:
+  number: 0
+requirements:
+  build:
+    - git
+    - curl
+  host:
+  run:
+test:
+  commands:
+    - ggcat build --help
+    - ggcat --help
+about:
+  home: https://github.com/algbio/ggcat
+  license: MIT
+  license_file: LICENSE
+  summary: Extremely fast compacted (and colored) de Bruijn graphs construction and querying
+  dev_url: https://github.com/algbio/ggcat
+  doc_url: https://github.com/algbio/ggcat#readme
+
+extra:
+  recipe-maintainers:
+    - guilucand
+  identifiers:
+    - doi:10.1101/2022.10.24.513174

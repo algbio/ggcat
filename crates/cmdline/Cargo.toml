@@ -44,11 +44,11 @@ config = { package = "ggcat_config", path = "../config" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Static dispatch
-dynamic-dispatch = "0.4.3"
+dynamic-dispatch = "0.5.3"
 
 
 # Common libraries
-parallel-processor = "0.1.8"
+parallel-processor = "0.1.10"
 io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
 
@@ -65,6 +65,7 @@ no-stats = ["parallel-processor/no-stats"]
 process-stats = ["parallel-processor/process-stats"]
 tracing = ["instrumenter/enabled"]
 devel-build = ["assembler/devel-build", "querier/devel-build"]
+kmer-counters = ["assembler/support_kmer_counters"]
 
 [build-dependencies]
 make-cmd = "0.1.0"

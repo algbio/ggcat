@@ -185,9 +185,9 @@ impl GGCATInstance {
         extra_elab: ExtraElaboration,
     ) -> PathBuf {
         let bucketing_hash_dispatch = if forward_only {
-            <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
+            <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::dynamic_dispatch_id()
         } else {
-            <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
+            <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::dynamic_dispatch_id()
         };
 
         let merging_hash_dispatch = utils::get_hash_static_id(
@@ -197,9 +197,9 @@ impl GGCATInstance {
         );
 
         let colors_hash = if colors {
-            ColorBundleMultifileBuilding::DYNAMIC_DISPATCH_ID
+            ColorBundleMultifileBuilding::dynamic_dispatch_id()
         } else {
-            NonColoredManager::DYNAMIC_DISPATCH_ID
+            NonColoredManager::dynamic_dispatch_id()
         };
 
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
@@ -261,9 +261,9 @@ impl GGCATInstance {
         color_output_format: ColoredQueryOutputFormat,
     ) -> PathBuf {
         let bucketing_hash_dispatch = if forward_only {
-            <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
+            <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::dynamic_dispatch_id()
         } else {
-            <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::DYNAMIC_DISPATCH_ID
+            <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::dynamic_dispatch_id()
         };
 
         let merging_hash_dispatch = utils::get_hash_static_id(
@@ -273,9 +273,9 @@ impl GGCATInstance {
         );
 
         let colors_hash = if colors {
-            ColorBundleGraphQuerying::DYNAMIC_DISPATCH_ID
+            ColorBundleGraphQuerying::dynamic_dispatch_id()
         } else {
-            NonColoredManager::DYNAMIC_DISPATCH_ID
+            NonColoredManager::dynamic_dispatch_id()
         };
 
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
@@ -361,7 +361,7 @@ impl GGCATInstance {
             );
         } else {
             FastaFileSequencesStream::new().read_block(
-                &graph_input,
+                &(graph_input, None),
                 false,
                 Some(kmer_length - 1),
                 |seq, _info| {

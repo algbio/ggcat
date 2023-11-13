@@ -141,7 +141,7 @@ fn ggcat_build_from_files(
                     todo!("GFA support is not implemented yet");
                     // GeneralSequenceBlockData::GFA() // PathBuf::from(f))
                 } else {
-                    GeneralSequenceBlockData::FASTA(PathBuf::from(f))
+                    GeneralSequenceBlockData::FASTA((PathBuf::from(f), None))
                 }
             })
             .collect(),

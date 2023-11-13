@@ -3,6 +3,8 @@ use crate::concurrent::structured_sequences::{
 };
 use utils::vec_slice::VecSlice;
 
+use super::SequenceAbundanceType;
+
 pub struct FastaWriterConcurrentBuffer<
     'a,
     ColorInfo: IdentSequenceWriter,
@@ -10,7 +12,7 @@ pub struct FastaWriterConcurrentBuffer<
     Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
 > {
     target: &'a StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>,
-    sequences: Vec<(VecSlice<u8>, ColorInfo, LinksInfo)>,
+    sequences: Vec<(VecSlice<u8>, ColorInfo, LinksInfo, SequenceAbundanceType)>,
     seq_buf: Vec<u8>,
     extra_buffers: (ColorInfo::TempBuffer, LinksInfo::TempBuffer),
     temp_buffer: Backend::SequenceTempBuffer,
@@ -51,7 +53,9 @@ impl<
             self.current_index.map(|c| c - self.sequences.len() as u64),
             self.sequences
                 .drain(..)
-                .map(|(slice, col, link)| (slice.get_slice(&self.seq_buf), col, link)),
+                .map(|(slice, col, link, abundance)| {
+                    (slice.get_slice(&self.seq_buf), col, link, abundance)
+                }),
             &self.extra_buffers,
         );
 
@@ -75,15 +79,21 @@ impl<
         color_extra_buffer: &ColorInfo::TempBuffer,
         links: LinksInfo,
         links_extra_buffer: &LinksInfo::TempBuffer,
+        #[cfg(feature = "support_kmer_counters")] abundance: SequenceAbundanceType,
     ) -> Option<u64> {
         let mut result = None;
+        let mut different_index = false;
 
-        if let Some(sequence_index) = sequence_index
-            && Some(sequence_index) != self.current_index {
-            result = Some(self.flush());
-            self.current_index = Some(sequence_index);
+        if let Some(sequence_index) = sequence_index {
+            if Some(sequence_index) != self.current_index {
+                result = Some(self.flush());
+                self.current_index = Some(sequence_index);
+                different_index = true;
+            }
         }
-        else if self.auto_flush && Self::will_overflow(&self.seq_buf, sequence.len()) {
+
+        if !different_index && self.auto_flush && Self::will_overflow(&self.seq_buf, sequence.len())
+        {
             result = Some(self.flush());
         }
 
@@ -96,6 +106,12 @@ impl<
             VecSlice::new_extend(&mut self.seq_buf, sequence),
             color,
             links,
+            match () {
+                #[cfg(feature = "support_kmer_counters")]
+                () => abundance,
+                #[cfg(not(feature = "support_kmer_counters"))]
+                () => (),
+            },
         ));
 
         if let Some(current_index) = &mut self.current_index {

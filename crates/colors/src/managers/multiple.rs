@@ -215,10 +215,14 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         data.sequences[bucket].flush(&data.temp_dir)
     }
 
+    #[cfg(feature = "support_kmer_counters")]
+    type HashMapTempColorIndex = usize;
+
+    #[cfg(not(feature = "support_kmer_counters"))]
     type HashMapTempColorIndex = ();
 
     fn new_color_index() -> Self::HashMapTempColorIndex {
-        ()
+        Default::default()
     }
 
     fn process_colors(
@@ -282,22 +286,38 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
                     let mut entry_count = entry.get_counter();
 
+                    let missing_temp_color = match () {
+                        #[cfg(not(feature = "support_kmer_counters"))]
+                        () => entry_count & VISITED_BIT == 0,
+                        #[cfg(feature = "support_kmer_counters")]
+                        () => (entry.color_index & VISITED_BIT) == 0,
+                    };
+
                     const BIDIRECTIONAL_FLAGS: u8 = READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END;
 
                     if entry.get_flags() & BIDIRECTIONAL_FLAGS == BIDIRECTIONAL_FLAGS {
                         if kmer_hash.is_forward() ^ is_first {
                             continue;
-                        } else if entry_count & VISITED_BIT == 0 {
+                        } else if missing_temp_color {
                             entry_count /= 2;
                         }
                     }
 
-                    if entry_count & VISITED_BIT == 0 {
+                    if missing_temp_color {
                         let colors_count = entry_count;
                         let start_temp_color_index = data.temp_colors_buffer.len();
 
-                        entry_count = VISITED_BIT | start_temp_color_index;
-                        entry.set_counter_after_check(entry_count);
+                        match () {
+                            #[cfg(not(feature = "support_kmer_counters"))]
+                            () => {
+                                entry_count = VISITED_BIT | start_temp_color_index;
+                                entry.set_counter_after_check(entry_count);
+                            }
+                            #[cfg(feature = "support_kmer_counters")]
+                            () => {
+                                entry.color_index = VISITED_BIT | start_temp_color_index;
+                            }
+                        };
 
                         data.temp_colors_buffer
                             .resize(data.temp_colors_buffer.len() + colors_count + 1, 0);
@@ -305,7 +325,12 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                         data.temp_colors_buffer[start_temp_color_index] = 1;
                     }
 
-                    let position = entry_count & !VISITED_BIT;
+                    let position = match () {
+                        #[cfg(not(feature = "support_kmer_counters"))]
+                        () => entry_count & !VISITED_BIT,
+                        #[cfg(feature = "support_kmer_counters")]
+                        () => entry.color_index & !VISITED_BIT,
+                    };
 
                     let col_count = data.temp_colors_buffer[position] as usize;
                     data.temp_colors_buffer[position] += 1;
@@ -336,7 +361,16 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                             last_partition = new_partition;
                         }
 
-                        entry.set_counter_after_check(VISITED_BIT | (last_color as usize));
+                        match () {
+                            #[cfg(not(feature = "support_kmer_counters"))]
+                            () => {
+                                entry.set_counter_after_check(VISITED_BIT | (last_color as usize));
+                            }
+                            #[cfg(feature = "support_kmer_counters")]
+                            () => {
+                                entry.color_index = VISITED_BIT | (last_color as usize);
+                            }
+                        };
                     }
                 }
             }
@@ -362,11 +396,17 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     ) {
         let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
 
-        if let Some(back_ts) = ts.colors.back_mut() && back_ts.color == kmer_color {
-            back_ts.counter += 1;
-        } else {
-            ts.colors.push_back(KmerSerializedColor { color: kmer_color, counter: 1 });
+        if let Some(back_ts) = ts.colors.back_mut() {
+            if back_ts.color == kmer_color {
+                back_ts.counter += 1;
+                return;
+            }
         }
+
+        ts.colors.push_back(KmerSerializedColor {
+            color: kmer_color,
+            counter: 1,
+        });
     }
 
     fn extend_backward(
@@ -375,12 +415,17 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     ) {
         let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
 
-        if let Some(front_ts) = ts.colors.front_mut()
-            && front_ts.color == kmer_color {
-            front_ts.counter += 1;
-        } else {
-            ts.colors.push_front(KmerSerializedColor { color: kmer_color, counter: 1 });
+        if let Some(front_ts) = ts.colors.front_mut() {
+            if front_ts.color == kmer_color {
+                front_ts.counter += 1;
+                return;
+            }
         }
+
+        ts.colors.push_front(KmerSerializedColor {
+            color: kmer_color,
+            counter: 1,
+        });
     }
 
     fn join_structures<const REVERSE: bool>(

@@ -279,7 +279,10 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
         .write()
         .start_phase("phase: graph + query bucketing".to_string());
 
-    let input_files = vec![(graph_file, FileType::Graph), (query_file, FileType::Query)];
+    let input_files = vec![
+        ((graph_file, None), FileType::Graph),
+        ((query_file, None), FileType::Query),
+    ];
 
     let queries_count = Arc::new(AtomicUsize::new(0));
 

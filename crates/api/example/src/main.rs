@@ -23,9 +23,18 @@ fn main() {
     // building also bcalm2-style links across maximal unitigs
     let graph_file = instance.build_graph(
         vec![
-            GeneralSequenceBlockData::FASTA(PathBuf::from("../../../example-inputs/sal1.fa")),
-            GeneralSequenceBlockData::FASTA(PathBuf::from("../../../example-inputs/sal2.fa")),
-            GeneralSequenceBlockData::FASTA(PathBuf::from("../../../example-inputs/sal3.fa")),
+            GeneralSequenceBlockData::FASTA((
+                PathBuf::from("../../../example-inputs/sal1.fa"),
+                None,
+            )),
+            GeneralSequenceBlockData::FASTA((
+                PathBuf::from("../../../example-inputs/sal2.fa"),
+                None,
+            )),
+            GeneralSequenceBlockData::FASTA((
+                PathBuf::from("../../../example-inputs/sal3.fa"),
+                None,
+            )),
         ],
         graph_file.clone(),
         Some(&["sal1".to_string(), "sal2".to_string(), "sal3".to_string()]),

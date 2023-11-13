@@ -8,6 +8,7 @@ use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
 };
+use nightly_quirks::prelude::*;
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use std::cmp::min;
 use std::hash::Hash;
@@ -235,7 +236,7 @@ pub trait ColorsManager: 'static + Sync + Send + Sized {
         buckets_count_log: u32,
         stride: u64,
     ) -> BucketIndexType {
-        let colors_count = colors_count.div_ceil(stride) * stride;
+        let colors_count = colors_count.nq_div_ceil(stride) * stride;
 
         min(
             (1 << buckets_count_log) - 1,

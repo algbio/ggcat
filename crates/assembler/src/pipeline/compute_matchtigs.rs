@@ -12,7 +12,7 @@ use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{
-    IdentSequenceWriter, StructuredSequenceBackend, StructuredSequenceWriter,
+    IdentSequenceWriter, SequenceAbundanceType, StructuredSequenceBackend, StructuredSequenceWriter,
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use libmatchtigs::{
@@ -20,11 +20,13 @@ use libmatchtigs::{
 };
 use libmatchtigs::{GreedytigAlgorithm, GreedytigAlgorithmConfiguration, TigAlgorithm};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use std::convert::identity;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 use traitgraph_algo::dijkstra::DijkstraWeightedEdgeData;
+
+#[cfg(feature = "support_kmer_counters")]
+use io::concurrent::structured_sequences::SequenceAbundance;
 
 const DUMMY_EDGE_VALUE: usize = usize::MAX;
 
@@ -41,8 +43,8 @@ impl<ColorInfo: IdentSequenceWriter> SequenceHandle<ColorInfo> {
         &(
             CompressedReadIndipendent,
             ColorInfo,
+            SequenceAbundanceType,
             DoubleMaximalUnitigLinks,
-            bool,
         ),
         &StructuredUnitigsStorage<ColorInfo>,
     )> {
@@ -135,8 +137,8 @@ pub struct StructuredUnitigsStorage<ColorInfo: IdentSequenceWriter> {
     sequences: Vec<(
         CompressedReadIndipendent,
         ColorInfo,
+        SequenceAbundanceType,
         DoubleMaximalUnitigLinks,
-        bool,
     )>,
 
     sequences_buffer: Vec<u8>,
@@ -185,6 +187,7 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
     }
 
     fn write_sequence(
+        _k: usize,
         buffer: &mut Self::SequenceTempBuffer,
         sequence_index: u64,
         sequence: &[u8],
@@ -194,6 +197,7 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
             ColorInfo::TempBuffer,
             <DoubleMaximalUnitigLinks as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ),
+        #[cfg(feature = "support_kmer_counters")] abundance: SequenceAbundanceType,
     ) {
         if buffer.first_sequence_index == usize::MAX {
             buffer.first_sequence_index = sequence_index as usize;
@@ -214,20 +218,17 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
             &mut buffer.links_buffer,
         );
 
-        let self_complemental = links_info
-            .0
-            .iter()
-            .map(|x| {
-                x.entries
-                    .get_slice(&buffer.links_buffer)
-                    .iter()
-                    .any(|x| x.index() == sequence_index)
-            })
-            .any(identity);
-
-        buffer
-            .sequences
-            .push((sequence, color_info, links_info, self_complemental));
+        buffer.sequences.push((
+            sequence,
+            color_info,
+            match () {
+                #[cfg(feature = "support_kmer_counters")]
+                () => abundance,
+                #[cfg(not(feature = "support_kmer_counters"))]
+                () => (),
+            },
+            links_info,
+        ));
     }
 
     fn get_path(&self) -> PathBuf {
@@ -257,7 +258,7 @@ impl<ColorInfo: IdentSequenceWriter> GenericNode for UnitigEdgeData<ColorInfo> {
     fn is_self_complemental(&self) -> bool {
         self.sequence_handle
             .get_sequence_handle()
-            .map(|s| s.0 .3)
+            .map(|s| s.0 .3.is_self_complemental)
             .unwrap_or(false)
     }
 
@@ -265,12 +266,12 @@ impl<ColorInfo: IdentSequenceWriter> GenericNode for UnitigEdgeData<ColorInfo> {
         let links = self
             .sequence_handle
             .get_sequence_handle()
-            .map(|h| h.0 .2.clone())
+            .map(|h| h.0 .3.clone())
             .unwrap_or(DoubleMaximalUnitigLinks::EMPTY);
         let storage = self.sequence_handle.0.clone();
 
         links
-            .0
+            .links
             .into_iter()
             .map(move |link| {
                 let storage = storage.clone();
@@ -430,6 +431,12 @@ pub fn compute_matchtigs_thread<
                 0,
             );
         }
+        #[cfg(feature = "support_kmer_counters")]
+        let mut abundance = SequenceAbundance {
+            first: handle.2.first,
+            sum: handle.2.sum,
+            last: handle.2.last,
+        };
 
         let mut previous_data = first_data;
         for edge in walk.iter().skip(1) {
@@ -461,6 +468,11 @@ pub fn compute_matchtigs_thread<
                     &storage.color_buffer,
                     kmer_offset,
                 );
+                #[cfg(feature = "support_kmer_counters")]
+                {
+                    abundance.sum += handle.2.sum - handle.2.first;
+                    abundance.last = handle.2.last;
+                }
             } else {
                 read_buffer.extend(
                     next_sequence
@@ -473,6 +485,11 @@ pub fn compute_matchtigs_thread<
                     &storage.color_buffer,
                     kmer_offset,
                 );
+                #[cfg(feature = "support_kmer_counters")]
+                {
+                    abundance.sum += handle.2.sum - handle.2.last;
+                    abundance.last = handle.2.last;
+                }
             }
         }
 
@@ -489,6 +506,8 @@ pub fn compute_matchtigs_thread<
             &final_color_extra_buffer,
             (),
             &(),
+            #[cfg(feature = "support_kmer_counters")]
+            abundance,
         );
     }
 }

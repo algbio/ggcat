@@ -12,6 +12,7 @@ use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerialize
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::get_bucket_index;
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLinkSerializer};
+use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
@@ -21,6 +22,9 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+
+#[cfg(feature = "support_kmer_counters")]
+use io::concurrent::structured_sequences::SequenceAbundance;
 
 #[derive(Copy, Clone, Debug)]
 struct FinalUnitigInfo {
@@ -200,7 +204,9 @@ pub fn build_unitigs<
                         final_sequences[findex] = Some((
                             CompressedReadIndipendent::from_read(&seq, &mut temp_storage),
                             unitig_info,
-                            index.color,
+                            index.colors,
+                            #[cfg(feature = "support_kmer_counters")]
+                            index.counters,
                         ));
                     },
                 );
@@ -211,7 +217,7 @@ pub fn build_unitigs<
                     CX::ColorsMergeManagerType::<H, MH>::alloc_unitig_color_structure();
 
                 'uloop: for sequence in
-                    final_sequences.group_by(|_a, b| !b.as_ref().unwrap().1.is_start)
+                    final_sequences.nq_group_by(|_a, b| !b.as_ref().unwrap().1.is_start)
                 {
                     let is_backwards = !sequence[0].as_ref().unwrap().1.flags.is_forward();
                     let is_circular = sequence[0].as_ref().unwrap().1.is_circular;
@@ -220,6 +226,14 @@ pub fn build_unitigs<
                     CX::ColorsMergeManagerType::<H, MH>::reset_unitig_color_structure(
                         &mut final_unitig_color,
                     );
+                    #[cfg(feature = "support_kmer_counters")]
+                    let mut abundance = SequenceAbundance {
+                        first: 0,
+                        sum: 0,
+                        last: 0,
+                    };
+                    #[cfg(feature = "support_kmer_counters")]
+                    let mut prev_last = 0;
 
                     let mut is_first = true;
 
@@ -228,6 +242,10 @@ pub fn build_unitigs<
                     } else {
                         itertools::Either::Left(sequence.iter())
                     } {
+                        #[cfg(feature = "support_kmer_counters")]
+                        let (read, FinalUnitigInfo { flags, .. }, color, counters) = upart.as_ref().unwrap();
+
+                        #[cfg(not(feature = "support_kmer_counters"))]
                         let (read, FinalUnitigInfo { flags, .. }, color) = upart.as_ref().unwrap();
 
                         let compr_read = read.as_reference(&temp_storage);
@@ -243,6 +261,11 @@ pub fn build_unitigs<
                                     &color_extra_buffer.0,
                                     0,
                                 );
+                                #[cfg(feature = "support_kmer_counters")]
+                                {
+                                    abundance.first = counters.last;
+                                    abundance.sum += counters.sum;
+                                }
                             } else {
                                 temp_sequence.extend(compr_read.as_bases_iter());
                                 CX::ColorsMergeManagerType::<H, MH>::join_structures::<false>(
@@ -251,6 +274,11 @@ pub fn build_unitigs<
                                     &color_extra_buffer.0,
                                     0,
                                 );
+                                #[cfg(feature = "support_kmer_counters")]
+                                {
+                                    abundance.first = counters.first;
+                                    abundance.sum += counters.sum;
+                                }
                             }
                             is_first = false;
                         } else {
@@ -267,6 +295,9 @@ pub fn build_unitigs<
                                     &color_extra_buffer.0,
                                     1,
                                 );
+                                #[cfg(feature = "support_kmer_counters")] {
+                                    abundance.sum += counters.sum - counters.last;
+                                }
                             } else {
                                 temp_sequence.extend(
                                     compr_read
@@ -280,13 +311,25 @@ pub fn build_unitigs<
                                     &color_extra_buffer.0,
                                     1,
                                 );
+                                #[cfg(feature = "support_kmer_counters")] {
+                                    abundance.sum += counters.sum - counters.first;
+                                }
                             }
+                        }
+                        #[cfg(feature = "support_kmer_counters")] {
+                            prev_last = abundance.last;
+                            abundance.last = counters.last;
                         }
                     }
 
                     // In case of circular unitigs, remove an extra ending base
                     if is_circular {
                         temp_sequence.pop();
+                        #[cfg(feature = "support_kmer_counters")] {
+                            abundance.sum -= abundance.last;
+                            abundance.last = prev_last;
+                        }
+
                         CX::ColorsMergeManagerType::<H, MH>::pop_base(&mut final_unitig_color);
                     }
 
@@ -303,6 +346,8 @@ pub fn build_unitigs<
                         &final_color_extra_buffer,
                         (),
                         &(),
+                        #[cfg(feature = "support_kmer_counters")]
+                        abundance,
                     );
 
                     // write_fasta_entry::<H, MH, CX, _>(

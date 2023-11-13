@@ -9,6 +9,8 @@ use config::{
     DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE, QUERIES_COUNT_MIN_BATCH,
 };
+use nightly_quirks::prelude::*;
+use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
@@ -101,7 +103,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
 
         fast_smart_radix_sort::<_, CountersCompare, false>(&mut counters_vec[..]);
 
-        for queries_by_color in counters_vec.group_by_mut(|a, b| a.1 == b.1) {
+        for queries_by_color in counters_vec.nq_group_by_mut(|a, b| a.1 == b.1) {
             let color = queries_by_color[0].1;
             temp_colors_buffer.clear();
             colormap_decoder.get_color_mappings(color, &mut temp_colors_buffer);
@@ -143,16 +145,16 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             // );
 
             let rounded_queries_count =
-                (queries_count + 1).div_ceil(QUERIES_COUNT_MIN_BATCH) * QUERIES_COUNT_MIN_BATCH;
+                (queries_count + 1).nq_div_ceil(QUERIES_COUNT_MIN_BATCH) * QUERIES_COUNT_MIN_BATCH;
 
             let get_query_bucket = |query_index: u64| {
                 ((query_index - 1) * (buckets_count as u64) / rounded_queries_count)
                     as BucketIndexType
             };
 
-            for entries in temp_queries_buffer
-                .group_by(|a, b| get_query_bucket(a.query_index) == get_query_bucket(b.query_index))
-            {
+            for entries in temp_queries_buffer.nq_group_by(|a, b| {
+                get_query_bucket(a.query_index) == get_query_bucket(b.query_index)
+            }) {
                 let bucket = get_query_bucket(entries[0].query_index);
                 colored_buckets_writer.add_element(
                     bucket,

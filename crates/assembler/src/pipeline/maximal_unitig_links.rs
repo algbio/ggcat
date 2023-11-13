@@ -18,12 +18,17 @@ use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
     DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
 };
-use hashes::ExtendableHashTraitType;
-use hashes::{HashFunction, HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
+use dashmap::DashSet;
+use hashbrown::HashSet;
+use hashes::{ExtendableHashTraitType, HashFunction, HashableSequence};
+use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
-use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
+use io::concurrent::structured_sequences::{
+    SequenceAbundanceType, StructuredSequenceBackend, StructuredSequenceWriter,
+};
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
@@ -59,6 +64,9 @@ pub fn build_maximal_unitigs_links<
     const DEFAULT_BUCKET_HASHES_SIZE_LOG: usize = 8;
 
     let buckets_count = 1 << DEFAULT_BUCKET_HASHES_SIZE_LOG;
+
+    
+    let self_complemental_unitigs = DashSet::new();
 
     // Hash all the extremities
     let (step_1_hash_files, unitigs_count) = {
@@ -96,38 +104,58 @@ pub fn build_maximal_unitigs_links<
                         BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count),
                     );
 
-                    while
-                        maximal_unitigs_reader_step1
-                            .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
+                    while maximal_unitigs_reader_step1
+                        .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
+                        _,
+                        typenum::consts::U0,
+                        false,
+                    >, _>(
+                        Vec::new(),
+                        <(u64, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType)>::new_temp_buffer(
+                        ),
+                        |(_, _, (index, _, _, _), read): (
                             _,
-                            typenum::consts::U0,
-                            false,
-                        >, _>(
-                            Vec::new(),
-                            <(u64, PartialUnitigsColorStructure<H, MH, CX>, ())>::new_temp_buffer(),
-                            |(_, _, (index, _, _), read): (
-                                _,
-                                _,
-                                (_, PartialUnitigsColorStructure<H, MH, CX>, ()),
-                                _,
-                            ),
-                             _extra_buffer| {
-                                let read_len = read.bases_count();
-                                unitigs_partial_count += 1;
+                            _,
+                            (_, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType),
+                            _,
+                        ),
+                         _extra_buffer| {
+                            let read_len = read.bases_count();
+                            unitigs_partial_count += 1;
 
-                                let first_hash = MH::new(read.sub_slice(0..(k - 1)), k - 1)
+                            let first_hash = MH::new(read.sub_slice(0..(k - 1)), k - 1)
+                                .iter()
+                                .next()
+                                .unwrap();
+                            let last_hash =
+                                MH::new(read.sub_slice((read_len - k + 1)..read_len), k - 1)
                                     .iter()
                                     .next()
                                     .unwrap();
-                                let last_hash =
-                                    MH::new(read.sub_slice((read_len - k + 1)..read_len), k - 1)
-                                        .iter()
-                                        .next()
-                                        .unwrap();
 
-                                let first_hash_unx = first_hash.to_unextendable();
-                                let last_hash_unx = last_hash.to_unextendable();
 
+                            let first_hash_unx = first_hash.to_unextendable();
+                            let last_hash_unx = last_hash.to_unextendable();
+
+                            let self_complemental = (first_hash_unx == last_hash_unx) 
+                                && (first_hash.is_rc_symmetric() || (first_hash.is_forward() != last_hash.is_forward()));
+
+                            if self_complemental {
+                                self_complemental_unitigs.insert(index);
+                            }
+
+                            hashes_tmp.add_element(
+                                MH::get_bucket(0, DEFAULT_BUCKET_HASHES_SIZE_LOG, first_hash_unx),
+                                &(),
+                                &MaximalHashEntry::new(
+                                    first_hash_unx,
+                                    index,
+                                    MaximalUnitigPosition::Beginning,
+                                    first_hash.is_forward(),
+                                ),
+                            );
+
+                            if first_hash.is_rc_symmetric() {
                                 hashes_tmp.add_element(
                                     MH::get_bucket(
                                         0,
@@ -139,27 +167,23 @@ pub fn build_maximal_unitigs_links<
                                         first_hash_unx,
                                         index,
                                         MaximalUnitigPosition::Beginning,
-                                        first_hash.is_forward(),
+                                        !first_hash.is_forward(),
                                     ),
                                 );
+                            }
 
-                                if first_hash.is_rc_symmetric() {
-                                    hashes_tmp.add_element(
-                                        MH::get_bucket(
-                                            0,
-                                            DEFAULT_BUCKET_HASHES_SIZE_LOG,
-                                            first_hash_unx,
-                                        ),
-                                        &(),
-                                        &MaximalHashEntry::new(
-                                            first_hash_unx,
-                                            index,
-                                            MaximalUnitigPosition::Beginning,
-                                            !first_hash.is_forward(),
-                                        ),
-                                    );
-                                }
+                            hashes_tmp.add_element(
+                                MH::get_bucket(0, DEFAULT_BUCKET_HASHES_SIZE_LOG, last_hash_unx),
+                                &(),
+                                &MaximalHashEntry::new(
+                                    last_hash_unx,
+                                    index,
+                                    MaximalUnitigPosition::Ending,
+                                    !last_hash.is_forward(),
+                                ),
+                            );
 
+                            if last_hash.is_rc_symmetric() {
                                 hashes_tmp.add_element(
                                     MH::get_bucket(
                                         0,
@@ -171,29 +195,12 @@ pub fn build_maximal_unitigs_links<
                                         last_hash_unx,
                                         index,
                                         MaximalUnitigPosition::Ending,
-                                        !last_hash.is_forward(),
+                                        last_hash.is_forward(),
                                     ),
                                 );
-
-                                if last_hash.is_rc_symmetric() {
-                                    hashes_tmp.add_element(
-                                        MH::get_bucket(
-                                            0,
-                                            DEFAULT_BUCKET_HASHES_SIZE_LOG,
-                                            last_hash_unx,
-                                        ),
-                                        &(),
-                                        &MaximalHashEntry::new(
-                                            last_hash_unx,
-                                            index,
-                                            MaximalUnitigPosition::Ending,
-                                            last_hash.is_forward(),
-                                        ),
-                                    );
-                                }
-                            },
-                        )
-                    {
+                            }
+                        },
+                    ) {
                         continue;
                     }
 
@@ -258,7 +265,7 @@ pub fn build_maximal_unitigs_links<
 
             fast_smart_radix_sort::<_, MaximalHashCompare<MH>, false>(&mut hashes_vec[..]);
 
-            for x in hashes_vec.group_by_mut(|a, b| a.hash == b.hash) {
+            for x in hashes_vec.nq_group_by_mut(|a, b| a.hash == b.hash) {
                 if x.len() == 1 {
                     continue;
                 }
@@ -301,6 +308,9 @@ pub fn build_maximal_unitigs_links<
 
     // Rewrite the output file to include found links
     {
+        let self_complemental_unitigs = self_complemental_unitigs.into_iter().collect::<HashSet<_>>();
+
+
         PHASES_TIMES_MONITOR
             .write()
             .start_phase("phase: maximal unitigs links building [step 3]".to_string());
@@ -333,43 +343,45 @@ pub fn build_maximal_unitigs_links<
 
                     let mut current_mapping = Arc::new(MaximalUnitigLinksMapping::empty());
 
-                    while
-                        maximal_unitigs_reader_step3
-                            .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
+                    while maximal_unitigs_reader_step3
+                        .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
+                        _,
+                        typenum::consts::U0,
+                        false,
+                    >, _>(
+                        Vec::new(),
+                        <(u64, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType)>::new_temp_buffer(
+                        ),
+                        |(_, _, (index, color, _, _abundance), read): (
                             _,
-                            typenum::consts::U0,
-                            false,
-                        >, _>(
-                            Vec::new(),
-                            <(u64, PartialUnitigsColorStructure<H, MH, CX>, ())>::new_temp_buffer(),
-                            |(_, _, (index, color, _), read): (
-                                _,
-                                _,
-                                (_, PartialUnitigsColorStructure<H, MH, CX>, ()),
-                                _,
-                            ),
-                             extra_buffer| {
-                                temp_sequence_buffer.clear();
-                                temp_sequence_buffer.extend(read.as_bases_iter());
+                            _,
+                            (_, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType),
+                            _,
+                        ),
+                         extra_buffer| {
+                            temp_sequence_buffer.clear();
+                            temp_sequence_buffer.extend(read.as_bases_iter());
 
-                                if !current_mapping.has_mapping(index) {
-                                    current_mapping =
-                                        mappings_loader.get_mapping_for(index, thread_index);
-                                }
+                            if !current_mapping.has_mapping(index) {
+                                current_mapping =
+                                    mappings_loader.get_mapping_for(index, thread_index);
+                            }
 
-                                let (links, links_buffer) = current_mapping.get_mapping(index);
+                            let (mut links, links_buffer) = current_mapping.get_mapping(index);
+                            links.is_self_complemental = self_complemental_unitigs.contains(&index);
 
-                                tmp_final_unitigs_buffer.add_read(
-                                    &temp_sequence_buffer,
-                                    Some(index),
-                                    color,
-                                    &extra_buffer.0,
-                                    links,
-                                    links_buffer,
-                                );
-                            },
-                        )
-                    {
+                            tmp_final_unitigs_buffer.add_read(
+                                &temp_sequence_buffer,
+                                Some(index),
+                                color,
+                                &extra_buffer.0,
+                                links,
+                                links_buffer,
+                                #[cfg(feature = "support_kmer_counters")]
+                                _abundance,
+                            );
+                        },
+                    ) {
                         tmp_final_unitigs_buffer.flush();
                     }
 

@@ -29,7 +29,7 @@ impl FastaFileSequencesStream {
 }
 
 impl GenericSequencesStream for FastaFileSequencesStream {
-    type SequenceBlockData = PathBuf;
+    type SequenceBlockData = (PathBuf, Option<u32>);
 
     fn new() -> Self {
         Self {
@@ -45,8 +45,8 @@ impl GenericSequencesStream for FastaFileSequencesStream {
         mut callback: impl FnMut(DnaSequence, SequenceInfo),
     ) {
         self.sequences_reader.process_file_extended(
-            block,
-            |x| callback(x, SequenceInfo { color: None }),
+            &block.0,
+            |x| callback(x, SequenceInfo { color: block.1 }),
             partial_read_copyback,
             copy_ident_data,
             false,

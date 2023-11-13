@@ -1,5 +1,3 @@
-#![feature(let_chains)]
-
 use crate::sequences_stream::general::GeneralSequenceBlockData;
 use config::{BucketIndexType, MAX_BUCKETS_COUNT_LOG, MAX_BUCKET_SIZE, MIN_BUCKETS_COUNT_LOG};
 use std::cmp::{max, min};

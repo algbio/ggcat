@@ -8,6 +8,7 @@ use config::{
 use hashes::HashFunctionFactory;
 use io::structs::hash_entry::{Direction, HashCompare, HashEntrySerializer};
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink, UnitigLinkSerializer};
+use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
@@ -68,7 +69,7 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
 
             let mut unitigs_vec = Vec::new();
 
-            for x in hashes_vec.group_by(|a, b| a.hash == b.hash) {
+            for x in hashes_vec.nq_group_by(|a, b| a.hash == b.hash) {
                 match x.len() {
                     2 => {
                         let mut reverse_complemented = [false, false];
