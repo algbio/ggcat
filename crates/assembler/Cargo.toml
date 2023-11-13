@@ -33,9 +33,9 @@ structs = { package = "ggcat_structs", path = "../structs" }
 
 
 # Matchtigs support
-matchtigs = "1.5.5"
-genome-graph = { version = "5.1.1", features = ["traitgraph-algo"] }
-traitgraph-algo = { version = "5.3.0", features = ["hashbrown_dijkstra_node_weight_array"] }
+matchtigs = "2.1.6"
+genome-graph = { version = "8.0.0", features = ["traitgraph-algo"] }
+traitgraph-algo = { version = "8.1.0", features = ["hashbrown_dijkstra_node_weight_array"] }
 
 
 # Other libraries
@@ -43,7 +43,7 @@ typenum = "1.16.0"
 parking_lot = "0.12.1"
 fs_extra = "1.3.0"
 rayon = "1.7.0"
-hashbrown = "0.13.2"
+hashbrown = "0.14.2"
 itertools = "0.10.5"
 byteorder = "1.4.3"
 serde = "1.0.160"
