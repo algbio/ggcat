@@ -18,6 +18,8 @@ use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
     DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
 };
+use dashmap::DashSet;
+use hashbrown::HashSet;
 use hashes::{ExtendableHashTraitType, HashFunction, HashableSequence};
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
@@ -62,6 +64,9 @@ pub fn build_maximal_unitigs_links<
     const DEFAULT_BUCKET_HASHES_SIZE_LOG: usize = 8;
 
     let buckets_count = 1 << DEFAULT_BUCKET_HASHES_SIZE_LOG;
+
+    
+    let self_complemental_unitigs = DashSet::new();
 
     // Hash all the extremities
     let (step_1_hash_files, unitigs_count) = {
@@ -128,8 +133,16 @@ pub fn build_maximal_unitigs_links<
                                     .next()
                                     .unwrap();
 
+
                             let first_hash_unx = first_hash.to_unextendable();
                             let last_hash_unx = last_hash.to_unextendable();
+
+                            let self_complemental = (first_hash_unx == last_hash_unx) 
+                                && (first_hash.is_rc_symmetric() || (first_hash.is_forward() != last_hash.is_forward()));
+
+                            if self_complemental {
+                                self_complemental_unitigs.insert(index);
+                            }
 
                             hashes_tmp.add_element(
                                 MH::get_bucket(0, DEFAULT_BUCKET_HASHES_SIZE_LOG, first_hash_unx),
@@ -295,6 +308,9 @@ pub fn build_maximal_unitigs_links<
 
     // Rewrite the output file to include found links
     {
+        let self_complemental_unitigs = self_complemental_unitigs.into_iter().collect::<HashSet<_>>();
+
+
         PHASES_TIMES_MONITOR
             .write()
             .start_phase("phase: maximal unitigs links building [step 3]".to_string());
@@ -351,7 +367,8 @@ pub fn build_maximal_unitigs_links<
                                     mappings_loader.get_mapping_for(index, thread_index);
                             }
 
-                            let (links, links_buffer) = current_mapping.get_mapping(index);
+                            let (mut links, links_buffer) = current_mapping.get_mapping(index);
+                            links.is_self_complemental = self_complemental_unitigs.contains(&index);
 
                             tmp_final_unitigs_buffer.add_read(
                                 &temp_sequence_buffer,

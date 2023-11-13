@@ -20,7 +20,6 @@ use libmatchtigs::{
 };
 use libmatchtigs::{GreedytigAlgorithm, GreedytigAlgorithmConfiguration, TigAlgorithm};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use std::convert::identity;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,7 +45,6 @@ impl<ColorInfo: IdentSequenceWriter> SequenceHandle<ColorInfo> {
             ColorInfo,
             SequenceAbundanceType,
             DoubleMaximalUnitigLinks,
-            bool,
         ),
         &StructuredUnitigsStorage<ColorInfo>,
     )> {
@@ -141,7 +139,6 @@ pub struct StructuredUnitigsStorage<ColorInfo: IdentSequenceWriter> {
         ColorInfo,
         SequenceAbundanceType,
         DoubleMaximalUnitigLinks,
-        bool,
     )>,
 
     sequences_buffer: Vec<u8>,
@@ -221,17 +218,6 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
             &mut buffer.links_buffer,
         );
 
-        let self_complemental = links_info
-            .0
-            .iter()
-            .map(|x| {
-                x.entries
-                    .get_slice(&buffer.links_buffer)
-                    .iter()
-                    .any(|x| x.index() == sequence_index)
-            })
-            .any(identity);
-
         buffer.sequences.push((
             sequence,
             color_info,
@@ -242,7 +228,6 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
                 () => (),
             },
             links_info,
-            self_complemental,
         ));
     }
 
@@ -273,7 +258,7 @@ impl<ColorInfo: IdentSequenceWriter> GenericNode for UnitigEdgeData<ColorInfo> {
     fn is_self_complemental(&self) -> bool {
         self.sequence_handle
             .get_sequence_handle()
-            .map(|s| s.0 .4)
+            .map(|s| s.0 .3.is_self_complemental)
             .unwrap_or(false)
     }
 
@@ -286,7 +271,7 @@ impl<ColorInfo: IdentSequenceWriter> GenericNode for UnitigEdgeData<ColorInfo> {
         let storage = self.sequence_handle.0.clone();
 
         links
-            .0
+            .links
             .into_iter()
             .map(move |link| {
                 let storage = storage.clone();
