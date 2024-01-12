@@ -121,7 +121,12 @@ impl GGCATInstance {
         }
 
         // Increase the maximum allowed number of open files
-        fdlimit::raise_fd_limit();
+        if let Err(err) = fdlimit::raise_fd_limit() {
+            println!(
+                "WARNING: Failed to increase the maximum number of open files: {}",
+                err
+            );
+        }
 
         config::PREFER_MEMORY.store(config.prefer_memory, Ordering::Relaxed);
 

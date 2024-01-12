@@ -1,6 +1,3 @@
-#![feature(thread_local)]
-#![feature(slice_partition_dedup)]
-
 use crate::storage::run_length::RunLengthColorsSerializer;
 
 pub mod bundles;

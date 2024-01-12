@@ -88,6 +88,7 @@ impl<SI: ColorsSerializerTrait> ColorsSerializer<SI> {
         }
     }
 
+    #[inline(always)]
     pub fn serialize_colors(&self, colors: &[ColorIndexType]) -> ColorIndexType {
         self.serializer_impl.serialize_colors(colors)
     }

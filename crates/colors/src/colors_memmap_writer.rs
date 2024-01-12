@@ -31,6 +31,7 @@ impl<C: ColorsSerializerTrait> ColorsMemMapWriter<C> {
         hasher.finish128().as_u128()
     }
 
+    #[inline(always)]
     pub fn get_id(&self, colors: &[ColorIndexType]) -> ColorIndexType {
         let hash = self.hash_colors(colors);
 

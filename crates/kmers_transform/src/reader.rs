@@ -488,8 +488,6 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
     type GlobalParams = KmersTransformContext<F>;
     type InitData = ();
 
-    type AsyncExecutorFuture<'a> = impl Future<Output = ()> + 'a;
-
     fn new() -> Self {
         Self {
             _phantom: Default::default(),
@@ -501,7 +499,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
         global_context: &'a KmersTransformContext<F>,
         mut receiver: ExecutorReceiver<Self>,
         _memory_tracker: MemoryTracker<Self>,
-    ) -> Self::AsyncExecutorFuture<'a> {
+    ) -> impl Future<Output = ()> + 'a {
         async move {
             let mut async_threads = Vec::new();
 

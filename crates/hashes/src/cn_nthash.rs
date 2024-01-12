@@ -60,23 +60,23 @@ impl<N: HashableSequence> CanonicalNtHashIterator<N> {
 impl<N: HashableSequence> HashFunction<CanonicalNtHashIteratorFactory>
     for CanonicalNtHashIterator<N>
 {
-    type IteratorType = impl Iterator<
-        Item = <CanonicalNtHashIteratorFactory as HashFunctionFactory>::HashTypeExtendable,
-    >;
-    type EnumerableIteratorType = impl Iterator<
-        Item = (
-            usize,
-            <CanonicalNtHashIteratorFactory as HashFunctionFactory>::HashTypeExtendable,
-        ),
-    >;
-
     #[inline(always)]
-    fn iter(mut self) -> Self::IteratorType {
+    fn iter(
+        mut self,
+    ) -> impl Iterator<Item = <CanonicalNtHashIteratorFactory as HashFunctionFactory>::HashTypeExtendable>
+    {
         (0..self.seq.bases_count() - self.k_minus1).map(move |idx| self.roll_hash(idx))
     }
 
     #[inline(always)]
-    fn iter_enumerate(mut self) -> Self::EnumerableIteratorType {
+    fn iter_enumerate(
+        mut self,
+    ) -> impl Iterator<
+        Item = (
+            usize,
+            <CanonicalNtHashIteratorFactory as HashFunctionFactory>::HashTypeExtendable,
+        ),
+    > {
         (0..self.seq.bases_count() - self.k_minus1).map(move |idx| (idx, self.roll_hash(idx)))
     }
 }

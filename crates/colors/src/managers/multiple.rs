@@ -20,6 +20,7 @@ use io::varint::{
     decode_varint, decode_varint_flags, encode_varint, encode_varint_flags, VARINT_MAX_SIZE,
 };
 use itertools::Itertools;
+use nightly_quirks::slice_partition_dedup::SlicePartitionDedup;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::LockFreeBucket;
@@ -350,8 +351,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                         colors_range.sort_unstable();
 
                         // Get the new partition indexes, start to dedup last element
-                        let new_partition =
-                            (position + 1)..(position + 1 + colors_range.partition_dedup().0.len());
+                        let new_partition = (position + 1)
+                            ..(position + 1 + colors_range.nq_partition_dedup().0.len());
 
                         let unique_colors = &data.temp_colors_buffer[new_partition.clone()];
 

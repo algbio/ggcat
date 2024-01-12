@@ -992,6 +992,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fdlimit"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e182f7dbc2ef73d9ef67351c5fbbea084729c48362d3ce9dd44c28e32e277fe5"
+dependencies = [
+ "libc",
+ "thiserror",
+]
+
+[[package]]
 name = "feature-probe"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1164,7 +1174,7 @@ name = "ggcat-api"
 version = "0.1.0"
 dependencies = [
  "dynamic-dispatch",
- "fdlimit",
+ "fdlimit 0.3.0",
  "ggcat_assembler",
  "ggcat_colors",
  "ggcat_config",
@@ -1227,7 +1237,7 @@ name = "ggcat_assembler_kmers_merge"
 version = "0.1.0"
 dependencies = [
  "crossbeam",
- "fdlimit",
+ "fdlimit 0.2.1",
  "ggcat_assembler_minimizer_bucketing",
  "ggcat_colors",
  "ggcat_config",
@@ -1278,7 +1288,7 @@ dependencies = [
  "dashmap",
  "desse",
  "dynamic-dispatch",
- "fdlimit",
+ "fdlimit 0.2.1",
  "filebuffer",
  "flate2",
  "fs_extra",
@@ -2075,7 +2085,7 @@ dependencies = [
 
 [[package]]
 name = "parallel-processor"
-version = "0.1.11"
+version = "0.1.13"
 dependencies = [
  "backtrace",
  "bincode",

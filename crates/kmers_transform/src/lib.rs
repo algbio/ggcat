@@ -1,5 +1,3 @@
-#![feature(impl_trait_in_assoc_type)]
-
 mod reader;
 
 use crate::processor::KmersTransformProcessor;
@@ -36,7 +34,6 @@ pub mod debug_bucket_stats;
 pub mod processor;
 mod reads_buffer;
 mod resplitter;
-mod writer;
 
 pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
     type SequencesResplitterFactory: MinimizerBucketingExecutorFactory<

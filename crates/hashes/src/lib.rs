@@ -1,5 +1,3 @@
-#![feature(impl_trait_in_assoc_type)]
-
 use dynamic_dispatch::dynamic_dispatch;
 
 pub mod cn_nthash;
@@ -136,11 +134,8 @@ pub trait MinimizerHashFunctionFactory: HashFunctionFactory {
 }
 
 pub trait HashFunction<HF: HashFunctionFactory> {
-    type IteratorType: Iterator<Item = HF::HashTypeExtendable>;
-    type EnumerableIteratorType: Iterator<Item = (usize, HF::HashTypeExtendable)>;
-
-    fn iter(self) -> Self::IteratorType;
-    fn iter_enumerate(self) -> Self::EnumerableIteratorType;
+    fn iter(self) -> impl Iterator<Item = HF::HashTypeExtendable>;
+    fn iter_enumerate(self) -> impl Iterator<Item = (usize, HF::HashTypeExtendable)>;
 }
 
 pub trait HashableSequence: Clone {
