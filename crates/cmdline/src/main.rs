@@ -11,7 +11,7 @@ use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::panic;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -297,12 +297,31 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
     }
 
     for list in args.input_lists {
-        for input in BufReader::new(File::open(list).unwrap()).lines() {
+        for input in BufReader::new(
+            File::open(&list)
+                .map_err(|e| {
+                    panic!(
+                        "Error while opening input list file {}: {}",
+                        list.display(),
+                        e
+                    )
+                })
+                .unwrap(),
+        )
+        .lines()
+        {
             if let Ok(input) = input {
                 if input.trim().is_empty() {
                     continue;
                 }
-                inputs.push((PathBuf::from(input), None));
+
+                let input = if <String as AsRef<Path>>::as_ref(&input).is_relative() {
+                    list.parent().unwrap().join(input)
+                } else {
+                    PathBuf::from(input)
+                };
+
+                inputs.push((input, None));
             }
         }
     }
@@ -319,7 +338,19 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
         let mut next_index = 0;
 
         for list in args.colored_input_lists {
-            for input in BufReader::new(File::open(list).unwrap()).lines() {
+            for input in BufReader::new(
+                File::open(&list)
+                    .map_err(|e| {
+                        panic!(
+                            "Error while opening colored input list file {}: {}",
+                            list.display(),
+                            e
+                        )
+                    })
+                    .unwrap(),
+            )
+            .lines()
+            {
                 if let Ok(input) = input {
                     if input.trim().is_empty() {
                         continue;
@@ -346,7 +377,13 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
                         index
                     );
 
-                    inputs.push((PathBuf::from(file_name), Some(index)));
+                    let file_name = if <String as AsRef<Path>>::as_ref(&file_name).is_relative() {
+                        list.parent().unwrap().join(file_name)
+                    } else {
+                        PathBuf::from(file_name)
+                    };
+
+                    inputs.push((file_name, Some(index)));
                 }
             }
         }
