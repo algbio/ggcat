@@ -7,12 +7,11 @@ extern crate test;
 mod benchmarks;
 
 use ahash::HashMap;
-use backtrace::Backtrace;
 use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::panic;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -298,12 +297,31 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
     }
 
     for list in args.input_lists {
-        for input in BufReader::new(File::open(list).unwrap()).lines() {
+        for input in BufReader::new(
+            File::open(&list)
+                .map_err(|e| {
+                    panic!(
+                        "Error while opening input list file {}: {}",
+                        list.display(),
+                        e
+                    )
+                })
+                .unwrap(),
+        )
+        .lines()
+        {
             if let Ok(input) = input {
                 if input.trim().is_empty() {
                     continue;
                 }
-                inputs.push((PathBuf::from(input), None));
+
+                let input = if <String as AsRef<Path>>::as_ref(&input).is_relative() {
+                    list.parent().unwrap().join(input)
+                } else {
+                    PathBuf::from(input)
+                };
+
+                inputs.push((input, None));
             }
         }
     }
@@ -320,7 +338,19 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
         let mut next_index = 0;
 
         for list in args.colored_input_lists {
-            for input in BufReader::new(File::open(list).unwrap()).lines() {
+            for input in BufReader::new(
+                File::open(&list)
+                    .map_err(|e| {
+                        panic!(
+                            "Error while opening colored input list file {}: {}",
+                            list.display(),
+                            e
+                        )
+                    })
+                    .unwrap(),
+            )
+            .lines()
+            {
                 if let Ok(input) = input {
                     if input.trim().is_empty() {
                         continue;
@@ -347,7 +377,13 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
                         index
                     );
 
-                    inputs.push((PathBuf::from(file_name), Some(index)));
+                    let file_name = if <String as AsRef<Path>>::as_ref(&file_name).is_relative() {
+                        list.parent().unwrap().join(file_name)
+                    } else {
+                        PathBuf::from(file_name)
+                    };
+
+                    inputs.push((file_name, Some(index)));
                 }
             }
         }
@@ -443,22 +479,15 @@ fn main() {
         parallel_processor::mem_tracker::start_info_logging();
     }
 
-    panic::set_hook(Box::new(move |info| {
+    panic::set_hook(Box::new(move |panic_info| {
         let stdout = std::io::stdout();
-        let mut _lock = stdout.lock();
+        let _lock = stdout.lock();
 
         let stderr = std::io::stderr();
         let mut err_lock = stderr.lock();
 
-        if let Some(location) = info.location() {
-            let _ = writeln!(err_lock, "Thread panicked at location: {}", location);
-        }
-        if let Some(s) = info.payload().downcast_ref::<&str>() {
-            let _ = writeln!(err_lock, "Panic payload: {:?}", s);
-        }
-
-        println!("Backtrace: {:?}", Backtrace::new());
-
+        let backtrace = backtrace::Backtrace::new();
+        write!(err_lock, "Panic: {}\nBacktrace:{:?}", panic_info, backtrace).unwrap();
         exit(1);
     }));
 
@@ -536,7 +565,7 @@ fn main() {
     // Ensure termination
     std::thread::spawn(|| {
         std::thread::sleep(Duration::from_secs(5));
-        std::process::exit(0);
+        exit(0);
     });
     MemoryFs::terminate();
 }
