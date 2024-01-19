@@ -891,14 +891,14 @@ dependencies = [
 
 [[package]]
 name = "dynamic-dispatch"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "dynamic-dispatch-proc-macro",
 ]
 
 [[package]]
 name = "dynamic-dispatch-proc-macro"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "proc-macro-error",
  "proc-macro2 1.0.69",

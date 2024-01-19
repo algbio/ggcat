@@ -12,7 +12,7 @@ parallel-processor = "0.1.13"
 streaming-libdeflate-rs = "0.1.5"
 
 # Static dispatch
-dynamic-dispatch = "0.5.3"
+dynamic-dispatch = "0.5.4"
 
 # Common pipeline libraries
 hashes = { package = "ggcat_hashes", path = "../hashes" }
