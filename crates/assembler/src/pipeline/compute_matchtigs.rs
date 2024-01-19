@@ -257,8 +257,8 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
     fn finalize(self) {}
 }
 
-impl<ColorInfo: IdentSequenceWriter> GenericNode for UnitigEdgeData<ColorInfo> {
-    type EdgeIterator = impl Iterator<Item = GenericEdge>;
+impl<ColorInfo: IdentSequenceWriter + 'static> GenericNode for UnitigEdgeData<ColorInfo> {
+    type EdgeIterator = Box<dyn Iterator<Item = GenericEdge>>;
 
     fn id(&self) -> usize {
         self.sequence_handle.1
@@ -279,23 +279,25 @@ impl<ColorInfo: IdentSequenceWriter> GenericNode for UnitigEdgeData<ColorInfo> {
             .unwrap_or(DoubleMaximalUnitigLinks::EMPTY);
         let storage = self.sequence_handle.0.clone();
 
-        links
-            .links
-            .into_iter()
-            .map(move |link| {
-                let storage = storage.clone();
+        Box::new(
+            links
+                .links
+                .into_iter()
+                .map(move |link| {
+                    let storage = storage.clone();
 
-                link.entries.iter().map(move |entry| {
-                    let entry = &storage.as_ref().unwrap().links_buffer[entry];
+                    link.entries.iter().map(move |entry| {
+                        let entry = &storage.as_ref().unwrap().links_buffer[entry];
 
-                    GenericEdge {
-                        from_side: !entry.flags.flip_current(),
-                        to_node: entry.index() as usize,
-                        to_side: !entry.flags.flip_other(),
-                    }
+                        GenericEdge {
+                            from_side: !entry.flags.flip_current(),
+                            to_node: entry.index() as usize,
+                            to_side: !entry.flags.flip_other(),
+                        }
+                    })
                 })
-            })
-            .flatten()
+                .flatten(),
+        )
     }
 }
 

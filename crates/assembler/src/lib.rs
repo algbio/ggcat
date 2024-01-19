@@ -1,5 +1,3 @@
-#![feature(impl_trait_in_assoc_type)]
-
 use crate::pipeline::build_unitigs::build_unitigs;
 use crate::pipeline::compute_matchtigs::{compute_matchtigs_thread, MatchtigsStorageBackend};
 use crate::pipeline::hashes_sorting::hashes_sorting;

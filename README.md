@@ -167,13 +167,13 @@ ARGS:
 ## Installation
 
 At the moment building from source is the only option to install the tool.
-To build the tool the Rust nightly toolchain is required, and can be downloaded with the following commands:
+To build the tool the Rust stable (>= 1.75) toolchain is required, and can be downloaded with the following commands:
 
 ### Linux/Mac
 
 ```
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup toolchain install nightly
+rustup toolchain install stable
 
 ```
 
