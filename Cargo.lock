@@ -1210,8 +1210,8 @@ dependencies = [
  "dynamic-dispatch",
  "fs_extra",
  "genome-graph",
- "ggcat_assembler_kmers_merge",
- "ggcat_assembler_minimizer_bucketing",
+ "ggcat_assembler_kmerge",
+ "ggcat_assembler_minibuck",
  "ggcat_colors",
  "ggcat_config",
  "ggcat_hashes",
@@ -1233,12 +1233,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "ggcat_assembler_kmers_merge"
+name = "ggcat_assembler_kmerge"
 version = "0.1.0"
 dependencies = [
  "crossbeam",
  "fdlimit 0.2.1",
- "ggcat_assembler_minimizer_bucketing",
+ "ggcat_assembler_minibuck",
  "ggcat_colors",
  "ggcat_config",
  "ggcat_hashes",
@@ -1258,7 +1258,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ggcat_assembler_minimizer_bucketing"
+name = "ggcat_assembler_minibuck"
 version = "0.1.0"
 dependencies = [
  "dynamic-dispatch",

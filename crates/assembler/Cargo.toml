@@ -20,8 +20,8 @@ streaming-libdeflate-rs = "0.1.5"
 nightly-quirks = "0.1.2"
 
 # Pipeline crates
-assembler_minimizer_bucketing = { package = "ggcat_assembler_minimizer_bucketing", path = "../assembler_minimizer_bucketing" }
-assembler_kmers_merge = { package = "ggcat_assembler_kmers_merge", path = "../assembler_kmers_merge" }
+assembler_minimizer_bucketing = { package = "ggcat_assembler_minibuck", path = "../assembler_minimizer_bucketing" }
+assembler_kmers_merge = { package = "ggcat_assembler_kmerge", path = "../assembler_kmers_merge" }
 kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
 
 
@@ -35,7 +35,9 @@ structs = { package = "ggcat_structs", path = "../structs" }
 # Matchtigs support
 matchtigs = "2.1.6"
 genome-graph = { version = "8.0.0", features = ["traitgraph-algo"] }
-traitgraph-algo = { version = "8.1.0", features = ["hashbrown_dijkstra_node_weight_array"] }
+traitgraph-algo = { version = "8.1.0", features = [
+    "hashbrown_dijkstra_node_weight_array",
+] }
 
 
 # Other libraries

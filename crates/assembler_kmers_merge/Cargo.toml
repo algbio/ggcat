@@ -1,5 +1,5 @@
 [package]
-name = "ggcat_assembler_kmers_merge"
+name = "ggcat_assembler_kmerge"
 version = "0.1.0"
 edition = "2021"
 [dependencies]
@@ -22,7 +22,7 @@ kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transfor
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
 
 # Dependencies
-assembler_minimizer_bucketing = { package = "ggcat_assembler_minimizer_bucketing", path = "../assembler_minimizer_bucketing" }
+assembler_minimizer_bucketing = { package = "ggcat_assembler_minibuck", path = "../assembler_minimizer_bucketing" }
 
 
 # Other crates
@@ -40,4 +40,7 @@ rayon = "1.7.0"
 
 
 [features]
-support_kmer_counters = ["colors/support_kmer_counters", "structs/support_kmer_counters"]
+support_kmer_counters = [
+    "colors/support_kmer_counters",
+    "structs/support_kmer_counters",
+]

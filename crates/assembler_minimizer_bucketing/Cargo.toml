@@ -1,5 +1,5 @@
 [package]
-name = "ggcat_assembler_minimizer_bucketing"
+name = "ggcat_assembler_minibuck"
 version = "0.1.0"
 edition = "2021"
 [dependencies]
