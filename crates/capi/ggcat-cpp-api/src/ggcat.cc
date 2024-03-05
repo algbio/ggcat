@@ -182,3 +182,26 @@ void GGCATInstance::dump_unitigs_internal(
                        context,
                        output_function);
 }
+
+void GGCATInstance::query_colormap_internal(
+    std::string colormap_file,
+    uintptr_t subsets_ptr,
+    size_t subsets_len,
+    bool single_thread_output_function,
+    uintptr_t context,
+    uintptr_t output_function)
+
+{
+    auto subsets_rust_vec = rust::Vec<uint32_t>();
+    subsets_rust_vec.reserve(subsets_len);
+    for (size_t i = 0; i < subsets_len; i++) {
+        subsets_rust_vec.push_back(((uint32_t*)subsets_ptr)[i]);
+    }
+
+    ggcat_query_colormap(*ffi_instance,
+                       rust::String(colormap_file.c_str()),
+                       subsets_rust_vec,
+                       single_thread_output_function,
+                       context,
+                       output_function);
+}

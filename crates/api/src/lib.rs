@@ -331,12 +331,33 @@ impl GGCATInstance {
         })
     }
 
+    /// Queries specified color subsets of the colormap, returning
+    /// the color indices corresponding to the colors of each subset
+    pub fn query_colormap(
+        &self,
+        // The input colormap
+        colormap_file: PathBuf,
+        // The subsets to be queried
+        subsets: Vec<ColorIndexType>,
+        // Call the output function from a single thread at a time,
+        // avoiding the need for synchronization in the user code
+        single_thread_output_function: bool,
+        output_function: impl Fn(ColorIndexType, &[ColorIndexType]) + Send + Sync,
+    ) {
+        dumper::dump_colormap_query(
+            colormap_file,
+            subsets,
+            single_thread_output_function,
+            output_function,
+        );
+    }
+
     /// Dumps the unitigs of the given graph, optionally with colors
     /// It's not guaranteed that maximal unitigs are returned, as only kmers with the same colors subset
     /// are returned as whole unitigs to speedup colormap reading times
     pub fn dump_unitigs(
         &self,
-        graph_input: PathBuf,
+        graph_input: impl AsRef<Path>,
         // Specifies the k-mers length
         kmer_length: usize,
         // Overrides the default m-mers (minimizers) length
@@ -356,7 +377,7 @@ impl GGCATInstance {
             dumper::dump_unitigs(
                 kmer_length,
                 minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
-                graph_input,
+                &graph_input,
                 temp_dir.clone(),
                 *debug::BUCKETS_COUNT_LOG_FORCE.lock(),
                 threads_count,
@@ -366,7 +387,7 @@ impl GGCATInstance {
             );
         } else {
             FastaFileSequencesStream::new().read_block(
-                &(graph_input, None),
+                &(graph_input.as_ref().to_path_buf(), None),
                 false,
                 Some(kmer_length - 1),
                 |seq, _info| {

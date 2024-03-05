@@ -797,3 +797,7 @@ private:
 // It's not guaranteed that maximal unitigs are returned, as only kmers with the same colors subset
 // are returned as whole unitigs to speedup colormap reading times
 void ggcat_dump_unitigs(::GGCATInstanceFFI const &instance, ::rust::String graph_input, ::std::size_t kmer_length, ::std::size_t minimizer_length, bool colors, ::std::size_t threads_count, bool single_thread_output_function, ::std::size_t output_function_context, ::std::size_t output_function_ptr) noexcept;
+
+// Queries specified color subsets of the colormap, returning
+// the color indices corresponding to the colors of each subset
+void ggcat_query_colormap(::GGCATInstanceFFI const &instance, ::rust::String colormap, ::rust::Vec<::std::uint32_t> subsets, bool single_thread_output_function, ::std::size_t output_function_context, ::std::size_t output_function_ptr) noexcept;

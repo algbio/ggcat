@@ -69,7 +69,7 @@ fn main() {
         GGCATInstance::dump_colors(GGCATInstance::get_colormap_file(&graph_file)).collect();
 
     instance.dump_unitigs(
-        graph_file,
+        &graph_file,
         k,
         None,
         true,
@@ -94,4 +94,12 @@ fn main() {
             );
         },
     );
+
+    let colormap = GGCATInstance::get_colormap_file(&graph_file);
+    instance.query_colormap(colormap, vec![0, 1, 2, 3, 4], true, |subset, colors| {
+        print!("Subset: {} has colors:", subset);
+        for color in colors {
+            println!(" {}[{}]", color, color_names[*color as usize]);
+        }
+    })
 }

@@ -22,6 +22,9 @@ namespace ggcat
                                       data(data ? data : reinterpret_cast<T *>(UINTPTR_MAX)), size(size)
         {
         }
+
+        T *begin() { return data; };
+        T *end() { return data + size; };
     };
 
     enum ExtraElaborationStep
@@ -132,8 +135,16 @@ namespace ggcat
             uintptr_t context,
             uintptr_t output_function);
 
+        void query_colormap_internal(
+            std::string colormap_file,
+            uintptr_t subsets_ptr,
+            size_t subsets_len,
+            bool single_thread_output_function,
+            uintptr_t context,
+            uintptr_t output_function);
+
         template <typename F>
-        static void output_function_bridge(
+        static void unitigs_dump_output_function_bridge(
             uintptr_t context,
             uintptr_t seq_ptr,
             size_t seq_len,
@@ -145,6 +156,20 @@ namespace ggcat
                 Slice<char>((char *)seq_ptr, seq_len),
                 Slice<uint32_t>((uint32_t *)col_ptr, col_len),
                 same_color);
+        }
+
+        template <typename F>
+        static void colormap_query_output_function_bridge(
+            uintptr_t context,
+            uint32_t col_subset,
+            uintptr_t col_ptr,
+            size_t col_len)
+        {
+            F *output_function = reinterpret_cast<F *>(context);
+            (*output_function)(
+                col_subset,
+                Slice<uint32_t>((uint32_t *)col_ptr, col_len)
+            );
         }
 
         std::string build_graph_internal_ffi(
@@ -326,12 +351,36 @@ namespace ggcat
             // Overrides the default m-mers (minimizers) length
             size_t minimizer_length = -1)
         {
-            auto bridge_ptr = GGCATInstance::output_function_bridge<F>;
+            auto bridge_ptr = GGCATInstance::unitigs_dump_output_function_bridge<F>;
             this->dump_unitigs_internal(graph_input,
                                         kmer_length,
                                         minimizer_length,
                                         colors,
                                         threads_count,
+                                        single_thread_output_function,
+                                        (uintptr_t)&output_function, reinterpret_cast<uintptr_t>(bridge_ptr));
+        }
+
+        /// Queries specified color subsets of the colormap, returning
+        /// the color indices corresponding to the colors of each subset
+        template <typename F>
+        void query_colormap(
+            std::string colormap_file,
+            // Color subsets to be queried
+            uint32_t *subsets,
+            size_t subsets_count,
+            // Call the output function from a single thread at a time,
+            // avoiding the need for synchronization in the user code
+            bool single_thread_output_function,
+
+            // The callback to be called for each unitig, arguments: (Slice<char> seq, Slice<uint32_t> colors, bool same_color)
+            F output_function
+        )
+        {
+            auto bridge_ptr = GGCATInstance::colormap_query_output_function_bridge<F>;
+            this->query_colormap_internal(colormap_file,
+                                        (uintptr_t)subsets,
+                                        subsets_count,
                                         single_thread_output_function,
                                         (uintptr_t)&output_function, reinterpret_cast<uintptr_t>(bridge_ptr));
         }

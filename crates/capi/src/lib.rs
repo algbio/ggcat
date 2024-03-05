@@ -410,6 +410,39 @@ fn ggcat_dump_unitigs(
     )
 }
 
+/// Queries specified color subsets of the colormap, returning
+/// the color indices corresponding to the colors of each subset
+fn ggcat_query_colormap(
+    instance: &'static GGCATInstanceFFI,
+    // The input colormap
+    colormap: String,
+    // The subsets to be queried
+    subsets: Vec<ColorIndexType>,
+    // Call the output function from a single thread at a time,
+    // avoiding the need for synchronization in the user code
+    single_thread_output_function: bool,
+
+    output_function_context: usize,
+    output_function_ptr: usize,
+) {
+    let output_function: extern "C" fn(usize, u32, usize, usize) =
+        unsafe { transmute(output_function_ptr) };
+
+    instance.0.query_colormap(
+        PathBuf::from(colormap),
+        subsets,
+        single_thread_output_function,
+        |subset, colors| {
+            output_function(
+                output_function_context,
+                subset,
+                colors.as_ptr() as usize,
+                colors.len(),
+            );
+        },
+    )
+}
+
 static_assertions::assert_eq_size!(ColorIndexType, u32);
 
 #[derive(Debug)]
@@ -602,6 +635,22 @@ mod ffi {
 
             output_function_context: usize,
             // extern "C" fn(context: usize, seq_ptr: usize, seq_len: usize, col_ptr: usize, col_len: usize, same_colors: bool),
+            output_function_ptr: usize,
+        );
+
+        /// Queries specified color subsets of the colormap, returning
+        /// the color indices corresponding to the colors of each subset
+        fn ggcat_query_colormap(
+            instance: &'static GGCATInstanceFFI,
+            // The input colormap
+            colormap: String,
+            // The subsets to be queried
+            subsets: Vec<u32>,
+            // Call the output function from a single thread at a time,
+            // avoiding the need for synchronization in the user code
+            single_thread_output_function: bool,
+
+            output_function_context: usize,
             output_function_ptr: usize,
         );
     }

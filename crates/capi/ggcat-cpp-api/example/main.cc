@@ -140,6 +140,18 @@ int main(int argc, char const *argv[])
         },
         true);
 
+    auto colormap = GGCATInstance::get_colormap_file(graph_file);
+
+    uint32_t query_subsets[] = {0, 1, 2, 3, 4};
+    instance->query_colormap(colormap, query_subsets, 5, true, [&](uint32_t subset, Slice<uint32_t> colors) {
+        std::cout << "Subset: " << subset << " has colors:";
+        for (auto color : colors) {
+            std::cout << " ";
+            std::cout << color << "[" << file_color_names[color] << "]";
+        }
+        std::cout << std::endl;
+    });
+
     const char *sequences[] = {"AAAAACACACATATACAGTGTGTGAGTAGTATGATGT", "AAAATTTTTTTTTTTGGGGGGGGGGACACACATATACA", "AAAAACACACATATACACCCCCGGGAAAAAC", "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT"};
 
     // Advanced building using in-memory data
