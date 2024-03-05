@@ -29,21 +29,28 @@ pub fn colormap_query<
     color_subsets.sort_unstable();
     color_subsets.dedup();
 
-    color_subsets.par_iter().chunks(100).for_each(|subsets| {
-        let mut colormap_decoder = tlocal_colormap_decoder.get();
-        let mut temp_colors_buffer = Vec::new();
+    let threads_count = rayon::current_num_threads();
 
-        for &color in subsets {
-            temp_colors_buffer.clear();
-            colormap_decoder.get_color_mappings(color, &mut temp_colors_buffer);
+    let chunks_size = std::cmp::max(10000, color_subsets.len() / (threads_count * 2 + 1));
 
-            let _lock = if single_thread_output_function {
-                Some(single_thread_lock.lock())
-            } else {
-                None
-            };
+    color_subsets
+        .chunks(chunks_size)
+        .par_bridge()
+        .for_each(|subsets| {
+            let mut colormap_decoder = tlocal_colormap_decoder.get();
+            let mut temp_colors_buffer = Vec::new();
 
-            output_function(color, &temp_colors_buffer[..]);
-        }
-    });
+            for &color in subsets {
+                temp_colors_buffer.clear();
+                colormap_decoder.get_color_mappings(color, &mut temp_colors_buffer);
+
+                let _lock = if single_thread_output_function {
+                    Some(single_thread_lock.lock())
+                } else {
+                    None
+                };
+
+                output_function(color, &temp_colors_buffer[..]);
+            }
+        });
 }
