@@ -128,40 +128,44 @@ Here are listed all the available options for graph querying:
 ```
 > ggcat query --help
 USAGE:
-	ggcat query [FLAGS] [OPTIONS] <input-graph> <input-query>
+    ggcat query [FLAGS] [OPTIONS] <input-graph> <input-query> --kmer-length <kmer-length>
 
 FLAGS:
-	-c, --colors             Enable colors
-	-f, --forward-only       Treats reverse complementary kmers as different
-	-h, --help               Prints help information
-		--keep-temp-files    Keep intermediate temporary files for debugging purposes
-	-p, --prefer-memory      Use all the given memory before writing to disk
-	-V, --version            Prints version information
+    -c, --colors             Enable colors
+    -f, --forward-only       Treats reverse complementary kmers as different
+    -h, --help               Prints help information
+        --keep-temp-files    Keep intermediate temporary files for debugging purposes
+    -p, --prefer-memory      Use all the given memory before writing to disk
+    -V, --version            Prints version information
 
 OPTIONS:
-	-b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
-	-f, --colored-query-output-format <colored-query-output-format>
-	-w, --hash-type <hash-type>
-			Hash type used to identify kmers [default: Auto]
+    -b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
+        --colored-query-output-format <colored-query-output-format>          
+    -w, --hash-type <hash-type>
+            Hash type used to identify kmers [default: Auto]
 
-		--intermediate-compression-level <intermediate-compression-level>
-			The level of lz4 compression to be used for the intermediate files
+        --intermediate-compression-level <intermediate-compression-level>
+            The level of lz4 compression to be used for the intermediate files
 
-	-k <klen>                                                                Specifies the k-mers length [default: 32]
-	-m, --memory <memory>                                                    Maximum memory usage (GB) [default: 2]
-		--mlen <mlen>
-			Overrides the default m-mers (minimizers) length
+    -k, --kmer-length <kmer-length>                                          Specifies the k-mers length
+    -m, --memory <memory>
+            Maximum suggested memory usage (GB) The tool will try use only up to this GB of memory to store temporary
+            files without writing to disk. This usage does not include the needed memory for the processing steps. GGCAT
+            can allocate extra memory for files if the current memory is not enough to complete the current operation
+            [default: 2]
+        --minimizer-length <minimizer-length>
+            Overrides the default m-mers (minimizers) length
 
-	-o, --output-file-prefix <output-file-prefix>                             [default: output]
-	-x, --step <step>                                                         [default: MinimizerBucketing]
-	-t, --temp-dir <temp-dir>
-			Directory for temporary files (default .temp_files) [default: .temp_files]
+    -o, --output-file-prefix <output-file-prefix>                             [default: output]
+    -x, --step <step>                                                         [default: MinimizerBucketing]
+    -t, --temp-dir <temp-dir>
+            Directory for temporary files (default .temp_files) [default: .temp_files]
 
-	-j, --threads-count <threads-count>                                       [default: 16]
+    -j, --threads-count <threads-count>                                       [default: 16]
 
 ARGS:
-	<input-graph>    The input graph
-	<input-query>    The input query as a .fasta file
+    <input-graph>    The input graph
+    <input-query>    The input query as a .fasta file
 ```
 
 ## Installation
