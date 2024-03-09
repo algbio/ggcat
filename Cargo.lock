@@ -2085,7 +2085,7 @@ dependencies = [
 
 [[package]]
 name = "parallel-processor"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "backtrace",
  "bincode",

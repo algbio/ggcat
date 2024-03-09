@@ -105,6 +105,7 @@ fn create_tempdir(base_path: Option<PathBuf>) -> Option<PathBuf> {
 
 fn remove_tempdir(temp_dir: Option<PathBuf>) {
     if let Some(temp_dir) = temp_dir {
+        MemoryFs::remove_directory(&temp_dir, true);
         let _ = std::fs::remove_dir_all(temp_dir);
     }
 }
