@@ -8,8 +8,12 @@ use std::io::{BufWriter, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
+use self::stream_finish::FastaWriterWrapper;
+
 #[cfg(feature = "support_kmer_counters")]
 use super::SequenceAbundance;
+
+mod stream_finish;
 
 pub struct FastaWriter<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> {
     writer: Box<dyn Write>,
@@ -37,10 +41,10 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
         );
 
         FastaWriter {
-            writer: Box::new(BufWriter::with_capacity(
+            writer: Box::new(FastaWriterWrapper::new(BufWriter::with_capacity(
                 DEFAULT_OUTPUT_BUFFER_SIZE,
                 compress_stream,
-            )),
+            ))),
             path: path.as_ref().to_path_buf(),
             _phantom: PhantomData,
         }
@@ -59,10 +63,10 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
             .unwrap();
 
         FastaWriter {
-            writer: Box::new(BufWriter::with_capacity(
+            writer: Box::new(FastaWriterWrapper::new(BufWriter::with_capacity(
                 DEFAULT_OUTPUT_BUFFER_SIZE,
                 compress_stream,
-            )),
+            ))),
             path: path.as_ref().to_path_buf(),
             _phantom: PhantomData,
         }
@@ -70,10 +74,10 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
 
     pub fn new_plain(path: impl AsRef<Path>) -> Self {
         FastaWriter {
-            writer: Box::new(BufWriter::with_capacity(
+            writer: Box::new(FastaWriterWrapper::new(BufWriter::with_capacity(
                 DEFAULT_OUTPUT_BUFFER_SIZE,
                 File::create(&path).unwrap(),
-            )),
+            ))),
             path: path.as_ref().to_path_buf(),
             _phantom: PhantomData,
         }
