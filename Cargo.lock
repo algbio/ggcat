@@ -2077,6 +2077,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2355d85b9a3786f481747ced0e0ff2ba35213a1f9bd406ed906554d7af805a1"
 
 [[package]]
+name = "page_size"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "papi-bindings"
 version = "0.5.2"
 dependencies = [
@@ -2085,7 +2095,7 @@ dependencies = [
 
 [[package]]
 name = "parallel-processor"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "backtrace",
  "bincode",
@@ -2099,6 +2109,7 @@ dependencies = [
  "lz4",
  "mt-debug-counters",
  "nightly-quirks",
+ "page_size",
  "parking_lot",
  "procfs",
  "rand",
