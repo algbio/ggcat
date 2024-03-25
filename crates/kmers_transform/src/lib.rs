@@ -238,7 +238,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             buckets_list
         };
 
-        let compute_threads_count = max(1, threads_count);
+        let compute_threads_count = max(1, threads_count / 4);
         let read_threads_count = max(1, threads_count / 4 * 3);
 
         let max_buckets = max(MAXIMUM_SECOND_BUCKETS_COUNT, compute_threads_count);
