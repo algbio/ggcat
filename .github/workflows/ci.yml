@@ -29,10 +29,10 @@ jobs:
       - name: Arm setup
         shell: bash
         run:
-          apt install -y g++-aarch64-linux-gnu
-          apt install -y g++-arm-linux-gnueabi
-          apt install -y gcc-aarch64-linux-gnu
-          apt install -y gcc-arm-linux-gnueabi
+          sudo apt install -y g++-aarch64-linux-gnu
+          sudo apt install -y g++-arm-linux-gnueabi
+          sudo apt install -y gcc-aarch64-linux-gnu
+          sudo apt install -y gcc-arm-linux-gnueabi
       - name: Rust setup
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
