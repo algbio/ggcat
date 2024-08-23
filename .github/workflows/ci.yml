@@ -33,13 +33,13 @@ jobs:
           sudo apt install -y g++-arm-linux-gnueabi
           sudo apt install -y gcc-aarch64-linux-gnu
           sudo apt install -y gcc-arm-linux-gnueabi
-      - name: Rust setup
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          target: ${{ matrix.platform.target }}
       - name: Build cli
-        run: cargo build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline
+        uses: houseabsolute/actions-rust-cross@v0
+        with:
+          command: build
+          target: ${{ matrix.platform.target }}
+          args: "--release  --locked -p ggcat_cmdline"
+          strip: true
 
   linux-musl:
     strategy:
