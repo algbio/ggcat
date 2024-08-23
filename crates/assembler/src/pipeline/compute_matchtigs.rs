@@ -258,8 +258,6 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
 }
 
 impl<ColorInfo: IdentSequenceWriter + 'static> GenericNode for UnitigEdgeData<ColorInfo> {
-    type EdgeIterator = Box<dyn Iterator<Item = GenericEdge>>;
-
     fn id(&self) -> usize {
         self.sequence_handle.1
     }
@@ -271,7 +269,7 @@ impl<ColorInfo: IdentSequenceWriter + 'static> GenericNode for UnitigEdgeData<Co
             .unwrap_or(false)
     }
 
-    fn edges(&self) -> Self::EdgeIterator {
+    fn edges(&self) -> impl Iterator<Item = GenericEdge> {
         let links = self
             .sequence_handle
             .get_sequence_handle()

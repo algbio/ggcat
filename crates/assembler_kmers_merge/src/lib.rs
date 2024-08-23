@@ -25,8 +25,6 @@ use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBi
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
-#[cfg(feature = "mem-analysis")]
-use parallel_processor::mem_tracker::MemoryInfo;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;

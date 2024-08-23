@@ -11,17 +11,17 @@ utils = { package = "ggcat_utils",  path = "../utils" }
 # Common libraries
 parallel-processor = "0.1.15"
 streaming-libdeflate-rs = "0.1.5"
-nightly-quirks = "0.1.2"
+nightly-quirks = "0.1.4"
 hashes = { package = "ggcat_hashes",  path = "../hashes" }
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing",  path = "../minimizer_bucketing" }
 
 # Other libraries
 io = { package = "ggcat_io",  path = "../io" }
-parking_lot = "0.12.1"
-typenum = "1.16.0"
+parking_lot = "0.12.3"
+typenum = "1.17.0"
 replace_with = "0.1.7"
-tokio = "1.28.0"
+tokio = "1.38.0"
 
 
 # Tracing
-instrumenter = "0.1.1"
+instrumenter = "0.1.3"

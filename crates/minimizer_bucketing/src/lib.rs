@@ -354,7 +354,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
         global_params: &'a Self::GlobalParams,
         mut receiver: ExecutorReceiver<Self>,
         _memory_tracker: MemoryTracker<Self>,
-    ) -> impl Future<Output = ()> + Sync + Send + 'a {
+    ) -> impl Future<Output = ()> + Send + 'a {
         async move {
             while let Ok((address, _)) = receiver.obtain_address().await {
                 let max_concurrency = global_params.threads_count;

@@ -22,7 +22,7 @@ structs = { package = "ggcat_structs", path = "../structs" }
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
 
 # Other libraries
-typenum = "1.16.0"
+typenum = "1.17.0"
 
 [features]
 devel-build = []

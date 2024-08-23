@@ -11,7 +11,7 @@ utils = { package = "ggcat_utils", path = "../utils" }
 # Common libraries
 parallel-processor = "0.1.15"
 streaming-libdeflate-rs = "0.1.5"
-nightly-quirks = "0.1.2"
+nightly-quirks = "0.1.4"
 
 # Common pipeline libraries
 hashes = { package = "ggcat_hashes", path = "../hashes" }
@@ -26,17 +26,17 @@ assembler_minimizer_bucketing = { package = "ggcat_assembler_minibuck", path = "
 
 
 # Other crates
-hashbrown = "0.13.2"
-typenum = "1.16.0"
-crossbeam = "0.8.2"
+hashbrown = "0.14.5"
+typenum = "1.17.0"
+crossbeam = "0.8.4"
 
 # Profiler
-instrumenter = "0.1.1"
-parking_lot = "0.12.1"
+instrumenter = "0.1.3"
+parking_lot = "0.12.3"
 
 [dev-dependencies]
-fdlimit = "0.2.1"
-rayon = "1.7.0"
+fdlimit = "0.3.0"
+rayon = "1.10.0"
 
 
 [features]
