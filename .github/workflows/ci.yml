@@ -28,7 +28,7 @@ jobs:
           submodules: true
       - name: Arm setup
         shell: bash
-        run:
+        run: |
           sudo apt install -y g++-aarch64-linux-gnu
           sudo apt install -y g++-arm-linux-gnueabi
           sudo apt install -y gcc-aarch64-linux-gnu
