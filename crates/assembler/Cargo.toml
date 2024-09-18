@@ -33,7 +33,7 @@ structs = { package = "ggcat_structs", path = "../structs" }
 
 
 # Matchtigs support
-matchtigs = "2.1.7"
+matchtigs = "2.1.8"
 genome-graph = { version = "9.0.0", features = ["traitgraph-algo"] }
 traitgraph-algo = { version = "8.1.0", features = [
     "hashbrown_dijkstra_node_weight_array",

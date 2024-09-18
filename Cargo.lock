@@ -1795,9 +1795,9 @@ checksum = "a8ca8afbe8af1785e09636acb5a41e08a765f5f0340568716c18a8700ba3c0d3"
 
 [[package]]
 name = "matchtigs"
-version = "2.1.7"
+version = "2.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e819dc335e49cbc508de985fe52f6bfaeba0fe24282dd7486650ba6f31653a6"
+checksum = "ad06d0d20410db74fa7f76924afe4322ba2178b1ce346a25b9e955834866af15"
 dependencies = [
  "atomic-counter",
  "clap 4.5.16",
