@@ -120,6 +120,22 @@ const VISITED_BIT: usize = 1 << (COUNTER_BITS - 1);
 const TEMP_BUFFER_START_SIZE: usize = 1024 * 64;
 const READS_BUFFERS_MAX_CAPACITY: usize = 1024 * 32;
 
+#[cfg(feature = "support_kmer_counters")]
+type HashMapTempColorIndex = usize;
+
+#[cfg(not(feature = "support_kmer_counters"))]
+type HashMapTempColorIndex = ();
+
+#[inline]
+fn get_entry_color(entry: &MapEntry<HashMapTempColorIndex>) -> ColorIndexType {
+    (match () {
+        #[cfg(not(feature = "support_kmer_counters"))]
+        () => entry.get_counter() & !VISITED_BIT,
+        #[cfg(feature = "support_kmer_counters")]
+        () => entry.color_index & !VISITED_BIT,
+    }) as ColorIndexType
+}
+
 impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManager<H, MH>
     for MultipleColorsManager<H, MH>
 {
@@ -395,7 +411,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         ts: &mut Self::TempUnitigColorStructure,
         entry: &MapEntry<Self::HashMapTempColorIndex>,
     ) {
-        let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
+        let kmer_color = get_entry_color(entry);
 
         if let Some(back_ts) = ts.colors.back_mut() {
             if back_ts.color == kmer_color {
@@ -414,7 +430,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         ts: &mut Self::TempUnitigColorStructure,
         entry: &MapEntry<Self::HashMapTempColorIndex>,
     ) {
-        let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
+        let kmer_color = get_entry_color(entry);
 
         if let Some(front_ts) = ts.colors.front_mut() {
             if front_ts.color == kmer_color {
@@ -528,7 +544,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                 .flatten(),
         ) {
             let entry = hmap.get(&hash.to_unextendable()).unwrap();
-            let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
+            let kmer_color = get_entry_color(entry);
             if kmer_color != color {
                 let hashes = MH::new(read, 31);
                 println!(
@@ -537,7 +553,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                         .iter()
                         .map(|h| {
                             let entry = hmap.get(&h.to_unextendable()).unwrap();
-                            let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
+                            let kmer_color = get_entry_color(entry);
                             kmer_color
                         })
                         .zip(
