@@ -52,7 +52,7 @@ impl CountersAnalyzer {
     }
 
     pub fn print_debug(&self) {
-        println!("************** BUCKETS DEBUG: **************");
+        ggcat_logging::info!("************** BUCKETS DEBUG: **************");
         // for (i, cnt_bucket) in self.counters.iter().enumerate() {
         //     let mut buffer = String::new();
         //     for cnt_sub_bucket in cnt_bucket.iter() {
@@ -62,10 +62,10 @@ impl CountersAnalyzer {
         //             if cnt_sub_bucket.is_outlier { "*" } else { "" },
         //         ));
         //     }
-        //     println!("{} SIZES: {}", i, buffer);
+        //     ggcat_logging::info!("{} SIZES: {}", i, buffer);
         // }
-        println!("Sub-bucket median: {}", self.median);
-        println!(
+        ggcat_logging::info!("Sub-bucket median: {}", self.median);
+        ggcat_logging::info!(
             "Sub-bucket maximum: {}",
             self.counters
                 .iter()
@@ -82,7 +82,7 @@ impl CountersAnalyzer {
         // rval.counters.iter_mut().enumerate().for_each(|(bn, x)| {
         //     x.iter_mut().enumerate().for_each(|(sbn, y)| {
         //         if y.is_outlier {
-        //             println!("Found outlier: vec{}.{}", bn, sbn);
+        //             ggcat_logging::info!("Found outlier: vec{}.{}", bn, sbn);
         //             // y.is_outlier = false
         //         }
         //     })

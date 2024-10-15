@@ -433,7 +433,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     * (eta_total_buckets_size as f64)) as u64,
             );
 
-            println!(
+            ggcat_logging::info!(
                 "Processing bucket {}{} of [{}{}[R:{}]] {} phase eta: {:.0?} est. tot: {:.0?}",
                 processed_count,
                 if extra_processed_buckets_count > 0 {

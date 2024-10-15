@@ -54,6 +54,13 @@ namespace ggcat
         DnaSequencesFileType_BINARY = 3,
     };
 
+    enum MessageLevel {
+        MessageLevel_Info = 0,
+        MessageLevel_Warning = 1,
+        MessageLevel_Error = 2,
+        MessageLevel_UnrecoverableError = 3
+    };
+
     struct DnaSequence
     {
         Slice<char> ident_data;
@@ -101,6 +108,9 @@ namespace ggcat
         bool use_stats_file;
         // The path to an optional json-formatted real time stats file
         std::string stats_file;
+
+        // The messages callback, if not null no info will be printed to stdout
+        void (*messages_callback)(MessageLevel level, const char *message);
     };
 
     struct __InputStreamBlockData

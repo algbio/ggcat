@@ -146,7 +146,7 @@ impl ColorsSerializerTrait for RunLengthColorsSerializer {
     }
 
     fn print_stats(&self) {
-        println!("Total color subsets: {}", self.async_buffer.get_counter())
+        ggcat_logging::info!("Total color subsets: {}", self.async_buffer.get_counter())
     }
 
     fn finalize(self) -> ColorsFlushProcessing {
@@ -165,7 +165,7 @@ mod tests {
 
         ColorIndexSerializer::serialize_colors(&mut buffer, colors);
 
-        println!("Buffer size: {}", buffer.len());
+        ggcat_logging::info!("Buffer size: {}", buffer.len());
         let mut cursor = Cursor::new(buffer);
 
         let mut des_colors = Vec::new();

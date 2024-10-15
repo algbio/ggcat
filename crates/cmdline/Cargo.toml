@@ -34,7 +34,9 @@ replace_with = "0.1.7"
 roaring = "0.10.5"
 backtrace = "0.3.73"
 csv = "1.3.0"
-flate2 = { default-features = false, features = ["cloudflare_zlib"], version = "1.0.30" }
+flate2 = { default-features = false, features = [
+    "cloudflare_zlib",
+], version = "1.0.30" }
 typenum = "1.17.0"
 fs_extra = "1.3.0"
 atoi = "2.0.0"
@@ -48,7 +50,7 @@ dynamic-dispatch = "0.5.4"
 
 
 # Common libraries
-parallel-processor = "0.1.17"
+parallel-processor = "0.1.18"
 io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
 
@@ -57,6 +59,8 @@ instrumenter = "0.1.3"
 
 querier = { package = "ggcat_querier", path = "../querier" }
 ggcat-api = { version = "0.1.0", path = "../api" }
+logging = "0.1.0"
+ggcat-logging = { version = "0.1.0", path = "../logging" }
 
 
 [features]

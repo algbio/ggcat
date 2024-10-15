@@ -7,6 +7,7 @@ use config::{
     DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, QUERIES_COUNT_MIN_BATCH,
 };
 use flate2::Compression;
+use ggcat_logging::UnrecoverableErrorLogging;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::get_bucket_index;
 use nightly_quirks::prelude::*;
@@ -60,7 +61,7 @@ pub fn colored_query_output<
     temp_dir: PathBuf,
     query_kmers_count: &[u64],
     colored_query_output_format: ColoredQueryOutputFormat,
-) {
+) -> anyhow::Result<()> {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: colored query output".to_string());
@@ -83,7 +84,8 @@ pub fn colored_query_output<
         output_file
     };
 
-    let query_output_file = File::create(&output_file).unwrap();
+    let query_output_file = File::create(&output_file)
+        .log_unrecoverable_error_with_data("Cannot create output file", output_file.display())?;
 
     let query_output = Mutex::new((
         BufWriter::new(
@@ -269,9 +271,10 @@ pub fn colored_query_output<
             }
         });
 
-    println!(
+    ggcat_logging::info!(
         "Operations count: {} vs real {}",
         OPS_COUNT.load(Ordering::Relaxed),
         COL_COUNT.load(Ordering::Relaxed)
     );
+    Ok(())
 }

@@ -98,7 +98,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
 
                 if real_size != proc_info.sequences_count {
                     //MAX_PACKET_SIZE.fetch_max(current_size, Ordering::Relaxed) < current_size {
-                    println!(
+                    ggcat_logging::info!(
                         "Found bucket with max size {} ==> {} // EXPECTED_SIZE: {} REAL_SIZE: {} SUB: {}",
                         current_size,
                         proc_info.bucket_path.display(),

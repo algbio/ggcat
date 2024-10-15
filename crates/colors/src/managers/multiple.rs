@@ -146,12 +146,12 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     fn create_colors_table(
         path: impl AsRef<Path>,
         color_names: &[String],
-    ) -> Self::GlobalColorsTableWriter {
+    ) -> anyhow::Result<Self::GlobalColorsTableWriter> {
         ColorsMemMapWriter::new(path, color_names)
     }
 
-    fn open_colors_table(_path: impl AsRef<Path>) -> Self::GlobalColorsTableReader {
-        ()
+    fn open_colors_table(_path: impl AsRef<Path>) -> anyhow::Result<Self::GlobalColorsTableReader> {
+        Ok(())
     }
 
     fn print_color_stats(global_colors_table: &Self::GlobalColorsTableWriter) {
@@ -517,8 +517,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             .sum::<ColorCounterType>()
             + 30;
         if sum != seq.len() {
-            println!("Temp values: {} {}", sum as usize, seq.len());
-            println!("Dbg: {:?}", str.colors);
+            ggcat_logging::info!("Temp values: {} {}", sum as usize, seq.len());
+            ggcat_logging::info!("Dbg: {:?}", str.colors);
             assert_eq!(sum as usize, seq.len());
         }
     }
@@ -547,8 +547,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             let kmer_color = get_entry_color(entry);
             if kmer_color != color {
                 let hashes = MH::new(read, 31);
-                println!(
-                    "Err: {:?}",
+                ggcat_logging::error!(
+                    "Error: {:?}",
                     hashes
                         .iter()
                         .map(|h| {
@@ -697,7 +697,7 @@ impl IdentSequenceWriter for UnitigColorData {
             colors_count += kmers_count
         }
         if colors_count == 0 {
-            println!("Warn: 0 colors for {:?}", std::str::from_utf8(ident));
+            ggcat_logging::error!("Error: 0 colors for {:?}", std::str::from_utf8(ident));
         }
 
         Some(UnitigColorData {
@@ -722,7 +722,7 @@ impl IdentSequenceWriter for UnitigColorData {
             }
         }
         if colors_count == 0 {
-            println!("Warn: 0 colors for {:?}", std::str::from_utf8(ident));
+            ggcat_logging::error!("Error: 0 colors for {:?}", std::str::from_utf8(ident));
         }
 
         Some(UnitigColorData {

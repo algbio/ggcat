@@ -282,7 +282,7 @@ mod tests {
         let min_multiplicity = 1;
 
         // Increase the maximum allowed number of open files
-        fdlimit::raise_fd_limit();
+        let _ = fdlimit::raise_fd_limit();
 
         KEEP_FILES.store(true, Ordering::Relaxed);
 
@@ -311,7 +311,7 @@ mod tests {
             32768,
         );
 
-        println!("Using m: {} with k: {}", m, k);
+        ggcat_logging::info!("Using m: {} with k: {}", m, k);
 
         // #[cfg(feature = "mem-analysis")]
         // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));

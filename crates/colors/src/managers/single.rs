@@ -32,11 +32,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     fn create_colors_table(
         _path: impl AsRef<Path>,
         _color_names: &[String],
-    ) -> Self::GlobalColorsTableWriter {
-        ()
+    ) -> anyhow::Result<Self::GlobalColorsTableWriter> {
+        Ok(())
     }
 
-    fn open_colors_table(path: impl AsRef<Path>) -> Self::GlobalColorsTableReader {
+    fn open_colors_table(path: impl AsRef<Path>) -> anyhow::Result<Self::GlobalColorsTableReader> {
         ColorsDeserializer::new(path, true)
     }
 

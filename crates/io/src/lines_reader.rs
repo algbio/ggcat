@@ -70,7 +70,7 @@ impl LinesReader {
                 },
                 DEFAULT_OUTPUT_BUFFER_SIZE,
             ) {
-                println!(
+                ggcat_logging::error!(
                     "WARNING: Error while reading file {}",
                     path.as_ref().display()
                 );
@@ -83,7 +83,7 @@ impl LinesReader {
             .unwrap();
             self.read_stream_buffered(file, callback)
                 .unwrap_or_else(|_| {
-                    println!(
+                    ggcat_logging::error!(
                         "WARNING: Error while reading file {}",
                         path.as_ref().display()
                     );
@@ -93,7 +93,7 @@ impl LinesReader {
                 File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display()));
             self.read_stream_buffered(file, callback)
                 .unwrap_or_else(|_| {
-                    println!(
+                    ggcat_logging::error!(
                         "WARNING: Error while reading file {}",
                         path.as_ref().display()
                     );
@@ -152,7 +152,7 @@ impl LinesReader {
                 // File finished
                 if buffer.len() == 0 {
                     if line_pending {
-                        eprintln!(
+                        ggcat_logging::error!(
                             "WARNING: No newline at ending of file '{}'",
                             file.as_ref().display()
                         );

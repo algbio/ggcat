@@ -72,7 +72,7 @@ pub fn run_query<
     threads_count: usize,
     default_compression_level: Option<u32>,
     colored_query_output_format: ColoredQueryOutputFormat,
-) -> PathBuf {
+) -> anyhow::Result<PathBuf> {
     let temp_dir = temp_dir.unwrap_or(PathBuf::new());
 
     PHASES_TIMES_MONITOR.write().init();
@@ -82,13 +82,13 @@ pub fn run_query<
 
     let color_map = QuerierColorsManager::ColorsMergeManagerType::<BucketingHash, MergingHash>::open_colors_table(
         graph_input.with_extension("colors.dat"),
-    );
+    )?;
 
     // TODO: Support GFA input
     let file_stats = compute_stats_from_input_blocks(&[
         GeneralSequenceBlockData::FASTA((graph_input.clone(), None)),
         GeneralSequenceBlockData::FASTA((query_input.clone(), None)),
-    ]);
+    ])?;
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
 
@@ -175,7 +175,7 @@ pub fn run_query<
             colored_buckets,
             temp_dir.clone(),
             queries_count,
-        );
+        )?;
 
         colored_query_output::<BucketingHash, MergingHash, QuerierColorsManager>(
             &color_map,
@@ -184,7 +184,7 @@ pub fn run_query<
             temp_dir,
             &query_kmers_count,
             colored_query_output_format,
-        );
+        )?;
     }
 
     PHASES_TIMES_MONITOR
@@ -201,5 +201,5 @@ pub fn run_query<
         output_file_prefix
     };
 
-    output_file_name
+    Ok(output_file_name)
 }

@@ -61,7 +61,7 @@ impl RoaringBitmapInstance {
 
         // Flush the partial bitmap
         if strided_color >= self.checkpoint_distance as u32 {
-            println!("Flushing with offset: {}", self.offset);
+            ggcat_logging::info!("Flushing with offset: {}", self.offset);
             self.flush(writer);
         }
 
@@ -138,7 +138,7 @@ impl ColorsSerializerTrait for RoaringColorsSerializer {
     }
 
     fn print_stats(&self) {
-        println!(
+        ggcat_logging::info!(
             "Subsets count: {} witn {} colors",
             self.get_subsets_count(),
             self.colors_count

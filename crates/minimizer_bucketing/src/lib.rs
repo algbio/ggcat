@@ -304,7 +304,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                 let current_file = context.current_file.load(Ordering::Relaxed);
                 let processed_files = context.processed_files.load(Ordering::Relaxed);
 
-                println!(
+                ggcat_logging::info!(
                     "Elaborated {} sequences! [{} | {:.2}% qb] ({}[{}]/{} => {:.2}%) {}",
                     SEQ_COUNT.load(Ordering::Relaxed),
                     VALID_BASES_COUNT.load(Ordering::Relaxed),

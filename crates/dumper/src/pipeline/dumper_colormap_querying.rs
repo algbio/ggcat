@@ -16,13 +16,17 @@ pub fn colormap_query<
     mut color_subsets: Vec<ColorIndexType>,
     single_thread_output_function: bool,
     output_function: impl Fn(ColorIndexType, &[ColorIndexType]) + Send + Sync,
-) {
+) -> anyhow::Result<()> {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: colormap query".to_string());
 
-    let tlocal_colormap_decoder =
-        ScopedThreadLocal::new(move || ColorsDeserializer::<CD>::new(&colormap_file, false));
+    // Try to build a color deserializer to check colormap correctness
+    let _ = ColorsDeserializer::<CD>::new(&colormap_file, false)?;
+
+    let tlocal_colormap_decoder = ScopedThreadLocal::new(move || {
+        ColorsDeserializer::<CD>::new(&colormap_file, false).unwrap()
+    });
 
     let single_thread_lock = Mutex::new(());
 
@@ -53,4 +57,5 @@ pub fn colormap_query<
                 output_function(color, &temp_colors_buffer[..]);
             }
         });
+    Ok(())
 }

@@ -16,7 +16,7 @@ utils = { package = "ggcat_utils", path = "../utils" }
 
 
 # Common libraries
-parallel-processor = "0.1.17"
+parallel-processor = "0.1.18"
 streaming-libdeflate-rs = "0.1.5"
 nightly-quirks = "0.1.4"
 
@@ -31,6 +31,8 @@ serde = "1.0.203"
 flate2 = "1.0.30"
 typenum = "1.17.0"
 bstr = "1.9.1"
+ggcat-logging = { version = "0.1.0", path = "../logging" }
+anyhow = "1.0.89"
 
 [dev-dependencies]
 rand = "0.8.5"

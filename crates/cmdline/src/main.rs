@@ -8,6 +8,7 @@ mod benchmarks;
 
 use ahash::HashMap;
 use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance};
+use ggcat_logging::UnrecoverableErrorLogging;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::panic;
@@ -247,6 +248,7 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
         total_threads_count: args.threads_count,
         intermediate_compression_level: args.intermediate_compression_level,
         stats_file: Some(out_file.with_extension("stats.log")),
+        messages_callback: None,
     });
 
     ggcat_api::debug::DEBUG_KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
@@ -269,7 +271,7 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
 
     // #[cfg(feature = "mem-analysis")]
     // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
-    instance
+    instance.unwrap()
 }
 
 fn convert_assembler_step(step: AssemblerStartingStep) -> assembler::AssemblerStartingStep {
@@ -299,13 +301,10 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
     for list in args.input_lists {
         for input in BufReader::new(
             File::open(&list)
-                .map_err(|e| {
-                    panic!(
-                        "Error while opening input list file {}: {}",
-                        list.display(),
-                        e
-                    )
-                })
+                .log_unrecoverable_error_with_data(
+                    "Error while opening input list file",
+                    list.display(),
+                )
                 .unwrap(),
         )
         .lines()
@@ -407,28 +406,30 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
     *ggcat_api::debug::DEBUG_ASSEMBLER_LAST_STEP.lock() = convert_assembler_step(args.last_step);
     ggcat_api::debug::DEBUG_LINK_PHASE_ITERATION_START_STEP.store(args.number, Ordering::Relaxed);
 
-    let output_file = instance.build_graph(
-        inputs,
-        args.output_file,
-        Some(&color_names),
-        args.common_args.kmer_length,
-        args.common_args.threads_count,
-        args.common_args.forward_only,
-        args.common_args.minimizer_length,
-        args.colors,
-        args.min_multiplicity,
-        if args.generate_maximal_unitigs_links {
-            ExtraElaboration::UnitigLinks
-        } else if args.greedy_matchtigs {
-            ExtraElaboration::GreedyMatchtigs
-        } else if args.eulertigs {
-            ExtraElaboration::Eulertigs
-        } else if args.pathtigs {
-            ExtraElaboration::Pathtigs
-        } else {
-            ExtraElaboration::None
-        },
-    );
+    let output_file = instance
+        .build_graph(
+            inputs,
+            args.output_file,
+            Some(&color_names),
+            args.common_args.kmer_length,
+            args.common_args.threads_count,
+            args.common_args.forward_only,
+            args.common_args.minimizer_length,
+            args.colors,
+            args.min_multiplicity,
+            if args.generate_maximal_unitigs_links {
+                ExtraElaboration::UnitigLinks
+            } else if args.greedy_matchtigs {
+                ExtraElaboration::GreedyMatchtigs
+            } else if args.eulertigs {
+                ExtraElaboration::Eulertigs
+            } else if args.pathtigs {
+                ExtraElaboration::Pathtigs
+            } else {
+                ExtraElaboration::None
+            },
+        )
+        .unwrap();
 
     println!("Final output saved to: {}", output_file.display());
 }
@@ -445,27 +446,29 @@ fn convert_querier_step(step: QuerierStartingStep) -> querier::QuerierStartingSt
 fn run_querier_from_args(instance: &GGCATInstance, args: QueryArgs) -> PathBuf {
     *ggcat_api::debug::DEBUG_QUERIER_FIRST_STEP.lock() = convert_querier_step(args.step);
 
-    instance.query_graph(
-        args.input_graph,
-        args.input_query,
-        args.output_file_prefix,
-        args.common_args.kmer_length,
-        args.common_args.threads_count,
-        args.common_args.forward_only,
-        args.common_args.minimizer_length,
-        args.colors,
-        match args
-            .colored_query_output_format
-            .unwrap_or(ColoredQueryOutputFormat::JsonLinesWithNumbers)
-        {
-            ColoredQueryOutputFormat::JsonLinesWithNumbers => {
-                querier::ColoredQueryOutputFormat::JsonLinesWithNumbers
-            }
-            ColoredQueryOutputFormat::JsonLinesWithNames => {
-                querier::ColoredQueryOutputFormat::JsonLinesWithNames
-            }
-        },
-    )
+    instance
+        .query_graph(
+            args.input_graph,
+            args.input_query,
+            args.output_file_prefix,
+            args.common_args.kmer_length,
+            args.common_args.threads_count,
+            args.common_args.forward_only,
+            args.common_args.minimizer_length,
+            args.colors,
+            match args
+                .colored_query_output_format
+                .unwrap_or(ColoredQueryOutputFormat::JsonLinesWithNumbers)
+            {
+                ColoredQueryOutputFormat::JsonLinesWithNumbers => {
+                    querier::ColoredQueryOutputFormat::JsonLinesWithNumbers
+                }
+                ColoredQueryOutputFormat::JsonLinesWithNames => {
+                    querier::ColoredQueryOutputFormat::JsonLinesWithNames
+                }
+            },
+        )
+        .unwrap()
 }
 
 instrumenter::global_setup_instrumenter!();
@@ -505,7 +508,7 @@ fn main() {
         CliArgs::Matches(args) => {
             let colors_file = args.input_file.with_extension("colors.dat");
             let mut colors_deserializer =
-                ColorsDeserializer::<DefaultColorsSerializer>::new(colors_file, true);
+                ColorsDeserializer::<DefaultColorsSerializer>::new(colors_file, true).unwrap();
 
             let mut colors = Vec::new();
 
@@ -544,8 +547,9 @@ fn main() {
 
             let mut output_file = BufWriter::new(File::create(&output_file_name).unwrap());
 
-            for (color_idx, color_name) in
-                GGCATInstance::dump_colors(args.input_colormap).enumerate()
+            for (color_idx, color_name) in GGCATInstance::dump_colors(args.input_colormap)
+                .unwrap()
+                .enumerate()
             {
                 writeln!(
                     output_file,

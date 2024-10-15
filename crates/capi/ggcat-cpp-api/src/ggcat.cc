@@ -24,8 +24,9 @@ GGCATInstance *GGCATInstance::create(GGCATConfig config)
         ffi_config.intermediate_compression_level = config.intermediate_compression_level,
         ffi_config.use_stats_file = config.use_stats_file,
         ffi_config.stats_file = rust::String(config.stats_file.c_str()),
+        ffi_config.messages_callback = (size_t)config.messages_callback;
 
-        ffi_instance = &ggcat_create(ffi_config);
+        ffi_instance = ggcat_create(ffi_config);
     }
     return &instance;
 }
@@ -194,14 +195,15 @@ void GGCATInstance::query_colormap_internal(
 {
     auto subsets_rust_vec = rust::Vec<uint32_t>();
     subsets_rust_vec.reserve(subsets_len);
-    for (size_t i = 0; i < subsets_len; i++) {
-        subsets_rust_vec.push_back(((uint32_t*)subsets_ptr)[i]);
+    for (size_t i = 0; i < subsets_len; i++)
+    {
+        subsets_rust_vec.push_back(((uint32_t *)subsets_ptr)[i]);
     }
 
     ggcat_query_colormap(*ffi_instance,
-                       rust::String(colormap_file.c_str()),
-                       subsets_rust_vec,
-                       single_thread_output_function,
-                       context,
-                       output_function);
+                         rust::String(colormap_file.c_str()),
+                         subsets_rust_vec,
+                         single_thread_output_function,
+                         context,
+                         output_function);
 }

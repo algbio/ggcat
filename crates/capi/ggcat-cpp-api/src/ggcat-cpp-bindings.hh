@@ -747,6 +747,8 @@ struct GGCATConfigFFI final {
   bool use_stats_file;
   // The path to an optional json-formatted real time stats file
   ::rust::String stats_file;
+  // Function pointer with signature void (uint8_t, const char *) receiving messages
+  ::std::size_t messages_callback;
 
   using IsRelocatable = ::std::true_type;
 };
@@ -778,7 +780,7 @@ private:
 #endif // CXXBRIDGE1_STRUCT_GGCATInstanceFFI
 
 // Creates a new GGCATInstance. If an instance already exists, it will be returned, ignoring the new config.
-::GGCATInstanceFFI const &ggcat_create(::GGCATConfigFFI config) noexcept;
+::GGCATInstanceFFI const *ggcat_create(::GGCATConfigFFI config) noexcept;
 
 // Builds a new graph from the given input files, with the specified parameters
 ::rust::String ggcat_build_from_files(::GGCATInstanceFFI const &instance, ::rust::Slice<::rust::String const> input_files, ::rust::String output_file, ::rust::Slice<::rust::String const> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab) noexcept;

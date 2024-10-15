@@ -41,7 +41,7 @@ pub fn dump_unitigs(
     single_thread_output_function: bool,
     default_compression_level: Option<u32>,
     output_function: impl Fn(&[u8], &[ColorIndexType], bool) + Send + Sync,
-) {
+) -> anyhow::Result<()> {
     let temp_dir = temp_dir.unwrap_or(PathBuf::new());
 
     PHASES_TIMES_MONITOR.write().init();
@@ -49,13 +49,13 @@ pub fn dump_unitigs(
     let color_map = <ColorBundleGraphQuerying as ColorsManager>::ColorsMergeManagerType::<
         hashes::cn_nthash::CanonicalNtHashIteratorFactory,
         hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
-    >::open_colors_table(graph_input.as_ref().with_extension("colors.dat"));
+    >::open_colors_table(graph_input.as_ref().with_extension("colors.dat"))?;
 
     // TODO: Support GFA input
     let file_stats = compute_stats_from_input_blocks(&[GeneralSequenceBlockData::FASTA((
         graph_input.as_ref().to_path_buf(),
         None,
-    ))]);
+    ))])?;
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
 
@@ -86,7 +86,7 @@ pub fn dump_unitigs(
         reorganized_unitigs,
         single_thread_output_function,
         output_function,
-    );
+    )
 }
 
 pub fn dump_colormap_query(
@@ -94,7 +94,7 @@ pub fn dump_colormap_query(
     color_subsets: Vec<ColorIndexType>,
     single_thread_output_function: bool,
     output_function: impl Fn(ColorIndexType, &[ColorIndexType]) + Send + Sync,
-) {
+) -> anyhow::Result<()> {
     PHASES_TIMES_MONITOR.write().init();
 
     colormap_query::<ColorBundleGraphQuerying, DefaultColorsSerializer>(
@@ -102,5 +102,5 @@ pub fn dump_colormap_query(
         color_subsets,
         single_thread_output_function,
         output_function,
-    );
+    )
 }

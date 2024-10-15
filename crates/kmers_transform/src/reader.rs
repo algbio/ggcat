@@ -186,7 +186,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                     >= (MAX_INTERMEDIATE_MAP_SIZE / F::MapProcessorType::MAP_SIZE as u64) as f64);
 
             // if is_outlier {
-            //     println!(
+            //     ggcat_logging::info!(
             //         "Is outlier bucket with count {} and {} >= {}",
             //         biggest_sub_bucket.0.count,
             //         biggest_sub_bucket.0.count as f64 * unique_estimator_factor,
@@ -229,7 +229,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         for (count, index, outlier) in queue.into_iter() {
             dbg_counters[index] = count.0;
             addresses[index] = if outlier {
-                // println!("Sub-bucket {} is an outlier with size {}!", index, count.0);
+                // ggcat_logging::info!("Sub-bucket {} is an outlier with size {}!", index, count.0);
                 let new_address =
                     KmersTransformResplitter::<F>::generate_new_address(ResplitterInitData {
                         bucket_size: count.0 as usize,
@@ -289,7 +289,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             min(addr_concurrency, chunks_concurrency),
         );
 
-        //     println!(
+        //     ggcat_logging::info!(
         //     "File:{}\nChunks {} concurrency: {} REMAPPINGS: {:?} // {:?} // {:?} RATIO: {:.2} ADDR_COUNT: {}",
         //     file.path.display(),
         //     reader.get_chunks_count(),
@@ -528,7 +528,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
 
                 let mut spawner = address.make_spawner();
 
-                // println!(
+                // ggcat_logging::info!(
                 //     "Reading with concurrency: {} and max buckets: {} with addrs: {}",
                 //     buckets_info.concurrency,
                 //     global_context.max_buckets,

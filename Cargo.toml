@@ -49,7 +49,7 @@ members = [
     "crates/api",
 
     # Main c/c++ library for api usage
-   "crates/capi",
+    "crates/capi",
 
     # Global config constants
     "crates/config",
@@ -58,6 +58,7 @@ members = [
     "crates/utils",
 
     # Common pipeline crates
+    "crates/logging",
     "crates/hashes",
     "crates/io",
     "crates/minimizer_bucketing",

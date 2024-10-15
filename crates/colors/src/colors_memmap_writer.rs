@@ -16,13 +16,13 @@ pub struct ColorsMemMapWriter<C: ColorsSerializerTrait> {
 }
 
 impl<C: ColorsSerializerTrait> ColorsMemMapWriter<C> {
-    pub fn new(file: impl AsRef<Path>, color_names: &[String]) -> Self {
+    pub fn new(file: impl AsRef<Path>, color_names: &[String]) -> anyhow::Result<Self> {
         let mut rng = thread_rng();
-        Self {
+        Ok(Self {
             colors: DashMap::with_hasher(DummyHasherBuilder),
-            colors_storage: ColorsSerializer::new(file, color_names),
+            colors_storage: ColorsSerializer::new(file, color_names)?,
             hash_keys: (rng.next_u64(), rng.next_u64()),
-        }
+        })
     }
 
     fn hash_colors(&self, colors: &[ColorIndexType]) -> u128 {

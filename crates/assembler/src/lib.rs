@@ -92,12 +92,12 @@ pub fn run_assembler<
     generate_maximal_unitigs_links: bool,
     compute_tigs_mode: Option<MatchtigMode>,
     only_bstats: bool,
-) -> PathBuf {
+) -> anyhow::Result<PathBuf> {
     let temp_dir = temp_dir.unwrap_or(PathBuf::new());
 
     PHASES_TIMES_MONITOR.write().init();
 
-    let file_stats = compute_stats_from_input_blocks(&input_blocks);
+    let file_stats = compute_stats_from_input_blocks(&input_blocks)?;
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
 
@@ -112,7 +112,7 @@ pub fn run_assembler<
         AssemblerColorsManager::ColorsMergeManagerType::create_colors_table(
             output_file.with_extension("colors.dat"),
             color_names,
-        ),
+        )?,
     );
 
     let (buckets, counters) = if step <= AssemblerStartingStep::MinimizerBucketing {
@@ -134,7 +134,7 @@ pub fn run_assembler<
         )
     };
 
-    println!(
+    ggcat_logging::info!(
         "Temp buckets files size: {:.2}",
         MemoryDataSize::from_bytes(fs_extra::dir::get_size(&temp_dir).unwrap_or(0) as usize)
     );
@@ -143,7 +143,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Completed minimizer bucketing.".to_string());
-        return PathBuf::new();
+        return Ok(PathBuf::new());
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -164,7 +164,7 @@ pub fn run_assembler<
                 m,
             );
         });
-        return PathBuf::new();
+        return Ok(PathBuf::new());
     }
 
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
@@ -189,7 +189,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Completed kmers merge.".to_string());
-        return PathBuf::new();
+        return Ok(PathBuf::new());
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -208,7 +208,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Hashes sorting.".to_string());
-        return PathBuf::new();
+        return Ok(PathBuf::new());
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -278,7 +278,7 @@ pub fn run_assembler<
             };
 
             if do_logging {
-                println!("Iteration: {}", loop_iteration);
+                ggcat_logging::info!("Iteration: {}", loop_iteration);
             }
 
             let (new_links, remaining) = links_compaction(
@@ -294,7 +294,7 @@ pub fn run_assembler<
             );
 
             if do_logging {
-                println!(
+                ggcat_logging::info!(
                     "Remaining: {} {}",
                     remaining,
                     PHASES_TIMES_MONITOR
@@ -305,7 +305,7 @@ pub fn run_assembler<
 
             links = new_links;
             if remaining == 0 {
-                println!("Completed compaction with {} iters", loop_iteration);
+                ggcat_logging::info!("Completed compaction with {} iters", loop_iteration);
                 break (final_buckets.finalize(), result_map_buckets.finalize());
             }
             loop_iteration += 1;
@@ -329,7 +329,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Links Compaction.".to_string());
-        return PathBuf::new();
+        return Ok(PathBuf::new());
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -404,7 +404,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Reorganize reads.".to_string());
-        return PathBuf::new();
+        return Ok(PathBuf::new());
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -515,5 +515,5 @@ pub fn run_assembler<
         .write()
         .print_stats("Compacted De Bruijn graph construction completed.".to_string());
 
-    output_file
+    Ok(output_file)
 }

@@ -165,7 +165,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                 if CX::COLORS_ENABLED
                     && (color.debug_count() != sequence.seq.len() - self.global_data.k + 1)
                 {
-                    println!(
+                    ggcat_logging::error!(
                         "WARN: Sequence does not have enough colors, please check matching k size:\n{}\n{}",
                         std::str::from_utf8(sequence.ident_data).unwrap(),
                         std::str::from_utf8(sequence.seq).unwrap()

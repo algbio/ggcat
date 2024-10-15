@@ -1,4 +1,5 @@
 use std::slice::from_raw_parts;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{mem::transmute, path::PathBuf};
 
@@ -10,7 +11,11 @@ use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance, GeneralSequenceBlo
 #[repr(transparent)]
 struct GGCATInstanceFFI(GGCATInstance);
 
-fn ggcat_create(config: ffi::GGCATConfigFFI) -> &'static GGCATInstanceFFI {
+static FFI_MESSAGES_CALLBACK_PTR: AtomicUsize = AtomicUsize::new(0);
+
+fn ggcat_create(config: ffi::GGCATConfigFFI) -> *const GGCATInstanceFFI {
+    FFI_MESSAGES_CALLBACK_PTR.store(config.messages_callback, Ordering::SeqCst);
+
     let instance = GGCATInstance::create(GGCATConfig {
         temp_dir: if config.use_temp_dir {
             Some(PathBuf::from(config.temp_dir))
@@ -30,7 +35,21 @@ fn ggcat_create(config: ffi::GGCATConfigFFI) -> &'static GGCATInstanceFFI {
         } else {
             None
         },
-    });
+        messages_callback: if config.messages_callback == 0 {
+            None
+        } else {
+            Some(|lvl, str| {
+                let ptr = FFI_MESSAGES_CALLBACK_PTR.load(Ordering::SeqCst);
+                if ptr != 0 {
+                    let cb: extern "C" fn(u8, *const i8) =
+                        unsafe { std::mem::transmute(ptr as *const ()) };
+                    let cstring = std::ffi::CString::new(str).unwrap();
+                    cb(lvl as u8, cstring.as_ptr());
+                }
+            })
+        },
+    })
+    .ok();
     unsafe { std::mem::transmute(instance) }
 }
 
@@ -98,6 +117,7 @@ fn ggcat_build(
                 _ => panic!("Invalid extra_elab value: {}", extra_elab),
             },
         )
+        .unwrap_or_default()
         .to_str()
         .unwrap()
         .to_string()
@@ -337,6 +357,7 @@ fn ggcat_query_graph(
                 _ => panic!("Invalid color_output_format value: {}", color_output_format),
             },
         )
+        .unwrap_or_default()
         .to_str()
         .unwrap()
         .to_string()
@@ -357,7 +378,9 @@ pub fn ggcat_dump_colors(
     // The input colormap
     input_colormap: String,
 ) -> Vec<String> {
-    GGCATInstance::dump_colors(input_colormap).collect()
+    GGCATInstance::dump_colors(input_colormap)
+        .map(|v| v.collect())
+        .unwrap_or_default()
 }
 
 /// Dumps the unitigs of the given graph, optionally with colors
@@ -386,7 +409,7 @@ fn ggcat_dump_unitigs(
     let output_function: extern "C" fn(usize, usize, usize, usize, usize, bool) =
         unsafe { transmute(output_function_ptr) };
 
-    instance.0.dump_unitigs(
+    let _ = instance.0.dump_unitigs(
         PathBuf::from(graph_input),
         kmer_length,
         if minimizer_length == usize::MAX {
@@ -407,7 +430,7 @@ fn ggcat_dump_unitigs(
                 same_colors,
             );
         },
-    )
+    );
 }
 
 /// Queries specified color subsets of the colormap, returning
@@ -428,7 +451,7 @@ fn ggcat_query_colormap(
     let output_function: extern "C" fn(usize, u32, usize, usize) =
         unsafe { transmute(output_function_ptr) };
 
-    instance.0.query_colormap(
+    let _ = instance.0.query_colormap(
         PathBuf::from(colormap),
         subsets,
         single_thread_output_function,
@@ -440,7 +463,7 @@ fn ggcat_query_colormap(
                 colors.len(),
             );
         },
-    )
+    );
 }
 
 static_assertions::assert_eq_size!(ColorIndexType, u32);
@@ -470,6 +493,7 @@ pub struct SequenceInfoFFI {
 
 #[cxx::bridge]
 mod ffi {
+
     /// Main config of GGCAT. This config is global and should be passed to GGCATInstance::create
     pub struct GGCATConfigFFI {
         /// If false, a memory only mode is attempted. May crash for large input data if there is no enough RAM memory.
@@ -497,6 +521,9 @@ mod ffi {
         pub use_stats_file: bool,
         /// The path to an optional json-formatted real time stats file
         pub stats_file: String,
+
+        /// Function pointer with signature void (uint8_t, const char *) receiving messages
+        pub messages_callback: usize,
     }
 
     pub struct InputStreamFFI {
@@ -512,7 +539,7 @@ mod ffi {
         type GGCATInstanceFFI;
 
         /// Creates a new GGCATInstance. If an instance already exists, it will be returned, ignoring the new config.
-        fn ggcat_create(config: GGCATConfigFFI) -> &'static GGCATInstanceFFI;
+        fn ggcat_create(config: GGCATConfigFFI) -> *const GGCATInstanceFFI;
 
         /// Builds a new graph from the given input files, with the specified parameters
         fn ggcat_build_from_files(
