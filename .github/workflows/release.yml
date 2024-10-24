@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  linux-release:
+    strategy:
+      matrix:
+        platform:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Rust setup
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.platform.target }}
+      - name: Cross install
+        shell: bash
+        run: cargo install cross
+      - name: Build cli
+        shell: bash
+        run: |
+          cross build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline
+      - name: Pack release
+        shell: bash
+        run: |
+          tar cvf "ggcat-${{ matrix.platform.target }}.tar.gz" -C target/release/ ggcat
+      - name: Publish release
+        uses: AButler/upload-release-assets@v3.0
+        with:
+          files: "target/release/ggcat"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+  linux-musl-release:
+    strategy:
+      matrix:
+        platform:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            image: messense/rust-musl-cross:x86_64-musl
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            image: messense/rust-musl-cross:aarch64-musl
+    runs-on: ${{ matrix.platform.runner }}
+    container:
+      image: ${{ matrix.platform.image }}
+      volumes:
+        - .:/home/rust/src
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build cli
+        run: cargo build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline
+      - name: Pack release
+        shell: bash
+        run: |
+          tar cvf "ggcat-${{ matrix.platform.target }}.tar.gz" -C target/release/ ggcat
+      - name: Publish release
+        uses: AButler/upload-release-assets@v3.0
+        with:
+          files: "target/release/ggcat"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+  windows-release:
+    strategy:
+      matrix:
+        platform:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Rust setup
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.platform.target }}
+      - name: Build cli
+        run: cargo build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline
+      - name: Pack release
+        shell: bash
+        run: |
+          tar cvf "ggcat-${{ matrix.platform.target }}.tar.gz" -C target/release/ ggcat
+      - name: Publish release
+        uses: AButler/upload-release-assets@v3.0
+        with:
+          files: "target/release/ggcat"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+  macos-release:
+    strategy:
+      matrix:
+        platform:
+          - runner: macos-12
+            target: x86_64-apple-darwin
+          - runner: macos-14
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Rust setup
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.platform.target }}
+      - name: Build cli
+        run: cargo build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline
+      - name: Pack release
+        shell: bash
+        run: |
+          tar cvf "ggcat-${{ matrix.platform.target }}.tar.gz" -C target/release/ ggcat
+      - name: Publish release
+        uses: AButler/upload-release-assets@v3.0
+        with:
+          files: "target/release/ggcat"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
