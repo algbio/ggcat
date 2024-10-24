@@ -199,7 +199,7 @@ Additional features can be enabled by specifying them in the command line while 
 Then the tool can be installed with the commands:
 
 ```
-git clone https://github.com/algbio/ggcat --recursive
+git clone https://github.com/algbio/ggcat
 cd ggcat/
 cargo install --path crates/cmdline/ --locked
 ```
