@@ -125,7 +125,7 @@ jobs:
       - name: Pack release
         shell: bash
         run: |
-          tar cvf "ggcat-${{ matrix.platform.target }}.tar.gz" -C target/release/ ggcat
+          tar cvf "ggcat-${{ matrix.platform.target }}.tar.gz" -C target/${{ matrix.platform.target }}/release/ ggcat
       - name: Publish release
         uses: AButler/upload-release-assets@v3.0
         with:
