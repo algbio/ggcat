@@ -191,6 +191,10 @@ struct AssemblerArgs {
 
     #[structopt(flatten)]
     pub common_args: CommonArgs,
+
+    /// Output the graph in GFA format
+    #[structopt(short = "h", long = "gfa")]
+    pub gfa_output: bool,
 }
 
 #[derive(StructOpt, Debug)]
@@ -240,7 +244,7 @@ struct QueryArgs {
 // #[cfg(feature = "mem-analysis")]
 // static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
 
-fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
+fn initialize(args: &CommonArgs, out_file: &PathBuf, gfa_output: bool) -> &'static GGCATInstance {
     let instance = GGCATInstance::create(GGCATConfig {
         temp_dir: Some(args.temp_dir.clone()),
         memory: args.memory,
@@ -249,6 +253,7 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
         intermediate_compression_level: args.intermediate_compression_level,
         stats_file: Some(out_file.with_extension("stats.log")),
         messages_callback: None,
+        gfa_output,
     });
 
     ggcat_api::debug::DEBUG_KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
@@ -428,6 +433,7 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
             } else {
                 ExtraElaboration::None
             },
+            args.gfa_output,
         )
         .unwrap();
 
@@ -501,7 +507,7 @@ fn main() {
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
 
-            let instance = initialize(&args.common_args, &args.output_file);
+            let instance = initialize(&args.common_args, &args.output_file, args.gfa_output);
 
             run_assembler_from_args(&instance, args);
         }
@@ -526,8 +532,6 @@ fn main() {
             return; // Skip final memory deallocation
         }
         CliArgs::Query(args) => {
-            initialize(&args.common_args, &args.output_file_prefix);
-
             if !args.colors && args.colored_query_output_format.is_some() {
                 println!("Warning: colored query output format is specified, but the graph is not colored");
             }
@@ -537,7 +541,7 @@ fn main() {
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
 
-            let instance = initialize(&args.common_args, &args.output_file_prefix);
+            let instance = initialize(&args.common_args, &args.output_file_prefix, false);
 
             let output_file_name = run_querier_from_args(&instance, args);
             println!("Final output saved to: {}", output_file_name.display());

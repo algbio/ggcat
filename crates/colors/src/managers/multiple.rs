@@ -668,7 +668,13 @@ impl IdentSequenceWriter for UnitigColorData {
     }
 
     #[allow(unused_variables)]
-    fn write_as_gfa(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
+    fn write_as_gfa(
+        &self,
+        _k: u64,
+        _index: u64,
+        stream: &mut impl Write,
+        extra_buffer: &Self::TempBuffer,
+    ) {
         if self.slice.len() > 0 {
             write!(stream, "CS",).unwrap();
         }

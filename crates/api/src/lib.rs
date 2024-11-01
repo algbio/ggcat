@@ -9,6 +9,9 @@ pub use ggcat_logging::MessageLevel;
 use ggcat_logging::UnrecoverableErrorLogging;
 use hashes::MinimizerHashFunctionFactory;
 use hashes::{cn_nthash::CanonicalNtHashIteratorFactory, fw_nthash::ForwardNtHashIteratorFactory};
+use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
+use io::concurrent::structured_sequences::gfa::GFAWriterWrapper;
+use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
 use io::sequences_stream::fasta::FastaFileSequencesStream;
 use io::sequences_stream::GenericSequencesStream;
 use parallel_processor::enable_counters_logging;
@@ -86,6 +89,9 @@ pub struct GGCATConfig {
 
     /// The messages callback, if present, no output will be automatically written to stdout
     pub messages_callback: Option<fn(MessageLevel, &str)>,
+
+    /// Output GFA format instead of FASTA
+    pub gfa_output: bool,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -217,6 +223,8 @@ impl GGCATInstance {
         min_multiplicity: usize,
 
         extra_elab: ExtraElaboration,
+
+        gfa_output: bool,
     ) -> anyhow::Result<PathBuf> {
         let bucketing_hash_dispatch = if forward_only {
             <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::dynamic_dispatch_id()
@@ -236,10 +244,25 @@ impl GGCATInstance {
             NonColoredManager::dynamic_dispatch_id()
         };
 
+        if gfa_output && colors {
+            anyhow::bail!("GFA output is not supported with colors");
+        }
+
+        let output_mode = if gfa_output {
+            GFAWriterWrapper::dynamic_dispatch_id()
+        } else {
+            FastaWriterWrapper::dynamic_dispatch_id()
+        };
+
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
 
         let output_file = assembler::dynamic_dispatch::run_assembler(
-            (bucketing_hash_dispatch, merging_hash_dispatch, colors_hash),
+            (
+                bucketing_hash_dispatch,
+                merging_hash_dispatch,
+                colors_hash,
+                output_mode,
+            ),
             kmer_length,
             minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
             debug::DEBUG_ASSEMBLER_FIRST_STEP.lock().clone(),

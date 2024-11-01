@@ -236,7 +236,14 @@ impl SequenceExtraData for UnitigColorDataSerializer {
 impl IdentSequenceWriter for UnitigColorDataSerializer {
     fn write_as_ident(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
 
-    fn write_as_gfa(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
+    fn write_as_gfa(
+        &self,
+        _k: u64,
+        _index: u64,
+        _stream: &mut impl Write,
+        _extra_buffer: &Self::TempBuffer,
+    ) {
+    }
 
     fn parse_as_ident<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
         todo!()

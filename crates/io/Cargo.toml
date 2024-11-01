@@ -33,6 +33,7 @@ typenum = "1.17.0"
 bstr = "1.9.1"
 ggcat-logging = { version = "0.1.0", path = "../logging" }
 anyhow = "1.0.89"
+dynamic-dispatch = "0.5.4"
 
 [dev-dependencies]
 rand = "0.8.5"

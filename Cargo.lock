@@ -1203,6 +1203,7 @@ dependencies = [
  "bincode",
  "bstr",
  "byteorder",
+ "dynamic-dispatch",
  "flate2",
  "ggcat-logging",
  "ggcat_config",

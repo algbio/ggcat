@@ -10,37 +10,35 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
 use super::stream_finish::SequencesWriterWrapper;
-
 #[cfg(feature = "support_kmer_counters")]
 use super::SequenceAbundance;
 use super::{StructuredSequenceBackendInit, StructuredSequenceBackendWrapper};
 
-pub struct FastaWriterWrapper;
+pub struct GFAWriterWrapper;
 
 #[dynamic_dispatch]
-impl StructuredSequenceBackendWrapper for FastaWriterWrapper {
+impl StructuredSequenceBackendWrapper for GFAWriterWrapper {
     type Backend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> =
-        FastaWriter<ColorInfo, LinksInfo>;
+        GFAWriter<ColorInfo, LinksInfo>;
 }
-
-pub struct FastaWriter<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> {
+pub struct GFAWriter<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> {
     writer: Box<dyn Write>,
     path: PathBuf,
     _phantom: PhantomData<(ColorInfo, LinksInfo)>,
 }
 
 unsafe impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> Send
-    for FastaWriter<ColorInfo, LinksInfo>
+    for GFAWriter<ColorInfo, LinksInfo>
 {
 }
 
 unsafe impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> Sync
-    for FastaWriter<ColorInfo, LinksInfo>
+    for GFAWriter<ColorInfo, LinksInfo>
 {
 }
 
 impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> StructuredSequenceBackendInit
-    for FastaWriter<ColorInfo, LinksInfo>
+    for GFAWriter<ColorInfo, LinksInfo>
 {
     fn new_compressed_gzip(path: impl AsRef<Path>, level: u32) -> Self {
         let compress_stream = GzEncoder::new(
@@ -48,7 +46,7 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> StructuredS
             Compression::new(level),
         );
 
-        FastaWriter {
+        GFAWriter {
             writer: Box::new(SequencesWriterWrapper::new(BufWriter::with_capacity(
                 DEFAULT_OUTPUT_BUFFER_SIZE,
                 compress_stream,
@@ -70,7 +68,7 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> StructuredS
             ))
             .unwrap();
 
-        FastaWriter {
+        GFAWriter {
             writer: Box::new(SequencesWriterWrapper::new(BufWriter::with_capacity(
                 DEFAULT_OUTPUT_BUFFER_SIZE,
                 compress_stream,
@@ -81,7 +79,7 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> StructuredS
     }
 
     fn new_plain(path: impl AsRef<Path>) -> Self {
-        FastaWriter {
+        GFAWriter {
             writer: Box::new(SequencesWriterWrapper::new(BufWriter::with_capacity(
                 DEFAULT_OUTPUT_BUFFER_SIZE,
                 File::create(&path).unwrap(),
@@ -93,7 +91,7 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> StructuredS
 }
 
 impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
-    StructuredSequenceBackend<ColorInfo, LinksInfo> for FastaWriter<ColorInfo, LinksInfo>
+    StructuredSequenceBackend<ColorInfo, LinksInfo> for GFAWriter<ColorInfo, LinksInfo>
 {
     type SequenceTempBuffer = Vec<u8>;
 
@@ -102,36 +100,36 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
     }
 
     fn write_sequence(
-        _k: usize,
+        k: usize,
         buffer: &mut Self::SequenceTempBuffer,
         sequence_index: u64,
         sequence: &[u8],
 
-        color_info: ColorInfo,
+        _color_info: ColorInfo,
         links_info: LinksInfo,
         extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
 
         #[cfg(feature = "support_kmer_counters")] abundance: SequenceAbundance,
     ) {
-        #[cfg(feature = "support_kmer_counters")]
-        write!(
-            buffer,
-            ">{} LN:i:{} KC:i:{} km:f:{:.1}",
-            sequence_index,
-            sequence.len(),
-            abundance.sum,
-            abundance.sum as f64 / (sequence.len() - _k + 1) as f64
-        )
-        .unwrap();
-
-        #[cfg(not(feature = "support_kmer_counters"))]
-        write!(buffer, ">{} LN:i:{}", sequence_index, sequence.len(),).unwrap();
-
-        color_info.write_as_ident(buffer, &extra_buffers.0);
-        links_info.write_as_ident(buffer, &extra_buffers.1);
-        buffer.extend_from_slice(b"\n");
+        write!(buffer, "S\t{}\t{}\t", sequence_index, sequence.len()).unwrap();
         buffer.extend_from_slice(sequence);
-        buffer.extend_from_slice(b"\n");
+        write!(buffer, "\tLN:i:{}", sequence.len()).unwrap();
+
+        #[cfg(feature = "support_kmer_counters")]
+        {
+            write!(buffer, "\tKC:i:{}", abundance.sum).unwrap();
+            write!(
+                buffer,
+                "\tkm:f:{:.1}",
+                abundance.sum as f64 / (sequence.len() - k + 1) as f64
+            )
+            .unwrap();
+        }
+
+        buffer.push(b'\n');
+
+        // color_info.write_as_ident(buffer, &extra_buffers.0);
+        links_info.write_as_gfa(k as u64, sequence_index, buffer, &extra_buffers.1);
     }
 
     fn get_path(&self) -> PathBuf {
@@ -147,7 +145,7 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
 }
 
 impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> Drop
-    for FastaWriter<ColorInfo, LinksInfo>
+    for GFAWriter<ColorInfo, LinksInfo>
 {
     fn drop(&mut self) {
         self.writer.flush().unwrap();

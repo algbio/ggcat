@@ -270,8 +270,28 @@ impl IdentSequenceWriter for DoubleMaximalUnitigLinks {
     }
 
     #[allow(unused_variables)]
-    fn write_as_gfa(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
-        todo!()
+    fn write_as_gfa(
+        &self,
+        k: u64,
+        index: u64,
+        stream: &mut impl Write,
+        extra_buffer: &Self::TempBuffer,
+    ) {
+        for entries in &self.links {
+            let entries = entries.entries.get_slice(extra_buffer);
+            for entry in entries {
+                writeln!(
+                    stream,
+                    "L\t{}\t{}\t{}\t{}\t{}M",
+                    index,
+                    if entry.flags.flip_current() { "-" } else { "+" },
+                    entry.index,
+                    if entry.flags.flip_other() { "-" } else { "+" },
+                    k - 1
+                )
+                .unwrap();
+            }
+        }
     }
 
     fn parse_as_ident<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {

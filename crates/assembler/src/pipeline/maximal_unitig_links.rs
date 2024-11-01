@@ -65,7 +65,6 @@ pub fn build_maximal_unitigs_links<
 
     let buckets_count = 1 << DEFAULT_BUCKET_HASHES_SIZE_LOG;
 
-    
     let self_complemental_unitigs = DashSet::new();
 
     // Hash all the extremities
@@ -137,7 +136,7 @@ pub fn build_maximal_unitigs_links<
                             let first_hash_unx = first_hash.to_unextendable();
                             let last_hash_unx = last_hash.to_unextendable();
 
-                            let self_complemental = (first_hash_unx == last_hash_unx) 
+                            let self_complemental = (first_hash_unx == last_hash_unx)
                                 && (first_hash.is_rc_symmetric() || (first_hash.is_forward() != last_hash.is_forward()));
 
                             if self_complemental {
@@ -308,8 +307,9 @@ pub fn build_maximal_unitigs_links<
 
     // Rewrite the output file to include found links
     {
-        let self_complemental_unitigs = self_complemental_unitigs.into_iter().collect::<HashSet<_>>();
-
+        let self_complemental_unitigs = self_complemental_unitigs
+            .into_iter()
+            .collect::<HashSet<_>>();
 
         PHASES_TIMES_MONITOR
             .write()
