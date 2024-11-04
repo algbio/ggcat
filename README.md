@@ -1,6 +1,19 @@
+[![BioConda Install](https://img.shields.io/conda/dn/bioconda/ggcat.svg?style=flag&label=BioConda%20install)](https://anaconda.org/bioconda/ggcat)
+[![License](https://img.shields.io/github/license/algbio/ggcat)](https://mit-license.org/)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/algbio/ggcat)](https://github.com/algbio/ggcat/releases/)
+[![GitHub Downloads](https://img.shields.io/github/downloads/algbio/ggcat/total.svg?style=social&logo=github&label=Download)](https://github.com/algbio/ggcat/releases)
+
 # GGCAT - compacted and colored de Bruijn graph construction and querying
 
 GGCAT is a tool for building compacted (and optionally colored) de Bruijn graphs from raw sequencing data or for merging multiple existing cDBG in a single graph. It also supports sequence queryies to either a colored or non-colored graph (i.e. number/percentage of present kmers).
+
+## Install
+
+GGCAT can be downloaded from https://github.com/algbio/ggcat/releases or installed via conda:
+
+```
+conda install  -c conda-forge -c bioconda ggcat
+```
 
 ## Tool usage
 
@@ -62,6 +75,7 @@ FLAGS:
 	-f, --forward-only                      Treats reverse complementary kmers as different
 	-e, --generate-maximal-unitigs-links    Generate maximal unitigs connections references, in BCALM2 format
 											L:<+/->:<other id>:<+/->
+	-h, --gfa                               Output the graph in GFA format
 	-g, --greedy-matchtigs                  Generate greedy matchtigs instead of maximal unitigs
 	-h, --help                              Prints help information
 		--keep-temp-files                   Keep intermediate temporary files for debugging purposes
@@ -140,7 +154,7 @@ FLAGS:
 
 OPTIONS:
     -b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
-        --colored-query-output-format <colored-query-output-format>          
+        --colored-query-output-format <colored-query-output-format>
     -w, --hash-type <hash-type>
             Hash type used to identify kmers [default: Auto]
 
@@ -168,9 +182,8 @@ ARGS:
     <input-query>    The input query as a .fasta file
 ```
 
-## Installation
+## Building from source
 
-At the moment building from source is the only option to install the tool.
 To build the tool the Rust stable (>= 1.75) toolchain is required, and can be downloaded with the following commands:
 
 ### Linux/Mac
@@ -185,8 +198,6 @@ rustup toolchain install stable
 
 Follow the instructions at the site:
 https://rustup.rs/
-
-The building process was not tested on windows, but it should work with minor tweaks.
 
 ### Additional opt-in features
 
@@ -208,9 +219,9 @@ the binary is automatically copied to `$HOME/.cargo/bin`
 
 To launch the tool directly from the command line, the above directory should be added to the `$PATH` variable.
 
-## Experimental API
+## API usage
 
-GGCAT has an experimental API for Rust and C++.
+GGCAT has an API for both Rust and C++.
 
 ### Rust
 
