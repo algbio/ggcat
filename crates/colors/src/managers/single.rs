@@ -32,11 +32,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     fn create_colors_table(
         _path: impl AsRef<Path>,
         _color_names: &[String],
-    ) -> Self::GlobalColorsTableWriter {
-        ()
+    ) -> anyhow::Result<Self::GlobalColorsTableWriter> {
+        Ok(())
     }
 
-    fn open_colors_table(path: impl AsRef<Path>) -> Self::GlobalColorsTableReader {
+    fn open_colors_table(path: impl AsRef<Path>) -> anyhow::Result<Self::GlobalColorsTableReader> {
         ColorsDeserializer::new(path, true)
     }
 
@@ -236,7 +236,14 @@ impl SequenceExtraData for UnitigColorDataSerializer {
 impl IdentSequenceWriter for UnitigColorDataSerializer {
     fn write_as_ident(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
 
-    fn write_as_gfa(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
+    fn write_as_gfa(
+        &self,
+        _k: u64,
+        _index: u64,
+        _stream: &mut impl Write,
+        _extra_buffer: &Self::TempBuffer,
+    ) {
+    }
 
     fn parse_as_ident<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
         todo!()

@@ -6,12 +6,13 @@ extern crate test;
 
 mod benchmarks;
 
-use backtrace::Backtrace;
+use ahash::HashMap;
 use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance};
+use ggcat_logging::UnrecoverableErrorLogging;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::panic;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -141,6 +142,10 @@ struct AssemblerArgs {
     #[structopt(short = "l", long = "input-lists")]
     pub input_lists: Vec<PathBuf>,
 
+    /// The lists of input files with colors in format <COLOR_NAME><TAB><FILE_PATH>
+    #[structopt(short = "d", long = "colored-input-lists")]
+    pub colored_input_lists: Vec<PathBuf>,
+
     /// Enable colors
     #[structopt(short, long)]
     pub colors: bool,
@@ -190,6 +195,10 @@ struct AssemblerArgs {
 
     #[structopt(flatten)]
     pub common_args: CommonArgs,
+
+    /// Output the graph in GFA format
+    #[structopt(short = "h", long = "gfa")]
+    pub gfa_output: bool,
 }
 
 #[derive(StructOpt, Debug)]
@@ -239,7 +248,7 @@ struct QueryArgs {
 // #[cfg(feature = "mem-analysis")]
 // static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
 
-fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
+fn initialize(args: &CommonArgs, out_file: &PathBuf, gfa_output: bool) -> &'static GGCATInstance {
     let instance = GGCATInstance::create(GGCATConfig {
         temp_dir: Some(args.temp_dir.clone()),
         memory: args.memory,
@@ -247,6 +256,8 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
         total_threads_count: args.threads_count,
         intermediate_compression_level: args.intermediate_compression_level,
         stats_file: Some(out_file.with_extension("stats.log")),
+        messages_callback: None,
+        gfa_output,
     });
 
     ggcat_api::debug::DEBUG_KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
@@ -269,7 +280,7 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
 
     // #[cfg(feature = "mem-analysis")]
     // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
-    instance
+    instance.unwrap()
 }
 
 fn convert_assembler_step(step: AssemblerStartingStep) -> assembler::AssemblerStartingStep {
@@ -289,25 +300,111 @@ fn convert_assembler_step(step: AssemblerStartingStep) -> assembler::AssemblerSt
 }
 
 fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
-    let mut inputs = args.input.clone();
+    let mut inputs: Vec<_> = args.input.iter().cloned().map(|f| (f, None)).collect();
+
+    if (args.input_lists.len() > 0 || args.input.len() > 0) && args.colored_input_lists.len() > 0 {
+        println!("Cannot specify both colored input lists and other files/lists");
+        exit(1);
+    }
 
     for list in args.input_lists {
-        for input in BufReader::new(File::open(list).unwrap()).lines() {
+        for input in BufReader::new(
+            File::open(&list)
+                .log_unrecoverable_error_with_data(
+                    "Error while opening input list file",
+                    list.display(),
+                )
+                .unwrap(),
+        )
+        .lines()
+        {
             if let Ok(input) = input {
-                inputs.push(PathBuf::from(input));
+                if input.trim().is_empty() {
+                    continue;
+                }
+
+                let input = if <String as AsRef<Path>>::as_ref(&input).is_relative() {
+                    list.parent().unwrap().join(input)
+                } else {
+                    PathBuf::from(input)
+                };
+
+                inputs.push((input, None));
             }
         }
     }
+
+    let color_names: Vec<_> = if args.colored_input_lists.is_empty() {
+        // Standard colors (input file names)
+        inputs
+            .iter()
+            .map(|f| f.0.file_name().unwrap().to_string_lossy().to_string())
+            .collect()
+    } else {
+        // Mapped colors
+        let mut colors = HashMap::default();
+        let mut next_index = 0;
+
+        for list in args.colored_input_lists {
+            for input in BufReader::new(
+                File::open(&list)
+                    .map_err(|e| {
+                        panic!(
+                            "Error while opening colored input list file {}: {}",
+                            list.display(),
+                            e
+                        )
+                    })
+                    .unwrap(),
+            )
+            .lines()
+            {
+                if let Ok(input) = input {
+                    if input.trim().is_empty() {
+                        continue;
+                    }
+
+                    let parts = input.split("\t").collect::<Vec<_>>();
+                    if parts.len() < 2 {
+                        println!("Invalid line in colored input list: {}", input);
+                        exit(1);
+                    }
+
+                    let color_name = parts[0..parts.len() - 1].join("\t");
+                    let file_name = parts.last().unwrap().to_string();
+
+                    let index = *colors.entry(color_name).or_insert_with(|| {
+                        let index = next_index;
+                        next_index += 1;
+                        index
+                    });
+
+                    println!(
+                        "Add index with color {} => {}",
+                        parts[0..parts.len() - 1].join("\t"),
+                        index
+                    );
+
+                    let file_name = if <String as AsRef<Path>>::as_ref(&file_name).is_relative() {
+                        list.parent().unwrap().join(file_name)
+                    } else {
+                        PathBuf::from(file_name)
+                    };
+
+                    inputs.push((file_name, Some(index)));
+                }
+            }
+        }
+        let mut colors: Vec<_> = colors.into_iter().collect();
+        colors.sort_by_key(|(_, i)| *i);
+
+        colors.into_iter().map(|(c, _)| c).collect()
+    };
 
     if inputs.is_empty() {
         println!("ERROR: No input files specified!");
         exit(1);
     }
-
-    let color_names: Vec<_> = inputs
-        .iter()
-        .map(|f| f.file_name().unwrap().to_string_lossy().to_string())
-        .collect();
 
     let inputs = inputs
         .into_iter()
@@ -318,30 +415,33 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
     *ggcat_api::debug::DEBUG_ASSEMBLER_LAST_STEP.lock() = convert_assembler_step(args.last_step);
     ggcat_api::debug::DEBUG_LINK_PHASE_ITERATION_START_STEP.store(args.number, Ordering::Relaxed);
 
-    let output_file = instance.build_graph(
-        inputs,
-        args.output_file,
-        Some(&color_names),
-        args.common_args.kmer_length,
-        args.common_args.threads_count,
-        args.common_args.forward_only,
-        args.common_args.minimizer_length,
-        args.colors,
-        args.min_multiplicity,
-        if args.generate_maximal_unitigs_links {
-            ExtraElaboration::UnitigLinks
-        } else if args.greedy_matchtigs {
-            ExtraElaboration::GreedyMatchtigs
-        } else if args.eulertigs {
-            ExtraElaboration::Eulertigs
-        } else if args.pathtigs {
-            ExtraElaboration::Pathtigs
-        } else if args.fast_simplitigs {
-            ExtraElaboration::FastSimplitigs
-        } else {
-            ExtraElaboration::None
-        },
-    );
+    let output_file = instance
+        .build_graph(
+            inputs,
+            args.output_file,
+            Some(&color_names),
+            args.common_args.kmer_length,
+            args.common_args.threads_count,
+            args.common_args.forward_only,
+            args.common_args.minimizer_length,
+            args.colors,
+            args.min_multiplicity,
+            if args.generate_maximal_unitigs_links {
+                ExtraElaboration::UnitigLinks
+            } else if args.greedy_matchtigs {
+                ExtraElaboration::GreedyMatchtigs
+            } else if args.eulertigs {
+                ExtraElaboration::Eulertigs
+            } else if args.pathtigs {
+                ExtraElaboration::Pathtigs
+            } else if args.fast_simplitigs {
+                ExtraElaboration::FastSimplitigs
+            } else {
+                ExtraElaboration::None
+            },
+            args.gfa_output,
+        )
+        .unwrap();
 
     println!("Final output saved to: {}", output_file.display());
 }
@@ -358,27 +458,29 @@ fn convert_querier_step(step: QuerierStartingStep) -> querier::QuerierStartingSt
 fn run_querier_from_args(instance: &GGCATInstance, args: QueryArgs) -> PathBuf {
     *ggcat_api::debug::DEBUG_QUERIER_FIRST_STEP.lock() = convert_querier_step(args.step);
 
-    instance.query_graph(
-        args.input_graph,
-        args.input_query,
-        args.output_file_prefix,
-        args.common_args.kmer_length,
-        args.common_args.threads_count,
-        args.common_args.forward_only,
-        args.common_args.minimizer_length,
-        args.colors,
-        match args
-            .colored_query_output_format
-            .unwrap_or(ColoredQueryOutputFormat::JsonLinesWithNumbers)
-        {
-            ColoredQueryOutputFormat::JsonLinesWithNumbers => {
-                querier::ColoredQueryOutputFormat::JsonLinesWithNumbers
-            }
-            ColoredQueryOutputFormat::JsonLinesWithNames => {
-                querier::ColoredQueryOutputFormat::JsonLinesWithNames
-            }
-        },
-    )
+    instance
+        .query_graph(
+            args.input_graph,
+            args.input_query,
+            args.output_file_prefix,
+            args.common_args.kmer_length,
+            args.common_args.threads_count,
+            args.common_args.forward_only,
+            args.common_args.minimizer_length,
+            args.colors,
+            match args
+                .colored_query_output_format
+                .unwrap_or(ColoredQueryOutputFormat::JsonLinesWithNumbers)
+            {
+                ColoredQueryOutputFormat::JsonLinesWithNumbers => {
+                    querier::ColoredQueryOutputFormat::JsonLinesWithNumbers
+                }
+                ColoredQueryOutputFormat::JsonLinesWithNames => {
+                    querier::ColoredQueryOutputFormat::JsonLinesWithNames
+                }
+            },
+        )
+        .unwrap()
 }
 
 instrumenter::global_setup_instrumenter!();
@@ -392,22 +494,15 @@ fn main() {
         parallel_processor::mem_tracker::start_info_logging();
     }
 
-    panic::set_hook(Box::new(move |info| {
+    panic::set_hook(Box::new(move |panic_info| {
         let stdout = std::io::stdout();
-        let mut _lock = stdout.lock();
+        let _lock = stdout.lock();
 
         let stderr = std::io::stderr();
         let mut err_lock = stderr.lock();
 
-        if let Some(location) = info.location() {
-            let _ = writeln!(err_lock, "Thread panicked at location: {}", location);
-        }
-        if let Some(s) = info.payload().downcast_ref::<&str>() {
-            let _ = writeln!(err_lock, "Panic payload: {:?}", s);
-        }
-
-        println!("Backtrace: {:?}", Backtrace::new());
-
+        let backtrace = backtrace::Backtrace::new();
+        write!(err_lock, "Panic: {}\nBacktrace:{:?}", panic_info, backtrace).unwrap();
         exit(1);
     }));
 
@@ -418,14 +513,14 @@ fn main() {
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
 
-            let instance = initialize(&args.common_args, &args.output_file);
+            let instance = initialize(&args.common_args, &args.output_file, args.gfa_output);
 
             run_assembler_from_args(&instance, args);
         }
         CliArgs::Matches(args) => {
             let colors_file = args.input_file.with_extension("colors.dat");
             let mut colors_deserializer =
-                ColorsDeserializer::<DefaultColorsSerializer>::new(colors_file, true);
+                ColorsDeserializer::<DefaultColorsSerializer>::new(colors_file, true).unwrap();
 
             let mut colors = Vec::new();
 
@@ -443,8 +538,6 @@ fn main() {
             return; // Skip final memory deallocation
         }
         CliArgs::Query(args) => {
-            initialize(&args.common_args, &args.output_file_prefix);
-
             if !args.colors && args.colored_query_output_format.is_some() {
                 println!("Warning: colored query output format is specified, but the graph is not colored");
             }
@@ -454,7 +547,7 @@ fn main() {
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
 
-            let instance = initialize(&args.common_args, &args.output_file_prefix);
+            let instance = initialize(&args.common_args, &args.output_file_prefix, false);
 
             let output_file_name = run_querier_from_args(&instance, args);
             println!("Final output saved to: {}", output_file_name.display());
@@ -464,8 +557,9 @@ fn main() {
 
             let mut output_file = BufWriter::new(File::create(&output_file_name).unwrap());
 
-            for (color_idx, color_name) in
-                GGCATInstance::dump_colors(args.input_colormap).enumerate()
+            for (color_idx, color_name) in GGCATInstance::dump_colors(args.input_colormap)
+                .unwrap()
+                .enumerate()
             {
                 writeln!(
                     output_file,
@@ -485,7 +579,7 @@ fn main() {
     // Ensure termination
     std::thread::spawn(|| {
         std::thread::sleep(Duration::from_secs(5));
-        std::process::exit(0);
+        exit(0);
     });
     MemoryFs::terminate();
 }

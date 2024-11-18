@@ -1,5 +1,3 @@
-#![feature(impl_trait_in_assoc_type)]
-
 pub mod counters_analyzer;
 mod queue_data;
 mod reader;
@@ -306,7 +304,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                 let current_file = context.current_file.load(Ordering::Relaxed);
                 let processed_files = context.processed_files.load(Ordering::Relaxed);
 
-                println!(
+                ggcat_logging::info!(
                     "Elaborated {} sequences! [{} | {:.2}% qb] ({}[{}]/{} => {:.2}%) {}",
                     SEQ_COUNT.load(Ordering::Relaxed),
                     VALID_BASES_COUNT.load(Ordering::Relaxed),
@@ -345,8 +343,6 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
     type GlobalParams = MinimizerBucketingExecutionContext<E::GlobalData>;
     type InitData = ();
 
-    type AsyncExecutorFuture<'a> = impl Future<Output = ()> + Sync + Send + 'a;
-
     fn new() -> Self {
         Self {
             _phantom: PhantomData,
@@ -358,7 +354,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
         global_params: &'a Self::GlobalParams,
         mut receiver: ExecutorReceiver<Self>,
         _memory_tracker: MemoryTracker<Self>,
-    ) -> Self::AsyncExecutorFuture<'a> {
+    ) -> impl Future<Output = ()> + Send + 'a {
         async move {
             while let Ok((address, _)) = receiver.obtain_address().await {
                 let max_concurrency = global_params.threads_count;

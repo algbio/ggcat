@@ -114,10 +114,10 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
                         );
                     },
                     1 => {
-                        println!("Warning spurious hash detected ({:?}) with index {}, this is a bug or a collision in the KmersMerge phase!", x[0].hash, x[0].entry());
+                        ggcat_logging::error!("Warning spurious hash detected ({:?}) with index {}, this is a bug or a collision in the KmersMerge phase!", x[0].hash, x[0].entry());
                     }
                     _ => {
-                        println!("More than 2 equal hashes found in hashes sorting phase, this indicates an hash ({}) collision!",  x[0].hash);
+                        ggcat_logging::error!("More than 2 equal hashes found in hashes sorting phase, this indicates an hash ({}) collision!",  x[0].hash);
                     }
                 }
             }

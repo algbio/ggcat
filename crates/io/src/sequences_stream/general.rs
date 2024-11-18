@@ -22,16 +22,16 @@ pub enum GeneralSequenceBlockData {
 }
 
 impl GeneralSequenceBlockData {
-    pub fn estimated_bases_count(&self) -> u64 {
+    pub fn estimated_bases_count(&self) -> anyhow::Result<u64> {
         match self {
-            GeneralSequenceBlockData::FASTA(path) => {
-                FastaFileSequencesStream::get_estimated_bases_count(path)
+            GeneralSequenceBlockData::FASTA(block) => {
+                FastaFileSequencesStream::get_estimated_bases_count(&block.0)
             }
             GeneralSequenceBlockData::GFA() => {
                 todo!()
             }
             GeneralSequenceBlockData::Dynamic((reader, block)) => {
-                reader.estimated_base_count(*block)
+                Ok(reader.estimated_base_count(*block))
             }
         }
     }

@@ -1,5 +1,3 @@
-#![feature(impl_trait_in_assoc_type)]
-
 use crate::pipeline::build_unitigs::build_unitigs;
 use crate::pipeline::compute_matchtigs::MatchtigHelperTrait;
 use crate::pipeline::compute_matchtigs::{compute_matchtigs_thread, MatchtigsStorageBackend};
@@ -18,8 +16,12 @@ use config::{
 };
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::concurrent::structured_sequences::binary::StructSeqBinaryWriter;
-use io::concurrent::structured_sequences::fasta::FastaWriter;
-use io::concurrent::structured_sequences::StructuredSequenceWriter;
+use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
+use io::concurrent::structured_sequences::gfa::GFAWriterWrapper;
+use io::concurrent::structured_sequences::{
+    IdentSequenceWriter, StructuredSequenceBackend, StructuredSequenceBackendInit,
+    StructuredSequenceBackendWrapper, StructuredSequenceWriter,
+};
 use io::sequences_stream::general::GeneralSequenceBlockData;
 use io::{compute_stats_from_input_blocks, generate_bucket_names};
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
@@ -52,6 +54,23 @@ pub enum AssemblerStartingStep {
     MaximalUnitigsLinks = 6,
 }
 
+fn get_writer<
+    C: IdentSequenceWriter,
+    L: IdentSequenceWriter,
+    W: StructuredSequenceBackend<C, L> + StructuredSequenceBackendInit,
+>(
+    output_file: &PathBuf,
+) -> W {
+    match output_file.extension() {
+        Some(ext) => match ext.to_string_lossy().to_string().as_str() {
+            "lz4" => W::new_compressed_lz4(&output_file, 2),
+            "gz" => W::new_compressed_gzip(&output_file, 2),
+            _ => W::new_plain(&output_file),
+        },
+        None => W::new_plain(&output_file),
+    }
+}
+
 #[dynamic_dispatch(BucketingHash = [
     hashes::cn_nthash::CanonicalNtHashIteratorFactory,
     #[cfg(not(feature = "devel-build"))] hashes::fw_nthash::ForwardNtHashIteratorFactory
@@ -73,11 +92,15 @@ pub enum AssemblerStartingStep {
 ], AssemblerColorsManager = [
     #[cfg(not(feature = "devel-build"))] colors::bundles::multifile_building::ColorBundleMultifileBuilding,
     colors::non_colored::NonColoredManager,
+], OutputMode = [
+    FastaWriterWrapper,
+    #[cfg(not(feature = "devel-build"))] GFAWriterWrapper
 ])]
 pub fn run_assembler<
     BucketingHash: MinimizerHashFunctionFactory,
     MergingHash: HashFunctionFactory,
     AssemblerColorsManager: ColorsManager,
+    OutputMode: StructuredSequenceBackendWrapper,
 >(
     k: usize,
     m: usize,
@@ -95,12 +118,12 @@ pub fn run_assembler<
     generate_maximal_unitigs_links: bool,
     compute_tigs_mode: Option<MatchtigMode>,
     only_bstats: bool,
-) -> PathBuf {
+) -> anyhow::Result<PathBuf> {
     let temp_dir = temp_dir.unwrap_or(PathBuf::new());
 
     PHASES_TIMES_MONITOR.write().init();
 
-    let file_stats = compute_stats_from_input_blocks(&input_blocks);
+    let file_stats = compute_stats_from_input_blocks(&input_blocks)?;
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
 
@@ -115,7 +138,7 @@ pub fn run_assembler<
         AssemblerColorsManager::ColorsMergeManagerType::create_colors_table(
             output_file.with_extension("colors.dat"),
             color_names,
-        ),
+        )?,
     );
 
     let (buckets, counters) = if step <= AssemblerStartingStep::MinimizerBucketing {
@@ -137,7 +160,7 @@ pub fn run_assembler<
         )
     };
 
-    println!(
+    ggcat_logging::info!(
         "Temp buckets files size: {:.2}",
         MemoryDataSize::from_bytes(fs_extra::dir::get_size(&temp_dir).unwrap_or(0) as usize)
     );
@@ -146,7 +169,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Completed minimizer bucketing.".to_string());
-        return PathBuf::new();
+        return Ok(PathBuf::new());
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -167,7 +190,7 @@ pub fn run_assembler<
                 m,
             );
         });
-        return PathBuf::new();
+        return Ok(PathBuf::new());
     }
 
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
@@ -193,7 +216,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Completed kmers merge.".to_string());
-        return PathBuf::new();
+        return Ok(PathBuf::new());
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -212,7 +235,7 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Hashes sorting.".to_string());
-        return PathBuf::new();
+        return Ok(PathBuf::new());
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -282,7 +305,7 @@ pub fn run_assembler<
             };
 
             if do_logging {
-                println!("Iteration: {}", loop_iteration);
+                ggcat_logging::info!("Iteration: {}", loop_iteration);
             }
 
             let (new_links, remaining) = links_compaction(
@@ -298,7 +321,7 @@ pub fn run_assembler<
             );
 
             if do_logging {
-                println!(
+                ggcat_logging::info!(
                     "Remaining: {} {}",
                     remaining,
                     PHASES_TIMES_MONITOR
@@ -309,7 +332,7 @@ pub fn run_assembler<
 
             links = new_links;
             if remaining == 0 {
-                println!("Completed compaction with {} iters", loop_iteration);
+                ggcat_logging::info!("Completed compaction with {} iters", loop_iteration);
                 break (final_buckets.finalize(), result_map_buckets.finalize());
             }
             loop_iteration += 1;
@@ -333,21 +356,14 @@ pub fn run_assembler<
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Links Compaction.".to_string());
-        return PathBuf::new();
+        return Ok(PathBuf::new());
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
     }
 
     let final_unitigs_file = StructuredSequenceWriter::new(
-        match output_file.extension() {
-            Some(ext) => match ext.to_string_lossy().to_string().as_str() {
-                "lz4" => FastaWriter::new_compressed_lz4(&output_file, 2),
-                "gz" => FastaWriter::new_compressed_gzip(&output_file, 2),
-                _ => FastaWriter::new_plain(&output_file),
-            },
-            None => FastaWriter::new_plain(&output_file),
-        },
+        get_writer::<_, _, OutputMode::Backend<_, _>>(&output_file),
         k,
     );
 
@@ -369,46 +385,50 @@ pub fn run_assembler<
             None
         };
 
-    let (reorganized_reads, _final_unitigs_bucket) = if step
-        <= AssemblerStartingStep::ReorganizeReads
-    {
-        if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
-            reorganize_reads::<
-                BucketingHash,
-                MergingHash,
-                AssemblerColorsManager,
-                StructSeqBinaryWriter<_, _>,
-            >(
-                sequences,
-                reads_map,
-                temp_dir.as_path(),
-                compressed_temp_unitigs_file.as_ref().unwrap(),
-                buckets_count,
-            )
+    let (reorganized_reads, _final_unitigs_bucket) =
+        if step <= AssemblerStartingStep::ReorganizeReads {
+            if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
+                reorganize_reads::<
+                    BucketingHash,
+                    MergingHash,
+                    AssemblerColorsManager,
+                    StructSeqBinaryWriter<_, _>,
+                >(
+                    sequences,
+                    reads_map,
+                    temp_dir.as_path(),
+                    compressed_temp_unitigs_file.as_ref().unwrap(),
+                    buckets_count,
+                )
+            } else {
+                reorganize_reads::<
+                    BucketingHash,
+                    MergingHash,
+                    AssemblerColorsManager,
+                    OutputMode::Backend<_, _>,
+                >(
+                    sequences,
+                    reads_map,
+                    temp_dir.as_path(),
+                    &final_unitigs_file,
+                    buckets_count,
+                )
+            }
         } else {
-            reorganize_reads::<BucketingHash, MergingHash, AssemblerColorsManager, FastaWriter<_, _>>(
-                sequences,
-                reads_map,
-                temp_dir.as_path(),
-                &final_unitigs_file,
-                buckets_count,
+            (
+                generate_bucket_names(temp_dir.join("reads_bucket"), buckets_count, Some("tmp")),
+                (generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
+                    .into_iter()
+                    .next()
+                    .unwrap()),
             )
-        }
-    } else {
-        (
-            generate_bucket_names(temp_dir.join("reads_bucket"), buckets_count, Some("tmp")),
-            (generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
-                .into_iter()
-                .next()
-                .unwrap()),
-        )
-    };
+        };
 
     if last_step <= AssemblerStartingStep::ReorganizeReads {
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Reorganize reads.".to_string());
-        return PathBuf::new();
+        return Ok(PathBuf::new());
     } else {
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
@@ -431,7 +451,12 @@ pub fn run_assembler<
                 k,
             );
         } else {
-            build_unitigs::<BucketingHash, MergingHash, AssemblerColorsManager, FastaWriter<_, _>>(
+            build_unitigs::<
+                BucketingHash,
+                MergingHash,
+                AssemblerColorsManager,
+                OutputMode::Backend<_, _>,
+            >(
                 reorganized_reads,
                 unitigs_map,
                 temp_dir.as_path(),
@@ -487,14 +512,7 @@ pub fn run_assembler<
                 final_unitigs_file.finalize();
 
                 let final_unitigs_file = StructuredSequenceWriter::new(
-                    match output_file.extension() {
-                        Some(ext) => match ext.to_string_lossy().to_string().as_str() {
-                            "lz4" => FastaWriter::new_compressed_lz4(&output_file, 2),
-                            "gz" => FastaWriter::new_compressed_gzip(&output_file, 2),
-                            _ => FastaWriter::new_plain(&output_file),
-                        },
-                        None => FastaWriter::new_plain(&output_file),
-                    },
+                    get_writer::<_, _, OutputMode::Backend<_, _>>(&output_file),
                     k,
                 );
 
@@ -502,7 +520,7 @@ pub fn run_assembler<
                     BucketingHash,
                     MergingHash,
                     AssemblerColorsManager,
-                    FastaWriter<_, _>,
+                    OutputMode::Backend<_, _>,
                 >(temp_path, temp_dir.as_path(), &final_unitigs_file, k);
                 final_unitigs_file.finalize();
             }
@@ -519,5 +537,5 @@ pub fn run_assembler<
         .write()
         .print_stats("Compacted De Bruijn graph construction completed.".to_string());
 
-    output_file
+    Ok(output_file)
 }

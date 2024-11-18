@@ -1,5 +1,3 @@
-#![feature(impl_trait_in_assoc_type)]
-
 use dynamic_dispatch::dynamic_dispatch;
 
 pub mod cn_nthash;
@@ -136,11 +134,8 @@ pub trait MinimizerHashFunctionFactory: HashFunctionFactory {
 }
 
 pub trait HashFunction<HF: HashFunctionFactory> {
-    type IteratorType: Iterator<Item = HF::HashTypeExtendable>;
-    type EnumerableIteratorType: Iterator<Item = (usize, HF::HashTypeExtendable)>;
-
-    fn iter(self) -> Self::IteratorType;
-    fn iter_enumerate(self) -> Self::EnumerableIteratorType;
+    fn iter(self) -> impl Iterator<Item = HF::HashTypeExtendable>;
+    fn iter_enumerate(self) -> impl Iterator<Item = (usize, HF::HashTypeExtendable)>;
 }
 
 pub trait HashableSequence: Clone {
@@ -278,7 +273,7 @@ pub mod tests {
                         let sx = &test_bases[s..s + *kval];
 
                         if fx != sx {
-                            println!(
+                            ggcat_logging::error!(
                                 "Found collision {:?} {} != {}!",
                                 tmp[i - 1].0,
                                 std::str::from_utf8(fx).unwrap(),
@@ -409,17 +404,17 @@ pub mod tests {
                     kmer.copy_to_buffer(&mut buffer);
 
                     let buffer1 = FACTORY::invert(hash);
-                    println!("Original slice: {:?}", buffer);
+                    ggcat_logging::info!("Original slice: {:?}", buffer);
 
                     // assert_eq!(buffer, buffer1, "Hash: {}", hash);
 
                     // buffer1 = buffer.clone();
 
-                    println!(
+                    ggcat_logging::info!(
                         "Old decoded: {}",
                         CompressedRead::new_from_compressed(buffer.as_slice(), *kval).to_string()
                     );
-                    println!(
+                    ggcat_logging::info!(
                         "New decoded: {}",
                         CompressedRead::new_from_compressed(buffer1.as_ref(), *kval).to_string()
                     );

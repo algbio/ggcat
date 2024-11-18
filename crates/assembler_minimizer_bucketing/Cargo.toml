@@ -1,5 +1,5 @@
 [package]
-name = "ggcat_assembler_minimizer_bucketing"
+name = "ggcat_assembler_minibuck"
 version = "0.1.0"
 edition = "2021"
 [dependencies]
@@ -8,11 +8,11 @@ edition = "2021"
 config = { package = "ggcat_config", path = "../config" }
 
 # Common libraries
-parallel-processor = "0.1.10"
+parallel-processor = "0.1.18"
 streaming-libdeflate-rs = "0.1.5"
 
 # Static dispatch
-dynamic-dispatch = "0.5.3"
+dynamic-dispatch = "0.5.4"
 
 # Common pipeline libraries
 hashes = { package = "ggcat_hashes", path = "../hashes" }
@@ -22,7 +22,7 @@ structs = { package = "ggcat_structs", path = "../structs" }
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
 
 # Other libraries
-typenum = "1.16.0"
+typenum = "1.17.0"
 
 [features]
 devel-build = []

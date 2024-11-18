@@ -139,8 +139,6 @@ impl<
     type GlobalParams = MinimizerBucketingExecutionContext<GlobalData>;
     type InitData = ();
 
-    type AsyncExecutorFuture<'a> = impl Future<Output = ()> + Sync + Send + 'a;
-
     fn new() -> Self {
         Self {
             _phantom: PhantomData,
@@ -152,7 +150,7 @@ impl<
         global_params: &'a Self::GlobalParams,
         mut receiver: ExecutorReceiver<Self>,
         _memory_tracker: MemoryTracker<Self>,
-    ) -> Self::AsyncExecutorFuture<'a> {
+    ) -> impl Future<Output = ()> + Send + 'a {
         async move {
             while let Ok((address, _)) = receiver.obtain_address().await {
                 let read_threads_count = global_params.read_threads_count;

@@ -20,6 +20,7 @@ use io::varint::{
     decode_varint, decode_varint_flags, encode_varint, encode_varint_flags, VARINT_MAX_SIZE,
 };
 use itertools::Itertools;
+use nightly_quirks::slice_partition_dedup::SlicePartitionDedup;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::LockFreeBucket;
@@ -119,6 +120,22 @@ const VISITED_BIT: usize = 1 << (COUNTER_BITS - 1);
 const TEMP_BUFFER_START_SIZE: usize = 1024 * 64;
 const READS_BUFFERS_MAX_CAPACITY: usize = 1024 * 32;
 
+#[cfg(feature = "support_kmer_counters")]
+type HashMapTempColorIndex = usize;
+
+#[cfg(not(feature = "support_kmer_counters"))]
+type HashMapTempColorIndex = ();
+
+#[inline]
+fn get_entry_color(entry: &MapEntry<HashMapTempColorIndex>) -> ColorIndexType {
+    (match () {
+        #[cfg(not(feature = "support_kmer_counters"))]
+        () => entry.get_counter() & !VISITED_BIT,
+        #[cfg(feature = "support_kmer_counters")]
+        () => entry.color_index & !VISITED_BIT,
+    }) as ColorIndexType
+}
+
 impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManager<H, MH>
     for MultipleColorsManager<H, MH>
 {
@@ -129,12 +146,12 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     fn create_colors_table(
         path: impl AsRef<Path>,
         color_names: &[String],
-    ) -> Self::GlobalColorsTableWriter {
+    ) -> anyhow::Result<Self::GlobalColorsTableWriter> {
         ColorsMemMapWriter::new(path, color_names)
     }
 
-    fn open_colors_table(_path: impl AsRef<Path>) -> Self::GlobalColorsTableReader {
-        ()
+    fn open_colors_table(_path: impl AsRef<Path>) -> anyhow::Result<Self::GlobalColorsTableReader> {
+        Ok(())
     }
 
     fn print_color_stats(global_colors_table: &Self::GlobalColorsTableWriter) {
@@ -350,8 +367,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                         colors_range.sort_unstable();
 
                         // Get the new partition indexes, start to dedup last element
-                        let new_partition =
-                            (position + 1)..(position + 1 + colors_range.partition_dedup().0.len());
+                        let new_partition = (position + 1)
+                            ..(position + 1 + colors_range.nq_partition_dedup().0.len());
 
                         let unique_colors = &data.temp_colors_buffer[new_partition.clone()];
 
@@ -394,7 +411,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         ts: &mut Self::TempUnitigColorStructure,
         entry: &MapEntry<Self::HashMapTempColorIndex>,
     ) {
-        let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
+        let kmer_color = get_entry_color(entry);
 
         if let Some(back_ts) = ts.colors.back_mut() {
             if back_ts.color == kmer_color {
@@ -413,7 +430,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         ts: &mut Self::TempUnitigColorStructure,
         entry: &MapEntry<Self::HashMapTempColorIndex>,
     ) {
-        let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
+        let kmer_color = get_entry_color(entry);
 
         if let Some(front_ts) = ts.colors.front_mut() {
             if front_ts.color == kmer_color {
@@ -500,8 +517,8 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             .sum::<ColorCounterType>()
             + 30;
         if sum != seq.len() {
-            println!("Temp values: {} {}", sum as usize, seq.len());
-            println!("Dbg: {:?}", str.colors);
+            ggcat_logging::info!("Temp values: {} {}", sum as usize, seq.len());
+            ggcat_logging::info!("Dbg: {:?}", str.colors);
             assert_eq!(sum as usize, seq.len());
         }
     }
@@ -527,16 +544,16 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
                 .flatten(),
         ) {
             let entry = hmap.get(&hash.to_unextendable()).unwrap();
-            let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
+            let kmer_color = get_entry_color(entry);
             if kmer_color != color {
                 let hashes = MH::new(read, 31);
-                println!(
-                    "Err: {:?}",
+                ggcat_logging::error!(
+                    "Error: {:?}",
                     hashes
                         .iter()
                         .map(|h| {
                             let entry = hmap.get(&h.to_unextendable()).unwrap();
-                            let kmer_color = (entry.get_counter() & !VISITED_BIT) as ColorIndexType;
+                            let kmer_color = get_entry_color(entry);
                             kmer_color
                         })
                         .zip(
@@ -651,7 +668,13 @@ impl IdentSequenceWriter for UnitigColorData {
     }
 
     #[allow(unused_variables)]
-    fn write_as_gfa(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
+    fn write_as_gfa(
+        &self,
+        _k: u64,
+        _index: u64,
+        stream: &mut impl Write,
+        extra_buffer: &Self::TempBuffer,
+    ) {
         if self.slice.len() > 0 {
             write!(stream, "CS",).unwrap();
         }
@@ -680,7 +703,7 @@ impl IdentSequenceWriter for UnitigColorData {
             colors_count += kmers_count
         }
         if colors_count == 0 {
-            println!("Warn: 0 colors for {:?}", std::str::from_utf8(ident));
+            ggcat_logging::error!("Error: 0 colors for {:?}", std::str::from_utf8(ident));
         }
 
         Some(UnitigColorData {
@@ -705,7 +728,7 @@ impl IdentSequenceWriter for UnitigColorData {
             }
         }
         if colors_count == 0 {
-            println!("Warn: 0 colors for {:?}", std::str::from_utf8(ident));
+            ggcat_logging::error!("Error: 0 colors for {:?}", std::str::from_utf8(ident));
         }
 
         Some(UnitigColorData {

@@ -100,8 +100,8 @@ pub fn compute_stats_for_bucket<H: MinimizerHashFunctionFactory, MH: HashFunctio
     let tot_seqs = total_counters.iter().sum::<usize>();
     let uniq_seqs = hash_maps.iter().map(|h| h.len()).sum::<usize>();
 
-    println!("Stats for bucket: {}", bucket_index);
-    println!(
+    ggcat_logging::info!("Stats for bucket: {}", bucket_index);
+    ggcat_logging::info!(
         "FSIZE: {} SEQUENCES: {}/{} UNIQUE_RATIO: {} COMPR_RATIO: {} ",
         file_size,
         tot_seqs,
@@ -109,5 +109,5 @@ pub fn compute_stats_for_bucket<H: MinimizerHashFunctionFactory, MH: HashFunctio
         (tot_seqs as f64 / uniq_seqs as f64),
         (file_size as f64 / tot_seqs as f64)
     );
-    println!("Results: {}", counters_string);
+    ggcat_logging::info!("Results: {}", counters_string);
 }

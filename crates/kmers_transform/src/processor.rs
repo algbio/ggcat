@@ -37,8 +37,6 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
     type GlobalParams = KmersTransformContext<F>;
     type InitData = KmersProcessorInitData;
 
-    type AsyncExecutorFuture<'a> = impl Future<Output = ()> + 'a;
-
     fn new() -> Self {
         Self(PhantomData)
     }
@@ -48,7 +46,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
         global_context: &'a Self::GlobalParams,
         mut receiver: ExecutorReceiver<Self>,
         memory_tracker: MemoryTracker<Self>,
-    ) -> Self::AsyncExecutorFuture<'a> {
+    ) -> impl Future<Output = ()> + 'a {
         async move {
             let mut map_processor =
                 F::new_map_processor(&global_context.global_extra_data, memory_tracker.clone());
@@ -100,7 +98,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
 
                 if real_size != proc_info.sequences_count {
                     //MAX_PACKET_SIZE.fetch_max(current_size, Ordering::Relaxed) < current_size {
-                    println!(
+                    ggcat_logging::info!(
                         "Found bucket with max size {} ==> {} // EXPECTED_SIZE: {} REAL_SIZE: {} SUB: {}",
                         current_size,
                         proc_info.bucket_path.display(),

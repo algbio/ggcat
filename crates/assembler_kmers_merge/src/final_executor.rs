@@ -300,7 +300,7 @@ impl<
                                 map_struct.rhash_map.get(&new_hash.to_unextendable())
                             {
                                 if hash.get_kmer_multiplicity() >= global_data.min_multiplicity {
-                                    // println!("Forward match extend read {:x?}!", new_hash);
+                                    // ggcat_logging::info!("Forward match extend read {:x?}!", new_hash);
                                     #[cfg(feature = "support_kmer_counters")]
                                     {
                                         multiplicity = hash.get_kmer_multiplicity() as u64;

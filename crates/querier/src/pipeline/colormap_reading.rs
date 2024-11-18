@@ -30,7 +30,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
     colored_query_buckets: Vec<PathBuf>,
     temp_dir: PathBuf,
     queries_count: u64,
-) -> Vec<PathBuf> {
+) -> anyhow::Result<Vec<PathBuf>> {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: colormap reading".to_string());
@@ -52,8 +52,12 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
         BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
     });
 
-    let tlocal_colormap_decoder =
-        ScopedThreadLocal::new(move || ColorsDeserializer::<CD>::new(&colormap_file, false));
+    // Try to build a color deserializer to check colormap correctness
+    let _ = ColorsDeserializer::<CD>::new(&colormap_file, false)?;
+
+    let tlocal_colormap_decoder = ScopedThreadLocal::new(move || {
+        ColorsDeserializer::<CD>::new(&colormap_file, false).unwrap()
+    });
 
     colored_query_buckets.par_iter().for_each(|input| {
         let mut colormap_decoder = tlocal_colormap_decoder.get();
@@ -137,7 +141,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
                 temp_queries_buffer.sort_unstable_by_key(|c| c.query_index);
             }
 
-            // println!(
+            // ggcat_logging::info!(
             //     " Queries: {:?} Colors: {:?} Compressed: {:?}",
             //     queries_by_color.iter().map(|q| &q.0).collect::<Vec<_>>(),
             //     temp_colors_buffer,
@@ -169,5 +173,5 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
         thread_buffer.put_back(colored_buckets_writer.finalize().0);
     });
 
-    correct_color_buckets.finalize()
+    Ok(correct_color_buckets.finalize())
 }

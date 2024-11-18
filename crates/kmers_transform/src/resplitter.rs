@@ -195,7 +195,6 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
     type InputPacket = ReadsBuffer<F::AssociatedExtraData>;
     type OutputPacket = InputBucketDesc;
     type GlobalParams = KmersTransformContext<F>;
-    type AsyncExecutorFuture<'a> = impl Future<Output = ()> + 'a;
     type InitData = ResplitterInitData;
 
     fn new() -> Self {
@@ -207,7 +206,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
         global_context: &'a Self::GlobalParams,
         mut receiver: ExecutorReceiver<Self>,
         _memory_tracker: MemoryTracker<Self>,
-    ) -> Self::AsyncExecutorFuture<'a> {
+    ) -> impl Future<Output = ()> + 'a {
         async move {
             while let Ok((address, init_data)) =
                 track!(receiver.obtain_address().await, ADDR_WAITING_COUNTER)

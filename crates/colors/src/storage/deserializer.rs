@@ -4,6 +4,7 @@ use crate::storage::ColorsSerializerTrait;
 use config::ColorIndexType;
 use desse::Desse;
 use desse::DesseSized;
+use ggcat_logging::UnrecoverableErrorLogging;
 use replace_with::replace_with_or_abort;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
@@ -25,20 +26,41 @@ unsafe impl<DS: ColorsSerializerTrait> Sync for ColorsDeserializer<DS> {}
 unsafe impl<DS: ColorsSerializerTrait> Send for ColorsDeserializer<DS> {}
 
 impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
-    pub fn new(file: impl AsRef<Path>, read_color_names: bool) -> Self {
-        let mut file = File::open(file).unwrap();
+    pub fn new(path: impl AsRef<Path>, read_color_names: bool) -> anyhow::Result<Self> {
+        let mut file = File::open(path.as_ref()).log_unrecoverable_error_with_data(
+            "Cannot open colors file",
+            path.as_ref().display(),
+        )?;
 
         let mut header_buffer = [0; ColorsFileHeader::SIZE];
-        file.read_exact(&mut header_buffer).unwrap();
+        file.read_exact(&mut header_buffer)
+            .log_unrecoverable_error_with_data("Cannot read header", path.as_ref().display())?;
 
         let header: ColorsFileHeader = ColorsFileHeader::deserialize_from(&header_buffer);
-        assert_eq!(header.magic, DS::MAGIC);
+        if header.magic != DS::MAGIC {
+            anyhow::Result::Err(anyhow::anyhow!(
+                "Header mismatch: expected {:?}, got {:?}",
+                DS::MAGIC,
+                header.magic
+            ))
+            .log_unrecoverable_error_with_data(
+                "Colors file is corrupted",
+                path.as_ref().display(),
+            )?;
+        }
 
         let color_names = if read_color_names {
-            let mut compressed_stream = lz4::Decoder::new(BufReader::new(file)).unwrap();
+            let mut compressed_stream = lz4::Decoder::new(BufReader::new(file))
+                .log_unrecoverable_error_with_data(
+                    "Cannot create LZ4 decoder",
+                    path.as_ref().display(),
+                )?;
 
-            let color_names: Vec<String> =
-                bincode::deserialize_from(&mut compressed_stream).unwrap();
+            let color_names: Vec<String> = bincode::deserialize_from(&mut compressed_stream)
+                .log_unrecoverable_error_with_data(
+                    "Cannot deserialize color names",
+                    path.as_ref().display(),
+                )?;
             file = compressed_stream.finish().0.into_inner();
             color_names
         } else {
@@ -46,12 +68,20 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
         };
 
         let colors_index: ColorsIndexMap = {
-            file.seek(SeekFrom::Start(header.index_offset)).unwrap();
-            bincode::deserialize_from(&mut file).unwrap()
+            file.seek(SeekFrom::Start(header.index_offset))
+                .log_unrecoverable_error_with_data(
+                    "Cannot seek color map",
+                    path.as_ref().display(),
+                )?;
+            bincode::deserialize_from(&mut file).log_unrecoverable_error_with_data(
+                "Cannot deserialize color index",
+                path.as_ref().display(),
+            )?
         };
 
         let first_chunk = colors_index.pairs[0];
-        file.seek(SeekFrom::Start(first_chunk.file_offset)).unwrap();
+        file.seek(SeekFrom::Start(first_chunk.file_offset))
+            .log_unrecoverable_error_with_data("Cannot seek color map", path.as_ref().display())?;
 
         let current_chunk_size = colors_index
             .pairs
@@ -65,7 +95,7 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
             .map(|s| s.replace("\"", "\\\"").replace("\\", "\\\\"))
             .collect();
 
-        Self {
+        Ok(Self {
             colormap_file: lz4::Decoder::new(BufReader::new(file)).unwrap(),
             color_names,
             json_escaped_color_names,
@@ -74,14 +104,14 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
             current_chunk_size,
             current_index: first_chunk.start_index,
             _phantom: Default::default(),
-        }
+        })
     }
 
     fn maybe_change_block(&mut self, target_color: ColorIndexType) {
         if target_color < self.current_index
             || target_color >= (self.current_chunk.start_index + self.current_chunk_size)
         {
-            // println!(
+            // ggcat_logging::info!(
             //     "Changing chunk {} < {} || {} >= {} + {}!",
             //     target_color,
             //     self.current_index,

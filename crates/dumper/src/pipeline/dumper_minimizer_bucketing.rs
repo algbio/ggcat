@@ -166,7 +166,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
                 if CX::COLORS_ENABLED
                     && (color.debug_count() != sequence.seq.len() - self.global_data.k + 1)
                 {
-                    println!(
+                    ggcat_logging::error!(
                         "WARN: Sequence does not have enough colors, please check matching k size:\n{}\n{}",
                         std::str::from_utf8(sequence.ident_data).unwrap(),
                         std::str::from_utf8(sequence.seq).unwrap()
@@ -259,7 +259,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         .write()
         .start_phase("phase: unitigs reorganization".to_string());
 
-    let input_files = vec![(graph_file, ())];
+    let input_files = vec![((graph_file, None), ())];
 
     GenericMinimizerBucketing::do_bucketing::<
         DumperMinimizerBucketingExecutorFactory<CX>,

@@ -1,5 +1,5 @@
 [package]
-name = "ggcat_assembler_kmers_merge"
+name = "ggcat_assembler_kmerge"
 version = "0.1.0"
 edition = "2021"
 [dependencies]
@@ -9,9 +9,9 @@ config = { package = "ggcat_config", path = "../config" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Common libraries
-parallel-processor = "0.1.10"
+parallel-processor = "0.1.18"
 streaming-libdeflate-rs = "0.1.5"
-nightly-quirks = "0.1.2"
+nightly-quirks = "0.1.4"
 
 # Common pipeline libraries
 hashes = { package = "ggcat_hashes", path = "../hashes" }
@@ -22,22 +22,26 @@ kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transfor
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
 
 # Dependencies
-assembler_minimizer_bucketing = { package = "ggcat_assembler_minimizer_bucketing", path = "../assembler_minimizer_bucketing" }
+assembler_minimizer_bucketing = { package = "ggcat_assembler_minibuck", path = "../assembler_minimizer_bucketing" }
 
 
 # Other crates
-hashbrown = "0.13.2"
-typenum = "1.16.0"
-crossbeam = "0.8.2"
+hashbrown = "0.14.5"
+typenum = "1.17.0"
+crossbeam = "0.8.4"
 
 # Profiler
-instrumenter = "0.1.1"
-parking_lot = "0.12.1"
+instrumenter = "0.1.3"
+parking_lot = "0.12.3"
+ggcat-logging = { version = "0.1.0", path = "../logging" }
 
 [dev-dependencies]
-fdlimit = "0.2.1"
-rayon = "1.7.0"
+fdlimit = "0.3.0"
+rayon = "1.10.0"
 
 
 [features]
-support_kmer_counters = ["colors/support_kmer_counters", "structs/support_kmer_counters"]
+support_kmer_counters = [
+    "colors/support_kmer_counters",
+    "structs/support_kmer_counters",
+]

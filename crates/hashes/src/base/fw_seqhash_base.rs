@@ -45,20 +45,21 @@ impl<N: HashableSequence> ForwardSeqHashIterator<N> {
 }
 
 impl<N: HashableSequence> HashFunction<ForwardSeqHashFactory> for ForwardSeqHashIterator<N> {
-    type IteratorType =
-        impl Iterator<Item = <ForwardSeqHashFactory as HashFunctionFactory>::HashTypeExtendable>;
-    type EnumerableIteratorType = impl Iterator<
+    fn iter(
+        mut self,
+    ) -> impl Iterator<Item = <ForwardSeqHashFactory as HashFunctionFactory>::HashTypeExtendable>
+    {
+        (self.k_minus1..self.seq.bases_count()).map(move |idx| self.roll_hash(idx))
+    }
+
+    fn iter_enumerate(
+        mut self,
+    ) -> impl Iterator<
         Item = (
             usize,
             <ForwardSeqHashFactory as HashFunctionFactory>::HashTypeExtendable,
         ),
-    >;
-
-    fn iter(mut self) -> Self::IteratorType {
-        (self.k_minus1..self.seq.bases_count()).map(move |idx| self.roll_hash(idx))
-    }
-
-    fn iter_enumerate(mut self) -> Self::EnumerableIteratorType {
+    > {
         (self.k_minus1..self.seq.bases_count())
             .map(move |idx| (idx - self.k_minus1, self.roll_hash(idx)))
     }

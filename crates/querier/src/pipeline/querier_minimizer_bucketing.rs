@@ -165,7 +165,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
                 if CX::COLORS_ENABLED
                     && (color.debug_count() != sequence.seq.len() - self.global_data.k + 1)
                 {
-                    println!(
+                    ggcat_logging::error!(
                         "WARN: Sequence does not have enough colors, please check matching k size:\n{}\n{}",
                         std::str::from_utf8(sequence.ident_data).unwrap(),
                         std::str::from_utf8(sequence.seq).unwrap()
@@ -279,7 +279,10 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
         .write()
         .start_phase("phase: graph + query bucketing".to_string());
 
-    let input_files = vec![(graph_file, FileType::Graph), (query_file, FileType::Query)];
+    let input_files = vec![
+        ((graph_file, None), FileType::Graph),
+        ((query_file, None), FileType::Query),
+    ];
 
     let queries_count = Arc::new(AtomicUsize::new(0));
 

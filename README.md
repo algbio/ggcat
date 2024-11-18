@@ -1,6 +1,19 @@
+[![BioConda Install](https://img.shields.io/conda/dn/bioconda/ggcat.svg?style=flag&label=BioConda%20install)](https://anaconda.org/bioconda/ggcat)
+[![License](https://img.shields.io/github/license/algbio/ggcat)](https://mit-license.org/)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/algbio/ggcat)](https://github.com/algbio/ggcat/releases/)
+[![GitHub Downloads](https://img.shields.io/github/downloads/algbio/ggcat/total.svg?style=social&logo=github&label=Download)](https://github.com/algbio/ggcat/releases)
+
 # GGCAT - compacted and colored de Bruijn graph construction and querying
 
 GGCAT is a tool for building compacted (and optionally colored) de Bruijn graphs from raw sequencing data or for merging multiple existing cDBG in a single graph. It also supports sequence queryies to either a colored or non-colored graph (i.e. number/percentage of present kmers).
+
+## Install
+
+GGCAT can be downloaded from https://github.com/algbio/ggcat/releases or installed via conda:
+
+```
+conda install  -c conda-forge -c bioconda ggcat
+```
 
 ## Tool usage
 
@@ -22,6 +35,25 @@ ggcat build -k <k_value> -j <threads_count> -l <input_files_list> -o <output_fil
 
 To build a colored graph, add the `-c` flag to the above commands
 
+By default the color name is equal to the file name, this behavior can be overridden
+by specifying color names with associated input files in a separate file, and by passing it to ggcat with the `-d` flag. The color and file in each line should be separated by one `<TAB>` character.
+
+Example `color_mapping.in`:
+
+```
+color1	file1.fa
+color2	file2.fa
+color2	file3.fa
+color1	dir/file4.fa
+color3	dir2/file5.fa
+```
+
+Then the graph can be built with the command:
+
+```
+ggcat build -k <k_value> -j <threads_count> -c -d color_mapping.in -o <output_file>
+```
+
 #### Building links
 
 To build links between maximal unitigs in BCALM2 like format, use the `-e` flag
@@ -35,48 +67,50 @@ Here are all listed the available options for graph building:
 ```
 > ggcat build --help
 USAGE:
-    ggcat build [FLAGS] [OPTIONS] [--] [input]...
+	ggcat build [FLAGS] [OPTIONS] [--] [input]...
 
 FLAGS:
-    -c, --colors                            Enable colors
-        --eulertigs                         Generate eulertigs instead of maximal unitigs
-    -f, --forward-only                      Treats reverse complementary kmers as different
-    -e, --generate-maximal-unitigs-links    Generate maximal unitigs connections references, in BCALM2 format
-                                            L:<+/->:<other id>:<+/->
-    -g, --greedy-matchtigs                  Generate greedy matchtigs instead of maximal unitigs
-    -h, --help                              Prints help information
-        --keep-temp-files                   Keep intermediate temporary files for debugging purposes
-        --pathtigs                          Generate pathtigs instead of maximal unitigs
-    -p, --prefer-memory                     Use all the given memory before writing to disk
-    -V, --version                           Prints version information
+	-c, --colors                            Enable colors
+		--eulertigs                         Generate eulertigs instead of maximal unitigs
+	-f, --forward-only                      Treats reverse complementary kmers as different
+	-e, --generate-maximal-unitigs-links    Generate maximal unitigs connections references, in BCALM2 format
+											L:<+/->:<other id>:<+/->
+	-h, --gfa                               Output the graph in GFA format
+	-g, --greedy-matchtigs                  Generate greedy matchtigs instead of maximal unitigs
+	-h, --help                              Prints help information
+		--keep-temp-files                   Keep intermediate temporary files for debugging purposes
+		--pathtigs                          Generate pathtigs instead of maximal unitigs
+	-p, --prefer-memory                     Use all the given memory before writing to disk
+	-V, --version                           Prints version information
 
 OPTIONS:
-    -b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
-    -w, --hash-type <hash-type>
-            Hash type used to identify kmers [default: Auto]
+	-b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
+	-d, --colored-input-lists <colored-input-lists>...
+	-w, --hash-type <hash-type>
+			Hash type used to identify kmers [default: Auto]
 
-    -l, --input-lists <input-lists>...                                       The lists of input files
-        --intermediate-compression-level <intermediate-compression-level>
-            The level of lz4 compression to be used for the intermediate files
+	-l, --input-lists <input-lists>...                                       The lists of input files
+		--intermediate-compression-level <intermediate-compression-level>
+			The level of lz4 compression to be used for the intermediate files
 
-    -k <klen>                                                                Specifies the k-mers length [default: 32]
-        --last-step <last-step>                                               [default: BuildUnitigs]
-    -m, --memory <memory>                                                    Maximum memory usage (GB) [default: 2]
-    -s, --min-multiplicity <min-multiplicity>
-            Minimum multiplicity required to keep a kmer [default: 2]
+	-k <klen>                                                                Specifies the k-mers length [default: 32]
+		--last-step <last-step>                                               [default: BuildUnitigs]
+	-m, --memory <memory>                                                    Maximum memory usage (GB) [default: 2]
+	-s, --min-multiplicity <min-multiplicity>
+			Minimum multiplicity required to keep a kmer [default: 2]
 
-        --mlen <mlen>
-            Overrides the default m-mers (minimizers) length
+		--mlen <mlen>
+			Overrides the default m-mers (minimizers) length
 
-    -o, --output-file <output-file>                                           [default: output.fasta.lz4]
-        --step <step>                                                         [default: MinimizerBucketing]
-    -t, --temp-dir <temp-dir>
-            Directory for temporary files (default .temp_files) [default: .temp_files]
+	-o, --output-file <output-file>                                           [default: output.fasta.lz4]
+		--step <step>                                                         [default: MinimizerBucketing]
+	-t, --temp-dir <temp-dir>
+			Directory for temporary files (default .temp_files) [default: .temp_files]
 
-    -j, --threads-count <threads-count>                                       [default: 16]
+	-j, --threads-count <threads-count>                                       [default: 16]
 
 ARGS:
-    <input>...    The input files
+	<input>...    The input files
 ```
 
 ### Querying a graph
@@ -108,7 +142,7 @@ Here are listed all the available options for graph querying:
 ```
 > ggcat query --help
 USAGE:
-    ggcat query [FLAGS] [OPTIONS] <input-graph> <input-query>
+    ggcat query [FLAGS] [OPTIONS] <input-graph> <input-query> --kmer-length <kmer-length>
 
 FLAGS:
     -c, --colors             Enable colors
@@ -120,16 +154,20 @@ FLAGS:
 
 OPTIONS:
     -b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
-    -f, --colored-query-output-format <colored-query-output-format>
+        --colored-query-output-format <colored-query-output-format>
     -w, --hash-type <hash-type>
             Hash type used to identify kmers [default: Auto]
 
         --intermediate-compression-level <intermediate-compression-level>
             The level of lz4 compression to be used for the intermediate files
 
-    -k <klen>                                                                Specifies the k-mers length [default: 32]
-    -m, --memory <memory>                                                    Maximum memory usage (GB) [default: 2]
-        --mlen <mlen>
+    -k, --kmer-length <kmer-length>                                          Specifies the k-mers length
+    -m, --memory <memory>
+            Maximum suggested memory usage (GB) The tool will try use only up to this GB of memory to store temporary
+            files without writing to disk. This usage does not include the needed memory for the processing steps. GGCAT
+            can allocate extra memory for files if the current memory is not enough to complete the current operation
+            [default: 2]
+        --minimizer-length <minimizer-length>
             Overrides the default m-mers (minimizers) length
 
     -o, --output-file-prefix <output-file-prefix>                             [default: output]
@@ -144,16 +182,15 @@ ARGS:
     <input-query>    The input query as a .fasta file
 ```
 
-## Installation
+## Building from source
 
-At the moment building from source is the only option to install the tool.
-To build the tool the Rust nightly toolchain is required, and can be downloaded with the following commands:
+To build the tool the Rust stable (>= 1.75) toolchain is required, and can be downloaded with the following commands:
 
 ### Linux/Mac
 
 ```
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup toolchain install nightly
+rustup toolchain install stable
 
 ```
 
@@ -162,19 +199,18 @@ rustup toolchain install nightly
 Follow the instructions at the site:
 https://rustup.rs/
 
-The building process was not tested on windows, but it should work with minor tweaks.
-
 ### Additional opt-in features
-Additional features can be enabled by specifying them in the command line while building/installing GGCAT (ex. --features "feature1,feature2"):
-* **kmer-counters**: Adds kmer abundance for each unitig, in a BCALM2 compatible format. If enabled GGCAT consumes more memory while building colored graphs
 
+Additional features can be enabled by specifying them in the command line while building/installing GGCAT (ex. --features "feature1,feature2"):
+
+- **kmer-counters**: Adds kmer abundance for each unitig, in a BCALM2 compatible format. If enabled GGCAT uses more memory while building colored graphs
 
 ### Building
 
 Then the tool can be installed with the commands:
 
 ```
-git clone https://github.com/algbio/ggcat --recursive
+git clone https://github.com/algbio/ggcat
 cd ggcat/
 cargo install --path crates/cmdline/ --locked
 ```
@@ -183,9 +219,9 @@ the binary is automatically copied to `$HOME/.cargo/bin`
 
 To launch the tool directly from the command line, the above directory should be added to the `$PATH` variable.
 
-## Experimental API
+## API usage
 
-GGCAT has an experimental API for Rust and C++.
+GGCAT has an API for both Rust and C++.
 
 ### Rust
 
@@ -205,7 +241,7 @@ If you use GGCAT in your research, please cite the following article:
 
 > Extremely-fast construction and querying of compacted and colored de Bruijn graphs with GGCAT
 > Andrea Cracco, Alexandru I. Tomescu
-> bioRxiv 2022.10.24.513174; doi: https://doi.org/10.1101/2022.10.24.513174
+> Genome Research gr.277615.122; doi: https://doi.org/10.1101/gr.277615.122
 
 If you use a matchtigs/eulertigs output, please also cite the following articles:
 

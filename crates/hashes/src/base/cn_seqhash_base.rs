@@ -58,20 +58,21 @@ impl<N: HashableSequence> CanonicalSeqHashIterator<N> {
 }
 
 impl<N: HashableSequence> HashFunction<CanonicalSeqHashFactory> for CanonicalSeqHashIterator<N> {
-    type IteratorType =
-        impl Iterator<Item = <CanonicalSeqHashFactory as HashFunctionFactory>::HashTypeExtendable>;
-    type EnumerableIteratorType = impl Iterator<
+    fn iter(
+        mut self,
+    ) -> impl Iterator<Item = <CanonicalSeqHashFactory as HashFunctionFactory>::HashTypeExtendable>
+    {
+        (self.k_minus1..self.seq.bases_count()).map(move |idx| self.roll_hash(idx))
+    }
+
+    fn iter_enumerate(
+        mut self,
+    ) -> impl Iterator<
         Item = (
             usize,
             <CanonicalSeqHashFactory as HashFunctionFactory>::HashTypeExtendable,
         ),
-    >;
-
-    fn iter(mut self) -> Self::IteratorType {
-        (self.k_minus1..self.seq.bases_count()).map(move |idx| self.roll_hash(idx))
-    }
-
-    fn iter_enumerate(mut self) -> Self::EnumerableIteratorType {
+    > {
         (self.k_minus1..self.seq.bases_count())
             .map(move |idx| (idx - self.k_minus1, self.roll_hash(idx)))
     }

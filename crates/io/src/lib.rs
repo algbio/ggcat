@@ -57,21 +57,23 @@ pub struct FilesStatsInfo {
     // pub best_lz4_compression_level: u32,
 }
 
-pub fn compute_stats_from_input_blocks(blocks: &[GeneralSequenceBlockData]) -> FilesStatsInfo {
+pub fn compute_stats_from_input_blocks(
+    blocks: &[GeneralSequenceBlockData],
+) -> anyhow::Result<FilesStatsInfo> {
     let mut bases_count = 0;
     for block in blocks {
-        bases_count += block.estimated_bases_count();
+        bases_count += block.estimated_bases_count()?;
     }
 
     let buckets_count = bases_count / MAX_BUCKET_SIZE;
 
     let buckets_log = (max(1, buckets_count) - 1).next_power_of_two().ilog2() as usize;
 
-    FilesStatsInfo {
+    Ok(FilesStatsInfo {
         best_buckets_count_log: min(
             MAX_BUCKETS_COUNT_LOG,
             max(MIN_BUCKETS_COUNT_LOG, buckets_log),
         ),
         // best_lz4_compression_level: 0,
-    }
+    })
 }

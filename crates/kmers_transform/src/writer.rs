@@ -30,7 +30,6 @@
 //     type GlobalParams = KmersTransformContext<F>;
 //     type InitData = ();
 //
-//     type AsyncExecutorFuture<'a> = impl Future<Output = ()> + 'a;
 //
 //     fn new() -> Self {
 //         Self(PhantomData)
@@ -41,7 +40,7 @@
 //         global_context: &'a Self::GlobalParams,
 //         mut receiver: ExecutorReceiver<Self>,
 //         memory_tracker: MemoryTracker<Self>,
-//     ) -> Self::AsyncExecutorFuture<'a> {
+//     ) -> impl Future<Output = ()> + 'a {
 //         async move {
 //             // Only one address
 //             let (address, _) = track!(

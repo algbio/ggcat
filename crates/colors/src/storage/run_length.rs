@@ -5,11 +5,12 @@ use byteorder::ReadBytesExt;
 use config::ColorIndexType;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use io::varint::{decode_varint, encode_varint};
+use std::cell::UnsafeCell;
 use std::io::{Read, Write};
 
 pub struct ColorIndexSerializer;
 impl ColorIndexSerializer {
-    pub fn serialize_colors(mut writer: impl Write, colors: &[ColorIndexType]) {
+    pub fn serialize_colors(writer: &mut impl Write, colors: &[ColorIndexType]) {
         encode_varint(|b| writer.write_all(b), (colors[0] as u64) + 2).unwrap();
 
         let mut last_color = colors[0];
@@ -101,8 +102,9 @@ pub struct RunLengthColorsSerializer {
     async_buffer: AsyncSliceQueue<u8, ColorsFlushProcessing>,
 }
 
-#[thread_local]
-static mut TEMP_COLOR_BUFFER: Vec<u8> = Vec::new();
+thread_local! {
+    static TEMP_COLOR_BUFFER: UnsafeCell<Vec<u8>> = const { UnsafeCell::new(Vec::new()) };
+}
 
 impl ColorsSerializerTrait for RunLengthColorsSerializer {
     const MAGIC: [u8; 16] = *b"GGCAT_CMAP_RNLEN";
@@ -129,12 +131,14 @@ impl ColorsSerializerTrait for RunLengthColorsSerializer {
         }
     }
 
+    #[inline(always)]
     fn serialize_colors(&self, colors: &[u32]) -> u32 {
-        unsafe {
-            TEMP_COLOR_BUFFER.clear();
-            ColorIndexSerializer::serialize_colors(&mut TEMP_COLOR_BUFFER, colors);
-            self.async_buffer.add_data(TEMP_COLOR_BUFFER.as_slice()) as ColorIndexType
-        }
+        TEMP_COLOR_BUFFER.with(|buffer| {
+            let buffer = unsafe { &mut *buffer.get() };
+            buffer.clear();
+            ColorIndexSerializer::serialize_colors(buffer, colors);
+            self.async_buffer.add_data(buffer.as_slice()) as ColorIndexType
+        })
     }
 
     fn get_subsets_count(&self) -> u64 {
@@ -142,7 +146,7 @@ impl ColorsSerializerTrait for RunLengthColorsSerializer {
     }
 
     fn print_stats(&self) {
-        println!("Total color subsets: {}", self.async_buffer.get_counter())
+        ggcat_logging::info!("Total color subsets: {}", self.async_buffer.get_counter())
     }
 
     fn finalize(self) -> ColorsFlushProcessing {
@@ -161,7 +165,7 @@ mod tests {
 
         ColorIndexSerializer::serialize_colors(&mut buffer, colors);
 
-        println!("Buffer size: {}", buffer.len());
+        ggcat_logging::info!("Buffer size: {}", buffer.len());
         let mut cursor = Cursor::new(buffer);
 
         let mut des_colors = Vec::new();

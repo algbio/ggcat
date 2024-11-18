@@ -130,10 +130,10 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
     fn create_colors_table(
         path: impl AsRef<Path>,
         color_names: &[String],
-    ) -> Self::GlobalColorsTableWriter;
+    ) -> anyhow::Result<Self::GlobalColorsTableWriter>;
 
     /// Creates a new colors table at the given path
-    fn open_colors_table(path: impl AsRef<Path>) -> Self::GlobalColorsTableReader;
+    fn open_colors_table(path: impl AsRef<Path>) -> anyhow::Result<Self::GlobalColorsTableReader>;
 
     /// Prints to stdout the final stats for the colors table
     fn print_color_stats(global_colors_table: &Self::GlobalColorsTableWriter);

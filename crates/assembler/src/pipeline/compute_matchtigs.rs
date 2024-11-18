@@ -7,6 +7,7 @@ use genome_graph::bigraph::implementation::node_bigraph_wrapper::NodeBigraphWrap
 use genome_graph::bigraph::interface::BidirectedData;
 use genome_graph::bigraph::traitgraph::implementation::petgraph_impl::PetGraph;
 use genome_graph::bigraph::traitgraph::interface::ImmutableGraphContainer;
+use genome_graph::bigraph::traitgraph::interface::MutableGraphContainer;
 use genome_graph::generic::{GenericEdge, GenericNode};
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
@@ -20,7 +21,6 @@ use libmatchtigs::{
 };
 use libmatchtigs::{GreedytigAlgorithm, GreedytigAlgorithmConfiguration, TigAlgorithm};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use std::convert::identity;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,7 +46,6 @@ impl<ColorInfo: IdentSequenceWriter> SequenceHandle<ColorInfo> {
             ColorInfo,
             SequenceAbundanceType,
             DoubleMaximalUnitigLinks,
-            bool,
         ),
         &StructuredUnitigsStorage<ColorInfo>,
     )> {
@@ -100,6 +99,14 @@ impl<ColorInfo: IdentSequenceWriter> BidirectedData for UnitigEdgeData<ColorInfo
     }
 }
 
+/*impl<ColorInfo: IdentSequenceWriter> BidirectedData for UnitigEdgeData<ColorInfo> {
+
+}
+
+impl<ColorInfo: IdentSequenceWriter> DijkstraWeightedEdgeData<usize> for UnitigEdgeData<ColorInfo> {
+
+}*/
+
 // SequenceHandle is the type that points to a sequence, e.g. just an integer.
 impl<ColorInfo: IdentSequenceWriter> MatchtigEdgeData<SequenceHandle<ColorInfo>>
     for UnitigEdgeData<ColorInfo>
@@ -141,7 +148,6 @@ pub struct StructuredUnitigsStorage<ColorInfo: IdentSequenceWriter> {
         ColorInfo,
         SequenceAbundanceType,
         DoubleMaximalUnitigLinks,
-        bool,
     )>,
 
     sequences_buffer: Vec<u8>,
@@ -221,17 +227,6 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
             &mut buffer.links_buffer,
         );
 
-        let self_complemental = links_info
-            .0
-            .iter()
-            .map(|x| {
-                x.entries
-                    .get_slice(&buffer.links_buffer)
-                    .iter()
-                    .any(|x| x.index() == sequence_index)
-            })
-            .any(identity);
-
         buffer.sequences.push((
             sequence,
             color_info,
@@ -242,7 +237,6 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
                 () => (),
             },
             links_info,
-            self_complemental,
         ));
     }
 
@@ -263,9 +257,7 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
     fn finalize(self) {}
 }
 
-impl<ColorInfo: IdentSequenceWriter> GenericNode for UnitigEdgeData<ColorInfo> {
-    type EdgeIterator = impl Iterator<Item = GenericEdge>;
-
+impl<ColorInfo: IdentSequenceWriter + 'static> GenericNode for UnitigEdgeData<ColorInfo> {
     fn id(&self) -> usize {
         self.sequence_handle.1
     }
@@ -273,11 +265,11 @@ impl<ColorInfo: IdentSequenceWriter> GenericNode for UnitigEdgeData<ColorInfo> {
     fn is_self_complemental(&self) -> bool {
         self.sequence_handle
             .get_sequence_handle()
-            .map(|s| s.0 .4)
+            .map(|s| s.0 .3.is_self_complemental)
             .unwrap_or(false)
     }
 
-    fn edges(&self) -> Self::EdgeIterator {
+    fn edges(&self) -> impl Iterator<Item = GenericEdge> {
         let links = self
             .sequence_handle
             .get_sequence_handle()
@@ -285,23 +277,25 @@ impl<ColorInfo: IdentSequenceWriter> GenericNode for UnitigEdgeData<ColorInfo> {
             .unwrap_or(DoubleMaximalUnitigLinks::EMPTY);
         let storage = self.sequence_handle.0.clone();
 
-        links
-            .0
-            .into_iter()
-            .map(move |link| {
-                let storage = storage.clone();
+        Box::new(
+            links
+                .links
+                .into_iter()
+                .map(move |link| {
+                    let storage = storage.clone();
 
-                link.entries.iter().map(move |entry| {
-                    let entry = &storage.as_ref().unwrap().links_buffer[entry];
+                    link.entries.iter().map(move |entry| {
+                        let entry = &storage.as_ref().unwrap().links_buffer[entry];
 
-                    GenericEdge {
-                        from_side: !entry.flags.flip_current(),
-                        to_node: entry.index() as usize,
-                        to_side: !entry.flags.flip_other(),
-                    }
+                        GenericEdge {
+                            from_side: !entry.flags.flip_current(),
+                            to_node: entry.index() as usize,
+                            to_side: !entry.flags.flip_other(),
+                        }
+                    })
                 })
-            })
-            .flatten()
+                .flatten(),
+        )
     }
 }
 
@@ -385,7 +379,7 @@ pub fn compute_matchtigs_thread<
         .start_phase(format!("phase: {} building [step1]", phase_name));
 
     /* assign weight to each edge */
-    for edge_index in graph.edge_indices() {
+    for edge_index in graph.edge_indices_copied() {
         let edge_data: &mut UnitigEdgeData<_> = graph.edge_data_mut(edge_index);
 
         // length (in characters) of the sequence associated with edge_data

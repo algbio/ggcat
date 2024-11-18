@@ -33,33 +33,6 @@ struct FinalUnitigInfo {
     flags: UnitigFlags,
 }
 
-pub trait FastaCompatibleRead {
-    type IntermediateData;
-    fn write_unpacked_to_buffer(&self, buffer: &mut Vec<u8>) -> Self::IntermediateData;
-    fn as_slice_from_buffer<'a>(
-        &'a self,
-        buffer: &'a Vec<u8>,
-        data: Self::IntermediateData,
-    ) -> &'a [u8];
-    fn get_length(&self) -> usize;
-}
-
-impl FastaCompatibleRead for [u8] {
-    type IntermediateData = ();
-
-    #[inline(always)]
-    fn write_unpacked_to_buffer(&self, _buffer: &mut Vec<u8>) -> Self::IntermediateData {}
-
-    #[inline(always)]
-    fn as_slice_from_buffer<'a>(&'a self, _: &'a Vec<u8>, _: ()) -> &'a [u8] {
-        self
-    }
-
-    fn get_length(&self) -> usize {
-        self.len()
-    }
-}
-
 type CompressedReadsDataSerializerUnitigsBuilding<H, MH, CX> = CompressedReadsBucketDataSerializer<
     ReorganizedReadsExtraData<PartialUnitigsColorStructure<H, MH, CX>>,
     typenum::U0,

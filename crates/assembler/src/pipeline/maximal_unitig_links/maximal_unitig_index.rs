@@ -176,13 +176,19 @@ impl BucketItemSerializer for MaximalUnitigLinkSerializer {
 }
 
 #[derive(Clone, Debug)]
-pub struct DoubleMaximalUnitigLinks(pub [MaximalUnitigLink; 2]);
+pub struct DoubleMaximalUnitigLinks {
+    pub links: [MaximalUnitigLink; 2],
+    pub is_self_complemental: bool,
+}
 
 impl DoubleMaximalUnitigLinks {
-    pub const EMPTY: Self = Self([
-        MaximalUnitigLink::new(0, VecSlice::new(0, 0)),
-        MaximalUnitigLink::new(0, VecSlice::new(0, 0)),
-    ]);
+    pub const EMPTY: Self = Self {
+        links: [
+            MaximalUnitigLink::new(0, VecSlice::new(0, 0)),
+            MaximalUnitigLink::new(0, VecSlice::new(0, 0)),
+        ],
+        is_self_complemental: false,
+    };
 }
 
 impl SequenceExtraDataTempBufferManagement for DoubleMaximalUnitigLinks {
@@ -207,20 +213,27 @@ impl SequenceExtraDataTempBufferManagement for DoubleMaximalUnitigLinks {
         dst: &mut Vec<MaximalUnitigIndex>,
     ) -> Self {
         Self {
-            0: [
+            links: [
                 {
-                    let entries = extra.0[0].entries.get_slice(src);
+                    let entries = extra.links[0].entries.get_slice(src);
                     let start = dst.len();
                     dst.extend_from_slice(entries);
-                    MaximalUnitigLink::new(extra.0[0].index(), VecSlice::new(start, entries.len()))
+                    MaximalUnitigLink::new(
+                        extra.links[0].index(),
+                        VecSlice::new(start, entries.len()),
+                    )
                 },
                 {
-                    let entries = extra.0[1].entries.get_slice(src);
+                    let entries = extra.links[1].entries.get_slice(src);
                     let start = dst.len();
                     dst.extend_from_slice(entries);
-                    MaximalUnitigLink::new(extra.0[1].index(), VecSlice::new(start, entries.len()))
+                    MaximalUnitigLink::new(
+                        extra.links[1].index(),
+                        VecSlice::new(start, entries.len()),
+                    )
                 },
             ],
+            is_self_complemental: extra.is_self_complemental,
         }
     }
 }
@@ -241,7 +254,7 @@ impl SequenceExtraData for DoubleMaximalUnitigLinks {
 
 impl IdentSequenceWriter for DoubleMaximalUnitigLinks {
     fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
-        for entries in &self.0 {
+        for entries in &self.links {
             let entries = entries.entries.get_slice(extra_buffer);
             for entry in entries {
                 write!(
@@ -257,8 +270,28 @@ impl IdentSequenceWriter for DoubleMaximalUnitigLinks {
     }
 
     #[allow(unused_variables)]
-    fn write_as_gfa(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
-        todo!()
+    fn write_as_gfa(
+        &self,
+        k: u64,
+        index: u64,
+        stream: &mut impl Write,
+        extra_buffer: &Self::TempBuffer,
+    ) {
+        for entries in &self.links {
+            let entries = entries.entries.get_slice(extra_buffer);
+            for entry in entries {
+                writeln!(
+                    stream,
+                    "L\t{}\t{}\t{}\t{}\t{}M",
+                    index,
+                    if entry.flags.flip_current() { "-" } else { "+" },
+                    entry.index,
+                    if entry.flags.flip_other() { "-" } else { "+" },
+                    k - 1
+                )
+                .unwrap();
+            }
+        }
     }
 
     fn parse_as_ident<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {

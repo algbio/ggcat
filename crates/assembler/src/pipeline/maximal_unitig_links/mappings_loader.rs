@@ -33,10 +33,13 @@ impl MaximalUnitigLinksMapping {
         let mut self_ = Self {
             start_index,
             mappings: vec![
-                DoubleMaximalUnitigLinks([
-                    MaximalUnitigLink::new(0, VecSlice::EMPTY),
-                    MaximalUnitigLink::new(0, VecSlice::EMPTY)
-                ]);
+                DoubleMaximalUnitigLinks {
+                    links: [
+                        MaximalUnitigLink::new(0, VecSlice::EMPTY),
+                        MaximalUnitigLink::new(0, VecSlice::EMPTY)
+                    ],
+                    is_self_complemental: false
+                };
                 unitigs_per_bucket
             ],
             mappings_data: vec![],
@@ -67,7 +70,7 @@ impl MaximalUnitigLinksMapping {
                 0
             };
 
-            self_.mappings[index as usize].0[forward_index] = item;
+            self_.mappings[index as usize].links[forward_index] = item;
         }
 
         self_
@@ -125,7 +128,7 @@ impl MaximalUnitigLinksMappingsLoader {
                 self.loaded_buckets[*next_disposed_bucket_index]
                     .lock()
                     .take();
-                // println!("Disposing bucket {}", *next_disposed_bucket_index);
+                // ggcat_logging::info!("Disposing bucket {}", *next_disposed_bucket_index);
                 *next_disposed_bucket_index += 1;
             }
         }

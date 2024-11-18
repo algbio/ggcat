@@ -243,7 +243,7 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
         })
         .collect();
 
-    input_files.sort_by_cached_key(|(file, _)| file.estimated_bases_count());
+    input_files.sort_by_cached_key(|(file, _)| file.estimated_bases_count().unwrap());
     input_files.reverse();
 
     GenericMinimizerBucketing::do_bucketing::<

@@ -1,16 +1,25 @@
 use super::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
+use dynamic_dispatch::dynamic_dispatch;
 use parking_lot::{Condvar, Mutex};
 use std::io::Write;
 use std::marker::PhantomData;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub mod binary;
 pub mod concurrent;
 pub mod fasta;
+pub mod gfa;
+pub mod stream_finish;
 
 pub trait IdentSequenceWriter: SequenceExtraDataConsecutiveCompression + Sized {
     fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer);
-    fn write_as_gfa(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer);
+    fn write_as_gfa(
+        &self,
+        k: u64,
+        index: u64,
+        stream: &mut impl Write,
+        extra_buffer: &Self::TempBuffer,
+    );
 
     fn parse_as_ident<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self>;
 
@@ -20,7 +29,14 @@ pub trait IdentSequenceWriter: SequenceExtraDataConsecutiveCompression + Sized {
 impl IdentSequenceWriter for () {
     fn write_as_ident(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
 
-    fn write_as_gfa(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
+    fn write_as_gfa(
+        &self,
+        _k: u64,
+        _index: u64,
+        _stream: &mut impl Write,
+        _extra_buffer: &Self::TempBuffer,
+    ) {
+    }
 
     fn parse_as_ident<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
         Some(())
@@ -44,6 +60,27 @@ pub type SequenceAbundanceType = SequenceAbundance;
 
 #[cfg(not(feature = "support_kmer_counters"))]
 pub type SequenceAbundanceType = ();
+
+pub trait StructuredSequenceBackendInit: Sync + Send + Sized {
+    fn new_compressed_gzip(_path: impl AsRef<Path>, _level: u32) -> Self {
+        unimplemented!()
+    }
+
+    fn new_compressed_lz4(_path: impl AsRef<Path>, _level: u32) -> Self {
+        unimplemented!()
+    }
+
+    fn new_plain(_path: impl AsRef<Path>) -> Self {
+        unimplemented!()
+    }
+}
+
+#[dynamic_dispatch]
+pub trait StructuredSequenceBackendWrapper: 'static {
+    type Backend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>:
+         StructuredSequenceBackendInit +
+         StructuredSequenceBackend<ColorInfo, LinksInfo>;
+}
 
 pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>:
     Sync + Send

@@ -1,30 +1,13 @@
-
-[patch.crates-io]
-dynamic-dispatch-proc-macro = { path = "libs-crates/dynamic-dispatch-rs/dynamic-dispatch-proc-macro" }
-dynamic-dispatch = { path = "libs-crates/dynamic-dispatch-rs" }
-mt-debug-counters = { path = "libs-crates/mt-debug-counters-rs" }
-streaming-libdeflate-rs = { path = "libs-crates/streaming-libdeflate-rs" }
-papi-bindings = { path = "libs-crates/papi-bindings-rs" }
-nightly-quirks = { path = "libs-crates/nightly-quirks-rs" }
-instrumenter-proc-macro = { path = "libs-crates/instrumenter-rs/instrumenter-proc-macro-rs" }
-instrumenter = { path = "libs-crates/instrumenter-rs" }
-parallel-processor = { path = "libs-crates/parallel-processor-rs" }
-
-
-#ggat_cmdline = { path = "crates/cmdline" }
-#ggat_api = { path = "crates/api" }
-#ggat_config = { path = "crates/config" }
-#ggat_utils = { path = "crates/utils" }
-#ggat_hashes = { path = "crates/hashes" }
-#ggat_io = { path = "crates/io" }
-#ggat_minimizer_bucketing = { path = "crates/minimizer_bucketing" }
-#ggat_kmers_transform = { path = "crates/kmers_transform" }
-#ggat_colors = { path = "crates/colors" }
-#ggat_structs = { path = "crates/structs" }
-#ggat_assembler_minimizer_bucketing = { path = "crates/assembler_minimizer_bucketing" }
-#ggat_assembler_kmers_merge = { path = "crates/assembler_kmers_merge" }
-#ggat_assembler = { path = "crates/assembler" }
-#ggat_querier = { path = "crates/querier" }
+# [patch.crates-io]
+# dynamic-dispatch-proc-macro = { path = "libs-crates/dynamic-dispatch-rs/dynamic-dispatch-proc-macro" }
+# dynamic-dispatch = { path = "libs-crates/dynamic-dispatch-rs" }
+# mt-debug-counters = { path = "libs-crates/mt-debug-counters-rs" }
+# streaming-libdeflate-rs = { path = "libs-crates/streaming-libdeflate-rs" }
+# papi-bindings = { path = "libs-crates/papi-bindings-rs" }
+# nightly-quirks = { path = "libs-crates/nightly-quirks-rs" }
+# instrumenter-proc-macro = { path = "libs-crates/instrumenter-rs/instrumenter-proc-macro-rs" }
+# instrumenter = { path = "libs-crates/instrumenter-rs" }
+# parallel-processor = { path = "libs-crates/parallel-processor-rs" }
 
 [workspace]
 
@@ -32,15 +15,15 @@ resolver = "2"
 
 members = [
     # Library crates added as submodules
-    "libs-crates/dynamic-dispatch-rs/dynamic-dispatch-proc-macro",
-    "libs-crates/dynamic-dispatch-rs",
-    "libs-crates/mt-debug-counters-rs",
-    "libs-crates/streaming-libdeflate-rs",
-    "libs-crates/papi-bindings-rs",
-    "libs-crates/nightly-quirks-rs",
-    "libs-crates/instrumenter-rs/instrumenter-proc-macro-rs",
-    "libs-crates/instrumenter-rs",
-    "libs-crates/parallel-processor-rs",
+    # "libs-crates/dynamic-dispatch-rs/dynamic-dispatch-proc-macro",
+    # "libs-crates/dynamic-dispatch-rs",
+    # "libs-crates/mt-debug-counters-rs",
+    # "libs-crates/streaming-libdeflate-rs",
+    # "libs-crates/papi-bindings-rs",
+    # "libs-crates/nightly-quirks-rs",
+    # "libs-crates/instrumenter-rs/instrumenter-proc-macro-rs",
+    # "libs-crates/instrumenter-rs",
+    # "libs-crates/parallel-processor-rs",
 
     # Main crate for the command line tools
     "crates/cmdline",
@@ -49,7 +32,7 @@ members = [
     "crates/api",
 
     # Main c/c++ library for api usage
-   "crates/capi",
+    "crates/capi",
 
     # Global config constants
     "crates/config",
@@ -58,6 +41,7 @@ members = [
     "crates/utils",
 
     # Common pipeline crates
+    "crates/logging",
     "crates/hashes",
     "crates/io",
     "crates/minimizer_bucketing",

@@ -2,6 +2,7 @@ use crate::storage::ColorsSerializerTrait;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use config::{ColorIndexType, COLORS_SINGLE_BATCH_SIZE};
 use desse::{Desse, DesseSized};
+use ggcat_logging::UnrecoverableErrorLogging;
 use io::chunks_writer::ChunksWriter;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -43,26 +44,44 @@ pub struct ColorsSerializer<SI: ColorsSerializerTrait> {
 }
 
 impl<SI: ColorsSerializerTrait> ColorsSerializer<SI> {
-    pub fn new(file: impl AsRef<Path>, color_names: &[String]) -> Self {
-        let mut colormap_file = File::create(file).unwrap();
+    pub fn new(file: impl AsRef<Path>, color_names: &[String]) -> anyhow::Result<Self> {
+        let mut colormap_file = File::create(file.as_ref()).log_unrecoverable_error_with_data(
+            "Cannot create colormap file",
+            file.as_ref().display(),
+        )?;
 
         colormap_file
             .write_all(&ColorsFileHeader::default().serialize()[..])
-            .unwrap();
+            .log_unrecoverable_error_with_data(
+                "Cannot write colormap header",
+                file.as_ref().display(),
+            )?;
 
         colormap_file = {
             let mut color_names_stream = lz4::EncoderBuilder::new()
                 .level(4)
                 .build(colormap_file)
                 .unwrap();
-            bincode::serialize_into(&mut color_names_stream, color_names).unwrap();
+            bincode::serialize_into(&mut color_names_stream, color_names)
+                .log_unrecoverable_error_with_data(
+                    "Cannot serialize color names",
+                    file.as_ref().display(),
+                )?;
 
             let (cf, res) = color_names_stream.finish();
-            res.unwrap();
+            res.log_unrecoverable_error_with_data(
+                "Cannot finish color names stream",
+                file.as_ref().display(),
+            )?;
             cf
         };
 
-        let file_offset = colormap_file.stream_position().unwrap();
+        let file_offset = colormap_file
+            .stream_position()
+            .log_unrecoverable_error_with_data(
+                "Cannot seek colormap file",
+                file.as_ref().display(),
+            )?;
 
         let color_processor = ColorsFlushProcessing {
             colormap_file: Mutex::new((
@@ -78,16 +97,17 @@ impl<SI: ColorsSerializerTrait> ColorsSerializer<SI> {
 
         let colors_count = color_names.len() as u64;
 
-        Self {
+        Ok(Self {
             colors_count,
             serializer_impl: ManuallyDrop::new(SI::new(
                 color_processor,
                 COLORS_SINGLE_BATCH_SIZE as usize,
                 colors_count,
             )),
-        }
+        })
     }
 
+    #[inline(always)]
     pub fn serialize_colors(&self, colors: &[ColorIndexType]) -> ColorIndexType {
         self.serializer_impl.serialize_colors(colors)
     }

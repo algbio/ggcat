@@ -25,8 +25,6 @@ use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBi
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
-#[cfg(feature = "mem-analysis")]
-use parallel_processor::mem_tracker::MemoryInfo;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
@@ -308,7 +306,7 @@ mod tests {
         let min_multiplicity = 1;
 
         // Increase the maximum allowed number of open files
-        fdlimit::raise_fd_limit();
+        let _ = fdlimit::raise_fd_limit();
 
         KEEP_FILES.store(true, Ordering::Relaxed);
 
@@ -337,7 +335,7 @@ mod tests {
             32768,
         );
 
-        println!("Using m: {} with k: {}", m, k);
+        ggcat_logging::info!("Using m: {} with k: {}", m, k);
 
         // #[cfg(feature = "mem-analysis")]
         // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
