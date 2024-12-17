@@ -309,13 +309,31 @@ impl<
                                     temp_data = (new_hash, idx);
 
                                     if COMPUTE_SIMPLITIGS {
-                                        break;
+                                        // If we are computing simplitigs, it can be that multiple outgoing edges could be valid,
+                                        // but some of them are already used. So we must check that the chosen branch is not used yet before selecting it
+                                        let entryref = map_struct
+                                            .rhash_map
+                                            .get(&temp_data.0.to_unextendable())
+                                            .unwrap();
+
+                                        let already_used = entryref.is_used();
+                                        if !already_used {
+                                            break;
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        if count == 1 {
+                        let should_extend = if COMPUTE_SIMPLITIGS {
+                            // Simplitigs can be always extended if there is an outgoing edge
+                            count > 0
+                        } else {
+                            // Unitigs can be extended only if they're not branching
+                            count == 1
+                        };
+
+                        if should_extend {
                             // Test for backward branches
 
                             if !COMPUTE_SIMPLITIGS {
