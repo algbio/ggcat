@@ -49,6 +49,9 @@ pub fn build_unitigs<
     mut unitig_map_files: Vec<PathBuf>,
     _temp_path: &Path,
     out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<H, MH, CX>, (), BK>,
+    circular_out_file: Option<
+        &StructuredSequenceWriter<PartialUnitigsColorStructure<H, MH, CX>, (), BK>,
+    >,
     k: usize,
 ) {
     PHASES_TIMES_MONITOR
@@ -70,6 +73,11 @@ pub fn build_unitigs<
             .for_each(|(_index, (read_file, unitigs_map_file))| {
                 let mut tmp_final_unitigs_buffer =
                     FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
+
+                let mut tmp_final_circular_unitigs_buffer =
+                    circular_out_file.map(|circular_out_file|
+                        FastaWriterConcurrentBuffer::new(circular_out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true)
+                    );
 
                 assert_eq!(
                     get_bucket_index(read_file),
@@ -312,16 +320,29 @@ pub fn build_unitigs<
                             &mut final_color_extra_buffer,
                         );
 
-                    tmp_final_unitigs_buffer.add_read(
-                        temp_sequence.as_slice(),
-                        None,
-                        writable_color,
-                        &final_color_extra_buffer,
-                        (),
-                        &(),
-                        #[cfg(feature = "support_kmer_counters")]
-                        abundance,
-                    );
+                    if tmp_final_circular_unitigs_buffer.is_some() && is_circular {
+                        tmp_final_circular_unitigs_buffer.as_mut().unwrap().add_read(
+                            temp_sequence.as_slice(),
+                            None,
+                            writable_color,
+                            &final_color_extra_buffer,
+                            (),
+                            &(),
+                            #[cfg(feature = "support_kmer_counters")]
+                            abundance,
+                        );
+                    } else {
+                        tmp_final_unitigs_buffer.add_read(
+                            temp_sequence.as_slice(),
+                            None,
+                            writable_color,
+                            &final_color_extra_buffer,
+                            (),
+                            &(),
+                            #[cfg(feature = "support_kmer_counters")]
+                            abundance,
+                        );
+                    }
 
                     // write_fasta_entry::<H, MH, CX, _>(
                     //     &mut ident_buffer,

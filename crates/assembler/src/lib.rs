@@ -32,6 +32,7 @@ use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
+use pipeline::eulertigs::build_eulertigs;
 use std::fs::remove_file;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -203,7 +204,7 @@ pub fn run_assembler<
             temp_dir.as_path(),
             k,
             m,
-            compute_tigs_mode.is_simplitigs(),
+            compute_tigs_mode.needs_simplitigs(),
             threads_count,
         )
     } else {
@@ -368,22 +369,40 @@ pub fn run_assembler<
     );
 
     // Temporary file to store maximal unitigs data without links info, if further processing is requested
-    let compressed_temp_unitigs_file =
-        if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
-            Some(StructuredSequenceWriter::new(
-                StructSeqBinaryWriter::new(
-                    temp_dir.join("maximal_unitigs.tmp"),
-                    &(
-                        get_memory_mode(SwapPriority::FinalMaps as usize),
-                        CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
-                        get_compression_level_info(),
-                    ),
+    let compressed_temp_unitigs_file = if generate_maximal_unitigs_links
+        || compute_tigs_mode.needs_matchtigs_library()
+        || compute_tigs_mode == Some(MatchtigMode::FastEulerTigs)
+    {
+        Some(StructuredSequenceWriter::new(
+            StructSeqBinaryWriter::new(
+                temp_dir.join("maximal_unitigs.tmp"),
+                &(
+                    get_memory_mode(SwapPriority::FinalMaps as usize),
+                    CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
+                    get_compression_level_info(),
                 ),
-                k,
-            ))
-        } else {
-            None
-        };
+            ),
+            k,
+        ))
+    } else {
+        None
+    };
+
+    let circular_temp_unitigs_file = if let Some(MatchtigMode::FastEulerTigs) = compute_tigs_mode {
+        Some(StructuredSequenceWriter::new(
+            StructSeqBinaryWriter::new(
+                temp_dir.join("circular_unitigs.tmp"),
+                &(
+                    get_memory_mode(SwapPriority::FinalMaps as usize),
+                    CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
+                    get_compression_level_info(),
+                ),
+            ),
+            k,
+        ))
+    } else {
+        None
+    };
 
     let (reorganized_reads, _final_unitigs_bucket) =
         if step <= AssemblerStartingStep::ReorganizeReads {
@@ -435,9 +454,11 @@ pub fn run_assembler<
     }
 
     // links_manager.compute_id_offsets();
-
     if step <= AssemblerStartingStep::BuildUnitigs {
-        if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
+        if generate_maximal_unitigs_links
+            || compute_tigs_mode.needs_matchtigs_library()
+            || compute_tigs_mode == Some(MatchtigMode::FastEulerTigs)
+        {
             build_unitigs::<
                 BucketingHash,
                 MergingHash,
@@ -448,6 +469,11 @@ pub fn run_assembler<
                 unitigs_map,
                 temp_dir.as_path(),
                 compressed_temp_unitigs_file.as_ref().unwrap(),
+                if compute_tigs_mode == Some(MatchtigMode::FastEulerTigs) {
+                    circular_temp_unitigs_file.as_ref()
+                } else {
+                    None
+                },
                 k,
             );
         } else {
@@ -461,13 +487,30 @@ pub fn run_assembler<
                 unitigs_map,
                 temp_dir.as_path(),
                 &final_unitigs_file,
+                None,
                 k,
             );
         }
     }
 
     if step <= AssemblerStartingStep::MaximalUnitigsLinks {
-        if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
+        if compute_tigs_mode == Some(MatchtigMode::FastEulerTigs) {
+            let circular_temp_unitigs_file = circular_temp_unitigs_file.unwrap();
+            let circular_temp_path = circular_temp_unitigs_file.get_path();
+            circular_temp_unitigs_file.finalize();
+
+            let compressed_temp_unitigs_file = compressed_temp_unitigs_file.unwrap();
+            let temp_path = compressed_temp_unitigs_file.get_path();
+            compressed_temp_unitigs_file.finalize();
+
+            build_eulertigs::<BucketingHash, MergingHash, AssemblerColorsManager, _, _>(
+                circular_temp_path,
+                temp_path,
+                temp_dir.as_path(),
+                &final_unitigs_file,
+                k,
+            );
+        } else if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
             let compressed_temp_unitigs_file = compressed_temp_unitigs_file.unwrap();
             let temp_path = compressed_temp_unitigs_file.get_path();
             compressed_temp_unitigs_file.finalize();

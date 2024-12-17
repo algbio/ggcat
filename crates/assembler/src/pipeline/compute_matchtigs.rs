@@ -302,6 +302,7 @@ impl<ColorInfo: IdentSequenceWriter + 'static> GenericNode for UnitigEdgeData<Co
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum MatchtigMode {
     FastSimpliTigs,
+    FastEulerTigs,
     EulerTigs,
     GreedyTigs,
     // MatchTigs,
@@ -309,14 +310,14 @@ pub enum MatchtigMode {
 }
 
 pub trait MatchtigHelperTrait {
-    fn is_simplitigs(&self) -> bool;
+    fn needs_simplitigs(&self) -> bool;
     fn needs_matchtigs_library(&self) -> bool;
     fn get_matchtigs_mode(&self) -> Self;
 }
 
 impl MatchtigHelperTrait for Option<MatchtigMode> {
-    fn is_simplitigs(&self) -> bool {
-        *self == Some(MatchtigMode::FastSimpliTigs)
+    fn needs_simplitigs(&self) -> bool {
+        *self == Some(MatchtigMode::FastSimpliTigs) || *self == Some(MatchtigMode::FastEulerTigs)
     }
 
     fn needs_matchtigs_library(&self) -> bool {
@@ -372,6 +373,7 @@ pub fn compute_matchtigs_thread<
         MatchtigMode::GreedyTigs => "greedy matchtigs",
         MatchtigMode::PathTigs => "pathtigs",
         MatchtigMode::FastSimpliTigs => unreachable!(),
+        MatchtigMode::FastEulerTigs => unreachable!(),
     };
 
     PHASES_TIMES_MONITOR
@@ -414,6 +416,7 @@ pub fn compute_matchtigs_thread<
             EulertigAlgorithm::compute_tigs(&mut graph, &EulertigAlgorithmConfiguration { k })
         }
         MatchtigMode::FastSimpliTigs => unreachable!(),
+        MatchtigMode::FastEulerTigs => unreachable!(),
     };
 
     PHASES_TIMES_MONITOR

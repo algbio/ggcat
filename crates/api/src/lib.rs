@@ -107,6 +107,8 @@ pub enum ExtraElaboration {
     Pathtigs,
     /// Generate simplitigs
     FastSimplitigs,
+    /// Generate fast eulertigs
+    FastEulertigs,
 }
 
 static INSTANCE: Mutex<Option<&'static GGCATInstance>> = Mutex::new(None);
@@ -284,6 +286,7 @@ impl GGCATInstance {
                 ExtraElaboration::Eulertigs => Some(assembler::MatchtigMode::EulerTigs),
                 ExtraElaboration::Pathtigs => Some(assembler::MatchtigMode::PathTigs),
                 ExtraElaboration::FastSimplitigs => Some(assembler::MatchtigMode::FastSimpliTigs),
+                ExtraElaboration::FastEulertigs => Some(assembler::MatchtigMode::FastEulerTigs),
                 _ => None,
             },
             debug::DEBUG_ONLY_BSTATS.load(Ordering::Relaxed),

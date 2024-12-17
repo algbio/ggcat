@@ -186,6 +186,10 @@ struct AssemblerArgs {
     pub fast_simplitigs: bool,
 
     /// Generate eulertigs instead of maximal unitigs
+    #[structopt(long = "fast-eulertigs", group = "output-mode")]
+    pub fast_eulertigs: bool,
+
+    /// Generate eulertigs instead of maximal unitigs
     #[structopt(long = "eulertigs", group = "output-mode")]
     pub eulertigs: bool,
 
@@ -436,6 +440,8 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
                 ExtraElaboration::Pathtigs
             } else if args.fast_simplitigs {
                 ExtraElaboration::FastSimplitigs
+            } else if args.fast_eulertigs {
+                ExtraElaboration::FastEulertigs
             } else {
                 ExtraElaboration::None
             },
