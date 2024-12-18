@@ -2,7 +2,7 @@
 authors = ["Andrea Cracco <guilucand@gmail.com>"]
 edition = "2021"
 name = "ggcat-api"
-version = "0.1.0"
+version = "1.1.1"
 
 [lib]
 crate-type = ["rlib", "staticlib"]
@@ -24,10 +24,10 @@ colors = { package = "ggcat_colors", path = "../colors" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 fdlimit = "0.3.0"
-parallel-processor = "0.1.18"
+parallel-processor = "0.1.19"
 rayon = "1.10.0"
 dynamic-dispatch = "0.5.4"
 parking_lot = "0.12.3"
 uuid = { version = "1.9.1", features = ["v4"] }
-ggcat-logging = { version = "0.1.0", path = "../logging" }
+ggcat-logging = { version = "1.1.1", path = "../logging" }
 anyhow = "1.0.89"

@@ -1,10 +1,10 @@
 [package]
 name = "ggcat_config"
-version = "0.1.0"
+version = "1.1.1"
 edition = "2021"
 [dependencies]
 
 
 # Common libraries
-parallel-processor = "0.1.18"
+parallel-processor = "0.1.19"
 parking_lot = "0.12.3"
