@@ -1,9 +1,9 @@
 [package]
 name = "ggcat_utils"
-version = "0.1.0"
+version = "1.1.1"
 edition = "2021"
 [dependencies]
 parking_lot = "0.12.3"
 rand = "0.8.5"
 
-parallel-processor = "0.1.18"
+parallel-processor = "0.1.19"

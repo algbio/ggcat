@@ -74,12 +74,6 @@ checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "ansi_term"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b3568b48b7cefa6b8ce125f9bb4989e52fbcc29ebea88df04cc7c5f12f70455"
-
-[[package]]
-name = "ansi_term"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d52a9bb7ec0cf484c551830a7ce27bd20d67eac647e1befb56b0be4ee39a55d2"
@@ -432,7 +426,7 @@ version = "2.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0610544180c38b88101fecf2dd634b174a62eef6946f84dfc6a7127512b381c"
 dependencies = [
- "ansi_term 0.12.1",
+ "ansi_term",
  "atty",
  "bitflags 1.3.2",
  "strsim 0.8.0",
@@ -948,7 +942,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat-api"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "anyhow",
  "dynamic-dispatch",
@@ -970,7 +964,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat-cpp-bindings"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "cxx",
  "cxx-build",
@@ -980,14 +974,14 @@ dependencies = [
 
 [[package]]
 name = "ggcat-logging"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "parking_lot",
 ]
 
 [[package]]
 name = "ggcat_assembler"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1022,7 +1016,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_assembler_kmerge"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "crossbeam",
  "fdlimit",
@@ -1048,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_assembler_minibuck"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "dynamic-dispatch",
  "ggcat_colors",
@@ -1064,7 +1058,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_cmdline"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "ahash",
  "atoi",
@@ -1095,7 +1089,6 @@ dependencies = [
  "itertools 0.13.0",
  "lazy_static",
  "libc",
- "logging",
  "lz4",
  "make-cmd",
  "parallel-processor",
@@ -1113,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_colors"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "anyhow",
  "atoi",
@@ -1147,7 +1140,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_config"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "parallel-processor",
  "parking_lot",
@@ -1182,7 +1175,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_hashes"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "ahash",
  "criterion",
@@ -1197,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_io"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1221,7 +1214,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_kmers_transform"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "ggcat-logging",
  "ggcat_config",
@@ -1241,7 +1234,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_minimizer_bucketing"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "bincode",
  "ggcat-logging",
@@ -1287,7 +1280,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_structs"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "bincode",
  "byteorder",
@@ -1299,7 +1292,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_utils"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "parallel-processor",
  "parking_lot",
@@ -1557,15 +1550,6 @@ name = "log"
 version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
-
-[[package]]
-name = "logging"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "461a8beca676e8ab1bd468c92e9b4436d6368e11e96ae038209e520cfe665e46"
-dependencies = [
- "ansi_term 0.10.2",
-]
 
 [[package]]
 name = "lz4"
@@ -1843,9 +1827,9 @@ dependencies = [
 
 [[package]]
 name = "parallel-processor"
-version = "0.1.18"
+version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f67637fe6f0a59cb51d539691d7702746b65e543f71a1f0cb8f7a1e19a87e78c"
+checksum = "29ae386f63827a1973e6a41e3f029ef083cf76d8499327dd00b387c00d8a208a"
 dependencies = [
  "backtrace",
  "bincode",
