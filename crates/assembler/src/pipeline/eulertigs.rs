@@ -218,7 +218,7 @@ pub fn build_eulertigs<
 ) {
     PHASES_TIMES_MONITOR
         .write()
-        .start_phase("phase: Eulertigs building part 1".to_string());
+        .start_phase("phase: eulertigs building part 1".to_string());
 
     let circular_unitigs_reader = CompressedBinaryReader::new(
         &circ_in_file,
@@ -282,7 +282,7 @@ pub fn build_eulertigs<
 
     PHASES_TIMES_MONITOR
         .write()
-        .start_phase("phase: Eulertigs building part 2".to_string());
+        .start_phase("phase: eulertigs building part 2".to_string());
 
     let mut circular_unitigs_kmers = circular_unitigs_kmers.pop().unwrap();
     circular_unitigs_kmers.par_sort();
@@ -326,7 +326,7 @@ pub fn build_eulertigs<
 
     PHASES_TIMES_MONITOR
         .write()
-        .start_phase("phase: Eulertigs building part 3".to_string());
+        .start_phase("phase: eulertigs building part 3".to_string());
 
     let default_links_buffer = L::new_temp_buffer();
 

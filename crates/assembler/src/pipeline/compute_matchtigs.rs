@@ -369,7 +369,7 @@ pub fn compute_matchtigs_thread<
             .unwrap();
 
     let phase_name = match mode {
-        MatchtigMode::EulerTigs => "euleryigs",
+        MatchtigMode::EulerTigs => "eulertigs",
         MatchtigMode::GreedyTigs => "greedy matchtigs",
         MatchtigMode::PathTigs => "pathtigs",
         MatchtigMode::FastSimpliTigs => unreachable!(),
