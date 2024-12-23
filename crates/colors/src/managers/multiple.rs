@@ -450,7 +450,12 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         src: &Self::PartialUnitigsColorStructure,
         src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         mut skip: ColorCounterType,
+        count: Option<usize>,
     ) {
+        if count.is_some() {
+            todo!();
+        }
+
         let get_index = |i| {
             if REVERSE {
                 src.slice.end - i - 1

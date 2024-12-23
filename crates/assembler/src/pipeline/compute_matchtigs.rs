@@ -463,6 +463,7 @@ pub fn compute_matchtigs_thread<
                 &handle.1,
                 &storage.color_buffer,
                 0,
+                None,
             );
         } else {
             read_buffer.extend(first_sequence.as_reverse_complement_bases_iter());
@@ -471,6 +472,7 @@ pub fn compute_matchtigs_thread<
                 &handle.1,
                 &storage.color_buffer,
                 0,
+                None,
             );
         }
         #[cfg(feature = "support_kmer_counters")]
@@ -509,6 +511,7 @@ pub fn compute_matchtigs_thread<
                     &handle.1,
                     &storage.color_buffer,
                     kmer_offset,
+                    None,
                 );
                 #[cfg(feature = "support_kmer_counters")]
                 {
@@ -526,6 +529,7 @@ pub fn compute_matchtigs_thread<
                     &handle.1,
                     &storage.color_buffer,
                     kmer_offset,
+                    None,
                 );
                 #[cfg(feature = "support_kmer_counters")]
                 {

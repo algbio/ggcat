@@ -218,6 +218,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         _src: &Self::PartialUnitigsColorStructure,
         _src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         _skip: ColorCounterType,
+        _count: Option<usize>,
     ) {
     }
 

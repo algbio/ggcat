@@ -192,6 +192,7 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
         src: &Self::PartialUnitigsColorStructure,
         src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         skip: ColorCounterType,
+        count: Option<usize>,
     );
 
     fn pop_base(target: &mut Self::TempUnitigColorStructure);

@@ -394,7 +394,7 @@ pub fn run_assembler<
                 temp_dir.join("circular_unitigs.tmp"),
                 &(
                     get_memory_mode(SwapPriority::FinalMaps as usize),
-                    CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
+                    CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(1)),
                     get_compression_level_info(),
                 ),
             ),

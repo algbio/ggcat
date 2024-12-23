@@ -54,7 +54,7 @@ impl CompressedReadIndipendent {
         }
     }
 
-    pub fn as_reference(&self, storage: &Vec<u8>) -> CompressedRead {
+    pub fn as_reference<'a>(&self, storage: &'a Vec<u8>) -> CompressedRead<'a> {
         CompressedRead {
             size: self.size,
             start: (self.start % 4) as u8,
@@ -194,6 +194,21 @@ impl<'a> CompressedRead<'a> {
     pub unsafe fn get_base_unchecked(&self, index: usize) -> u8 {
         let index = index + self.start as usize;
         (*self.data.add(index / 4) >> ((index % 4) * 2)) & 0x3
+    }
+
+    pub fn write_unpacked_to_vec(&self, vec: &mut Vec<u8>) {
+        vec.reserve(self.size);
+        let start = vec.len();
+        unsafe {
+            vec.set_len(vec.len() + self.size);
+        }
+
+        for (val, letter) in vec[start..start + self.size]
+            .iter_mut()
+            .zip(self.as_bases_iter())
+        {
+            *val = letter;
+        }
     }
 
     pub fn write_unpacked_to_slice(&self, slice: &mut [u8]) {

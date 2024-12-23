@@ -241,6 +241,7 @@ pub fn build_unitigs<
                                     color,
                                     &color_extra_buffer.0,
                                     0,
+                                    None,
                                 );
                                 #[cfg(feature = "support_kmer_counters")]
                                 {
@@ -254,6 +255,7 @@ pub fn build_unitigs<
                                     color,
                                     &color_extra_buffer.0,
                                     0,
+                                    None,
                                 );
                                 #[cfg(feature = "support_kmer_counters")]
                                 {
@@ -275,6 +277,7 @@ pub fn build_unitigs<
                                     color,
                                     &color_extra_buffer.0,
                                     1,
+                                    None,
                                 );
                                 #[cfg(feature = "support_kmer_counters")] {
                                     abundance.sum += counters.sum - counters.last;
@@ -291,6 +294,7 @@ pub fn build_unitigs<
                                     color,
                                     &color_extra_buffer.0,
                                     1,
+                                    None,
                                 );
                                 #[cfg(feature = "support_kmer_counters")] {
                                     abundance.sum += counters.sum - counters.first;
