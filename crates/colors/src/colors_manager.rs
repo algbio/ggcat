@@ -195,6 +195,28 @@ pub trait ColorsMergeManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFa
         count: Option<usize>,
     );
 
+    fn join_structures_rc(
+        dest: &mut Self::TempUnitigColorStructure,
+        src: &Self::PartialUnitigsColorStructure,
+        src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        total_bases: usize,
+        fwd_range: Range<usize>,
+        is_rc: bool,
+    ) {
+        if is_rc {
+            let skip = total_bases as ColorCounterType - fwd_range.end;
+            Self::join_structures::<true>(dest, src, src_buffer, skip, Some(fwd_range.len()));
+        } else {
+            Self::join_structures::<false>(
+                dest,
+                src,
+                src_buffer,
+                fwd_range.start,
+                Some(fwd_range.len()),
+            );
+        }
+    }
+
     fn pop_base(target: &mut Self::TempUnitigColorStructure);
 
     /// Encodes partial unitig colors into the extra data structure

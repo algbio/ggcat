@@ -103,8 +103,15 @@ impl CircularUnitig {
     >(
         &mut self,
         unitigs_kmers: &Vec<u8>,
-        unitigs: &DashMap<usize, CompressedReadIndipendent>,
+        unitigs: &DashMap<
+            usize,
+            (
+                CompressedReadIndipendent,
+                PartialUnitigsColorStructure<H, MH, CX>,
+            ),
+        >,
         writer: &mut Vec<u8>,
+        unitigs_colors_buffer: &<PartialUnitigsColorStructure<H, MH, CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
         colors_buffer: &mut <CX::ColorsMergeManagerType<H, MH> as ColorsMergeManager<H, MH>>::TempUnitigColorStructure,
         k: usize,
         write_full: bool,
@@ -116,18 +123,27 @@ impl CircularUnitig {
         let children_count = self.base_children.len();
 
         for child in self.base_children.iter_mut().take(children_count - 1) {
-            let unitig = unitigs.get(&child.orig_index).unwrap();
+            let unitig_entry = unitigs.get(&child.orig_index).unwrap();
+            let (unitig, src_color) = unitig_entry.value();
             let unitig = unitig.as_reference(unitigs_kmers);
 
             child.rc ^= self.rc;
             let should_rc = child.rc;
             let rc_offset = if should_rc { k - 1 } else { 0 };
             // Skip the first k-1 bases as if they're already written when merging
-            let unitig_part = unitig.sub_slice(
-                (child.start_pos + rc_offset)..(child.start_pos + rc_offset + child.length),
-            );
+            let unitig_slice =
+                (child.start_pos + rc_offset)..(child.start_pos + rc_offset + child.length);
+
+            let unitig_part = unitig.sub_slice(unitig_slice.clone());
             unitig_part.write_unpacked_to_vec(writer, should_rc);
-            // C::join_structures::<false>(colors_buffer, src, src_buffer, 1, Some(5));
+            CX::ColorsMergeManagerType::<H, MH>::join_structures_rc(
+                colors_buffer,
+                src_color,
+                unitigs_colors_buffer,
+                unitig.bases_count(),
+                unitig_slice,
+                should_rc,
+            );
         }
 
         // Add the last part, adding k-1 prefix or suffix depending on the rc status
@@ -136,17 +152,28 @@ impl CircularUnitig {
 
         let end_offset = if !last.rc && !write_full { 0 } else { k - 1 };
 
-        let last_part = unitigs
-            .get(&last.orig_index)
-            .unwrap()
+        let last_part_entry = unitigs.get(&last.orig_index).unwrap();
+
+        let last_part_slice = last.start_pos..last.start_pos + last.length + end_offset;
+        let last_part = last_part_entry
+            .0
             .as_reference(unitigs_kmers)
-            .sub_slice(last.start_pos..last.start_pos + last.length + end_offset);
+            .sub_slice(last_part_slice.clone());
 
         last_part.write_unpacked_to_vec(writer, last.rc);
+        CX::ColorsMergeManagerType::<H, MH>::join_structures_rc(
+            colors_buffer,
+            &last_part_entry.1,
+            unitigs_colors_buffer,
+            last_part_entry.0.bases_count(),
+            last_part_slice,
+            last.rc,
+        );
 
         self.rc = false;
     }
 
+    #[allow(dead_code)]
     pub fn debug_to_string<
         H: MinimizerHashFunctionFactory,
         MH: HashFunctionFactory,
@@ -155,14 +182,23 @@ impl CircularUnitig {
         &mut self,
         k: usize,
         unitigs_kmers: &Vec<u8>,
-        unitigs: &DashMap<usize, CompressedReadIndipendent>,
+        unitigs: &DashMap<
+            usize,
+            (
+                CompressedReadIndipendent,
+                PartialUnitigsColorStructure<H, MH, CX>,
+            ),
+        >,
     ) -> String {
         let mut colors_buffer = CX::ColorsMergeManagerType::<H, MH>::alloc_unitig_color_structure();
+        let dummy_buffer =
+            color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer();
         let mut writer = vec![];
         self.write_unpacked::<H, MH, CX>(
             unitigs_kmers,
             unitigs,
             &mut writer,
+            &dummy_buffer,
             &mut colors_buffer,
             k,
             true,
@@ -309,9 +345,20 @@ pub fn build_eulertigs<
     let joined = Mutex::new(CircularUnionFind::new(DEFAULT_OUTPUT_BUFFER_SIZE));
 
     let unitigs_bases = Mutex::new(vec![]);
-    let unitig_mapping = DashMap::<usize, CompressedReadIndipendent>::new();
+    let unitig_mapping = DashMap::<
+        usize,
+        (
+            CompressedReadIndipendent,
+            PartialUnitigsColorStructure<H, MH, CX>,
+        ),
+    >::new();
 
     let circular_unitigs_kmers = Mutex::new(vec![]);
+    let unitigs_color_buffer =
+        Mutex::new(<CX::ColorsMergeManagerType<H, MH> as ColorsMergeManager<
+            H,
+            MH,
+        >>::PartialUnitigsColorStructure::new_temp_buffer());
 
     rayon::scope(|_s| {
         (0..rayon::current_num_threads())
@@ -327,19 +374,25 @@ pub fn build_eulertigs<
                 Vec::new(),
                 <(u64, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType)>::new_temp_buffer(
                 ),
-                |(_, _, (_index, _, _, _), read): (
+                |(_, _, (_index, mut color, _, _), read): (
                     _,
                     _,
                     (_, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType),
                     _,
                 ),
-                _extra_buffer| {
+                colors_extra_buffer| {
                     let unitig_index = joined.lock().add_unitig(read.get_length() - (k - 1));
                     let mut buffer = unitigs_bases.lock();
 
                     // Save the current circular unitig for later usage
                     let copied_read = CompressedReadIndipendent::from_read(&read, &mut buffer);
-                    unitig_mapping.insert(unitig_index, copied_read);
+
+                    if CX::COLORS_ENABLED {
+                        // Copy the color data to the temporary buffer
+                        color = PartialUnitigsColorStructure::<H, MH, CX>::copy_extra_from(color, &colors_extra_buffer.0, &mut unitigs_color_buffer.lock());
+                    }
+
+                    unitig_mapping.insert(unitig_index, (copied_read, color));
 
                     for (offset, hash) in MH::new(read.sub_slice(0..(copied_read.bases_count() - 1)), k - 1).iter().enumerate() {
                         kmers.push((hash.to_unextendable(), unitig_index, KmerOffset::new(offset,!hash.is_forward())));
@@ -417,6 +470,7 @@ pub fn build_eulertigs<
     let default_links_buffer = L::new_temp_buffer();
 
     let circular_unitigs_kmers_map = circular_unitigs_kmers_map.into_read_only();
+    let unitigs_color_buffer = unitigs_color_buffer.into_inner();
 
     rayon::scope(|_s| {
         (0..rayon::current_num_threads())
@@ -468,7 +522,7 @@ pub fn build_eulertigs<
                             // Found match
                             let end_base_offset = offset;
                             read.sub_slice(last_offset..end_base_offset).write_unpacked_to_vec(&mut output_unitigs_buffer, false);
-                            CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
+                            CX::ColorsMergeManagerType::<H, MH>::join_structures::<false>(
                                 &mut final_unitig_color,
                                 &color,
                                 &color_extra_buffer.0,
@@ -481,14 +535,21 @@ pub fn build_eulertigs<
 
                             circular_unitig.rotate(index, rotation.get_offset(), should_rc);
 
-                            circular_unitig.write_unpacked::<H, MH, CX>(&unitigs_bases, &unitig_mapping, &mut output_unitigs_buffer, &mut final_unitig_color, k, false);
+                            circular_unitig.write_unpacked::<H, MH, CX>(
+                                &unitigs_bases, &unitig_mapping,
+                                &mut output_unitigs_buffer,
+                                &unitigs_color_buffer,
+                                &mut final_unitig_color,
+                                k,
+                                false
+                            );
                             last_offset = end_base_offset;
                         }
                     }
 
                     // Write the last part of the unitig
                     read.sub_slice(last_offset..read.bases_count()).write_unpacked_to_vec(&mut output_unitigs_buffer, false);
-                    CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
+                    CX::ColorsMergeManagerType::<H, MH>::join_structures::<false>(
                         &mut final_unitig_color,
                         &color,
                         &color_extra_buffer.0,
@@ -542,6 +603,7 @@ pub fn build_eulertigs<
             &unitigs_bases,
             &unitig_mapping,
             &mut seq_buffer,
+            &unitigs_color_buffer,
             &mut final_unitig_color,
             k,
             true,
@@ -594,11 +656,17 @@ mod tests {
 
         unitigs_hashmap.insert(
             0,
-            CompressedReadIndipendent::from_read_inplace(&circular_unitig1, &stream),
+            (
+                CompressedReadIndipendent::from_read_inplace(&circular_unitig1, &stream),
+                NonColoredManager,
+            ),
         );
         unitigs_hashmap.insert(
             1,
-            CompressedReadIndipendent::from_read_inplace(&circular_unitig2, &stream),
+            (
+                CompressedReadIndipendent::from_read_inplace(&circular_unitig2, &stream),
+                NonColoredManager,
+            ),
         );
 
         let mut unitigs = CircularUnionFind::new(1000);

@@ -452,10 +452,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         mut skip: ColorCounterType,
         count: Option<usize>,
     ) {
-        if count.is_some() {
-            todo!();
-        }
-
         let get_index = |i| {
             if REVERSE {
                 src.slice.end - i - 1
@@ -468,13 +464,22 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
         let colors_slice = &src_buffer.colors.as_slice();
 
+        let mut count = count.unwrap_or(usize::MAX);
+
         for i in 0..len {
             let color = colors_slice[get_index(i)];
 
             if color.counter <= skip {
                 skip -= color.counter;
             } else {
-                let left = color.counter - skip;
+                let left = (color.counter - skip).min(count as ColorCounterType);
+
+                // Reached the needed count
+                if count == 0 {
+                    break;
+                }
+
+                count -= left as usize;
                 skip = 0;
                 if dest
                     .colors
