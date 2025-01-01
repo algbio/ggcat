@@ -19,7 +19,11 @@ impl<C: ColorsSerializerTrait> ColorsMemMapWriter<C> {
     pub fn new(file: impl AsRef<Path>, color_names: &[String]) -> anyhow::Result<Self> {
         let mut rng = thread_rng();
         Ok(Self {
-            colors: DashMap::with_hasher(DummyHasherBuilder),
+            colors: DashMap::with_hasher_and_shard_amount(
+                DummyHasherBuilder,
+                // Increase the number of shards to decrease stall while inserting new colors
+                rayon::current_num_threads() * 8,
+            ),
             colors_storage: ColorsSerializer::new(file, color_names)?,
             hash_keys: (rng.next_u64(), rng.next_u64()),
         })
@@ -35,13 +39,13 @@ impl<C: ColorsSerializerTrait> ColorsMemMapWriter<C> {
     pub fn get_id(&self, colors: &[ColorIndexType]) -> ColorIndexType {
         let hash = self.hash_colors(colors);
 
-        match self.colors.get(&hash) {
-            None => {
+        match self.colors.entry(hash) {
+            dashmap::Entry::Occupied(occupied_entry) => *occupied_entry.get(),
+            dashmap::Entry::Vacant(vacant_entry) => {
                 let color = self.colors_storage.serialize_colors(colors);
-                self.colors.insert(hash, color);
+                vacant_entry.insert(color);
                 color
             }
-            Some(id) => *id,
         }
     }
 
