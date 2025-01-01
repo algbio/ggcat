@@ -1828,6 +1828,8 @@ dependencies = [
 [[package]]
 name = "parallel-processor"
 version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fcc4497440bed50f68a41985cfe2dec6a50fff13abd10614ccd9e2ef9563b2c"
 dependencies = [
  "backtrace",
  "bincode",

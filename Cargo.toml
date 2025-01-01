@@ -67,6 +67,10 @@ members = [
 
 default-members = ["crates/cmdline", "crates/api"]
 
+[profile.dev]
+debug = true
+opt-level = 2
+lto = "off"
 
 [profile.release]
 debug = false

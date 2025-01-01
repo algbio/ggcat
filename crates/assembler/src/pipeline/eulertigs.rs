@@ -30,10 +30,12 @@ struct CircularUnitigPart {
     orig_index: usize,
     start_pos: usize,
     length: usize,
+    rc: bool,
 }
 
 struct CircularUnitig {
     base_children: Vec<CircularUnitigPart>,
+    rc: bool,
     used: AtomicBool,
 }
 
@@ -41,6 +43,7 @@ impl Clone for CircularUnitig {
     fn clone(&self) -> Self {
         Self {
             base_children: self.base_children.clone(),
+            rc: self.rc,
             used: AtomicBool::new(false),
         }
     }
@@ -50,17 +53,21 @@ impl CircularUnitig {
     pub fn new() -> Self {
         Self {
             base_children: vec![],
+            rc: false,
             used: AtomicBool::new(false),
         }
     }
 
-    pub fn rotate(&mut self, child: usize, position: usize) {
+    pub fn rotate(&mut self, child: usize, position: usize, rc: bool) {
+        self.rc ^= rc;
+
         let split_index = self
             .base_children
             .iter()
             .position(|x| {
-                (x.orig_index == child)
-                    && (x.start_pos <= position && (x.start_pos + x.length > position))
+                (x.orig_index == child) && {
+                    x.start_pos <= position && (x.start_pos + x.length > position)
+                }
             })
             .expect("Could not find child in base_children, this is a bug");
 
@@ -75,12 +82,14 @@ impl CircularUnitig {
             orig_index: target_child.orig_index,
             start_pos: target_child.start_pos,
             length: position - target_child.start_pos,
+            rc: target_child.rc,
         };
 
         let second_part = CircularUnitigPart {
             orig_index: target_child.orig_index,
             start_pos: position,
             length: target_child.length - (position - target_child.start_pos),
+            rc: target_child.rc,
         };
 
         self.base_children[0] = second_part;
@@ -92,7 +101,7 @@ impl CircularUnitig {
         MH: HashFunctionFactory,
         CX: ColorsManager,
     >(
-        &self,
+        &mut self,
         unitigs_kmers: &Vec<u8>,
         unitigs: &DashMap<usize, CompressedReadIndipendent>,
         writer: &mut Vec<u8>,
@@ -100,29 +109,65 @@ impl CircularUnitig {
         k: usize,
         write_full: bool,
     ) {
-        for child in &self.base_children {
-            let unitig = unitigs.get(&child.orig_index).unwrap();
-            let unitig = unitig.as_reference(unitigs_kmers);
-            // Skip the first k-1 bases as if they're already written when merging
-            let unitig_part = unitig.sub_slice(child.start_pos..(child.start_pos + child.length));
-            unitig_part.write_unpacked_to_vec(writer);
-            // C::join_structures::<false>(colors_buffer, src, src_buffer, 1, Some(5));
-            // TODO: Avoid duplicate kmers
+        if self.rc {
+            self.base_children.reverse();
         }
 
-        // Add the last part
-        let last = self.base_children.last().unwrap();
+        let children_count = self.base_children.len();
+
+        for child in self.base_children.iter_mut().take(children_count - 1) {
+            let unitig = unitigs.get(&child.orig_index).unwrap();
+            let unitig = unitig.as_reference(unitigs_kmers);
+
+            child.rc ^= self.rc;
+            let should_rc = child.rc;
+            let rc_offset = if should_rc { k - 1 } else { 0 };
+            // Skip the first k-1 bases as if they're already written when merging
+            let unitig_part = unitig.sub_slice(
+                (child.start_pos + rc_offset)..(child.start_pos + rc_offset + child.length),
+            );
+            unitig_part.write_unpacked_to_vec(writer, should_rc);
+            // C::join_structures::<false>(colors_buffer, src, src_buffer, 1, Some(5));
+        }
+
+        // Add the last part, adding k-1 prefix or suffix depending on the rc status
+        let last = self.base_children.last_mut().unwrap();
+        last.rc ^= self.rc;
+
+        let end_offset = if !last.rc && !write_full { 0 } else { k - 1 };
 
         let last_part = unitigs
             .get(&last.orig_index)
             .unwrap()
             .as_reference(unitigs_kmers)
-            .sub_slice(
-                last.start_pos + last.length
-                    ..last.start_pos + last.length + if write_full { k - 1 } else { 0 },
-            );
+            .sub_slice(last.start_pos..last.start_pos + last.length + end_offset);
 
-        last_part.write_unpacked_to_vec(writer);
+        last_part.write_unpacked_to_vec(writer, last.rc);
+
+        self.rc = false;
+    }
+
+    pub fn debug_to_string<
+        H: MinimizerHashFunctionFactory,
+        MH: HashFunctionFactory,
+        CX: ColorsManager,
+    >(
+        &mut self,
+        k: usize,
+        unitigs_kmers: &Vec<u8>,
+        unitigs: &DashMap<usize, CompressedReadIndipendent>,
+    ) -> String {
+        let mut colors_buffer = CX::ColorsMergeManagerType::<H, MH>::alloc_unitig_color_structure();
+        let mut writer = vec![];
+        self.write_unpacked::<H, MH, CX>(
+            unitigs_kmers,
+            unitigs,
+            &mut writer,
+            &mut colors_buffer,
+            k,
+            true,
+        );
+        String::from_utf8(writer).unwrap()
     }
 }
 
@@ -170,6 +215,7 @@ impl CircularUnionFind {
         unitig.base_children.push(CircularUnitigPart {
             orig_index: self.mappings.len(),
             start_pos: 0,
+            rc: false,
             length,
         });
         self.mappings.push(unitig);
@@ -179,7 +225,7 @@ impl CircularUnionFind {
     }
 
     // Join two circular unitigs placinga rotation of b inside a at a specific position
-    pub fn union(&mut self, a: usize, b: usize, a_pos: usize, b_rot: usize) -> usize {
+    pub fn union(&mut self, a: usize, b: usize, a_pos: usize, b_rot: usize, b_rc: bool) -> usize {
         let a_parent = self.find(a);
         let b_parent = self.find(b);
 
@@ -189,17 +235,51 @@ impl CircularUnionFind {
 
         // Align the rotations such that the circular unitigs can be concatenated
 
-        // TODO: Handle rc
-        self.mappings[a_parent].rotate(a, a_pos);
-        self.mappings[b_parent].rotate(b, b_rot);
+        let a_rc = self.mappings[a_parent].rc;
 
-        let b_children = std::mem::take(&mut self.mappings[b_parent].base_children);
+        // Adjust rotation in case of reverse complement
+
+        self.mappings[a_parent].rotate(a, a_pos, false);
+        self.mappings[b_parent].rotate(b, b_rot, a_rc ^ b_rc);
+
+        let mut b_children = std::mem::take(&mut self.mappings[b_parent].base_children);
+
+        if self.mappings[b_parent].rc != a_rc {
+            b_children.reverse();
+            for child in &mut b_children {
+                child.rc = !child.rc;
+            }
+        }
+
         self.mappings[a_parent]
             .base_children
             .extend(b_children.into_iter());
         self.parent[b_parent] = a_parent;
 
         a_parent
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct KmerOffset(usize);
+
+impl KmerOffset {
+    const REVERSE_FLAG: usize = 1 << (usize::BITS - 1);
+    const OFFSET_MASK: usize = !Self::REVERSE_FLAG;
+
+    fn new(offset: usize, reverse: bool) -> Self {
+        if reverse {
+            KmerOffset(offset | Self::REVERSE_FLAG)
+        } else {
+            KmerOffset(offset)
+        }
+    }
+    fn get_offset(&self) -> usize {
+        self.0 & Self::OFFSET_MASK
+    }
+
+    fn is_rc(&self) -> bool {
+        (self.0 & Self::REVERSE_FLAG) != 0
     }
 }
 
@@ -262,13 +342,13 @@ pub fn build_eulertigs<
                     unitig_mapping.insert(unitig_index, copied_read);
 
                     for (offset, hash) in MH::new(read.sub_slice(0..(copied_read.bases_count() - 1)), k - 1).iter().enumerate() {
-                        kmers.push((hash.to_unextendable(), unitig_index, offset));
+                        kmers.push((hash.to_unextendable(), unitig_index, KmerOffset::new(offset,!hash.is_forward())));
                     }
                 },
             ) {
                 continue;
             }
-            kmers.sort_unstable();
+            kmers.sort_unstable_by_key(|x| x.0);
             circular_unitigs_kmers.lock().push(kmers);
         })
     });
@@ -285,7 +365,7 @@ pub fn build_eulertigs<
         .start_phase("phase: eulertigs building part 2".to_string());
 
     let mut circular_unitigs_kmers = circular_unitigs_kmers.pop().unwrap();
-    circular_unitigs_kmers.par_sort();
+    circular_unitigs_kmers.par_sort_by_key(|x| x.0);
 
     let circular_unitigs_kmers_map = DashMap::new();
     circular_unitigs_kmers
@@ -301,10 +381,16 @@ pub fn build_eulertigs<
             // If the entry is different than the current unitig, find the parent of the entry
             // and join the current unitig with the parent rotating it by position
             for kmer in &equal_kmers[1..] {
-                let _joined_idx =
-                    joined
-                        .lock()
-                        .union(equal_kmers[0].1, kmer.1, equal_kmers[0].2, kmer.2);
+                let a_pos = equal_kmers[0].2.get_offset();
+                let b_rot = kmer.2.get_offset();
+
+                let _joined_idx = joined.lock().union(
+                    equal_kmers[0].1,
+                    kmer.1,
+                    a_pos,
+                    b_rot,
+                    equal_kmers[0].2.is_rc() ^ kmer.2.is_rc(),
+                );
             }
         });
 
@@ -370,6 +456,7 @@ pub fn build_eulertigs<
 
                         if let Some(kmer) = circular_unitigs_kmers_map.get(&hash.to_unextendable()) {
 
+                            let should_rc = kmer.1.is_rc() ^ !hash.is_forward();
                             let (index, rotation) = *kmer;
 
                             let parent = joined.find_flatten(index);
@@ -380,7 +467,7 @@ pub fn build_eulertigs<
 
                             // Found match
                             let end_base_offset = offset;
-                            read.sub_slice(last_offset..end_base_offset).write_unpacked_to_vec(&mut output_unitigs_buffer);
+                            read.sub_slice(last_offset..end_base_offset).write_unpacked_to_vec(&mut output_unitigs_buffer, false);
                             CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
                                 &mut final_unitig_color,
                                 &color,
@@ -392,14 +479,15 @@ pub fn build_eulertigs<
                             // Dump the current circular unitig
                             let mut circular_unitig = joined.mappings[parent].clone();
 
-                            circular_unitig.rotate(index, rotation);
+                            circular_unitig.rotate(index, rotation.get_offset(), should_rc);
+
                             circular_unitig.write_unpacked::<H, MH, CX>(&unitigs_bases, &unitig_mapping, &mut output_unitigs_buffer, &mut final_unitig_color, k, false);
                             last_offset = end_base_offset;
                         }
                     }
 
                     // Write the last part of the unitig
-                    read.sub_slice(last_offset..read.bases_count()).write_unpacked_to_vec(&mut output_unitigs_buffer);
+                    read.sub_slice(last_offset..read.bases_count()).write_unpacked_to_vec(&mut output_unitigs_buffer, false);
                     CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
                         &mut final_unitig_color,
                         &color,
@@ -472,5 +560,83 @@ pub fn build_eulertigs<
             L::default(),
             &default_links_buffer,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use colors::non_colored::NonColoredManager;
+    use hashbrown::HashMap;
+    use hashes::{
+        cn_nthash::CanonicalNtHashIteratorFactory, cn_seqhash::u128::CanonicalSeqHashFactory,
+    };
+    use io::compressed_read::CompressedRead;
+
+    #[test]
+    fn test_rc_rotation() {
+        let k = 31;
+        let mut stream = Vec::with_capacity(10000);
+        let circular_unitig1 = b"CCTGCATCAGCTAGTATGCATCAGCTACGCCATCGATCGCTAGCATCGCGCCGCATCCTCCGCGCCCGGGTACACCTGCATCAGCTAGTATGCATCAGCTACGC";
+        CompressedRead::compress_from_plain(circular_unitig1, |b| stream.extend_from_slice(b));
+        println!("STREAM: {:?}", stream);
+
+        let circular_unitig2 = b"ACCCATATTCTGACGGGCTATCGCCCTACGATAAATACCCGGGCGCGGAGGATGCGGCGCGATGCTTCATCTGACGCTCACACCCATATTCTGACGGGCTATCGCCCTACG";
+        let stream_start = stream.len();
+        CompressedRead::compress_from_plain(circular_unitig2, |b| stream.extend_from_slice(b));
+        let circular_unitig1 =
+            CompressedRead::new_from_compressed(&stream[..stream_start], circular_unitig1.len());
+        let circular_unitig2 =
+            CompressedRead::new_from_compressed(&stream[stream_start..], circular_unitig2.len());
+
+        let mut hashmap = HashMap::new();
+        let unitigs_hashmap = DashMap::new();
+
+        unitigs_hashmap.insert(
+            0,
+            CompressedReadIndipendent::from_read_inplace(&circular_unitig1, &stream),
+        );
+        unitigs_hashmap.insert(
+            1,
+            CompressedReadIndipendent::from_read_inplace(&circular_unitig2, &stream),
+        );
+
+        let mut unitigs = CircularUnionFind::new(1000);
+
+        let u1_index = unitigs.add_unitig(circular_unitig1.bases_count() - (k - 1));
+        let u2_index = unitigs.add_unitig(circular_unitig2.bases_count() - (k - 1));
+
+        println!("First sequence: {}", circular_unitig1.to_string());
+        for (offset, hash) in CanonicalSeqHashFactory::new(circular_unitig1, k - 1)
+            .iter()
+            .enumerate()
+        {
+            hashmap.insert(hash.to_unextendable(), offset);
+        }
+
+        println!("Second sequence: {}", circular_unitig2.to_string());
+        for (offset, hash) in CanonicalSeqHashFactory::new(circular_unitig2, k - 1)
+            .iter()
+            .enumerate()
+        {
+            if let Some(offset1) = hashmap.get(&hash.to_unextendable()) {
+                let offset2 = offset;
+                println!("Found match: {} - {}", offset1, offset2);
+
+                let result = unitigs.union(u1_index, u2_index, *offset1, offset2, true);
+
+                println!(
+                    "Joined unitig {} => {}",
+                    result,
+                    unitigs.mappings[result].debug_to_string::<CanonicalNtHashIteratorFactory, CanonicalSeqHashFactory, NonColoredManager>(
+                        k,
+                        &stream,
+                        &unitigs_hashmap
+                    )
+                );
+
+                break;
+            }
+        }
     }
 }
