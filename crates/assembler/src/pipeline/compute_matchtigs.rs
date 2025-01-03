@@ -21,6 +21,7 @@ use libmatchtigs::{
 };
 use libmatchtigs::{GreedytigAlgorithm, GreedytigAlgorithmConfiguration, TigAlgorithm};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use std::fmt::Debug;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,6 +37,12 @@ struct SequenceHandle<ColorInfo: IdentSequenceWriter>(
     Option<Arc<StructuredUnitigsStorage<ColorInfo>>>,
     usize,
 );
+
+impl<ColorInfo: IdentSequenceWriter> Debug for SequenceHandle<ColorInfo> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("SequenceHandle").field(&self.1).finish()
+    }
+}
 
 impl<ColorInfo: IdentSequenceWriter> SequenceHandle<ColorInfo> {
     fn get_sequence_handle(
@@ -69,7 +76,7 @@ impl<ColorInfo: IdentSequenceWriter> PartialEq for SequenceHandle<ColorInfo> {
 impl<ColorInfo: IdentSequenceWriter> Eq for SequenceHandle<ColorInfo> {}
 
 // Declare types for the graph. It may or may not make sense to have this be the same type as the iterator outputs.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct UnitigEdgeData<ColorInfo: IdentSequenceWriter> {
     sequence_handle: SequenceHandle<ColorInfo>,
     forwards: bool,
@@ -451,13 +458,18 @@ pub fn compute_matchtigs_thread<
         for edge in walk.iter().skip(1) {
             let edge_data = graph.edge_data(*edge);
 
+            if edge_data.is_dummy() {
+                previous_data = edge_data;
+                continue;
+            }
+
             let kmer_offset = if previous_data.is_original() {
                 0
             } else {
                 previous_data.weight()
             };
 
-            let offset = kmer_offset + k - 1;
+            let bases_offset = k - 1 - kmer_offset;
 
             previous_data = edge_data;
 
@@ -470,7 +482,7 @@ pub fn compute_matchtigs_thread<
             let next_sequence = handle.0.as_reference(&storage.sequences_buffer);
 
             if edge_data.is_forwards() {
-                read_buffer.extend(next_sequence.as_bases_iter().skip(offset));
+                read_buffer.extend(next_sequence.as_bases_iter().skip(bases_offset));
                 CX::ColorsMergeManagerType::<H, MH>::join_structures::<false>(
                     &mut final_unitig_color,
                     &handle.1,
@@ -486,7 +498,7 @@ pub fn compute_matchtigs_thread<
                 read_buffer.extend(
                     next_sequence
                         .as_reverse_complement_bases_iter()
-                        .skip(offset),
+                        .skip(bases_offset),
                 );
                 CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
                     &mut final_unitig_color,
