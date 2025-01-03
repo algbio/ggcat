@@ -458,25 +458,32 @@ pub fn compute_matchtigs_thread<
         for edge in walk.iter().skip(1) {
             let edge_data = graph.edge_data(*edge);
 
-            if edge_data.is_dummy() {
-                previous_data = edge_data;
-                continue;
-            }
-
-            let kmer_offset = if previous_data.is_original() {
+            let extra_bases = if previous_data.is_original() {
                 0
             } else {
                 previous_data.weight()
             };
 
-            let bases_offset = k - 1 - kmer_offset;
-
             previous_data = edge_data;
 
             let (handle, storage) = match edge_data.sequence_handle.get_sequence_handle() {
                 Some(handle) => handle,
-                None => continue,
+                None => {
+                    // The edge is dummy
+
+                    if CX::COLORS_ENABLED {
+                        // TODO: Skip colors data
+                        panic!("Matchtigs are not supported with colors");
+                    }
+                    assert!(edge_data.is_dummy());
+                    continue;
+                }
             };
+
+            assert!(!edge_data.is_dummy());
+
+            let kmer_offset = 0;
+            let bases_offset = k - 1 - extra_bases;
 
             // print sequence of edge, starting from character at index offset, forwards or reverse complemented, depending on edge_data.is_forwards()
             let next_sequence = handle.0.as_reference(&storage.sequences_buffer);
