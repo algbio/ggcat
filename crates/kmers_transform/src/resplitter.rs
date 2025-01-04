@@ -83,6 +83,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                 "resplit-bucket{}",
                 BUCKET_RESPLIT_COUNTER.fetch_add(1, Ordering::Relaxed)
             )),
+            None,
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
                 MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
@@ -232,8 +233,12 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
                     PACKETS_PRIORITY_DONE_RESPLIT,
                 );
 
-                for ((i, bucket), sub_bucket_count) in
-                    resplit_info.buckets.finalize().into_iter().enumerate().zip(
+                for ((i, bucket), sub_bucket_count) in resplit_info
+                    .buckets
+                    .finalize_single()
+                    .into_iter()
+                    .enumerate()
+                    .zip(
                         resplit_info
                             .global_counters
                             .into_iter()
@@ -245,7 +250,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
                     address.packet_send(
                         resplit_info.output_addresses[i].clone(),
                         Packet::new_simple(InputBucketDesc {
-                            path: bucket,
+                            paths: vec![bucket],
                             sub_bucket_counters: vec![sub_bucket_count],
                             resplitted: true,
                             rewritten: false,

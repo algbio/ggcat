@@ -41,6 +41,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
     let correct_color_buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
         buckets_count,
         buckets_prefix_path,
+        None,
         &(
             get_memory_mode(SwapPriority::MinimizerBuckets),
             MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
@@ -173,5 +174,5 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
         thread_buffer.put_back(colored_buckets_writer.finalize().0);
     });
 
-    Ok(correct_color_buckets.finalize())
+    Ok(correct_color_buckets.finalize_single())
 }

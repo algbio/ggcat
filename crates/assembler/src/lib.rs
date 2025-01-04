@@ -156,14 +156,19 @@ pub fn run_assembler<
         )
     } else {
         (
-            generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
+            generate_bucket_names(temp_dir.join("bucket"), buckets_count, None)
+                .into_iter()
+                .map(|x| vec![x])
+                .collect(),
             temp_dir.join("buckets-counters.dat"),
         )
     };
 
     ggcat_logging::info!(
-        "Temp buckets files size: {:.2}",
-        MemoryDataSize::from_bytes(fs_extra::dir::get_size(&temp_dir).unwrap_or(0) as usize)
+        "Temp buckets files size: {:.2} total buckets: {} total chunks: {}",
+        MemoryDataSize::from_bytes(fs_extra::dir::get_size(&temp_dir).unwrap_or(0) as usize),
+        buckets.len(),
+        buckets.iter().map(|x| x.len()).sum::<usize>()
     );
 
     if last_step <= AssemblerStartingStep::MinimizerBucketing {
@@ -178,18 +183,21 @@ pub fn run_assembler<
 
     if only_bstats {
         use rayon::prelude::*;
-        buckets.par_iter().enumerate().for_each(|(index, bucket)| {
-            kmers_transform::debug_bucket_stats::compute_stats_for_bucket::<
-                BucketingHash,
-                MergingHash,
-            >(
-                bucket.clone(),
-                index,
-                buckets.len(),
-                MAXIMUM_SECOND_BUCKETS_LOG,
-                k,
-                m,
-            );
+        buckets.par_iter().enumerate().for_each(|(index, buckets)| {
+            ggcat_logging::info!("Stats for bucket index: {}", index);
+            for bucket in buckets {
+                kmers_transform::debug_bucket_stats::compute_stats_for_bucket::<
+                    BucketingHash,
+                    MergingHash,
+                >(
+                    bucket.clone(),
+                    index,
+                    buckets.len(),
+                    MAXIMUM_SECOND_BUCKETS_LOG,
+                    k,
+                    m,
+                );
+            }
         });
         return Ok(PathBuf::new());
     }
@@ -261,6 +269,7 @@ pub fn run_assembler<
         let result_map_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             temp_dir.join("results_map"),
+            None,
             &(
                 get_memory_mode(SwapPriority::FinalMaps),
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
@@ -270,6 +279,7 @@ pub fn run_assembler<
         let final_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
             buckets_count,
             temp_dir.join("unitigs_map"),
+            None,
             &(
                 get_memory_mode(SwapPriority::FinalMaps),
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
@@ -334,7 +344,10 @@ pub fn run_assembler<
             links = new_links;
             if remaining == 0 {
                 ggcat_logging::info!("Completed compaction with {} iters", loop_iteration);
-                break (final_buckets.finalize(), result_map_buckets.finalize());
+                break (
+                    final_buckets.finalize_single(),
+                    result_map_buckets.finalize_single(),
+                );
             }
             loop_iteration += 1;
         };

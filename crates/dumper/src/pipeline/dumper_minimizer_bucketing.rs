@@ -261,7 +261,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
 
     let input_files = vec![((graph_file, None), ())];
 
-    GenericMinimizerBucketing::do_bucketing::<
+    GenericMinimizerBucketing::do_bucketing_no_max_usage::<
         DumperMinimizerBucketingExecutorFactory<CX>,
         FastaFileSequencesStream,
     >(

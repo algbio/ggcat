@@ -427,6 +427,7 @@ pub fn parallel_kmers_counting<
     let counters_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
         buckets_count,
         out_directory.as_ref().join("counters"),
+        None,
         &(
             get_memory_mode(SwapPriority::QueryCounters),
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
@@ -454,7 +455,7 @@ pub fn parallel_kmers_counting<
     });
 
     KmersTransform::<ParallelKmersQueryFactory<H, MH, CX>>::new(
-        file_inputs,
+        file_inputs.into_iter().map(|x| vec![x]).collect(),
         out_directory.as_ref(),
         buckets_counters_path,
         buckets_count,
@@ -467,5 +468,5 @@ pub fn parallel_kmers_counting<
 
     let global_data =
         Arc::try_unwrap(global_data).unwrap_or_else(|_| panic!("Cannot unwrap global data!"));
-    global_data.counters_buckets.finalize()
+    global_data.counters_buckets.finalize_single()
 }

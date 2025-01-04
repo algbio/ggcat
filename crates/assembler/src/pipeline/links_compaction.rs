@@ -41,6 +41,7 @@ pub fn links_compaction(
             .as_ref()
             .to_path_buf()
             .join(format!("linksi{}", elab_index)),
+        None,
         &(
             get_memory_mode(SwapPriority::LinksBuckets),
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
@@ -353,5 +354,8 @@ pub fn links_compaction(
         result_buffers.put_back(results_tmp.finalize().0);
     });
 
-    (links_buckets.finalize(), totsum.load(Ordering::Relaxed))
+    (
+        links_buckets.finalize_single(),
+        totsum.load(Ordering::Relaxed),
+    )
 }

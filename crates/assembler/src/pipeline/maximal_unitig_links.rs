@@ -82,6 +82,7 @@ pub fn build_maximal_unitigs_links<
             Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
                 buckets_count,
                 temp_dir.join("mu-hashes"),
+                None,
                 &(
                     get_memory_mode(SwapPriority::HashBuckets),
                     CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
@@ -208,7 +209,7 @@ pub fn build_maximal_unitigs_links<
                 });
         });
         (
-            maximal_unitigs_extremities_hashes_buckets.finalize(),
+            maximal_unitigs_extremities_hashes_buckets.finalize_single(),
             unitigs_count.into_inner(),
         )
     };
@@ -226,6 +227,7 @@ pub fn build_maximal_unitigs_links<
         let maximal_links_buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
             temp_dir.join("maximal-links"),
+            None,
             &(
                 get_memory_mode(SwapPriority::LinksBuckets),
                 CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
@@ -302,7 +304,7 @@ pub fn build_maximal_unitigs_links<
             }
             buffers.put_back(links_tmp.finalize().0);
         });
-        maximal_links_buckets.finalize()
+        maximal_links_buckets.finalize_single()
     };
 
     // Rewrite the output file to include found links

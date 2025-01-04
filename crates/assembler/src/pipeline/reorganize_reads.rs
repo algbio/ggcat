@@ -171,6 +171,7 @@ pub fn reorganize_reads<
     let buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
         buckets_count,
         temp_path.join("reads_bucket"),
+        None,
         &(
             get_memory_mode(SwapPriority::ReorganizeReads),
             CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
@@ -308,5 +309,5 @@ pub fn reorganize_reads<
         assert_eq!(map_index, mappings.len())
     });
 
-    (buckets.finalize(), PathBuf::new())
+    (buckets.finalize_single(), PathBuf::new())
 }

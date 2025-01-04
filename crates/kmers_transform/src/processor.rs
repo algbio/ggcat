@@ -28,7 +28,7 @@ pub struct KmersProcessorInitData {
     pub sequences_count: usize,
     pub sub_bucket: usize,
     pub is_resplitted: bool,
-    pub bucket_path: PathBuf,
+    pub bucket_paths: Vec<PathBuf>,
 }
 
 impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor<F> {
@@ -101,7 +101,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                     ggcat_logging::info!(
                         "Found bucket with max size {} ==> {} // EXPECTED_SIZE: {} REAL_SIZE: {} SUB: {}",
                         current_size,
-                        proc_info.bucket_path.display(),
+                        proc_info.bucket_paths[0].display(),
                         proc_info.sequences_count,
                         real_size,
                         proc_info.sub_bucket

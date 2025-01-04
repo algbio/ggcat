@@ -223,7 +223,7 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
     threads_count: usize,
     k: usize,
     m: usize,
-) -> (Vec<PathBuf>, PathBuf) {
+) -> (Vec<Vec<PathBuf>>, PathBuf) {
     H::initialize(k);
 
     PHASES_TIMES_MONITOR
@@ -243,8 +243,18 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
         })
         .collect();
 
-    input_files.sort_by_cached_key(|(file, _)| file.estimated_bases_count().unwrap());
+    let mut estimated_bases_count = 0;
+
+    input_files.sort_by_cached_key(|(file, _)| {
+        let bases_count = file.estimated_bases_count().unwrap();
+        estimated_bases_count += bases_count;
+        bases_count
+    });
     input_files.reverse();
+
+    // Heuristic for maximum disk usage, each base occupies 2 bits,
+    // try not to exceed half of the disk space theoretically used by the input files
+    let max_disk_usage = (estimated_bases_count as u64) / 4 / 2;
 
     GenericMinimizerBucketing::do_bucketing::<
         AssemblerMinimizerBucketingExecutorFactory<H, CX>,
@@ -260,5 +270,6 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
         Some(k - 1),
         false,
         k,
+        Some(max_disk_usage),
     )
 }

@@ -124,6 +124,7 @@ pub fn counters_sorting<CX: ColorsManager>(
         Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
             colored_buckets_path,
+            None,
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
                 MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
@@ -256,6 +257,6 @@ pub fn counters_sorting<CX: ColorsManager>(
         }
         vec![]
     } else {
-        color_buckets.finalize()
+        color_buckets.finalize_single()
     }
 }

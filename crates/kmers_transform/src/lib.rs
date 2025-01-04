@@ -159,7 +159,7 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
 
 impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
     pub fn new(
-        file_inputs: Vec<PathBuf>,
+        file_inputs: Vec<Vec<PathBuf>>,
         temp_dir: &Path,
         buckets_counters_path: PathBuf,
         buckets_count: usize,
@@ -175,22 +175,25 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
         let mut total_buckets_size = 0;
 
-        let mut files_with_sizes: Vec<_> = file_inputs
+        let mut file_batches_with_sizes: Vec<_> = file_inputs
             .into_iter()
             .map(|f| {
-                let file_size = MemoryFs::get_file_size(&f).unwrap_or(0);
-                total_buckets_size += file_size;
-                (f, file_size)
+                let total_file_size: usize = f
+                    .iter()
+                    .map(|f| MemoryFs::get_file_size(&f).unwrap_or(0))
+                    .sum();
+                total_buckets_size += total_file_size;
+                (f, total_file_size)
             })
             .collect();
 
-        files_with_sizes.sort_by_key(|x| x.1);
-        files_with_sizes.reverse();
+        file_batches_with_sizes.sort_by_key(|x| x.1);
+        file_batches_with_sizes.reverse();
 
         let normal_buckets_list = {
-            let mut buckets_list = Vec::with_capacity(files_with_sizes.len());
+            let mut buckets_list = Vec::with_capacity(file_batches_with_sizes.len());
             let mut start_idx = 0;
-            let mut end_idx = files_with_sizes.len();
+            let mut end_idx = file_batches_with_sizes.len();
 
             let mut matched_size = 0i64;
 
@@ -199,10 +202,13 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             while start_idx != end_idx && unique_estimator_buckets_count > 0 {
                 end_idx -= 1;
                 unique_estimator_buckets_count -= 1;
-                let file_entry = files_with_sizes[end_idx].0.clone();
-                let bucket_index = get_bucket_index(&file_entry);
+                let file_entries = file_batches_with_sizes[end_idx].0.clone();
+
+                // The bucket index is given by the first file name, other files are with incremented indexes
+                let first_bucket_name = file_entries.first().unwrap();
+                let bucket_index = get_bucket_index(&first_bucket_name);
                 buckets_list.push(InputBucketDesc {
-                    path: file_entry,
+                    paths: file_entries,
                     sub_bucket_counters: counters.get_counters_for_bucket(bucket_index).clone(),
                     resplitted: false,
                     rewritten: false,
@@ -212,23 +218,25 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
             while start_idx != end_idx {
                 let file_entry = if matched_size <= 0 {
-                    let target_file = &files_with_sizes[start_idx];
+                    let target_file = &file_batches_with_sizes[start_idx];
                     let entry = target_file.0.clone();
                     matched_size = target_file.1 as i64;
                     start_idx += 1;
                     entry
                 } else {
-                    let target_file = &files_with_sizes[end_idx - 1];
+                    let target_file = &file_batches_with_sizes[end_idx - 1];
                     let entry = target_file.0.clone();
                     matched_size -= target_file.1 as i64;
                     end_idx -= 1;
                     entry
                 };
 
-                let bucket_index = get_bucket_index(&file_entry);
+                // The bucket index is given by the first file name, other files are with incremented indexes
+                let first_bucket_name = file_entry.first().unwrap();
+                let bucket_index = get_bucket_index(first_bucket_name);
 
                 buckets_list.push(InputBucketDesc {
-                    path: file_entry,
+                    paths: file_entry,
                     sub_bucket_counters: counters.get_counters_for_bucket(bucket_index).clone(),
                     resplitted: false,
                     rewritten: false,

@@ -141,7 +141,7 @@ pub fn kmers_merge<
     CX: ColorsManager,
     P: AsRef<Path> + Sync,
 >(
-    file_inputs: Vec<PathBuf>,
+    file_inputs: Vec<Vec<PathBuf>>,
     buckets_counters_path: PathBuf,
     colors_global_table: Arc<GlobalColorsTableWriter<H, MH, CX>>,
     buckets_count: usize,
@@ -163,6 +163,7 @@ pub fn kmers_merge<
     let hashes_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
         buckets_count,
         out_directory.as_ref().join("hashes"),
+        None,
         &(
             get_memory_mode(SwapPriority::HashBuckets),
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
@@ -174,6 +175,7 @@ pub fn kmers_merge<
     let reads_buckets = MultiThreadBuckets::<CompressedBinaryWriter>::new(
         buckets_count,
         out_directory.as_ref().join("result"),
+        None,
         &(
             get_memory_mode(SwapPriority::ResultBuckets),
             CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
@@ -249,7 +251,7 @@ pub fn kmers_merge<
 
     RetType {
         sequences,
-        hashes: hashes_buckets.finalize(),
+        hashes: hashes_buckets.finalize_single(),
     }
 }
 

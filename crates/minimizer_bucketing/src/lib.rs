@@ -395,7 +395,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 // }
 
 impl GenericMinimizerBucketing {
-    pub fn do_bucketing<
+    pub fn do_bucketing_no_max_usage<
         E: MinimizerBucketingExecutorFactory + Sync + Send + 'static,
         S: GenericSequencesStream,
     >(
@@ -410,12 +410,55 @@ impl GenericMinimizerBucketing {
         copy_ident: bool,
         ignored_length: usize,
     ) -> (Vec<PathBuf>, PathBuf) {
+        let (buckets, counters) = Self::do_bucketing::<E, S>(
+            input_blocks,
+            output_path,
+            buckets_count,
+            threads_count,
+            k,
+            m,
+            global_data,
+            partial_read_copyback,
+            copy_ident,
+            ignored_length,
+            None,
+        );
+
+        (
+            buckets
+                .into_iter()
+                .map(|mut bucket| {
+                    assert!(bucket.len() == 1);
+                    bucket.pop().unwrap()
+                })
+                .collect(),
+            counters,
+        )
+    }
+
+    pub fn do_bucketing<
+        E: MinimizerBucketingExecutorFactory + Sync + Send + 'static,
+        S: GenericSequencesStream,
+    >(
+        input_blocks: impl ExactSizeIterator<Item = (S::SequenceBlockData, E::StreamInfo)>,
+        output_path: &Path,
+        buckets_count: usize,
+        threads_count: usize,
+        k: usize,
+        m: usize,
+        global_data: E::GlobalData,
+        partial_read_copyback: Option<usize>,
+        copy_ident: bool,
+        ignored_length: usize,
+        maximum_disk_usage: Option<u64>,
+    ) -> (Vec<Vec<PathBuf>>, PathBuf) {
         let read_threads_count = max(1, threads_count / 2);
         let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count / 4));
 
         let buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
             output_path.join("bucket"),
+            maximum_disk_usage,
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
                 MINIMIZER_BUCKETS_CHECKPOINT_SIZE,

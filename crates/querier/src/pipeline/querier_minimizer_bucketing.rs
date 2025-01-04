@@ -287,7 +287,7 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
     let queries_count = Arc::new(AtomicUsize::new(0));
 
     (
-        GenericMinimizerBucketing::do_bucketing::<
+        GenericMinimizerBucketing::do_bucketing_no_max_usage::<
             QuerierMinimizerBucketingExecutorFactory<H, CX>,
             FastaFileSequencesStream,
         >(

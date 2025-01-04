@@ -35,6 +35,7 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
     let links_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
         buckets_count,
         output_dir.as_ref().join("links"),
+        None,
         &(
             get_memory_mode(SwapPriority::LinksBuckets),
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
@@ -123,5 +124,5 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
             }
             buffers.put_back(links_tmp.finalize().0);
         });
-    links_buckets.finalize()
+    links_buckets.finalize_single()
 }
