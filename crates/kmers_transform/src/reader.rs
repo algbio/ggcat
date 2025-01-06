@@ -403,6 +403,10 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         let has_single_addr = bucket_info.addresses.len() == 1;
 
         for reader in &bucket_info.readers {
+            if reader.is_finished() {
+                continue;
+            }
+
             let mut items_iterator = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
                 F::AssociatedExtraData,
                 F::FLAGS_COUNT,
