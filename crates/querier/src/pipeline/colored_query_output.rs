@@ -9,12 +9,11 @@ use config::{
 use flate2::Compression;
 use ggcat_logging::UnrecoverableErrorLogging;
 use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
-use io::get_bucket_index;
 use nightly_quirks::prelude::*;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::LockFreeBucket;
+use parallel_processor::buckets::{LockFreeBucket, SingleBucket};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::{Condvar, Mutex};
@@ -56,7 +55,7 @@ pub fn colored_query_output<
     CX: ColorsManager,
 >(
     colormap: &<CX::ColorsMergeManagerType<H, MH> as ColorsMergeManager<H, MH>>::GlobalColorsTableReader,
-    mut colored_query_buckets: Vec<PathBuf>,
+    mut colored_query_buckets: Vec<SingleBucket>,
     output_file: PathBuf,
     temp_dir: PathBuf,
     query_kmers_count: &[u64],
@@ -133,10 +132,10 @@ pub fn colored_query_output<
                 queries_colors_list_pool.clear();
 
                 let start_query_index =
-                    get_bucket_index(&input) as usize * max_bucket_queries_count / buckets_count;
+                    input.index as usize * max_bucket_queries_count / buckets_count;
 
                 CompressedBinaryReader::new(
-                    &input,
+                    &input.path,
                     RemoveFileMode::Remove {
                         remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                     },
@@ -175,7 +174,7 @@ pub fn colored_query_output<
                     },
                 );
 
-                let bucket_index = get_bucket_index(input);
+                let bucket_index = input.index;
 
                 let compressed_stream = CompressedBinaryWriter::new(
                     &temp_dir.join("query-data"),

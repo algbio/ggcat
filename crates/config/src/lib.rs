@@ -14,6 +14,7 @@ pub type ColorCounterType = usize;
 
 pub const PACKETS_PRIORITY_DEFAULT: usize = 0;
 pub const PACKETS_PRIORITY_REWRITTEN: usize = 0;
+pub const PACKETS_PRIORITY_COMPACT: usize = 1;
 pub const PACKETS_PRIORITY_DONE_RESPLIT: usize = 0;
 pub const PACKETS_PRIORITY_FILES: usize = 1;
 // pub const PACKETS_PRIORITY_PENDING_RESPLIT: usize = 3;

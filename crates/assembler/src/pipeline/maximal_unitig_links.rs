@@ -250,7 +250,7 @@ pub fn build_maximal_unitigs_links<
             let mut tmp_links_vec = Vec::new();
 
             CompressedBinaryReader::new(
-                input,
+                &input.path,
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },

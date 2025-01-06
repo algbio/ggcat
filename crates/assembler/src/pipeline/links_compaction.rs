@@ -1,8 +1,8 @@
 use crate::structs::link_mapping::{LinkMapping, LinkMappingSerializer};
 use config::{
-    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
+    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
 };
-use io::get_bucket_index;
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink, UnitigLinkSerializer};
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
@@ -10,20 +10,20 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::single::SingleBucketThreadDispatcher;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use utils::fast_rand_bool::FastRandBool;
 use utils::vec_slice::VecSlice;
 
 pub fn links_compaction(
-    links_inputs: Vec<PathBuf>,
+    links_inputs: Vec<SingleBucket>,
     output_dir: impl AsRef<Path>,
     buckets_count: usize,
     elab_index: usize,
@@ -32,7 +32,7 @@ pub fn links_compaction(
     // links_manager: &UnitigLinksManager,
     link_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
     result_thread_buffers: &ScopedThreadLocal<BucketsThreadBuffer>,
-) -> (Vec<PathBuf>, u64) {
+) -> (Vec<SingleBucket>, u64) {
     let totsum = AtomicU64::new(0);
 
     let links_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
@@ -49,7 +49,7 @@ pub fn links_compaction(
     ));
 
     links_inputs.par_iter().for_each(|input| {
-        let bucket_index = get_bucket_index(input);
+        let bucket_index = input.index as BucketIndexType;
 
         let mut link_buffers = link_thread_buffers.get();
         let mut links_tmp = BucketsThreadDispatcher::<_, UnitigLinkSerializer>::new(
@@ -72,7 +72,7 @@ pub fn links_compaction(
         let mut rand_bool = FastRandBool::<1>::new();
 
         let file_reader = LockFreeBinaryReader::new(
-            input,
+            &input.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },

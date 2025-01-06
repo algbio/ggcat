@@ -1432,6 +1432,7 @@ dependencies = [
  "ggcat_config",
  "ggcat_hashes",
  "ggcat_io",
+ "ggcat_utils",
  "nightly-quirks",
  "parallel-processor",
  "parking_lot",

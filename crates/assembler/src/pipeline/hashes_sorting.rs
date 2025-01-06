@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -13,7 +13,7 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -24,10 +24,10 @@ use utils::fast_rand_bool::FastRandBool;
 use utils::vec_slice::VecSlice;
 
 pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
-    file_hashes_inputs: Vec<PathBuf>,
+    file_hashes_inputs: Vec<SingleBucket>,
     output_dir: P,
     buckets_count: usize,
-) -> Vec<PathBuf> {
+) -> Vec<SingleBucket> {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: hashes sorting".to_string());
@@ -60,7 +60,7 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
 
             let mut hashes_vec = Vec::new();
 
-            LockFreeBinaryReader::new(input, RemoveFileMode::Remove {
+            LockFreeBinaryReader::new(&input.path, RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed)
             }, DEFAULT_PREFETCH_AMOUNT).decode_all_bucket_items::<HashEntrySerializer<H::HashTypeUnextendable>, _>((), &mut (), |h, _| {
                 hashes_vec.push(h);

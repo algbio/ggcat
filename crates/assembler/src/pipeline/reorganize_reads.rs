@@ -1,7 +1,7 @@
 use assembler_kmers_merge::structs::PartialUnitigExtraData;
 use config::{
-    get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
+    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
 };
 use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 use io::concurrent::temp_reads::creads_utils::{
@@ -20,14 +20,13 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataConsecutiveCompression, SequenceExtraDataOwned,
     SequenceExtraDataTempBufferManagement,
 };
-use io::get_bucket_index;
 use io::structs::unitig_link::UnitigIndex;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -158,12 +157,12 @@ pub fn reorganize_reads<
     CX: ColorsManager,
     BK: StructuredSequenceBackend<PartialUnitigsColorStructure<H, MH, CX>, ()>,
 >(
-    mut reads: Vec<PathBuf>,
-    mut mapping_files: Vec<PathBuf>,
+    mut reads: Vec<SingleBucket>,
+    mut mapping_files: Vec<SingleBucket>,
     temp_path: &Path,
     out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<H, MH, CX>, (), BK>,
     buckets_count: usize,
-) -> (Vec<PathBuf>, PathBuf) {
+) -> (Vec<SingleBucket>, PathBuf) {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: reads reorganization".to_string());
@@ -179,8 +178,8 @@ pub fn reorganize_reads<
         ),
     ));
 
-    reads.sort();
-    mapping_files.sort();
+    reads.sort_by_key(|b| b.index);
+    mapping_files.sort_by_key(|b| b.index);
 
     let inputs: Vec<_> = reads.iter().zip(mapping_files.iter()).collect();
 
@@ -205,12 +204,12 @@ pub fn reorganize_reads<
 
         let mut mappings = Vec::new();
 
-        assert_eq!(get_bucket_index(read_file), get_bucket_index(mapping_file));
+        assert_eq!(read_file.index, mapping_file.index);
 
-        let bucket_index = get_bucket_index(read_file);
+        let bucket_index = read_file.index as BucketIndexType;
 
         LockFreeBinaryReader::new(
-            mapping_file,
+            &mapping_file.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
@@ -232,7 +231,7 @@ pub fn reorganize_reads<
             color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer();
 
         CompressedBinaryReader::new(
-            read_file,
+            &read_file.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },

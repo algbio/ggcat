@@ -158,7 +158,7 @@ pub fn run_assembler<
         (
             generate_bucket_names(temp_dir.join("bucket"), buckets_count, None)
                 .into_iter()
-                .map(|x| vec![x])
+                .map(|x| x.to_multi_chunk())
                 .collect(),
             temp_dir.join("buckets-counters.dat"),
         )
@@ -168,7 +168,7 @@ pub fn run_assembler<
         "Temp buckets files size: {:.2} total buckets: {} total chunks: {}",
         MemoryDataSize::from_bytes(fs_extra::dir::get_size(&temp_dir).unwrap_or(0) as usize),
         buckets.len(),
-        buckets.iter().map(|x| x.len()).sum::<usize>()
+        buckets.iter().map(|x| x.chunks.len()).sum::<usize>()
     );
 
     if last_step <= AssemblerStartingStep::MinimizerBucketing {
@@ -183,14 +183,14 @@ pub fn run_assembler<
 
     if only_bstats {
         use rayon::prelude::*;
-        buckets.par_iter().enumerate().for_each(|(index, buckets)| {
+        buckets.par_iter().enumerate().for_each(|(index, bucket)| {
             ggcat_logging::info!("Stats for bucket index: {}", index);
-            for bucket in buckets {
+            for chunk in &bucket.chunks {
                 kmers_transform::debug_bucket_stats::compute_stats_for_bucket::<
                     BucketingHash,
                     MergingHash,
                 >(
-                    bucket.clone(),
+                    chunk.clone(),
                     index,
                     buckets.len(),
                     MAXIMUM_SECOND_BUCKETS_LOG,
@@ -258,12 +258,12 @@ pub fn run_assembler<
     // let mut links_manager = UnitigLinksManager::new(buckets_count);
 
     let (unitigs_map, reads_map) = if step <= AssemblerStartingStep::LinksCompaction {
-        for file in unames {
-            let _ = remove_file(file);
+        for bucket in unames {
+            let _ = remove_file(bucket.path);
         }
 
-        for file in rnames {
-            let _ = remove_file(file);
+        for bucket in rnames {
+            let _ = remove_file(bucket.path);
         }
 
         let result_map_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
@@ -352,9 +352,9 @@ pub fn run_assembler<
             loop_iteration += 1;
         };
 
-        for link_file in links {
+        for link_bucket in links {
             MemoryFs::remove_file(
-                &link_file,
+                &link_bucket.path,
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
@@ -452,7 +452,8 @@ pub fn run_assembler<
                 (generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
                     .into_iter()
                     .next()
-                    .unwrap()),
+                    .unwrap()
+                    .path),
             )
         };
 

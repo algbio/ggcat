@@ -7,9 +7,8 @@ use io::concurrent::temp_reads::extra_data::{
 };
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::LockFreeBucket;
+use parallel_processor::buckets::{LockFreeBucket, SingleBucket};
 use std::marker::PhantomData;
-use std::path::PathBuf;
 #[cfg(feature = "support_kmer_counters")]
 use structs::unitigs_counters::UnitigsCounters;
 use utils::owned_drop::OwnedDrop;
@@ -136,6 +135,6 @@ impl<X: SequenceExtraDataConsecutiveCompression> Drop for ResultsBucket<X> {
 }
 
 pub struct RetType {
-    pub sequences: Vec<PathBuf>,
-    pub hashes: Vec<PathBuf>,
+    pub sequences: Vec<SingleBucket>,
+    pub hashes: Vec<SingleBucket>,
 }

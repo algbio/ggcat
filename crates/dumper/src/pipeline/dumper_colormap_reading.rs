@@ -9,6 +9,7 @@ use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerialize
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
+use parallel_processor::buckets::SingleBucket;
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, FastSortable, SortKey};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -24,7 +25,7 @@ pub fn colormap_reading<
     CD: ColorsSerializerTrait,
 >(
     colormap_file: PathBuf,
-    colored_unitigs_buckets: Vec<PathBuf>,
+    colored_unitigs_buckets: Vec<SingleBucket>,
     single_thread_output_function: bool,
     output_function: impl Fn(&[u8], &[ColorIndexType], bool) + Send + Sync,
 ) -> anyhow::Result<()> {
@@ -50,7 +51,7 @@ pub fn colormap_reading<
         let mut temp_sequences = Vec::new();
 
         CompressedBinaryReader::new(
-            input,
+            &input.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },

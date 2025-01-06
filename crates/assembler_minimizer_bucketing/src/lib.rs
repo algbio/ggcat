@@ -16,6 +16,7 @@ use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
 };
+use parallel_processor::buckets::MultiChunkBucket;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::max;
 use std::marker::PhantomData;
@@ -223,7 +224,7 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
     threads_count: usize,
     k: usize,
     m: usize,
-) -> (Vec<Vec<PathBuf>>, PathBuf) {
+) -> (Vec<MultiChunkBucket>, PathBuf) {
     H::initialize(k);
 
     PHASES_TIMES_MONITOR

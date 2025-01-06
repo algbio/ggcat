@@ -11,9 +11,9 @@ use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
 };
-use io::get_bucket_index;
 use minimizer_bucketing::counters_analyzer::CountersAnalyzer;
 use minimizer_bucketing::MinimizerBucketingExecutorFactory;
+use parallel_processor::buckets::MultiChunkBucket;
 use parallel_processor::execution_manager::execution_context::{ExecutionContext, PoolAllocMode};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
@@ -159,7 +159,7 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
 
 impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
     pub fn new(
-        file_inputs: Vec<Vec<PathBuf>>,
+        file_inputs: Vec<MultiChunkBucket>,
         temp_dir: &Path,
         buckets_counters_path: PathBuf,
         buckets_count: usize,
@@ -179,6 +179,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             .into_iter()
             .map(|f| {
                 let total_file_size: usize = f
+                    .chunks
                     .iter()
                     .map(|f| MemoryFs::get_file_size(&f).unwrap_or(0))
                     .sum();
@@ -202,14 +203,13 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             while start_idx != end_idx && unique_estimator_buckets_count > 0 {
                 end_idx -= 1;
                 unique_estimator_buckets_count -= 1;
-                let file_entries = file_batches_with_sizes[end_idx].0.clone();
+                let bucket_entries = file_batches_with_sizes[end_idx].0.clone();
 
-                // The bucket index is given by the first file name, other files are with incremented indexes
-                let first_bucket_name = file_entries.first().unwrap();
-                let bucket_index = get_bucket_index(&first_bucket_name);
                 buckets_list.push(InputBucketDesc {
-                    paths: file_entries,
-                    sub_bucket_counters: counters.get_counters_for_bucket(bucket_index).clone(),
+                    paths: bucket_entries.chunks,
+                    sub_bucket_counters: counters
+                        .get_counters_for_bucket(bucket_entries.index as BucketIndexType)
+                        .clone(),
                     resplitted: false,
                     rewritten: false,
                     used_hash_bits: buckets_count.ilog2() as usize,
@@ -217,7 +217,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             }
 
             while start_idx != end_idx {
-                let file_entry = if matched_size <= 0 {
+                let bucket_entry = if matched_size <= 0 {
                     let target_file = &file_batches_with_sizes[start_idx];
                     let entry = target_file.0.clone();
                     matched_size = target_file.1 as i64;
@@ -231,13 +231,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     entry
                 };
 
-                // The bucket index is given by the first file name, other files are with incremented indexes
-                let first_bucket_name = file_entry.first().unwrap();
-                let bucket_index = get_bucket_index(first_bucket_name);
-
                 buckets_list.push(InputBucketDesc {
-                    paths: file_entry,
-                    sub_bucket_counters: counters.get_counters_for_bucket(bucket_index).clone(),
+                    paths: bucket_entry.chunks,
+                    sub_bucket_counters: counters
+                        .get_counters_for_bucket(bucket_entry.index as BucketIndexType)
+                        .clone(),
                     resplitted: false,
                     rewritten: false,
                     used_hash_bits: buckets_count.ilog2() as usize,

@@ -4,10 +4,11 @@ use crate::pipeline::maximal_unitig_links::maximal_unitig_index::{
 use config::{DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
+use parallel_processor::buckets::SingleBucket;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parking_lot::{Mutex, RwLock};
 use std::cmp::min;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use utils::vec_slice::VecSlice;
@@ -92,7 +93,7 @@ impl MaximalUnitigLinksMapping {
 }
 
 pub struct MaximalUnitigLinksMappingsLoader {
-    buckets: Vec<PathBuf>,
+    buckets: Vec<SingleBucket>,
     unitigs_per_bucket: usize,
 
     minimum_buckets: Vec<AtomicUsize>,
@@ -102,7 +103,11 @@ pub struct MaximalUnitigLinksMappingsLoader {
 }
 
 impl MaximalUnitigLinksMappingsLoader {
-    pub fn new(buckets: Vec<PathBuf>, unitigs_per_bucket: usize, threads_count: usize) -> Self {
+    pub fn new(
+        buckets: Vec<SingleBucket>,
+        unitigs_per_bucket: usize,
+        threads_count: usize,
+    ) -> Self {
         let buckets_count = buckets.len();
 
         Self {
@@ -151,7 +156,7 @@ impl MaximalUnitigLinksMappingsLoader {
             bucket.clone()
         } else {
             let bucket = Arc::new(MaximalUnitigLinksMapping::load_from_bucket(
-                &self.buckets[bucket_index],
+                &self.buckets[bucket_index].path,
                 bucket_index as u64 * self.unitigs_per_bucket as u64,
                 self.unitigs_per_bucket,
             ));

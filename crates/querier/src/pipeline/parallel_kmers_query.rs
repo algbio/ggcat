@@ -29,7 +29,7 @@ use kmers_transform::{
 use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
@@ -412,14 +412,14 @@ pub fn parallel_kmers_counting<
     CX: ColorsManager,
     P: AsRef<Path> + Sync,
 >(
-    file_inputs: Vec<PathBuf>,
+    file_inputs: Vec<SingleBucket>,
     buckets_counters_path: PathBuf,
     buckets_count: usize,
     out_directory: P,
     k: usize,
     m: usize,
     threads_count: usize,
-) -> Vec<PathBuf> {
+) -> Vec<SingleBucket> {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: kmers counting".to_string());
@@ -455,7 +455,10 @@ pub fn parallel_kmers_counting<
     });
 
     KmersTransform::<ParallelKmersQueryFactory<H, MH, CX>>::new(
-        file_inputs.into_iter().map(|x| vec![x]).collect(),
+        file_inputs
+            .into_iter()
+            .map(|x| x.to_multi_chunk())
+            .collect(),
         out_directory.as_ref(),
         buckets_counters_path,
         buckets_count,

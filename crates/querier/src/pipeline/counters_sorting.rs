@@ -15,7 +15,7 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -100,12 +100,12 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> BucketItemSer
 
 pub fn counters_sorting<CX: ColorsManager>(
     _k: usize,
-    file_counters_inputs: Vec<PathBuf>,
+    file_counters_inputs: Vec<SingleBucket>,
     colored_buckets_path: PathBuf,
     colors_count: u64,
     output_file: PathBuf,
     query_kmers_count: &[u64],
-) -> Vec<PathBuf> {
+) -> Vec<SingleBucket> {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: counters sorting".to_string());
@@ -157,7 +157,7 @@ pub fn counters_sorting<CX: ColorsManager>(
             SingleKmerColorDataType<CX>,
         )> = Vec::new();
         LockFreeBinaryReader::new(
-            input,
+            &input.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },

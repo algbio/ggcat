@@ -15,6 +15,7 @@ use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
 };
+use parallel_processor::buckets::SingleBucket;
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::io::{Read, Write};
@@ -254,7 +255,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     k: usize,
     m: usize,
     colors_count: u64,
-) -> (Vec<PathBuf>, PathBuf) {
+) -> (Vec<SingleBucket>, PathBuf) {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: unitigs reorganization".to_string());

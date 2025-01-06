@@ -250,7 +250,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
                     address.packet_send(
                         resplit_info.output_addresses[i].clone(),
                         Packet::new_simple(InputBucketDesc {
-                            paths: vec![bucket],
+                            paths: vec![bucket.path],
                             sub_bucket_counters: vec![sub_bucket_count],
                             resplitted: true,
                             rewritten: false,

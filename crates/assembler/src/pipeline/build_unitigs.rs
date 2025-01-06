@@ -2,7 +2,7 @@ use crate::pipeline::reorganize_reads::ReorganizedReadsExtraData;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::{color_types, ColorsManager};
-use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
+use config::{BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
@@ -10,17 +10,17 @@ use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffe
 use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
-use io::get_bucket_index;
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLinkSerializer};
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
+use parallel_processor::buckets::SingleBucket;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::prelude::*;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::Ordering;
 
 #[cfg(feature = "support_kmer_counters")]
@@ -45,8 +45,8 @@ pub fn build_unitigs<
     CX: ColorsManager,
     BK: StructuredSequenceBackend<PartialUnitigsColorStructure<H, MH, CX>, ()>,
 >(
-    mut read_buckets_files: Vec<PathBuf>,
-    mut unitig_map_files: Vec<PathBuf>,
+    mut read_buckets_files: Vec<SingleBucket>,
+    mut unitig_map_files: Vec<SingleBucket>,
     _temp_path: &Path,
     out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<H, MH, CX>, (), BK>,
     circular_out_file: Option<
@@ -58,8 +58,8 @@ pub fn build_unitigs<
         .write()
         .start_phase("phase: unitigs building".to_string());
 
-    read_buckets_files.sort();
-    unitig_map_files.sort();
+    read_buckets_files.sort_by_key(|b| b.index);
+    unitig_map_files.sort_by_key(|b| b.index);
 
     let inputs: Vec<_> = read_buckets_files
         .iter()
@@ -80,14 +80,14 @@ pub fn build_unitigs<
                     );
 
                 assert_eq!(
-                    get_bucket_index(read_file),
-                    get_bucket_index(unitigs_map_file)
+                    read_file.index,
+                    unitigs_map_file.index
                 );
 
-                let bucket_index = get_bucket_index(read_file);
+                let bucket_index = read_file.index as BucketIndexType;
 
                 let mut unitigs_map_reader = LockFreeBinaryReader::new(
-                    &unitigs_map_file,
+                    &unitigs_map_file.path,
                     RemoveFileMode::Remove {
                         remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                     },
@@ -171,7 +171,7 @@ pub fn build_unitigs<
                     color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer();
 
                 CompressedBinaryReader::new(
-                    read_file,
+                    &read_file.path,
                     RemoveFileMode::Remove {
                         remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                     },

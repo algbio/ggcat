@@ -1,7 +1,8 @@
 use crate::sequences_stream::general::GeneralSequenceBlockData;
-use config::{BucketIndexType, MAX_BUCKETS_COUNT_LOG, MAX_BUCKET_SIZE, MIN_BUCKETS_COUNT_LOG};
+use config::{MAX_BUCKETS_COUNT_LOG, MAX_BUCKET_SIZE, MIN_BUCKETS_COUNT_LOG};
+use parallel_processor::buckets::SingleBucket;
 use std::cmp::{max, min};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub mod chunks_writer;
 pub mod compressed_read;
@@ -13,41 +14,22 @@ pub mod sequences_stream;
 pub mod structs;
 pub mod varint;
 
-pub fn get_bucket_index(bucket_file: impl AsRef<Path>) -> BucketIndexType {
-    let mut file_path = bucket_file.as_ref().to_path_buf();
-
-    while let Some(extension) = file_path.extension() {
-        if extension != "lz4" {
-            if let Some(extension) = extension.to_str() {
-                match extension.parse() {
-                    Ok(bucket_index) => return bucket_index,
-                    Err(_) => {}
-                };
-            }
-        }
-        file_path = file_path.with_extension("");
-    }
-    panic!(
-        "Cannot find bucket index for file {:?}",
-        bucket_file.as_ref()
-    );
-}
-
 pub fn generate_bucket_names(
     root: impl AsRef<Path>,
     count: usize,
     suffix: Option<&str>,
-) -> Vec<PathBuf> {
+) -> Vec<SingleBucket> {
     (0..count)
-        .map(|i| {
-            root.as_ref().with_extension(format!(
+        .map(|i| SingleBucket {
+            index: i,
+            path: root.as_ref().with_extension(format!(
                 "{}{}",
                 i,
                 match suffix {
                     None => String::from(""),
                     Some(s) => format!(".{}", s),
                 }
-            ))
+            )),
         })
         .collect()
 }

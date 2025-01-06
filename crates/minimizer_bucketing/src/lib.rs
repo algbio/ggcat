@@ -1,3 +1,4 @@
+pub mod compactor;
 pub mod counters_analyzer;
 mod queue_data;
 mod reader;
@@ -7,10 +8,11 @@ use crate::counters_analyzer::CountersAnalyzer;
 use crate::queue_data::MinimizerBucketingQueueData;
 use crate::reader::MinimizerBucketingFilesReader;
 use crate::sequences_splitter::SequencesSplitter;
+use compactor::CompactorInitData;
 use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
-    DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DEFAULT,
-    READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
+    DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_COMPACT,
+    PACKETS_PRIORITY_DEFAULT, READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
 };
 use config::{MAXIMUM_SECOND_BUCKETS_COUNT, USE_SECOND_BUCKET};
 use hashes::HashableSequence;
@@ -25,7 +27,9 @@ use io::sequences_reader::DnaSequence;
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::buckets::{
+    ChunkingStatus, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
+};
 use parallel_processor::execution_manager::execution_context::{ExecutionContext, PoolAllocMode};
 use parallel_processor::execution_manager::executor::{
     AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
@@ -35,7 +39,7 @@ use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
 use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInputAddressMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::cmp::max;
 use std::future::Future;
 use std::marker::PhantomData;
@@ -190,6 +194,8 @@ pub struct MinimizerBucketingExecutionContext<GlobalData> {
     pub read_threads_count: usize,
     pub threads_count: usize,
 
+    pub bucket_compactors: Vec<Mutex<Option<ExecutorAddress>>>,
+
     pub partial_read_copyback: Option<usize>,
     pub copy_ident: bool,
 }
@@ -270,12 +276,27 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                                     .fetch_add(256, Ordering::Relaxed);
                             }
 
-                            tmp_reads_buffer.add_element_extended(
+                            let chunking_status = tmp_reads_buffer.add_element_extended(
                                 bucket,
                                 &extra,
                                 extra_buffer,
                                 &CompressedReadsBucketData::new(seq, flags, next_bucket as u8),
                             );
+
+                            // New chunks were produced, spawn new compactors
+                            if let ChunkingStatus::NewChunks { bucket_indexes } = chunking_status {
+                                for bucket_index in bucket_indexes {
+                                    let new_address = compactor::MinimizerBucketingCompactor::<E>::generate_new_address(
+                                        CompactorInitData { bucket_index }
+                                    );
+
+                                    ops.declare_addresses(
+                                        vec![new_address.clone()],
+                                        PACKETS_PRIORITY_COMPACT,
+                                    );
+                                    *context.bucket_compactors[bucket_index as usize].lock() = Some(new_address);
+                                }
+                            }
                         },
                     );
                 });
@@ -409,7 +430,7 @@ impl GenericMinimizerBucketing {
         partial_read_copyback: Option<usize>,
         copy_ident: bool,
         ignored_length: usize,
-    ) -> (Vec<PathBuf>, PathBuf) {
+    ) -> (Vec<SingleBucket>, PathBuf) {
         let (buckets, counters) = Self::do_bucketing::<E, S>(
             input_blocks,
             output_path,
@@ -427,10 +448,7 @@ impl GenericMinimizerBucketing {
         (
             buckets
                 .into_iter()
-                .map(|mut bucket| {
-                    assert!(bucket.len() == 1);
-                    bucket.pop().unwrap()
-                })
+                .map(MultiChunkBucket::into_single)
                 .collect(),
             counters,
         )
@@ -451,7 +469,7 @@ impl GenericMinimizerBucketing {
         copy_ident: bool,
         ignored_length: usize,
         maximum_disk_usage: Option<u64>,
-    ) -> (Vec<Vec<PathBuf>>, PathBuf) {
+    ) -> (Vec<MultiChunkBucket>, PathBuf) {
         let read_threads_count = max(1, threads_count / 2);
         let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count / 4));
 
@@ -488,6 +506,8 @@ impl GenericMinimizerBucketing {
                 global_data,
             )),
             threads_count: compute_threads_count,
+
+            bucket_compactors: (0..buckets_count).map(|_| Mutex::new(None)).collect(),
             partial_read_copyback,
             read_threads_count,
             copy_ident,
@@ -530,6 +550,14 @@ impl GenericMinimizerBucketing {
                     &global_context,
                 );
 
+            let compactor_executors = compute_thread_pool
+                .register_executors::<compactor::MinimizerBucketingCompactor<E>>(
+                    compute_threads_count,
+                    PoolAllocMode::None,
+                    (),
+                    &global_context,
+                );
+
             input_files.set_output_executor::<MinimizerBucketingFilesReader<E::GlobalData, E::StreamInfo, S>>(
                 &execution_context,
                 (),
@@ -552,6 +580,7 @@ impl GenericMinimizerBucketing {
             global_context.executor_group_address.write().take();
 
             execution_context.wait_for_completion(writer_executors);
+            execution_context.wait_for_completion(compactor_executors);
 
             execution_context.join_all();
         }

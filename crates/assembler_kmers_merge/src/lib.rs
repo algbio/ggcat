@@ -23,7 +23,9 @@ use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::{LockFreeBucket, MultiThreadBuckets};
+use parallel_processor::buckets::{
+    LockFreeBucket, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
+};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
@@ -141,7 +143,7 @@ pub fn kmers_merge<
     CX: ColorsManager,
     P: AsRef<Path> + Sync,
 >(
-    file_inputs: Vec<Vec<PathBuf>>,
+    file_inputs: Vec<MultiChunkBucket>,
     buckets_counters_path: PathBuf,
     colors_global_table: Arc<GlobalColorsTableWriter<H, MH, CX>>,
     buckets_count: usize,
@@ -193,7 +195,10 @@ pub fn kmers_merge<
             _phantom: PhantomData,
             serializer: BucketItemSerializer::new(),
         };
-        sequences.push(bucket_read.reads_writer.get_path());
+        sequences.push(SingleBucket {
+            index,
+            path: bucket_read.reads_writer.get_path(),
+        });
         let res = output_results_buckets.push(bucket_read).is_ok();
         assert!(res);
     }

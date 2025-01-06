@@ -15,7 +15,7 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -27,10 +27,10 @@ use std::sync::Arc;
 
 pub fn colormap_reading<CD: ColorsSerializerTrait>(
     colormap_file: PathBuf,
-    colored_query_buckets: Vec<PathBuf>,
+    colored_query_buckets: Vec<SingleBucket>,
     temp_dir: PathBuf,
     queries_count: u64,
-) -> anyhow::Result<Vec<PathBuf>> {
+) -> anyhow::Result<Vec<SingleBucket>> {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: colormap reading".to_string());
@@ -75,7 +75,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
 
         let mut counters_vec: Vec<(CounterEntry<ColorIndexType>, ColorIndexType)> = Vec::new();
         CompressedBinaryReader::new(
-            input,
+            &input.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },

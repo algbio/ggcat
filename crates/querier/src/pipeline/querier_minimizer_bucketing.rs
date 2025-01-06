@@ -19,6 +19,7 @@ use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
 };
+use parallel_processor::buckets::SingleBucket;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
@@ -274,7 +275,7 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
     threads_count: usize,
     k: usize,
     m: usize,
-) -> ((Vec<PathBuf>, PathBuf), u64) {
+) -> ((Vec<SingleBucket>, PathBuf), u64) {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: graph + query bucketing".to_string());
