@@ -12,8 +12,8 @@ use config::{
     MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use crossbeam::queue::*;
+use hashes::default::MNHFactory;
 use hashes::HashFunctionFactory;
-use hashes::MinimizerHashFunctionFactory;
 use io::structs::hash_entry::HashEntry;
 use io::structs::hash_entry::{Direction, HashEntrySerializer};
 use kmers_transform::processor::KmersTransformProcessor;
@@ -40,18 +40,14 @@ mod map_processor;
 mod preprocessor;
 pub mod structs;
 
-pub struct GlobalMergeData<
-    H: MinimizerHashFunctionFactory,
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-> {
+pub struct GlobalMergeData<CX: ColorsManager> {
     k: usize,
     m: usize,
     buckets_count: usize,
     min_multiplicity: usize,
-    colors_global_table: Arc<GlobalColorsTableWriter<H, MH, CX>>,
+    colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
     output_results_buckets:
-        ArrayQueue<ResultsBucket<color_types::PartialUnitigsColorStructure<H, MH, CX>>>,
+        ArrayQueue<ResultsBucket<color_types::PartialUnitigsColorStructure<CX>>>,
     hashes_buckets: Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
     global_resplit_data: Arc<MinimizerBucketingCommonData<()>>,
     sequences_size_total: AtomicU64,
@@ -60,26 +56,21 @@ pub struct GlobalMergeData<
 }
 
 pub struct ParallelKmersMergeFactory<
-    H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
     const COMPUTE_SIMPLITIGS: bool,
->(PhantomData<(H, MH, CX)>);
+>(PhantomData<(MH, CX)>);
 
-impl<
-        H: MinimizerHashFunctionFactory,
-        MH: HashFunctionFactory,
-        CX: ColorsManager,
-        const COMPUTE_SIMPLITIGS: bool,
-    > KmersTransformExecutorFactory for ParallelKmersMergeFactory<H, MH, CX, COMPUTE_SIMPLITIGS>
+impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
+    KmersTransformExecutorFactory for ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS>
 {
-    type SequencesResplitterFactory = AssemblerMinimizerBucketingExecutorFactory<H, CX>;
-    type GlobalExtraData = GlobalMergeData<H, MH, CX>;
+    type SequencesResplitterFactory = AssemblerMinimizerBucketingExecutorFactory<CX>;
+    type GlobalExtraData = GlobalMergeData<CX>;
     type AssociatedExtraData = MinimizerBucketingSeqColorDataType<CX>;
 
-    type PreprocessorType = ParallelKmersMergePreprocessor<H, MH, CX, COMPUTE_SIMPLITIGS>;
-    type MapProcessorType = ParallelKmersMergeMapProcessor<H, MH, CX, COMPUTE_SIMPLITIGS>;
-    type FinalExecutorType = ParallelKmersMergeFinalExecutor<H, MH, CX, COMPUTE_SIMPLITIGS>;
+    type PreprocessorType = ParallelKmersMergePreprocessor<MH, CX, COMPUTE_SIMPLITIGS>;
+    type MapProcessorType = ParallelKmersMergeMapProcessor<MH, CX, COMPUTE_SIMPLITIGS>;
+    type FinalExecutorType = ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U2;
@@ -107,12 +98,8 @@ impl<
     }
 }
 
-impl<
-        H: MinimizerHashFunctionFactory,
-        MH: HashFunctionFactory,
-        CX: ColorsManager,
-        const COMPUTE_SIMPLITIGS: bool,
-    > ParallelKmersMergeFinalExecutor<H, MH, CX, COMPUTE_SIMPLITIGS>
+impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
+    ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>
 {
     #[inline(always)]
     fn write_hashes(
@@ -137,15 +124,10 @@ impl<
     }
 }
 
-pub fn kmers_merge<
-    H: MinimizerHashFunctionFactory,
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-    P: AsRef<Path> + Sync,
->(
+pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + Sync>(
     file_inputs: Vec<MultiChunkBucket>,
     buckets_counters_path: PathBuf,
-    colors_global_table: Arc<GlobalColorsTableWriter<H, MH, CX>>,
+    colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
     buckets_count: usize,
     min_multiplicity: usize,
     out_directory: P,
@@ -158,7 +140,7 @@ pub fn kmers_merge<
         .write()
         .start_phase("phase: kmers merge".to_string());
 
-    H::initialize(k);
+    MNHFactory::initialize(k);
     MH::initialize(k);
     *KMERGE_TEMP_DIR.write() = Some(out_directory.as_ref().to_path_buf());
 
@@ -187,7 +169,7 @@ pub fn kmers_merge<
 
     let output_results_buckets = ArrayQueue::new(reads_buckets.count());
     for (index, bucket) in reads_buckets.into_buckets().enumerate() {
-        let bucket_read = ResultsBucket::<color_types::PartialUnitigsColorStructure<H, MH, CX>> {
+        let bucket_read = ResultsBucket::<color_types::PartialUnitigsColorStructure<CX>> {
             read_index: 0,
             reads_writer: OwnedDrop::new(bucket),
             temp_buffer: Vec::with_capacity(256),
@@ -203,7 +185,7 @@ pub fn kmers_merge<
         assert!(res);
     }
 
-    let global_data = Arc::new(GlobalMergeData::<H, MH, CX> {
+    let global_data = Arc::new(GlobalMergeData::<CX> {
         k,
         m,
         buckets_count,
@@ -229,7 +211,7 @@ pub fn kmers_merge<
     });
 
     if compute_simplitigs {
-        KmersTransform::<ParallelKmersMergeFactory<H, MH, CX, true>>::new(
+        KmersTransform::<ParallelKmersMergeFactory<MH, CX, true>>::new(
             file_inputs,
             out_directory.as_ref(),
             buckets_counters_path,
@@ -241,7 +223,7 @@ pub fn kmers_merge<
         )
         .parallel_kmers_transform();
     } else {
-        KmersTransform::<ParallelKmersMergeFactory<H, MH, CX, false>>::new(
+        KmersTransform::<ParallelKmersMergeFactory<MH, CX, false>>::new(
             file_inputs,
             out_directory.as_ref(),
             buckets_counters_path,
@@ -298,13 +280,7 @@ mod tests {
         let counters = Path::new(TEMP_DIR).join("buckets-counters.dat");
 
         let global_colors_table = Arc::new(
-            <<NonColoredManager as ColorsManager>::ColorsMergeManagerType<
-                hashes::cn_nthash::CanonicalNtHashIteratorFactory,
-                hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
-            > as ColorsMergeManager<
-                hashes::cn_nthash::CanonicalNtHashIteratorFactory,
-                hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
-            >>::create_colors_table("", &[]),
+            <<NonColoredManager as ColorsManager>::ColorsMergeManagerType as ColorsMergeManager>::create_colors_table("", &[]),
         );
 
         let k = 63;
@@ -346,12 +322,7 @@ mod tests {
 
         // #[cfg(feature = "mem-analysis")]
         // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
-        crate::kmers_merge::<
-            hashes::cn_nthash::CanonicalNtHashIteratorFactory,
-            hashes::cn_seqhash::u128::CanonicalSeqHashFactory,
-            NonColoredManager,
-            _,
-        >(
+        crate::kmers_merge::<hashes::cn_seqhash::u128::CanonicalSeqHashFactory, NonColoredManager, _>(
             buckets,
             counters,
             global_colors_table.clone(),

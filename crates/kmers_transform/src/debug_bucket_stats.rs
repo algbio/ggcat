@@ -2,6 +2,7 @@ use config::{
     BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, READ_FLAG_INCL_END,
     USE_SECOND_BUCKET,
 };
+use hashes::default::MNHFactory;
 use hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     MinimizerHashFunctionFactory,
@@ -15,7 +16,7 @@ use parallel_processor::memory_fs::RemoveFileMode;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-fn get_sequence_bucket<C, H: MinimizerHashFunctionFactory>(
+fn get_sequence_bucket<C>(
     k: usize,
     m: usize,
     seq_data: &(u8, u8, C, CompressedRead),
@@ -26,21 +27,21 @@ fn get_sequence_bucket<C, H: MinimizerHashFunctionFactory>(
     let flags = seq_data.0;
     let decr_val = ((read.bases_count() == k) && (flags & READ_FLAG_INCL_END) == 0) as usize;
 
-    let hashes = H::new(read.sub_slice((1 - decr_val)..(k - decr_val)), m);
+    let hashes = MNHFactory::new(read.sub_slice((1 - decr_val)..(k - decr_val)), m);
 
     let minimizer = hashes
         .iter()
-        .min_by_key(|k| H::get_full_minimizer(k.to_unextendable()))
+        .min_by_key(|k| MNHFactory::get_full_minimizer(k.to_unextendable()))
         .unwrap();
 
-    H::get_bucket(
+    MNHFactory::get_bucket(
         used_hash_bits,
         bucket_bits_count,
         minimizer.to_unextendable(),
     )
 }
 
-pub fn compute_stats_for_bucket<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory>(
+pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
     bucket: PathBuf,
     bucket_index: usize,
     buckets_count: usize,
@@ -74,7 +75,7 @@ pub fn compute_stats_for_bucket<H: MinimizerHashFunctionFactory, MH: HashFunctio
     let mut total_counters = vec![0; second_buckets_max];
 
     while let Some((read_info, _)) = items_iterator.next() {
-        let orig_bucket = get_sequence_bucket::<(), H>(
+        let orig_bucket = get_sequence_bucket::<()>(
             k,
             m,
             &read_info,

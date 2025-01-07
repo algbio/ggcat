@@ -26,3 +26,4 @@ ggcat-logging = { version = "1.1.1", path = "../logging" }
 
 # Utils
 utils = { package = "ggcat_utils", path = "../utils" }
+colors = { package = "ggcat_colors", path = "../colors" }

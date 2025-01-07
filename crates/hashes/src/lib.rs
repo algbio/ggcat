@@ -19,6 +19,12 @@ use serde::Serialize;
 
 use config::{BucketIndexType, MinimizerType};
 
+pub mod default {
+    pub type MNHFactory = super::cn_nthash::CanonicalNtHashIteratorFactory;
+    pub type MNHExtendable = super::cn_nthash::ExtCanonicalNtHash;
+    pub type MNHUnextendable = u64;
+}
+
 pub trait UnextendableHashTraitType:
     Copy
     + Clone

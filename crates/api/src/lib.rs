@@ -7,8 +7,6 @@ use colors::{
 };
 pub use ggcat_logging::MessageLevel;
 use ggcat_logging::UnrecoverableErrorLogging;
-use hashes::MinimizerHashFunctionFactory;
-use hashes::{cn_nthash::CanonicalNtHashIteratorFactory, fw_nthash::ForwardNtHashIteratorFactory};
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
 use io::concurrent::structured_sequences::gfa::GFAWriterWrapper;
 use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
@@ -230,12 +228,6 @@ impl GGCATInstance {
 
         gfa_output: bool,
     ) -> anyhow::Result<PathBuf> {
-        let bucketing_hash_dispatch = if forward_only {
-            <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::dynamic_dispatch_id()
-        } else {
-            <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::dynamic_dispatch_id()
-        };
-
         let merging_hash_dispatch = utils::get_hash_static_id(
             debug::DEBUG_HASH_TYPE.lock().clone(),
             kmer_length,
@@ -261,12 +253,7 @@ impl GGCATInstance {
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
 
         let output_file = assembler::dynamic_dispatch::run_assembler(
-            (
-                bucketing_hash_dispatch,
-                merging_hash_dispatch,
-                colors_hash,
-                output_mode,
-            ),
+            (merging_hash_dispatch, colors_hash, output_mode),
             kmer_length,
             minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
             debug::DEBUG_ASSEMBLER_FIRST_STEP.lock().clone(),
@@ -323,12 +310,6 @@ impl GGCATInstance {
         // Query output format
         color_output_format: ColoredQueryOutputFormat,
     ) -> anyhow::Result<PathBuf> {
-        let bucketing_hash_dispatch = if forward_only {
-            <ForwardNtHashIteratorFactory as MinimizerHashFunctionFactory>::dynamic_dispatch_id()
-        } else {
-            <CanonicalNtHashIteratorFactory as MinimizerHashFunctionFactory>::dynamic_dispatch_id()
-        };
-
         let merging_hash_dispatch = utils::get_hash_static_id(
             debug::DEBUG_HASH_TYPE.lock().clone(),
             kmer_length,
@@ -344,7 +325,7 @@ impl GGCATInstance {
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
 
         let output_file = querier::dynamic_dispatch::run_query(
-            (bucketing_hash_dispatch, merging_hash_dispatch, colors_hash),
+            (merging_hash_dispatch, colors_hash),
             kmer_length,
             minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
             debug::DEBUG_QUERIER_FIRST_STEP.lock().clone(),

@@ -3,9 +3,8 @@ use crate::managers::multiple::MultipleColorsManager;
 use crate::parsers::separate::SeparateColorsParser;
 use config::{BucketIndexType, ColorIndexType, COLORS_SINGLE_BATCH_SIZE};
 use dynamic_dispatch::dynamic_dispatch;
-use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct ColorBundleMultifileBuilding;
 
 #[dynamic_dispatch]
@@ -28,6 +27,5 @@ impl ColorsManager for ColorBundleMultifileBuilding {
     }
 
     type ColorsParserType = SeparateColorsParser;
-    type ColorsMergeManagerType<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> =
-        MultipleColorsManager<H, MH>;
+    type ColorsMergeManagerType = MultipleColorsManager;
 }

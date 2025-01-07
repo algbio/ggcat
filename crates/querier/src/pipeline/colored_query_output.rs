@@ -8,7 +8,7 @@ use config::{
 };
 use flate2::Compression;
 use ggcat_logging::UnrecoverableErrorLogging;
-use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use hashes::HashFunctionFactory;
 use nightly_quirks::prelude::*;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
@@ -49,12 +49,8 @@ impl Write for QueryOutputFileWriter {
     }
 }
 
-pub fn colored_query_output<
-    H: MinimizerHashFunctionFactory,
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
->(
-    colormap: &<CX::ColorsMergeManagerType<H, MH> as ColorsMergeManager<H, MH>>::GlobalColorsTableReader,
+pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
+    colormap: &<CX::ColorsMergeManagerType as ColorsMergeManager>::GlobalColorsTableReader,
     mut colored_query_buckets: Vec<SingleBucket>,
     output_file: PathBuf,
     temp_dir: PathBuf,

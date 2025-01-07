@@ -12,6 +12,7 @@ use config::{
     MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use hashbrown::HashMap;
+use hashes::default::MNHFactory;
 use hashes::HashFunction;
 use hashes::HashFunctionFactory;
 use hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
@@ -146,22 +147,18 @@ struct GlobalQueryMergeData {
     global_resplit_data: Arc<MinimizerBucketingCommonData<QuerierMinimizerBucketingGlobalData>>,
 }
 
-struct ParallelKmersQueryFactory<
-    H: MinimizerHashFunctionFactory,
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
->(PhantomData<(H, MH, CX)>);
+struct ParallelKmersQueryFactory<MH: HashFunctionFactory, CX: ColorsManager>(PhantomData<(MH, CX)>);
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    KmersTransformExecutorFactory for ParallelKmersQueryFactory<H, MH, CX>
+impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
+    for ParallelKmersQueryFactory<MH, CX>
 {
-    type SequencesResplitterFactory = QuerierMinimizerBucketingExecutorFactory<H, CX>;
+    type SequencesResplitterFactory = QuerierMinimizerBucketingExecutorFactory<CX>;
     type GlobalExtraData = GlobalQueryMergeData;
     type AssociatedExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
 
-    type PreprocessorType = ParallelKmersQueryPreprocessor<H, MH, CX>;
-    type MapProcessorType = ParallelKmersQueryMapProcessor<H, MH, CX>;
-    type FinalExecutorType = ParallelKmersQueryFinalExecutor<H, MH, CX>;
+    type PreprocessorType = ParallelKmersQueryPreprocessor<MH, CX>;
+    type MapProcessorType = ParallelKmersQueryMapProcessor<MH, CX>;
+    type FinalExecutorType = ParallelKmersQueryFinalExecutor<MH, CX>;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U0;
@@ -206,35 +203,31 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     }
 }
 
-struct ParallelKmersQueryPreprocessor<
-    H: HashFunctionFactory,
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-> {
-    _phantom: PhantomData<(H, MH, CX)>,
+struct ParallelKmersQueryPreprocessor<MH: HashFunctionFactory, CX: ColorsManager> {
+    _phantom: PhantomData<(MH, CX)>,
 }
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    KmersTransformPreprocessor<ParallelKmersQueryFactory<H, MH, CX>>
-    for ParallelKmersQueryPreprocessor<H, MH, CX>
+impl<MH: HashFunctionFactory, CX: ColorsManager>
+    KmersTransformPreprocessor<ParallelKmersQueryFactory<MH, CX>>
+    for ParallelKmersQueryPreprocessor<MH, CX>
 {
     fn get_sequence_bucket<C>(
         &self,
-        global_data: &<ParallelKmersQueryFactory<H, MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+        global_data: &<ParallelKmersQueryFactory<MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
         seq_data: &(u8, u8, C, CompressedRead),
         used_hash_bits: usize,
         bucket_bits_count: usize,
     ) -> BucketIndexType {
         let read = &seq_data.3;
 
-        let hashes = H::new(read.sub_slice(0..global_data.k), global_data.m);
+        let hashes = MNHFactory::new(read.sub_slice(0..global_data.k), global_data.m);
 
         let minimizer = hashes
             .iter()
-            .min_by_key(|k| H::get_full_minimizer(k.to_unextendable()))
+            .min_by_key(|k| MNHFactory::get_full_minimizer(k.to_unextendable()))
             .unwrap();
 
-        H::get_bucket(
+        MNHFactory::get_bucket(
             used_hash_bits,
             bucket_bits_count,
             minimizer.to_unextendable(),
@@ -273,18 +266,14 @@ impl<MH: HashFunctionFactory, CX: Sync + Send + 'static> PacketTrait
     }
 }
 
-struct ParallelKmersQueryMapProcessor<
-    H: MinimizerHashFunctionFactory,
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-> {
+struct ParallelKmersQueryMapProcessor<MH: HashFunctionFactory, CX: ColorsManager> {
     map_packet: Option<Packet<ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>>>,
-    _phantom: PhantomData<(H, CX)>,
+    _phantom: PhantomData<CX>,
 }
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    KmersTransformMapProcessor<ParallelKmersQueryFactory<H, MH, CX>>
-    for ParallelKmersQueryMapProcessor<H, MH, CX>
+impl<MH: HashFunctionFactory, CX: ColorsManager>
+    KmersTransformMapProcessor<ParallelKmersQueryFactory<MH, CX>>
+    for ParallelKmersQueryMapProcessor<MH, CX>
 {
     type MapStruct = ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>;
     const MAP_SIZE: usize = size_of::<MH::HashTypeUnextendable>() + 8;
@@ -351,22 +340,18 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
     }
 }
 
-struct ParallelKmersQueryFinalExecutor<
-    H: MinimizerHashFunctionFactory,
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-> {
+struct ParallelKmersQueryFinalExecutor<MH: HashFunctionFactory, CX: ColorsManager> {
     counters_tmp: BucketsThreadDispatcher<
         LockFreeBinaryWriter,
         CounterEntrySerializer<SingleKmerColorDataType<CX>>,
     >,
     query_map: HashMap<(u64, SingleKmerColorDataType<CX>), u64>,
-    _phantom: PhantomData<(H, MH, CX)>,
+    _phantom: PhantomData<(MH, CX)>,
 }
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager>
-    KmersTransformFinalExecutor<ParallelKmersQueryFactory<H, MH, CX>>
-    for ParallelKmersQueryFinalExecutor<H, MH, CX>
+impl<MH: HashFunctionFactory, CX: ColorsManager>
+    KmersTransformFinalExecutor<ParallelKmersQueryFactory<MH, CX>>
+    for ParallelKmersQueryFinalExecutor<MH, CX>
 {
     type MapStruct = ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>;
 
@@ -407,7 +392,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory, CX: ColorsManager
 }
 
 pub fn parallel_kmers_counting<
-    H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
     P: AsRef<Path> + Sync,
@@ -454,7 +438,7 @@ pub fn parallel_kmers_counting<
         )),
     });
 
-    KmersTransform::<ParallelKmersQueryFactory<H, MH, CX>>::new(
+    KmersTransform::<ParallelKmersQueryFactory<MH, CX>>::new(
         file_inputs
             .into_iter()
             .map(|x| x.to_multi_chunk())

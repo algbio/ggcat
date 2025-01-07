@@ -20,8 +20,8 @@ use config::{
 };
 use dashmap::DashSet;
 use hashbrown::HashSet;
+use hashes::HashFunctionFactory;
 use hashes::{ExtendableHashTraitType, HashFunction, HashableSequence};
-use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{
     SequenceAbundanceType, StructuredSequenceBackend, StructuredSequenceWriter,
@@ -46,15 +46,14 @@ use std::sync::Arc;
 use utils::vec_slice::VecSlice;
 
 pub fn build_maximal_unitigs_links<
-    H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
-    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<H, MH, CX>, DoubleMaximalUnitigLinks>,
+    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<CX>, DoubleMaximalUnitigLinks>,
 >(
     in_file: PathBuf,
     temp_dir: &Path,
     out_file: &StructuredSequenceWriter<
-        PartialUnitigsColorStructure<H, MH, CX>,
+        PartialUnitigsColorStructure<CX>,
         DoubleMaximalUnitigLinks,
         BK,
     >,
@@ -111,12 +110,12 @@ pub fn build_maximal_unitigs_links<
                         false,
                     >, _>(
                         Vec::new(),
-                        <(u64, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType)>::new_temp_buffer(
+                        <(u64, PartialUnitigsColorStructure<CX>, (), SequenceAbundanceType)>::new_temp_buffer(
                         ),
                         |(_, _, (index, _, _, _), read): (
                             _,
                             _,
-                            (_, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType),
+                            (_, PartialUnitigsColorStructure<CX>, (), SequenceAbundanceType),
                             _,
                         ),
                          _extra_buffer| {
@@ -352,12 +351,12 @@ pub fn build_maximal_unitigs_links<
                         false,
                     >, _>(
                         Vec::new(),
-                        <(u64, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType)>::new_temp_buffer(
+                        <(u64, PartialUnitigsColorStructure<CX>, (), SequenceAbundanceType)>::new_temp_buffer(
                         ),
                         |(_, _, (index, color, _, _abundance), read): (
                             _,
                             _,
-                            (_, PartialUnitigsColorStructure<H, MH, CX>, (), SequenceAbundanceType),
+                            (_, PartialUnitigsColorStructure<CX>, (), SequenceAbundanceType),
                             _,
                         ),
                          extra_buffer| {

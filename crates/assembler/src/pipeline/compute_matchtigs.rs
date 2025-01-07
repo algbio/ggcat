@@ -9,7 +9,6 @@ use genome_graph::bigraph::traitgraph::implementation::petgraph_impl::PetGraph;
 use genome_graph::bigraph::traitgraph::interface::ImmutableGraphContainer;
 use genome_graph::bigraph::traitgraph::interface::MutableGraphContainer;
 use genome_graph::generic::{GenericEdge, GenericNode};
-use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{
@@ -343,15 +342,13 @@ impl MatchtigHelperTrait for Option<MatchtigMode> {
 }
 
 pub fn compute_matchtigs_thread<
-    H: MinimizerHashFunctionFactory,
-    MH: HashFunctionFactory,
     CX: ColorsManager,
-    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<H, MH, CX>, ()>,
+    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<CX>, ()>,
 >(
     k: usize,
     threads_count: usize,
-    input_data: Receiver<Arc<StructuredUnitigsStorage<PartialUnitigsColorStructure<H, MH, CX>>>>,
-    out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<H, MH, CX>, (), BK>,
+    input_data: Receiver<Arc<StructuredUnitigsStorage<PartialUnitigsColorStructure<CX>>>>,
+    out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<CX>, (), BK>,
     mode: MatchtigMode,
 ) {
     let iterator = input_data
@@ -436,16 +433,16 @@ pub fn compute_matchtigs_thread<
     let mut read_buffer = Vec::new();
 
     let mut final_unitig_color =
-        color_types::ColorsMergeManagerType::<H, MH, CX>::alloc_unitig_color_structure();
+        color_types::ColorsMergeManagerType::<CX>::alloc_unitig_color_structure();
     let mut final_color_extra_buffer =
-        color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer();
+        color_types::PartialUnitigsColorStructure::<CX>::new_temp_buffer();
 
     for walk in tigs.iter() {
         // Reset the colors
-        color_types::ColorsMergeManagerType::<H, MH, CX>::reset_unitig_color_structure(
+        color_types::ColorsMergeManagerType::<CX>::reset_unitig_color_structure(
             &mut final_unitig_color,
         );
-        color_types::PartialUnitigsColorStructure::<H, MH, CX>::clear_temp_buffer(
+        color_types::PartialUnitigsColorStructure::<CX>::clear_temp_buffer(
             &mut final_color_extra_buffer,
         );
 
@@ -465,7 +462,7 @@ pub fn compute_matchtigs_thread<
         // Update the sequence and its colors
         if first_data.is_forwards() {
             read_buffer.extend(first_sequence.as_bases_iter());
-            CX::ColorsMergeManagerType::<H, MH>::join_structures::<false>(
+            CX::ColorsMergeManagerType::join_structures::<false>(
                 &mut final_unitig_color,
                 &handle.1,
                 &storage.color_buffer,
@@ -474,7 +471,7 @@ pub fn compute_matchtigs_thread<
             );
         } else {
             read_buffer.extend(first_sequence.as_reverse_complement_bases_iter());
-            CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
+            CX::ColorsMergeManagerType::join_structures::<true>(
                 &mut final_unitig_color,
                 &handle.1,
                 &storage.color_buffer,
@@ -525,7 +522,7 @@ pub fn compute_matchtigs_thread<
 
             if edge_data.is_forwards() {
                 read_buffer.extend(next_sequence.as_bases_iter().skip(bases_offset));
-                CX::ColorsMergeManagerType::<H, MH>::join_structures::<false>(
+                CX::ColorsMergeManagerType::join_structures::<false>(
                     &mut final_unitig_color,
                     &handle.1,
                     &storage.color_buffer,
@@ -543,7 +540,7 @@ pub fn compute_matchtigs_thread<
                         .as_reverse_complement_bases_iter()
                         .skip(bases_offset),
                 );
-                CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
+                CX::ColorsMergeManagerType::join_structures::<true>(
                     &mut final_unitig_color,
                     &handle.1,
                     &storage.color_buffer,
@@ -558,11 +555,10 @@ pub fn compute_matchtigs_thread<
             }
         }
 
-        let writable_color =
-            color_types::ColorsMergeManagerType::<H, MH, CX>::encode_part_unitigs_colors(
-                &mut final_unitig_color,
-                &mut final_color_extra_buffer,
-            );
+        let writable_color = color_types::ColorsMergeManagerType::<CX>::encode_part_unitigs_colors(
+            &mut final_unitig_color,
+            &mut final_color_extra_buffer,
+        );
 
         output_buffer.add_read(
             &read_buffer,

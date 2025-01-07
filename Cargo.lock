@@ -1429,6 +1429,7 @@ version = "1.1.1"
 dependencies = [
  "bincode",
  "ggcat-logging",
+ "ggcat_colors",
  "ggcat_config",
  "ggcat_hashes",
  "ggcat_io",

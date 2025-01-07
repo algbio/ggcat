@@ -30,7 +30,7 @@ macro_rules! track {
 //
 //     let mut queue = RollingMinQueue::<H>::new(k - m);
 //
-//     let hashes = H::new(read, m);
+//     let hashes = MNHFactory::new(read, m);
 //
 //     let rolling_iter = queue.make_iter(hashes.iter().map(|x| x.to_unextendable()));
 //
@@ -38,11 +38,11 @@ macro_rules! track {
 //         println!(
 //             "Minimizer info for kmer: {}\nHASH: {} UNMASKED_HASH: {} FB: {} SB: {} SH: {}",
 //             read.get_subslice(idx..(idx + k - 1)).debug_to_string(),
-//             H::get_full_minimizer(hash),
-//             H::get_full_minimizer(hash),
-//             H::get_first_bucket(hash),
-//             H::get_second_bucket(hash),
-//             H::get_sorting_hash(hash),
+//             MNHFactory::get_full_minimizer(hash),
+//             MNHFactory::get_full_minimizer(hash),
+//             MNHFactory::get_first_bucket(hash),
+//             MNHFactory::get_second_bucket(hash),
+//             MNHFactory::get_sorting_hash(hash),
 //         );
 //     }
 // }

@@ -4,7 +4,7 @@ use crate::DefaultColorsSerializer;
 use byteorder::ReadBytesExt;
 use config::{ColorCounterType, ColorIndexType};
 use hashbrown::HashMap;
-use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use hashes::HashFunctionFactory;
 use io::compressed_read::CompressedRead;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
@@ -13,18 +13,13 @@ use io::concurrent::temp_reads::extra_data::{
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::MapEntry;
 
-pub struct SingleColorManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory>(
-    PhantomData<(H, MH)>,
-);
+pub struct SingleColorManager;
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManager<H, MH>
-    for SingleColorManager<H, MH>
-{
+impl ColorsMergeManager for SingleColorManager {
     type SingleKmerColorDataType = ColorIndexType;
     type GlobalColorsTableWriter = ();
     type GlobalColorsTableReader = ColorsDeserializer<DefaultColorsSerializer>;
@@ -50,7 +45,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
 
     fn reinit_temp_buffer_structure(_data: &mut Self::ColorsBufferTempStructure) {}
 
-    fn add_temp_buffer_structure_el(
+    fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         _data: &mut Self::ColorsBufferTempStructure,
         kmer_color: &ColorIndexType,
         _el: (usize, MH::HashTypeUnextendable),
@@ -81,7 +76,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         }
     }
 
-    fn process_colors(
+    fn process_colors<MH: HashFunctionFactory>(
         _global_colors_table: &Self::GlobalColorsTableWriter,
         _data: &mut Self::ColorsBufferTempStructure,
         _map: &mut HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
@@ -142,7 +137,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         unimplemented!();
     }
 
-    fn debug_colors(
+    fn debug_colors<MH: HashFunctionFactory>(
         _color: &Self::PartialUnitigsColorStructure,
         _colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         _seq: &[u8],

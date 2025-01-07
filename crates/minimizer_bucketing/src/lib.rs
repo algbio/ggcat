@@ -8,6 +8,7 @@ use crate::counters_analyzer::CountersAnalyzer;
 use crate::queue_data::MinimizerBucketingQueueData;
 use crate::reader::MinimizerBucketingFilesReader;
 use crate::sequences_splitter::SequencesSplitter;
+use colors::colors_manager::ColorsManager;
 use compactor::CompactorInitData;
 use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
@@ -89,6 +90,8 @@ pub trait MinimizerBucketingExecutorFactory: Sized {
     type ExtraData: SequenceExtraDataConsecutiveCompression;
     type PreprocessInfo: Default;
     type StreamInfo: Clone + Sync + Send + Default + 'static;
+
+    type ColorsManager: ColorsManager;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT: typenum::uint::Unsigned;

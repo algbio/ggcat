@@ -4,7 +4,7 @@ use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::{color_types, ColorsManager};
 use config::{BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use hashbrown::HashMap;
-use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
+use hashes::{HashFunctionFactory, HashableSequence};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
@@ -33,25 +33,22 @@ struct FinalUnitigInfo {
     flags: UnitigFlags,
 }
 
-type CompressedReadsDataSerializerUnitigsBuilding<H, MH, CX> = CompressedReadsBucketDataSerializer<
-    ReorganizedReadsExtraData<PartialUnitigsColorStructure<H, MH, CX>>,
+type CompressedReadsDataSerializerUnitigsBuilding<CX> = CompressedReadsBucketDataSerializer<
+    ReorganizedReadsExtraData<PartialUnitigsColorStructure<CX>>,
     typenum::U0,
     false,
 >;
 
 pub fn build_unitigs<
-    H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
-    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<H, MH, CX>, ()>,
+    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<CX>, ()>,
 >(
     mut read_buckets_files: Vec<SingleBucket>,
     mut unitig_map_files: Vec<SingleBucket>,
     _temp_path: &Path,
-    out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<H, MH, CX>, (), BK>,
-    circular_out_file: Option<
-        &StructuredSequenceWriter<PartialUnitigsColorStructure<H, MH, CX>, (), BK>,
-    >,
+    out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<CX>, (), BK>,
+    circular_out_file: Option<&StructuredSequenceWriter<PartialUnitigsColorStructure<CX>, (), BK>>,
     k: usize,
 ) {
     PHASES_TIMES_MONITOR
@@ -75,14 +72,15 @@ pub fn build_unitigs<
                     FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
 
                 let mut tmp_final_circular_unitigs_buffer =
-                    circular_out_file.map(|circular_out_file|
-                        FastaWriterConcurrentBuffer::new(circular_out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true)
-                    );
+                    circular_out_file.map(|circular_out_file| {
+                        FastaWriterConcurrentBuffer::new(
+                            circular_out_file,
+                            DEFAULT_OUTPUT_BUFFER_SIZE,
+                            true,
+                        )
+                    });
 
-                assert_eq!(
-                    read_file.index,
-                    unitigs_map_file.index
-                );
+                assert_eq!(read_file.index, unitigs_map_file.index);
 
                 let bucket_index = read_file.index as BucketIndexType;
 
@@ -103,7 +101,7 @@ pub fn build_unitigs<
 
                 let mut counter: usize = 0;
                 while let Some(link) =
-                                deserializer.read_from(&mut unitigs_map_stream, &mut unitigs_tmp_vec, &mut ())
+                    deserializer.read_from(&mut unitigs_map_stream, &mut unitigs_tmp_vec, &mut ())
                 {
                     let start_unitig = UnitigIndex::new(
                         bucket_index,
@@ -165,10 +163,10 @@ pub fn build_unitigs<
                 final_sequences.resize(counter, None);
 
                 let mut color_extra_buffer = ReorganizedReadsExtraData::<
-                    color_types::PartialUnitigsColorStructure<H, MH, CX>,
+                    color_types::PartialUnitigsColorStructure<CX>,
                 >::new_temp_buffer();
                 let mut final_color_extra_buffer =
-                    color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer();
+                    color_types::PartialUnitigsColorStructure::<CX>::new_temp_buffer();
 
                 CompressedBinaryReader::new(
                     &read_file.path,
@@ -177,7 +175,7 @@ pub fn build_unitigs<
                     },
                     DEFAULT_PREFETCH_AMOUNT,
                 )
-                .decode_all_bucket_items::<CompressedReadsDataSerializerUnitigsBuilding<H, MH, CX>, _>(
+                .decode_all_bucket_items::<CompressedReadsDataSerializerUnitigsBuilding<CX>, _>(
                     Vec::new(),
                     &mut color_extra_buffer,
                     |(_, _, index, seq), _color_extra_buffer| {
@@ -195,7 +193,7 @@ pub fn build_unitigs<
                 let mut temp_sequence = Vec::new();
 
                 let mut final_unitig_color =
-                    CX::ColorsMergeManagerType::<H, MH>::alloc_unitig_color_structure();
+                    CX::ColorsMergeManagerType::alloc_unitig_color_structure();
 
                 'uloop: for sequence in
                     final_sequences.nq_group_by(|_a, b| !b.as_ref().unwrap().1.is_start)
@@ -204,7 +202,7 @@ pub fn build_unitigs<
                     let is_circular = sequence[0].as_ref().unwrap().1.is_circular;
 
                     temp_sequence.clear();
-                    CX::ColorsMergeManagerType::<H, MH>::reset_unitig_color_structure(
+                    CX::ColorsMergeManagerType::reset_unitig_color_structure(
                         &mut final_unitig_color,
                     );
                     #[cfg(feature = "support_kmer_counters")]
@@ -224,7 +222,8 @@ pub fn build_unitigs<
                         itertools::Either::Left(sequence.iter())
                     } {
                         #[cfg(feature = "support_kmer_counters")]
-                        let (read, FinalUnitigInfo { flags, .. }, color, counters) = upart.as_ref().unwrap();
+                        let (read, FinalUnitigInfo { flags, .. }, color, counters) =
+                            upart.as_ref().unwrap();
 
                         #[cfg(not(feature = "support_kmer_counters"))]
                         let (read, FinalUnitigInfo { flags, .. }, color) = upart.as_ref().unwrap();
@@ -236,7 +235,7 @@ pub fn build_unitigs<
                         if is_first {
                             if flags.is_reverse_complemented() {
                                 temp_sequence.extend(compr_read.as_reverse_complement_bases_iter());
-                                CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
+                                CX::ColorsMergeManagerType::join_structures::<true>(
                                     &mut final_unitig_color,
                                     color,
                                     &color_extra_buffer.0,
@@ -250,7 +249,7 @@ pub fn build_unitigs<
                                 }
                             } else {
                                 temp_sequence.extend(compr_read.as_bases_iter());
-                                CX::ColorsMergeManagerType::<H, MH>::join_structures::<false>(
+                                CX::ColorsMergeManagerType::join_structures::<false>(
                                     &mut final_unitig_color,
                                     color,
                                     &color_extra_buffer.0,
@@ -272,14 +271,15 @@ pub fn build_unitigs<
                                         .sub_slice(0..compr_read.bases_count() - k)
                                         .as_reverse_complement_bases_iter(),
                                 );
-                                CX::ColorsMergeManagerType::<H, MH>::join_structures::<true>(
+                                CX::ColorsMergeManagerType::join_structures::<true>(
                                     &mut final_unitig_color,
                                     color,
                                     &color_extra_buffer.0,
                                     1,
                                     None,
                                 );
-                                #[cfg(feature = "support_kmer_counters")] {
+                                #[cfg(feature = "support_kmer_counters")]
+                                {
                                     abundance.sum += counters.sum - counters.last;
                                 }
                             } else {
@@ -289,19 +289,21 @@ pub fn build_unitigs<
                                         .sub_slice(k..compr_read.bases_count())
                                         .as_bases_iter(),
                                 );
-                                CX::ColorsMergeManagerType::<H, MH>::join_structures::<false>(
+                                CX::ColorsMergeManagerType::join_structures::<false>(
                                     &mut final_unitig_color,
                                     color,
                                     &color_extra_buffer.0,
                                     1,
                                     None,
                                 );
-                                #[cfg(feature = "support_kmer_counters")] {
+                                #[cfg(feature = "support_kmer_counters")]
+                                {
                                     abundance.sum += counters.sum - counters.first;
                                 }
                             }
                         }
-                        #[cfg(feature = "support_kmer_counters")] {
+                        #[cfg(feature = "support_kmer_counters")]
+                        {
                             prev_last = abundance.last;
                             abundance.last = counters.last;
                         }
@@ -310,31 +312,34 @@ pub fn build_unitigs<
                     // In case of circular unitigs, remove an extra ending base
                     if is_circular {
                         temp_sequence.pop();
-                        #[cfg(feature = "support_kmer_counters")] {
+                        #[cfg(feature = "support_kmer_counters")]
+                        {
                             abundance.sum -= abundance.last;
                             abundance.last = prev_last;
                         }
 
-                        CX::ColorsMergeManagerType::<H, MH>::pop_base(&mut final_unitig_color);
+                        CX::ColorsMergeManagerType::pop_base(&mut final_unitig_color);
                     }
 
-                    let writable_color =
-                        CX::ColorsMergeManagerType::<H, MH>::encode_part_unitigs_colors(
-                            &mut final_unitig_color,
-                            &mut final_color_extra_buffer,
-                        );
+                    let writable_color = CX::ColorsMergeManagerType::encode_part_unitigs_colors(
+                        &mut final_unitig_color,
+                        &mut final_color_extra_buffer,
+                    );
 
                     if tmp_final_circular_unitigs_buffer.is_some() && is_circular {
-                        tmp_final_circular_unitigs_buffer.as_mut().unwrap().add_read(
-                            temp_sequence.as_slice(),
-                            None,
-                            writable_color,
-                            &final_color_extra_buffer,
-                            (),
-                            &(),
-                            #[cfg(feature = "support_kmer_counters")]
-                            abundance,
-                        );
+                        tmp_final_circular_unitigs_buffer
+                            .as_mut()
+                            .unwrap()
+                            .add_read(
+                                temp_sequence.as_slice(),
+                                None,
+                                writable_color,
+                                &final_color_extra_buffer,
+                                (),
+                                &(),
+                                #[cfg(feature = "support_kmer_counters")]
+                                abundance,
+                            );
                     } else {
                         tmp_final_unitigs_buffer.add_read(
                             temp_sequence.as_slice(),
@@ -348,7 +353,7 @@ pub fn build_unitigs<
                         );
                     }
 
-                    // write_fasta_entry::<H, MH, CX, _>(
+                    // write_fasta_entry::<MH, CX, _>(
                     //     &mut ident_buffer,
                     //     &mut tmp_final_unitigs_buffer,
                     //     writable_color,
@@ -359,7 +364,7 @@ pub fn build_unitigs<
                 }
 
                 // ReorganizedReadsExtraData::<
-                //     color_types::PartialUnitigsColorStructure<H, MH, CX>,
+                //     color_types::PartialUnitigsColorStructure<CX>,
                 // >::clear_temp_buffer(&mut color_extra_buffer);
 
                 tmp_final_unitigs_buffer.finalize();

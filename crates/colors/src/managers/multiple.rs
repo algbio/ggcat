@@ -9,6 +9,7 @@ use config::{
     SwapPriority, PARTIAL_VECS_CHECKPOINT_SIZE, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END,
 };
 use hashbrown::HashMap;
+use hashes::default::MNHFactory;
 use hashes::ExtendableHashTraitType;
 use hashes::{HashFunction, HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
@@ -27,7 +28,6 @@ use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::memory_fs::RemoveFileMode;
 use std::collections::VecDeque;
 use std::io::{Cursor, Read, Write};
-use std::marker::PhantomData;
 use std::mem::size_of;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -106,14 +106,13 @@ impl SequencesStorage {
     }
 }
 
-pub struct MultipleColorsManager<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> {
+pub struct MultipleColorsManager {
     last_color: ColorIndexType,
     sequences: Vec<SequencesStorage>,
     kmers_count: usize,
     sequences_count: usize,
     temp_colors_buffer: Vec<ColorIndexType>,
     temp_dir: PathBuf,
-    _phantom: PhantomData<(H, MH)>,
 }
 
 const VISITED_BIT: usize = 1 << (COUNTER_BITS - 1);
@@ -136,9 +135,7 @@ fn get_entry_color(entry: &MapEntry<HashMapTempColorIndex>) -> ColorIndexType {
     }) as ColorIndexType
 }
 
-impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManager<H, MH>
-    for MultipleColorsManager<H, MH>
-{
+impl ColorsMergeManager for MultipleColorsManager {
     type SingleKmerColorDataType = ColorIndexType;
     type GlobalColorsTableWriter = ColorsMemMapWriter<DefaultColorsSerializer>;
     type GlobalColorsTableReader = ();
@@ -170,7 +167,6 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
             sequences_count: 0,
             temp_colors_buffer: vec![],
             temp_dir: temp_dir.to_path_buf(),
-            _phantom: PhantomData,
         }
     }
 
@@ -182,7 +178,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         data.sequences_count = 0;
     }
 
-    fn add_temp_buffer_structure_el(
+    fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         data: &mut Self::ColorsBufferTempStructure,
         kmer_color: &ColorIndexType,
         _el: (usize, MH::HashTypeUnextendable),
@@ -201,11 +197,11 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
     ) {
         let decr_val =
             ((sequence.bases_count() == k) && (flags & READ_FLAG_INCL_END) == 0) as usize;
-        let hashes = H::new(sequence.sub_slice((1 - decr_val)..(k - decr_val)), m);
+        let hashes = MNHFactory::new(sequence.sub_slice((1 - decr_val)..(k - decr_val)), m);
 
         let minimizer = hashes
             .iter()
-            .map(|m| H::get_full_minimizer(m.to_unextendable()))
+            .map(|m| MNHFactory::get_full_minimizer(m.to_unextendable()))
             .min()
             .unwrap();
 
@@ -242,7 +238,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         Default::default()
     }
 
-    fn process_colors(
+    fn process_colors<MH: HashFunctionFactory>(
         global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
         map: &mut HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
@@ -533,7 +529,7 @@ impl<H: MinimizerHashFunctionFactory, MH: HashFunctionFactory> ColorsMergeManage
         }
     }
 
-    fn debug_colors(
+    fn debug_colors<MH: HashFunctionFactory>(
         color: &Self::PartialUnitigsColorStructure,
         colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         seq: &[u8],

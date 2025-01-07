@@ -111,6 +111,8 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
     type PreprocessInfo = ReadTypeBuffered<CX>;
     type StreamInfo = ();
 
+    type ColorsManager = CX;
+
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U0;
 

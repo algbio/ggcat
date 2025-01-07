@@ -4,10 +4,11 @@ use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
+use hashes::default::MNHFactory;
 use hashes::rolling::minqueue::RollingMinQueue;
-use hashes::ExtendableHashTraitType;
 use hashes::HashFunction;
 use hashes::MinimizerHashFunctionFactory;
+use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
@@ -89,29 +90,28 @@ pub struct QuerierMinimizerBucketingGlobalData {
     pub queries_count: Arc<AtomicUsize>,
 }
 
-pub struct QuerierMinimizerBucketingExecutor<H: MinimizerHashFunctionFactory, CX: ColorsManager> {
-    minimizer_queue: RollingMinQueue<H>,
+pub struct QuerierMinimizerBucketingExecutor<CX: ColorsManager> {
+    minimizer_queue: RollingMinQueue,
     global_data: Arc<MinimizerBucketingCommonData<QuerierMinimizerBucketingGlobalData>>,
     _phantom: PhantomData<CX>,
 }
 
-pub struct QuerierMinimizerBucketingExecutorFactory<
-    H: MinimizerHashFunctionFactory,
-    CX: ColorsManager,
->(PhantomData<(H, CX)>);
+pub struct QuerierMinimizerBucketingExecutorFactory<CX: ColorsManager>(PhantomData<CX>);
 
-impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutorFactory
-    for QuerierMinimizerBucketingExecutorFactory<H, CX>
+impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
+    for QuerierMinimizerBucketingExecutorFactory<CX>
 {
     type GlobalData = QuerierMinimizerBucketingGlobalData;
     type ExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
     type PreprocessInfo = ReadTypeBuffered<CX>;
     type StreamInfo = FileType;
 
+    type ColorsManager = CX;
+
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U0;
 
-    type ExecutorType = QuerierMinimizerBucketingExecutor<H, CX>;
+    type ExecutorType = QuerierMinimizerBucketingExecutor<CX>;
 
     fn new(
         global_data: &Arc<MinimizerBucketingCommonData<Self::GlobalData>>,
@@ -124,17 +124,16 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecu
     }
 }
 
-impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
-    MinimizerBucketingExecutor<QuerierMinimizerBucketingExecutorFactory<H, CX>>
-    for QuerierMinimizerBucketingExecutor<H, CX>
+impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExecutorFactory<CX>>
+    for QuerierMinimizerBucketingExecutor<CX>
 {
     fn preprocess_dna_sequence(
         &mut self,
-        stream_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
+        stream_info: &<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
         sequence_info: SequenceInfo,
         read_index: u64,
         sequence: &DnaSequence,
-        preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
             &mut preprocess_info.colors_buffer.0,
@@ -189,9 +188,9 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
     fn reprocess_sequence(
         &mut self,
         _flags: u8,
-        extra_data: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-        extra_data_buffer: &<<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        extra_data: &<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData,
+        extra_data_buffer: &<<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::copy_temp_buffer(
             &mut preprocess_info.colors_buffer.0,
@@ -208,10 +207,10 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer),
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer),
     >(
         &mut self,
-        preprocess_info: &<QuerierMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        preprocess_info: &<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
         sequence: S,
         _range: Range<usize>,
         used_bits: usize,
@@ -219,7 +218,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         second_bits: usize,
         mut push_sequence: F,
     ){
-        let hashes = H::new(sequence, self.global_data.m);
+        let hashes = MNHFactory::new(sequence, self.global_data.m);
 
         let mut rolling_iter = self
             .minimizer_queue
@@ -229,10 +228,11 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         let mut last_hash = rolling_iter.next().unwrap();
 
         for (index, min_hash) in rolling_iter.enumerate() {
-            if H::get_full_minimizer(min_hash) != H::get_full_minimizer(last_hash) {
+            if MNHFactory::get_full_minimizer(min_hash) != MNHFactory::get_full_minimizer(last_hash)
+            {
                 push_sequence(
-                    H::get_bucket(used_bits, first_bits, last_hash),
-                    H::get_bucket(used_bits + first_bits, second_bits, last_hash),
+                    MNHFactory::get_bucket(used_bits, first_bits, last_hash),
+                    MNHFactory::get_bucket(used_bits + first_bits, second_bits, last_hash),
                     sequence.get_subslice(last_index..(index + self.global_data.k)),
                     0,
                     match &preprocess_info.read_type {
@@ -251,8 +251,8 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         }
 
         push_sequence(
-            H::get_bucket(used_bits, first_bits, last_hash),
-            H::get_bucket(used_bits + first_bits, second_bits, last_hash),
+            MNHFactory::get_bucket(used_bits, first_bits, last_hash),
+            MNHFactory::get_bucket(used_bits + first_bits, second_bits, last_hash),
             sequence.get_subslice(last_index..sequence.seq_len()),
             0,
             match &preprocess_info.read_type {
@@ -267,7 +267,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
     }
 }
 
-pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
+pub fn minimizer_bucketing<CX: ColorsManager>(
     graph_file: PathBuf,
     query_file: PathBuf,
     output_path: &Path,
@@ -289,7 +289,7 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
 
     (
         GenericMinimizerBucketing::do_bucketing_no_max_usage::<
-            QuerierMinimizerBucketingExecutorFactory<H, CX>,
+            QuerierMinimizerBucketingExecutorFactory<CX>,
             FastaFileSequencesStream,
         >(
             input_files.into_iter(),

@@ -4,10 +4,11 @@ use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::{BucketIndexType, ColorIndexType};
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
+use hashes::default::MNHFactory;
 use hashes::rolling::minqueue::RollingMinQueue;
-use hashes::ExtendableHashTraitType;
 use hashes::HashFunction;
 use hashes::MinimizerHashFunctionFactory;
+use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
@@ -24,8 +25,8 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub struct AssemblerMinimizerBucketingExecutor<H: MinimizerHashFunctionFactory, CX: ColorsManager> {
-    minimizer_queue: RollingMinQueue<H>,
+pub struct AssemblerMinimizerBucketingExecutor<CX: ColorsManager> {
+    minimizer_queue: RollingMinQueue,
     global_data: Arc<MinimizerBucketingCommonData<()>>,
     _phantom: PhantomData<CX>,
 }
@@ -54,23 +55,22 @@ pub struct InputFileInfo {
     file_color: ColorIndexType,
 }
 
-pub struct AssemblerMinimizerBucketingExecutorFactory<
-    H: MinimizerHashFunctionFactory,
-    CX: ColorsManager,
->(PhantomData<(H, CX)>);
+pub struct AssemblerMinimizerBucketingExecutorFactory<CX: ColorsManager>(PhantomData<CX>);
 
-impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecutorFactory
-    for AssemblerMinimizerBucketingExecutorFactory<H, CX>
+impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
+    for AssemblerMinimizerBucketingExecutorFactory<CX>
 {
     type GlobalData = ();
     type ExtraData = MinimizerBucketingSeqColorDataType<CX>;
     type PreprocessInfo = AssemblerPreprocessInfo<CX>;
     type StreamInfo = InputFileInfo;
 
+    type ColorsManager = CX;
+
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U2;
 
-    type ExecutorType = AssemblerMinimizerBucketingExecutor<H, CX>;
+    type ExecutorType = AssemblerMinimizerBucketingExecutor<CX>;
 
     fn new(
         global_data: &Arc<MinimizerBucketingCommonData<Self::GlobalData>>,
@@ -83,17 +83,16 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager> MinimizerBucketingExecu
     }
 }
 
-impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
-    MinimizerBucketingExecutor<AssemblerMinimizerBucketingExecutorFactory<H, CX>>
-    for AssemblerMinimizerBucketingExecutor<H, CX>
+impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingExecutorFactory<CX>>
+    for AssemblerMinimizerBucketingExecutor<CX>
 {
     fn preprocess_dna_sequence(
         &mut self,
-        stream_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
+        stream_info: &<AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
         sequence_info: SequenceInfo,
         _read_index: u64,
         sequence: &DnaSequence,
-        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
             &mut preprocess_info.color_info_buffer,
@@ -124,9 +123,9 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
     fn reprocess_sequence(
         &mut self,
         flags: u8,
-        extra_data: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData,
+        extra_data: &<AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData,
         extra_data_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
             &mut preprocess_info.color_info_buffer,
@@ -142,10 +141,10 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer),
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer),
     >(
         &mut self,
-        preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<H, CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
         sequence: S,
         _range: Range<usize>,
         used_bits: usize,
@@ -153,7 +152,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         second_bits: usize,
         mut push_sequence: F,
     ){
-        let hashes = H::new(sequence, self.global_data.m);
+        let hashes = MNHFactory::new(sequence, self.global_data.m);
 
         let mut rolling_iter = self
             .minimizer_queue
@@ -176,12 +175,13 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         for (index, min_hash) in rolling_iter.enumerate() {
             let index = index + additional_offset;
 
-            if (H::get_full_minimizer(min_hash) != H::get_full_minimizer(last_hash))
+            if (MNHFactory::get_full_minimizer(min_hash)
+                != MNHFactory::get_full_minimizer(last_hash))
                 && (preprocess_info.include_last || end_index != index)
             {
                 push_sequence(
-                    H::get_bucket(used_bits, first_bits, last_hash),
-                    H::get_bucket(used_bits + first_bits, second_bits, last_hash),
+                    MNHFactory::get_bucket(used_bits, first_bits, last_hash),
+                    MNHFactory::get_bucket(used_bits + first_bits, second_bits, last_hash),
                     sequence.get_subslice((max(1, last_index) - 1)..(index + self.global_data.k)),
                     include_first as u8,
                     preprocess_info
@@ -198,8 +198,8 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
         let start_index = max(1, last_index) - 1;
         let include_last = preprocess_info.include_last; // Always include the last element of the sequence in the last entry
         push_sequence(
-            H::get_bucket(used_bits, first_bits, last_hash),
-            H::get_bucket(used_bits + first_bits, second_bits, last_hash),
+            MNHFactory::get_bucket(used_bits, first_bits, last_hash),
+            MNHFactory::get_bucket(used_bits + first_bits, second_bits, last_hash),
             sequence.get_subslice(start_index..sequence.seq_len()),
             include_first as u8 | ((include_last as u8) << 1),
             preprocess_info
@@ -217,7 +217,7 @@ impl<H: MinimizerHashFunctionFactory, CX: ColorsManager>
     #[cfg(not(feature = "devel-build"))] colors::bundles::multifile_building::ColorBundleMultifileBuilding,
     colors::non_colored::NonColoredManager,
 ])]
-pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
+pub fn minimizer_bucketing<CX: ColorsManager>(
     input_blocks: Vec<GeneralSequenceBlockData>,
     output_path: &Path,
     buckets_count: usize,
@@ -225,7 +225,7 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
     k: usize,
     m: usize,
 ) -> (Vec<MultiChunkBucket>, PathBuf) {
-    H::initialize(k);
+    MNHFactory::initialize(k);
 
     PHASES_TIMES_MONITOR
         .write()
@@ -258,7 +258,7 @@ pub fn minimizer_bucketing<H: MinimizerHashFunctionFactory, CX: ColorsManager>(
     let max_disk_usage = (estimated_bases_count as u64) / 4 / 2;
 
     GenericMinimizerBucketing::do_bucketing::<
-        AssemblerMinimizerBucketingExecutorFactory<H, CX>,
+        AssemblerMinimizerBucketingExecutorFactory<CX>,
         GeneralSequencesStream,
     >(
         input_files.into_iter(),

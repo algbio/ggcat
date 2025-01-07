@@ -7,7 +7,8 @@ use ::dynamic_dispatch::dynamic_dispatch;
 use colors::colors_manager::{ColorMapReader, ColorsManager, ColorsMergeManager};
 use colors::DefaultColorsSerializer;
 use config::{INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW};
-use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use hashes::default::MNHFactory;
+use hashes::HashFunctionFactory;
 use io::sequences_reader::SequencesReader;
 use io::sequences_stream::general::GeneralSequenceBlockData;
 use io::{compute_stats_from_input_blocks, generate_bucket_names};
@@ -34,10 +35,7 @@ pub enum ColoredQueryOutputFormat {
     JsonLinesWithNames,
 }
 
-#[dynamic_dispatch(BucketingHash = [
-    hashes::cn_nthash::CanonicalNtHashIteratorFactory,
-    #[cfg(not(feature = "devel-build"))]  hashes::fw_nthash::ForwardNtHashIteratorFactory
-], MergingHash = [
+#[dynamic_dispatch(MergingHash = [
     #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u16::ForwardSeqHashFactory,
     #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u32::ForwardSeqHashFactory,
     #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u64::ForwardSeqHashFactory,
@@ -56,11 +54,7 @@ pub enum ColoredQueryOutputFormat {
     #[cfg(not(feature = "devel-build"))] colors::bundles::graph_querying::ColorBundleGraphQuerying,
     colors::non_colored::NonColoredManager,
 ])]
-pub fn run_query<
-    BucketingHash: MinimizerHashFunctionFactory,
-    MergingHash: HashFunctionFactory,
-    QuerierColorsManager: ColorsManager,
->(
+pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsManager>(
     k: usize,
     m: usize,
     step: QuerierStartingStep,
@@ -77,10 +71,10 @@ pub fn run_query<
 
     PHASES_TIMES_MONITOR.write().init();
 
-    BucketingHash::initialize(k);
+    MNHFactory::initialize(k);
     MergingHash::initialize(k);
 
-    let color_map = QuerierColorsManager::ColorsMergeManagerType::<BucketingHash, MergingHash>::open_colors_table(
+    let color_map = QuerierColorsManager::ColorsMergeManagerType::open_colors_table(
         graph_input.with_extension("colors.dat"),
     )?;
 
@@ -100,7 +94,7 @@ pub fn run_query<
     let buckets_count = 1 << buckets_count_log;
 
     let ((buckets, counters), queries_count) = if step <= QuerierStartingStep::MinimizerBucketing {
-        minimizer_bucketing::<BucketingHash, QuerierColorsManager>(
+        minimizer_bucketing::<QuerierColorsManager>(
             graph_input.clone(),
             query_input.clone(),
             temp_dir.as_path(),
@@ -126,7 +120,7 @@ pub fn run_query<
     };
 
     let counters_buckets = if step <= QuerierStartingStep::KmersCounting {
-        parallel_kmers_counting::<BucketingHash, MergingHash, QuerierColorsManager, _>(
+        parallel_kmers_counting::<MergingHash, QuerierColorsManager, _>(
             buckets,
             counters,
             buckets_count,
@@ -177,7 +171,7 @@ pub fn run_query<
             queries_count,
         )?;
 
-        colored_query_output::<BucketingHash, MergingHash, QuerierColorsManager>(
+        colored_query_output::<MergingHash, QuerierColorsManager>(
             &color_map,
             remapped_query_color_buckets,
             output_file_prefix.clone(),

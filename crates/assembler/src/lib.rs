@@ -14,7 +14,7 @@ use config::{
     INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES,
     MAXIMUM_SECOND_BUCKETS_LOG, MINIMUM_LOG_DELTA_TIME,
 };
-use hashes::{HashFunctionFactory, MinimizerHashFunctionFactory};
+use hashes::HashFunctionFactory;
 use io::concurrent::structured_sequences::binary::StructSeqBinaryWriter;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
 use io::concurrent::structured_sequences::gfa::GFAWriterWrapper;
@@ -72,10 +72,7 @@ fn get_writer<
     }
 }
 
-#[dynamic_dispatch(BucketingHash = [
-    hashes::cn_nthash::CanonicalNtHashIteratorFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::fw_nthash::ForwardNtHashIteratorFactory
-], MergingHash = [
+#[dynamic_dispatch(MergingHash = [
     #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u16::ForwardSeqHashFactory,
     #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u32::ForwardSeqHashFactory,
     #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u64::ForwardSeqHashFactory,
@@ -98,7 +95,6 @@ fn get_writer<
     #[cfg(not(feature = "devel-build"))] GFAWriterWrapper
 ])]
 pub fn run_assembler<
-    BucketingHash: MinimizerHashFunctionFactory,
     MergingHash: HashFunctionFactory,
     AssemblerColorsManager: ColorsManager,
     OutputMode: StructuredSequenceBackendWrapper,
@@ -143,10 +139,7 @@ pub fn run_assembler<
     );
 
     let (buckets, counters) = if step <= AssemblerStartingStep::MinimizerBucketing {
-        assembler_minimizer_bucketing::static_dispatch::minimizer_bucketing::<
-            BucketingHash,
-            AssemblerColorsManager,
-        >(
+        assembler_minimizer_bucketing::static_dispatch::minimizer_bucketing::<AssemblerColorsManager>(
             input_blocks,
             temp_dir.as_path(),
             buckets_count,
@@ -186,10 +179,7 @@ pub fn run_assembler<
         buckets.par_iter().enumerate().for_each(|(index, bucket)| {
             ggcat_logging::info!("Stats for bucket index: {}", index);
             for chunk in &bucket.chunks {
-                kmers_transform::debug_bucket_stats::compute_stats_for_bucket::<
-                    BucketingHash,
-                    MergingHash,
-                >(
+                kmers_transform::debug_bucket_stats::compute_stats_for_bucket::<MergingHash>(
                     chunk.clone(),
                     index,
                     buckets.len(),
@@ -203,7 +193,7 @@ pub fn run_assembler<
     }
 
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
-        assembler_kmers_merge::kmers_merge::<BucketingHash, MergingHash, AssemblerColorsManager, _>(
+        assembler_kmers_merge::kmers_merge::<MergingHash, AssemblerColorsManager, _>(
             buckets,
             counters,
             global_colors_table.clone(),
@@ -417,45 +407,36 @@ pub fn run_assembler<
         None
     };
 
-    let (reorganized_reads, _final_unitigs_bucket) =
-        if step <= AssemblerStartingStep::ReorganizeReads {
-            if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
-                reorganize_reads::<
-                    BucketingHash,
-                    MergingHash,
-                    AssemblerColorsManager,
-                    StructSeqBinaryWriter<_, _>,
-                >(
-                    sequences,
-                    reads_map,
-                    temp_dir.as_path(),
-                    compressed_temp_unitigs_file.as_ref().unwrap(),
-                    buckets_count,
-                )
-            } else {
-                reorganize_reads::<
-                    BucketingHash,
-                    MergingHash,
-                    AssemblerColorsManager,
-                    OutputMode::Backend<_, _>,
-                >(
-                    sequences,
-                    reads_map,
-                    temp_dir.as_path(),
-                    &final_unitigs_file,
-                    buckets_count,
-                )
-            }
-        } else {
-            (
-                generate_bucket_names(temp_dir.join("reads_bucket"), buckets_count, Some("tmp")),
-                (generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
-                    .into_iter()
-                    .next()
-                    .unwrap()
-                    .path),
+    let (reorganized_reads, _final_unitigs_bucket) = if step
+        <= AssemblerStartingStep::ReorganizeReads
+    {
+        if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
+            reorganize_reads::<MergingHash, AssemblerColorsManager, StructSeqBinaryWriter<_, _>>(
+                sequences,
+                reads_map,
+                temp_dir.as_path(),
+                compressed_temp_unitigs_file.as_ref().unwrap(),
+                buckets_count,
             )
-        };
+        } else {
+            reorganize_reads::<MergingHash, AssemblerColorsManager, OutputMode::Backend<_, _>>(
+                sequences,
+                reads_map,
+                temp_dir.as_path(),
+                &final_unitigs_file,
+                buckets_count,
+            )
+        }
+    } else {
+        (
+            generate_bucket_names(temp_dir.join("reads_bucket"), buckets_count, Some("tmp")),
+            (generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
+                .into_iter()
+                .next()
+                .unwrap()
+                .path),
+        )
+    };
 
     if last_step <= AssemblerStartingStep::ReorganizeReads {
         PHASES_TIMES_MONITOR
@@ -473,12 +454,7 @@ pub fn run_assembler<
             || compute_tigs_mode.needs_matchtigs_library()
             || compute_tigs_mode == Some(MatchtigMode::FastEulerTigs)
         {
-            build_unitigs::<
-                BucketingHash,
-                MergingHash,
-                AssemblerColorsManager,
-                StructSeqBinaryWriter<_, _>,
-            >(
+            build_unitigs::<MergingHash, AssemblerColorsManager, StructSeqBinaryWriter<_, _>>(
                 reorganized_reads,
                 unitigs_map,
                 temp_dir.as_path(),
@@ -491,12 +467,7 @@ pub fn run_assembler<
                 k,
             );
         } else {
-            build_unitigs::<
-                BucketingHash,
-                MergingHash,
-                AssemblerColorsManager,
-                OutputMode::Backend<_, _>,
-            >(
+            build_unitigs::<MergingHash, AssemblerColorsManager, OutputMode::Backend<_, _>>(
                 reorganized_reads,
                 unitigs_map,
                 temp_dir.as_path(),
@@ -517,7 +488,7 @@ pub fn run_assembler<
             let temp_path = compressed_temp_unitigs_file.get_path();
             compressed_temp_unitigs_file.finalize();
 
-            build_eulertigs::<BucketingHash, MergingHash, AssemblerColorsManager, _, _>(
+            build_eulertigs::<MergingHash, AssemblerColorsManager, _, _>(
                 circular_temp_path,
                 temp_path,
                 temp_dir.as_path(),
@@ -537,12 +508,7 @@ pub fn run_assembler<
                 let handle = std::thread::Builder::new()
                     .name("greedy_matchtigs".to_string())
                     .spawn(move || {
-                        compute_matchtigs_thread::<
-                            BucketingHash,
-                            MergingHash,
-                            AssemblerColorsManager,
-                            _,
-                        >(
+                        compute_matchtigs_thread::<AssemblerColorsManager, _>(
                             k,
                             threads_count,
                             matchtigs_receiver,
@@ -553,7 +519,6 @@ pub fn run_assembler<
                     .unwrap();
 
                 build_maximal_unitigs_links::<
-                    BucketingHash,
                     MergingHash,
                     AssemblerColorsManager,
                     MatchtigsStorageBackend<_>,
@@ -574,7 +539,6 @@ pub fn run_assembler<
                 );
 
                 build_maximal_unitigs_links::<
-                    BucketingHash,
                     MergingHash,
                     AssemblerColorsManager,
                     OutputMode::Backend<_, _>,

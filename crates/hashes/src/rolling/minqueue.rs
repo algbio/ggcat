@@ -1,18 +1,17 @@
+use crate::default::{MNHFactory, MNHUnextendable};
 use crate::MinimizerHashFunctionFactory;
 use std::cmp::min_by_key;
-use std::marker::PhantomData;
 
-pub struct RollingMinQueue<H: MinimizerHashFunctionFactory> {
-    queue: Vec<(H::HashTypeUnextendable, H::HashTypeUnextendable)>,
+pub struct RollingMinQueue {
+    queue: Vec<(MNHUnextendable, MNHUnextendable)>,
     index: usize,
     capacity_mask: usize,
     size: usize,
-    minimum: (H::HashTypeUnextendable, usize),
-    _marker: PhantomData<H>,
+    minimum: (MNHUnextendable, usize),
 }
 
-impl<H: MinimizerHashFunctionFactory> RollingMinQueue<H> {
-    pub fn new(size: usize) -> RollingMinQueue<H> {
+impl RollingMinQueue {
+    pub fn new(size: usize) -> RollingMinQueue {
         let capacity = size.next_power_of_two();
         let mut queue = Vec::with_capacity(capacity);
         unsafe {
@@ -24,8 +23,7 @@ impl<H: MinimizerHashFunctionFactory> RollingMinQueue<H> {
             index: 0,
             capacity_mask: capacity - 1,
             size,
-            minimum: (H::HashTypeUnextendable::default(), 0),
-            _marker: PhantomData,
+            minimum: (MNHUnextendable::default(), 0),
         }
     }
 
@@ -43,17 +41,17 @@ impl<H: MinimizerHashFunctionFactory> RollingMinQueue<H> {
                 self.queue.get_unchecked_mut(i).1 = min_by_key(
                     self.queue.get_unchecked_mut(i).1,
                     self.queue.get_unchecked_mut((i + 1) & self.capacity_mask).1,
-                    |x| H::get_full_minimizer(*x),
+                    |x| MNHFactory::get_full_minimizer(*x),
                 );
             }
             i = i.wrapping_sub(1) & self.capacity_mask;
         }
     }
 
-    pub fn make_iter<'a, I: Iterator<Item = H::HashTypeUnextendable> + 'a>(
+    pub fn make_iter<'a, I: Iterator<Item = MNHUnextendable> + 'a>(
         &'a mut self,
         mut iter: I,
-    ) -> impl Iterator<Item = H::HashTypeUnextendable> + 'a {
+    ) -> impl Iterator<Item = MNHUnextendable> + 'a {
         for i in 0..(self.size - 1) {
             unsafe {
                 let value = iter.next().unwrap_unchecked();
@@ -70,7 +68,7 @@ impl<H: MinimizerHashFunctionFactory> RollingMinQueue<H> {
             self.minimum = min_by_key(
                 self.minimum,
                 (x, (self.index + self.size) & self.capacity_mask),
-                |x| H::get_full_minimizer(x.0),
+                |x| MNHFactory::get_full_minimizer(x.0),
             );
             self.index = (self.index + 1) & self.capacity_mask;
 
@@ -83,7 +81,7 @@ impl<H: MinimizerHashFunctionFactory> RollingMinQueue<H> {
                 self.queue
                     .get_unchecked_mut((self.index.wrapping_sub(self.size)) & self.capacity_mask)
                     .1,
-                |x| H::get_full_minimizer(*x),
+                |x| MNHFactory::get_full_minimizer(*x),
             )
         })
     }

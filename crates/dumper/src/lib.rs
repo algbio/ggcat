@@ -46,10 +46,10 @@ pub fn dump_unitigs(
 
     PHASES_TIMES_MONITOR.write().init();
 
-    let color_map = <ColorBundleGraphQuerying as ColorsManager>::ColorsMergeManagerType::<
-        hashes::cn_nthash::CanonicalNtHashIteratorFactory,
-        hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
-    >::open_colors_table(graph_input.as_ref().with_extension("colors.dat"))?;
+    let color_map =
+        <ColorBundleGraphQuerying as ColorsManager>::ColorsMergeManagerType::open_colors_table(
+            graph_input.as_ref().with_extension("colors.dat"),
+        )?;
 
     // TODO: Support GFA input
     let file_stats = compute_stats_from_input_blocks(&[GeneralSequenceBlockData::FASTA((

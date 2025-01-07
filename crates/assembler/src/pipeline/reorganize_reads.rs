@@ -3,7 +3,7 @@ use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
     DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
 };
-use hashes::{HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
+use hashes::{HashFunctionFactory, HashableSequence};
 use io::concurrent::temp_reads::creads_utils::{
     CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
 };
@@ -152,15 +152,14 @@ impl<CX: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCo
 }
 
 pub fn reorganize_reads<
-    H: MinimizerHashFunctionFactory,
     MH: HashFunctionFactory,
     CX: ColorsManager,
-    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<H, MH, CX>, ()>,
+    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<CX>, ()>,
 >(
     mut reads: Vec<SingleBucket>,
     mut mapping_files: Vec<SingleBucket>,
     temp_path: &Path,
-    out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<H, MH, CX>, (), BK>,
+    out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<CX>, (), BK>,
     buckets_count: usize,
 ) -> (Vec<SingleBucket>, PathBuf) {
     PHASES_TIMES_MONITOR
@@ -193,7 +192,7 @@ pub fn reorganize_reads<
         let mut tmp_reads_buffer = BucketsThreadDispatcher::<
             _,
             CompressedReadsBucketDataSerializer<
-                ReorganizedReadsExtraData<color_types::PartialUnitigsColorStructure<H, MH, CX>>,
+                ReorganizedReadsExtraData<color_types::PartialUnitigsColorStructure<CX>>,
                 typenum::U0,
                 false,
             >,
@@ -227,8 +226,7 @@ pub fn reorganize_reads<
 
         let mut decompress_buffer = Vec::new();
 
-        let mut colors_buffer =
-            color_types::PartialUnitigsColorStructure::<H, MH, CX>::new_temp_buffer();
+        let mut colors_buffer = color_types::PartialUnitigsColorStructure::<CX>::new_temp_buffer();
 
         CompressedBinaryReader::new(
             &read_file.path,
@@ -238,7 +236,7 @@ pub fn reorganize_reads<
             DEFAULT_PREFETCH_AMOUNT,
         )
         .decode_all_bucket_items::<CompressedReadsBucketDataSerializer<
-            PartialUnitigExtraData<color_types::PartialUnitigsColorStructure<H, MH, CX>>,
+            PartialUnitigExtraData<color_types::PartialUnitigsColorStructure<CX>>,
             typenum::U0,
             false,
         >, _>(
@@ -284,7 +282,7 @@ pub fn reorganize_reads<
                         },
                     );
 
-                    // write_fasta_entry::<H, MH, CX, _>(
+                    // write_fasta_entry::<MH, CX, _>(
                     //     &mut fasta_temp_buffer,
                     //     &mut tmp_lonely_unitigs_buffer,
                     //     color,
@@ -294,9 +292,7 @@ pub fn reorganize_reads<
                     // );
                 }
 
-                color_types::PartialUnitigsColorStructure::<H, MH, CX>::clear_temp_buffer(
-                    color_buffer,
-                );
+                color_types::PartialUnitigsColorStructure::<CX>::clear_temp_buffer(color_buffer);
 
                 index += 1;
             },
