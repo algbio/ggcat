@@ -214,10 +214,9 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                                 if let Some(entry) = super_kmers_hashmap.get_mut(
                                     read.get_borrowable(),
                                 ) {
-                                    assert_eq!(entry.0, flags);
+                                    // Combine the flags from the two super-kmers
+                                    entry.0 |= flags;
                                     entry.1 += multiplicity;
-                                    let entry_value = super_kmers_hashmap.get_key_value(read.get_borrowable()).unwrap().0;
-                                    assert_eq!(entry_value.get_read().to_string(), read.to_string());
                                 } else {
                                     let new_read = CompressedReadIndipendent::from_read(&read, &mut kmers_storage);
                                     assert!(!super_kmers_hashmap.contains_key(read.get_borrowable()));
