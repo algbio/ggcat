@@ -203,6 +203,10 @@ struct AssemblerArgs {
     /// Output the graph in GFA format
     #[structopt(short = "h", long = "gfa")]
     pub gfa_output: bool,
+
+    /// Disables the max. disk usage reduction optimization
+    #[structopt(long = "disable-disk-optimization")]
+    pub disable_disk_optimization: bool,
 }
 
 #[derive(StructOpt, Debug)]
@@ -252,7 +256,12 @@ struct QueryArgs {
 // #[cfg(feature = "mem-analysis")]
 // static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
 
-fn initialize(args: &CommonArgs, out_file: &PathBuf, gfa_output: bool) -> &'static GGCATInstance {
+fn initialize(
+    args: &CommonArgs,
+    out_file: &PathBuf,
+    gfa_output: bool,
+    disable_disk_optimization: bool,
+) -> &'static GGCATInstance {
     let instance = GGCATInstance::create(GGCATConfig {
         temp_dir: Some(args.temp_dir.clone()),
         memory: args.memory,
@@ -262,6 +271,7 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf, gfa_output: bool) -> &'stat
         stats_file: Some(out_file.with_extension("stats.log")),
         messages_callback: None,
         gfa_output,
+        disable_disk_optimization,
     });
 
     ggcat_api::debug::DEBUG_KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
@@ -446,6 +456,7 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
                 ExtraElaboration::None
             },
             args.gfa_output,
+            args.disable_disk_optimization,
         )
         .unwrap();
 
@@ -519,7 +530,12 @@ fn main() {
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
 
-            let instance = initialize(&args.common_args, &args.output_file, args.gfa_output);
+            let instance = initialize(
+                &args.common_args,
+                &args.output_file,
+                args.gfa_output,
+                args.disable_disk_optimization,
+            );
 
             run_assembler_from_args(&instance, args);
         }
@@ -553,7 +569,7 @@ fn main() {
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
 
-            let instance = initialize(&args.common_args, &args.output_file_prefix, false);
+            let instance = initialize(&args.common_args, &args.output_file_prefix, false, false);
 
             let output_file_name = run_querier_from_args(&instance, args);
             println!("Final output saved to: {}", output_file_name.display());

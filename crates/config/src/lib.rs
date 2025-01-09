@@ -11,6 +11,7 @@ pub type BucketIndexType = u16;
 pub type MinimizerType = u32;
 pub type ColorIndexType = u32;
 pub type ColorCounterType = usize;
+pub type MultiplicityCounterType = u32;
 
 pub const PACKETS_PRIORITY_DEFAULT: usize = 0;
 pub const PACKETS_PRIORITY_REWRITTEN: usize = 0;

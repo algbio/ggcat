@@ -40,6 +40,7 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
             get_memory_mode(SwapPriority::LinksBuckets),
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
+        &(),
     ));
 
     let buckets_thread_buffers = ScopedThreadLocal::new(move || {

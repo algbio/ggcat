@@ -8,8 +8,8 @@ use colors::colors_manager::color_types::{
 };
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use config::{
-    get_memory_mode, BucketIndexType, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
-    MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
+    get_memory_mode, BucketIndexType, MultiplicityCounterType, SwapPriority,
+    DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
 };
 use hashbrown::HashMap;
 use hashes::default::MNHFactory;
@@ -17,12 +17,12 @@ use hashes::HashFunction;
 use hashes::HashFunctionFactory;
 use hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
-use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
 };
 use io::varint::{decode_varint, encode_varint};
 use kmers_transform::processor::KmersTransformProcessor;
+use kmers_transform::reads_buffer::ReadsVector;
 use kmers_transform::{
     GroupProcessStats, KmersTransform, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
     KmersTransformMapProcessor, KmersTransformPreprocessor,
@@ -214,7 +214,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
     fn get_sequence_bucket<C>(
         &self,
         global_data: &<ParallelKmersQueryFactory<MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
-        seq_data: &(u8, u8, C, CompressedRead),
+        seq_data: &(u8, u8, C, CompressedRead, MultiplicityCounterType),
         used_hash_bits: usize,
         bucket_bits_count: usize,
     ) -> BucketIndexType {
@@ -289,11 +289,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
     fn process_group_batch_sequences(
         &mut self,
         global_data: &GlobalQueryMergeData,
-        batch: &Vec<(
-            u8,
-            QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>,
-            CompressedReadIndipendent,
-        )>,
+        batch: &ReadsVector<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>>,
         extra_data_buffer: &<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ref_sequences: &Vec<u8>,
     ) -> GroupProcessStats {
@@ -302,7 +298,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
 
         let mut kmers_count = 0;
 
-        for (_, sequence_type, read) in batch.iter() {
+        for (_, sequence_type, read, _) in batch.iter() {
             let hashes = MH::new(read.as_reference(ref_sequences), k);
 
             kmers_count += (read.bases_count() - k + 1) as u64;
@@ -416,6 +412,7 @@ pub fn parallel_kmers_counting<
             get_memory_mode(SwapPriority::QueryCounters),
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
+        &(),
     ));
 
     let global_data = Arc::new(GlobalQueryMergeData {

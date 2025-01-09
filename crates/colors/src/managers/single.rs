@@ -11,6 +11,7 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::ops::Range;
@@ -79,7 +80,7 @@ impl ColorsMergeManager for SingleColorManager {
     fn process_colors<MH: HashFunctionFactory>(
         _global_colors_table: &Self::GlobalColorsTableWriter,
         _data: &mut Self::ColorsBufferTempStructure,
-        _map: &mut HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+        _map: &mut FxHashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
         _k: usize,
         _min_multiplicity: usize,
     ) {
@@ -164,6 +165,12 @@ pub struct UnitigsSerializerTempBuffer {
 #[derive(Clone, Debug)]
 pub struct UnitigColorDataSerializer {
     slice: Range<usize>,
+}
+
+impl Default for UnitigColorDataSerializer {
+    fn default() -> Self {
+        Self { slice: 0..0 }
+    }
 }
 
 impl SequenceExtraDataTempBufferManagement for UnitigColorDataSerializer {

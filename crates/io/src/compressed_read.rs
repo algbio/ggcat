@@ -1,6 +1,7 @@
 use crate::varint::encode_varint_flags;
 use core::fmt::{Debug, Formatter};
 use hashes::HashableSequence;
+use std::hash::Hash;
 use std::io::Write;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
@@ -24,6 +25,52 @@ impl<'a> Debug for CompressedRead<'a> {
         f.write_str(&self.to_string())
     }
 }
+
+impl<'a> Hash for CompressedRead<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.get_packed_slice().hash(state);
+    }
+}
+
+#[repr(transparent)]
+pub struct BorrowableCompressedRead {
+    // Hack to be able to store both a pointer and a size, to store the actual size of the read instead of the number of used bytes
+    // Usable only when start == 0
+    data: [()],
+}
+
+impl BorrowableCompressedRead {
+    pub fn get_compressed_read(&self) -> CompressedRead {
+        let data = self.data.as_ptr() as *const u8;
+        let size = self.data.len();
+        CompressedRead {
+            size,
+            start: 0,
+            data,
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl Hash for BorrowableCompressedRead {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let compressed_read = self.get_compressed_read();
+        compressed_read.size.hash(state);
+        compressed_read.get_packed_slice().hash(state);
+    }
+}
+
+impl PartialEq for BorrowableCompressedRead {
+    fn eq(&self, other: &Self) -> bool {
+        let compressed_read = self.get_compressed_read();
+        let other_compressed_read = other.get_compressed_read();
+
+        compressed_read.size == other_compressed_read.size
+            && compressed_read.get_packed_slice() == other_compressed_read.get_packed_slice()
+    }
+}
+
+impl Eq for BorrowableCompressedRead {}
 
 #[derive(Copy, Clone)]
 pub struct CompressedReadIndipendent {
@@ -91,6 +138,16 @@ impl<'a> CompressedRead<'a> {
         Self::compress_from_plain(seq, |b| {
             buffer.extend_from_slice(b);
         });
+    }
+
+    pub fn get_borrowable(&self) -> &'a BorrowableCompressedRead {
+        assert_eq!(self.start, 0);
+        unsafe {
+            std::mem::transmute(&*std::ptr::slice_from_raw_parts(
+                self.data as *const (),
+                self.size,
+            ))
+        }
     }
 
     #[inline(always)]

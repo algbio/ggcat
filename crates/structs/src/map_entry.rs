@@ -1,4 +1,4 @@
-use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
+use config::{MultiplicityCounterType, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use std::cell::Cell;
 use std::mem::size_of;
 
@@ -27,6 +27,20 @@ impl<CHI> MapEntry<CHI> {
     #[inline(always)]
     pub fn incr(&mut self) {
         self.count_flags.set(self.count_flags.get() + 1);
+    }
+
+    // Increment the multiplicity anc check if the threshold is just crossed
+    #[inline(always)]
+    pub fn incr_by_and_check(
+        &mut self,
+        value: MultiplicityCounterType,
+        check_threshold: usize,
+    ) -> bool {
+        let exceeded = self.count_flags.get() >= check_threshold;
+        self.count_flags
+            .set(self.count_flags.get() + value as usize);
+        let now_exceeded = self.count_flags.get() < check_threshold;
+        !exceeded && now_exceeded
     }
 
     #[inline(always)]

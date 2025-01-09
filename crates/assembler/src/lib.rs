@@ -115,6 +115,7 @@ pub fn run_assembler<
     generate_maximal_unitigs_links: bool,
     compute_tigs_mode: Option<MatchtigMode>,
     only_bstats: bool,
+    minimizer_bucketing_chunk_size: Option<u64>,
 ) -> anyhow::Result<PathBuf> {
     let temp_dir = temp_dir.unwrap_or(PathBuf::new());
 
@@ -146,6 +147,7 @@ pub fn run_assembler<
             threads_count,
             k,
             m,
+            minimizer_bucketing_chunk_size,
         )
     } else {
         (
@@ -264,6 +266,7 @@ pub fn run_assembler<
                 get_memory_mode(SwapPriority::FinalMaps),
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
+            &(),
         ));
 
         let final_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
@@ -274,6 +277,7 @@ pub fn run_assembler<
                 get_memory_mode(SwapPriority::FinalMaps),
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
+            &(),
         ));
 
         if loop_iteration != 0 {
@@ -384,6 +388,7 @@ pub fn run_assembler<
                     CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
                     get_compression_level_info(),
                 ),
+                &(),
             ),
             k,
         ))
@@ -400,6 +405,7 @@ pub fn run_assembler<
                     CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(1)),
                     get_compression_level_info(),
                 ),
+                &(),
             ),
             k,
         ))

@@ -46,6 +46,7 @@ pub fn links_compaction(
             get_memory_mode(SwapPriority::LinksBuckets),
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
+        &(),
     ));
 
     links_inputs.par_iter().for_each(|input| {

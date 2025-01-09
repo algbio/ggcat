@@ -68,7 +68,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                 while let Some(input_packet) =
                     track!(address.receive_packet().await, PACKET_WAITING_COUNTER)
                 {
-                    real_size += input_packet.reads.len();
+                    real_size += input_packet.reads.len() as usize;
                     let stats = map_processor.process_group_batch_sequences(
                         &global_context.global_extra_data,
                         &input_packet.reads,

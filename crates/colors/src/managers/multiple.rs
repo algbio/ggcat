@@ -26,6 +26,7 @@ use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBi
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::memory_fs::RemoveFileMode;
+use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::io::{Cursor, Read, Write};
 use std::mem::size_of;
@@ -97,6 +98,7 @@ impl SequencesStorage {
                         get_compression_level_info(),
                     ),
                     COLOR_STORAGE_INDEX.fetch_add(1, Ordering::Relaxed),
+                    &(),
                 ))
             }
 
@@ -241,7 +243,7 @@ impl ColorsMergeManager for MultipleColorsManager {
     fn process_colors<MH: HashFunctionFactory>(
         global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
-        map: &mut HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+        map: &mut FxHashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
         k: usize,
         min_multiplicity: usize,
     ) {
@@ -590,6 +592,12 @@ pub struct UnitigsSerializerTempBuffer {
 #[derive(Clone, Debug)]
 pub struct UnitigColorData {
     pub(crate) slice: Range<usize>,
+}
+
+impl Default for UnitigColorData {
+    fn default() -> Self {
+        Self { slice: 0..0 }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]

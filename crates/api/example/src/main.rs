@@ -28,6 +28,7 @@ fn main() {
             }
         }),
         gfa_output: false,
+        disable_disk_optimization: false,
     })
     .unwrap();
 

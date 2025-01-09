@@ -47,6 +47,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
             get_compression_level_info(),
         ),
+        &(),
     ));
 
     let thread_buffers = ScopedThreadLocal::new(move || {

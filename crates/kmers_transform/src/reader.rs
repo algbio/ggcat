@@ -15,11 +15,13 @@ use config::{
 use instrumenter::local_setup_instrumenter;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+    BucketModeFromBoolean, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+    MultiplicityModeFromBoolean, MultiplicityModeOption, NoSecondBucket,
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use io::creads_helper;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
-use minimizer_bucketing::MinimizerBucketingExecutorFactory;
+use minimizer_bucketing::{MinimizerBucketMode, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::readers::async_binary_reader::{
     AsyncBinaryReader, AsyncReaderThread,
@@ -48,13 +50,14 @@ use utils::track;
 
 local_setup_instrumenter!();
 
-pub struct KmersTransformReader<F: KmersTransformExecutorFactory> {
+pub(crate) struct KmersTransformReader<F: KmersTransformExecutorFactory> {
     _phantom: PhantomData<F>,
 }
 
 pub struct InputBucketDesc {
     pub(crate) paths: Vec<PathBuf>,
     pub(crate) sub_bucket_counters: Vec<BucketCounter>,
+    pub(crate) out_data_format: MinimizerBucketMode,
     pub(crate) resplitted: bool,
     pub(crate) rewritten: bool,
     pub(crate) used_hash_bits: usize,
@@ -70,6 +73,7 @@ impl PoolObjectTrait for InputBucketDesc {
             resplitted: false,
             rewritten: false,
             used_hash_bits: 0,
+            out_data_format: MinimizerBucketMode::Compacted,
         }
     }
 
@@ -100,6 +104,7 @@ static PACKET_ALLOC_COUNTER: AtomicCounter<SumMode> =
 struct RewriterInitData {
     pub buckets_hash_bits: usize,
     pub used_hash_bits: usize,
+    pub data_format: MinimizerBucketMode,
 }
 
 enum AddressMode {
@@ -116,6 +121,7 @@ struct BucketsInfo {
     second_buckets_log_max: usize,
     total_file_size: usize,
     used_hash_bits: usize,
+    data_format: MinimizerBucketMode,
 }
 
 impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
@@ -239,6 +245,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                 let new_address =
                     KmersTransformResplitter::<F>::generate_new_address(ResplitterInitData {
                         bucket_size: count.0 as usize,
+                        data_format: file.out_data_format,
                     });
                 register_addresses.push(new_address.clone());
                 Some(AddressMode::Send(new_address))
@@ -265,6 +272,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                             get_compression_level_info(),
                         ),
                         SUBSPLIT_INDEX.fetch_add(1, Ordering::Relaxed),
+                        &file.out_data_format,
                     );
 
                     Some(AddressMode::Rewrite(
@@ -273,6 +281,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                         RewriterInitData {
                             buckets_hash_bits: second_buckets_max.ilog2() as usize,
                             used_hash_bits: file.used_hash_bits,
+                            data_format: file.out_data_format,
                         },
                     ))
                 }
@@ -320,10 +329,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             second_buckets_log_max,
             total_file_size,
             used_hash_bits: file.used_hash_bits,
+            data_format: file.out_data_format,
         }
     }
 
-    fn flush_rewrite_bucket(
+    fn flush_rewrite_bucket<MultiplicityMode: MultiplicityModeOption>(
         input_buffer: &mut Packet<ReadsBuffer<F::AssociatedExtraData>>,
         writer: &CompressedBinaryWriter,
         seq_count: &AtomicU64,
@@ -334,16 +344,18 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         let mut serializer = CompressedReadsBucketDataSerializer::<
             _,
             <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,
-            false,
+            NoSecondBucket,
+            MultiplicityMode,
         >::new();
 
-        for (flags, extra, bases) in &input_buffer.reads {
+        for (flags, extra, bases, multiplicity) in input_buffer.reads.iter() {
             // sequences_count[input_packet.sub_bucket] += 1;
 
-            let element_to_write = CompressedReadsBucketData::new_packed(
+            let element_to_write = CompressedReadsBucketData::new_packed_with_multiplicity(
                 bases.as_reference(&input_buffer.reads_buffer),
-                *flags,
+                flags,
                 0,
+                multiplicity,
             );
 
             if serializer.get_size(&element_to_write, extra) + rewrite_buffer.len()
@@ -372,7 +384,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
     }
 
     #[instrumenter::track]
-    async fn read_bucket(
+    async fn read_bucket<const WITH_MULTIPLICITY: bool>(
         global_context: &KmersTransformContext<F>,
         ops: &ExecutorAddressOperations<'_, Self>,
         bucket_info: &BucketsInfo,
@@ -407,64 +419,71 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                 continue;
             }
 
-            let mut items_iterator = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
-                F::AssociatedExtraData,
-                F::FLAGS_COUNT,
-                { USE_SECOND_BUCKET },
-            >>(
-                async_reader_thread.clone(),
-                Vec::new(),
-                F::AssociatedExtraData::new_temp_buffer(),
-            );
+            let data_format: MinimizerBucketMode = reader.get_data_format_info().unwrap();
 
-            while let Some((read_info, extra_buffer)) = items_iterator.next() {
-                let bucket = if has_single_addr {
-                    0
-                } else {
-                    let orig_bucket = preprocessor.get_sequence_bucket(
-                        global_extra_data,
-                        &read_info,
-                        bucket_info.used_hash_bits,
-                        bucket_info.second_buckets_log_max,
-                    ) as usize;
+            creads_helper! {
+                helper_read_bucket_with_opt_multiplicity::<
+                    F::AssociatedExtraData,
+                    F::FLAGS_COUNT,
+                    BucketModeFromBoolean<USE_SECOND_BUCKET>
+                >(
+                    reader,
+                    async_reader_thread.clone(),
+                    matches!(data_format, MinimizerBucketMode::Compacted),
+                    |read_info, extra_buffer| {
+                        let bucket = if has_single_addr {
+                            0
+                        } else {
+                            let orig_bucket = preprocessor.get_sequence_bucket(
+                                global_extra_data,
+                                &read_info,
+                                bucket_info.used_hash_bits,
+                                bucket_info.second_buckets_log_max,
+                            ) as usize;
 
-                    bucket_info.buckets_remapping[orig_bucket]
-                };
+                            bucket_info.buckets_remapping[orig_bucket]
+                        };
 
-                let (flags, _second_bucket, mut extra_data, read) = read_info;
+                        let (flags, _second_bucket, mut extra_data, read, multiplicity) = read_info;
 
-                let ind_read =
-                    CompressedReadIndipendent::from_read(&read, &mut buffers[bucket].reads_buffer);
-                extra_data = F::AssociatedExtraData::copy_extra_from(
-                    extra_data,
-                    extra_buffer,
-                    &mut buffers[bucket].extra_buffer,
-                );
+                        let ind_read = CompressedReadIndipendent::from_read(
+                            &read,
+                            &mut buffers[bucket].reads_buffer,
+                        );
+                        extra_data = F::AssociatedExtraData::copy_extra_from(
+                            extra_data,
+                            extra_buffer,
+                            &mut buffers[bucket].extra_buffer,
+                        );
 
-                buffers[bucket].reads.push((flags, extra_data, ind_read));
+                        buffers[bucket]
+                            .reads
+                            .push::<WITH_MULTIPLICITY>(ind_read, extra_data, flags, multiplicity);
 
-                let packets_pool = &packets_pool;
-                if buffers[bucket].reads.len() == buffers[bucket].reads.capacity() {
-                    match &bucket_info.addresses[bucket] {
-                        AddressMode::Send(address) => {
-                            replace_with_async(&mut buffers[bucket], |mut buffer| async move {
-                                buffer.sub_bucket = bucket;
-                                ops.packet_send(address.clone(), buffer);
-                                track!(packets_pool.alloc_packet().await, PACKET_ALLOC_COUNTER)
-                            })
-                            .await;
+                        let packets_pool = &packets_pool;
+                        if buffers[bucket].reads.len() == buffers[bucket].reads.capacity() {
+                            match &bucket_info.addresses[bucket] {
+                                AddressMode::Send(address) => {
+                                    replace_with_async(&mut buffers[bucket], |mut buffer| async move {
+                                        buffer.sub_bucket = bucket;
+                                        ops.packet_send(address.clone(), buffer);
+                                        track!(packets_pool.alloc_packet().await, PACKET_ALLOC_COUNTER)
+                                    })
+                                    .await;
+                                }
+                                AddressMode::Rewrite(writer, seq_count, _) => {
+                                    Self::flush_rewrite_bucket::<MultiplicityModeFromBoolean<WITH_MULTIPLICITY>>(
+                                        &mut buffers[bucket],
+                                        writer,
+                                        seq_count,
+                                        &mut rewrite_buffer,
+                                    );
+                                }
+                            }
                         }
-                        AddressMode::Rewrite(writer, seq_count, _) => {
-                            Self::flush_rewrite_bucket(
-                                &mut buffers[bucket],
-                                writer,
-                                seq_count,
-                                &mut rewrite_buffer,
-                            );
-                        }
+                        F::AssociatedExtraData::clear_temp_buffer(extra_buffer);
                     }
-                }
-                F::AssociatedExtraData::clear_temp_buffer(extra_buffer);
+                );
             }
         }
 
@@ -480,7 +499,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                         ops.packet_send(address.clone(), packet);
                     }
                     AddressMode::Rewrite(writer, seq_count, _) => {
-                        Self::flush_rewrite_bucket(
+                        Self::flush_rewrite_bucket::<MultiplicityModeFromBoolean<WITH_MULTIPLICITY>>(
                             &mut packet,
                             writer,
                             seq_count,
@@ -559,14 +578,28 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
                         .await;
 
                     spawner.spawn_executor(async move {
-                        Self::read_bucket(
-                            global_context,
-                            address,
-                            buckets_info,
-                            async_thread,
-                            packets_pool,
-                        )
-                        .await;
+                        match buckets_info.data_format {
+                            MinimizerBucketMode::Single => {
+                                Self::read_bucket::<false>(
+                                    global_context,
+                                    address,
+                                    buckets_info,
+                                    async_thread,
+                                    packets_pool,
+                                )
+                                .await;
+                            }
+                            MinimizerBucketMode::Compacted => {
+                                Self::read_bucket::<true>(
+                                    global_context,
+                                    address,
+                                    buckets_info,
+                                    async_thread,
+                                    packets_pool,
+                                )
+                                .await;
+                            }
+                        }
                     });
                 }
 
@@ -602,6 +635,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
                                 rewritten: true,
                                 used_hash_bits: init_data.used_hash_bits
                                     + init_data.buckets_hash_bits,
+                                out_data_format: init_data.data_format,
                             }),
                         );
                     }

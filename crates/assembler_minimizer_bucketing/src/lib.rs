@@ -224,6 +224,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     threads_count: usize,
     k: usize,
     m: usize,
+    minimizer_bucketing_chunk_size: Option<u64>,
 ) -> (Vec<MultiChunkBucket>, PathBuf) {
     MNHFactory::initialize(k);
 
@@ -244,18 +245,11 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         })
         .collect();
 
-    let mut estimated_bases_count = 0;
-
     input_files.sort_by_cached_key(|(file, _)| {
         let bases_count = file.estimated_bases_count().unwrap();
-        estimated_bases_count += bases_count;
         bases_count
     });
     input_files.reverse();
-
-    // Heuristic for maximum disk usage, each base occupies 2 bits,
-    // try not to exceed half of the disk space theoretically used by the input files
-    let max_disk_usage = (estimated_bases_count as u64) / 4 / 2;
 
     GenericMinimizerBucketing::do_bucketing::<
         AssemblerMinimizerBucketingExecutorFactory<CX>,
@@ -271,6 +265,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         Some(k - 1),
         false,
         k,
-        Some(max_disk_usage),
+        minimizer_bucketing_chunk_size,
     )
 }

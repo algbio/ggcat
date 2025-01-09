@@ -9,10 +9,14 @@ use config::{
 use hashes::HashableSequence;
 use instrumenter::local_setup_instrumenter;
 use io::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+    CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMultiplicity,
+    WithMultiplicity,
 };
+use io::concurrent::temp_reads::creads_utils::{MultiplicityModeOption, NoSecondBucket};
 use minimizer_bucketing::counters_analyzer::BucketCounter;
-use minimizer_bucketing::{MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory};
+use minimizer_bucketing::{
+    MinimizerBucketMode, MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory,
+};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::MultiThreadBuckets;
@@ -44,6 +48,7 @@ struct BucketsResplitInfo {
     output_addresses: Vec<ExecutorAddress>,
     executors_count: usize,
     global_counters: Vec<AtomicU64>,
+    data_format: MinimizerBucketMode,
 }
 
 static ADDR_WAITING_COUNTER: AtomicCounter<SumMode> =
@@ -89,6 +94,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                 MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
                 get_compression_level_info(),
             ),
+            &init_data.data_format,
         ));
 
         let output_addresses: Vec<_> = (0..(1 << subsplit_buckets_count_log))
@@ -107,6 +113,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                 .map(|_| AtomicU64::new(0))
                 .collect(),
             executors_count,
+            data_format: init_data.data_format,
             // )
         }
     }
@@ -117,13 +124,30 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
         resplit_info: &BucketsResplitInfo,
         ops: &ExecutorAddressOperations<'_, Self>,
     ) {
+        match resplit_info.data_format {
+            MinimizerBucketMode::Single => {
+                Self::do_resplit_internal::<NoMultiplicity>(global_context, resplit_info, ops).await
+            }
+            MinimizerBucketMode::Compacted => {
+                Self::do_resplit_internal::<WithMultiplicity>(global_context, resplit_info, ops)
+                    .await
+            }
+        }
+    }
+
+    async fn do_resplit_internal<MultiplicityMode: MultiplicityModeOption>(
+        global_context: &KmersTransformContext<F>,
+        resplit_info: &BucketsResplitInfo,
+        ops: &ExecutorAddressOperations<'_, Self>,
+    ) {
         let mut resplitter = F::new_resplitter(&global_context.global_extra_data);
         let mut thread_local_buffers = BucketsThreadDispatcher::<
             _,
             CompressedReadsBucketDataSerializer<
                 _,
                 <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,
-                false,
+                NoSecondBucket,
+                MultiplicityMode,
             >,
         >::new(
             &resplit_info.buckets,
@@ -141,10 +165,10 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
 
             let mut preprocess_info = Default::default();
 
-            for (flags, extra, bases) in &input_packet.reads {
+            for (flags, extra, bases, multiplicity) in input_packet.reads.iter() {
                 let sequence = bases.as_reference(&input_packet.reads_buffer);
                 resplitter.reprocess_sequence(
-                    *flags,
+                    flags,
                     extra,
                     &input_packet.extra_buffer,
                     &mut preprocess_info,
@@ -172,7 +196,12 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                             bucket as BucketIndexType,
                             &extra,
                             extra_buffer,
-                            &CompressedReadsBucketData::new_packed(seq, flags, 0),
+                            &CompressedReadsBucketData::new_packed_with_multiplicity(
+                                seq,
+                                flags,
+                                0,
+                                multiplicity,
+                            ),
                         );
                     },
                 );
@@ -190,6 +219,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
 #[derive(Clone)]
 pub struct ResplitterInitData {
     pub bucket_size: usize,
+    pub data_format: MinimizerBucketMode,
 }
 
 impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitter<F> {
@@ -255,6 +285,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
                             resplitted: true,
                             rewritten: false,
                             used_hash_bits: 0,
+                            out_data_format: resplit_info.data_format,
                         }),
                     );
                 }

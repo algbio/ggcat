@@ -5,7 +5,9 @@ use colors::storage::deserializer::ColorsDeserializer;
 use colors::storage::ColorsSerializerTrait;
 use config::{ColorIndexType, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use io::compressed_read::CompressedReadIndipendent;
-use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
+use io::concurrent::temp_reads::creads_utils::{
+    CompressedReadsBucketDataSerializer, NoMultiplicity, NoSecondBucket,
+};
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
@@ -60,8 +62,9 @@ pub fn colormap_reading<
         .decode_all_bucket_items::<CompressedReadsBucketDataSerializer<
             DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
             typenum::consts::U0,
-            false,
-        >, _>(vec![], &mut (), |(_, _, color_extra, read), _| {
+            NoSecondBucket,
+            NoMultiplicity,
+        >, _>(vec![], &mut (), |(_, _, color_extra, read, _), _| {
             let new_read = CompressedReadIndipendent::from_read(&read, &mut temp_bases);
             temp_sequences.push((new_read, color_extra));
         });

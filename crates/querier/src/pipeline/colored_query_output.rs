@@ -180,6 +180,7 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
                         get_compression_level_info(),
                     ),
                     bucket_index as usize,
+                    &(),
                 );
 
                 let mut jsonline_buffer = vec![];

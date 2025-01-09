@@ -152,6 +152,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             get_memory_mode(SwapPriority::HashBuckets),
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
+        &(),
     ));
 
     let mut sequences = Vec::new();
@@ -165,6 +166,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             get_compression_level_info(),
         ),
+        &(),
     );
 
     let output_results_buckets = ArrayQueue::new(reads_buckets.count());

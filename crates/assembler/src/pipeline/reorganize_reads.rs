@@ -5,7 +5,7 @@ use config::{
 };
 use hashes::{HashFunctionFactory, HashableSequence};
 use io::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+    CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMultiplicity, NoSecondBucket,
 };
 #[cfg(feature = "support_kmer_counters")]
 use structs::unitigs_counters::UnitigsCounters;
@@ -175,6 +175,7 @@ pub fn reorganize_reads<
             CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             get_compression_level_info(),
         ),
+        &(),
     ));
 
     reads.sort_by_key(|b| b.index);
@@ -194,7 +195,8 @@ pub fn reorganize_reads<
             CompressedReadsBucketDataSerializer<
                 ReorganizedReadsExtraData<color_types::PartialUnitigsColorStructure<CX>>,
                 typenum::U0,
-                false,
+                NoSecondBucket,
+                NoMultiplicity,
             >,
         >::new(&buckets, buffers.take());
 
@@ -238,11 +240,12 @@ pub fn reorganize_reads<
         .decode_all_bucket_items::<CompressedReadsBucketDataSerializer<
             PartialUnitigExtraData<color_types::PartialUnitigsColorStructure<CX>>,
             typenum::U0,
-            false,
+            NoSecondBucket,
+            NoMultiplicity,
         >, _>(
             Vec::new(),
             &mut colors_buffer,
-            |(_, _, extra_data, seq), color_buffer| {
+            |(_, _, extra_data, seq, _), color_buffer| {
                 if seq.bases_count() > decompress_buffer.len() {
                     decompress_buffer.resize(seq.bases_count(), 0);
                 }

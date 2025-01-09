@@ -8,7 +8,9 @@ use hashes::{HashFunctionFactory, HashableSequence};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
-use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
+use io::concurrent::temp_reads::creads_utils::{
+    CompressedReadsBucketDataSerializer, NoMultiplicity, NoSecondBucket,
+};
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLinkSerializer};
 use nightly_quirks::slice_group_by::SliceGroupBy;
@@ -36,7 +38,8 @@ struct FinalUnitigInfo {
 type CompressedReadsDataSerializerUnitigsBuilding<CX> = CompressedReadsBucketDataSerializer<
     ReorganizedReadsExtraData<PartialUnitigsColorStructure<CX>>,
     typenum::U0,
-    false,
+    NoSecondBucket,
+    NoMultiplicity,
 >;
 
 pub fn build_unitigs<
@@ -178,7 +181,7 @@ pub fn build_unitigs<
                 .decode_all_bucket_items::<CompressedReadsDataSerializerUnitigsBuilding<CX>, _>(
                     Vec::new(),
                     &mut color_extra_buffer,
-                    |(_, _, index, seq), _color_extra_buffer| {
+                    |(_, _, index, seq, _), _color_extra_buffer| {
                         let &(findex, unitig_info) = unitigs_hashmap.get(&index.unitig).unwrap();
                         final_sequences[findex] = Some((
                             CompressedReadIndipendent::from_read(&seq, &mut temp_storage),

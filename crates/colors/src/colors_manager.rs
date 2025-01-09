@@ -10,6 +10,7 @@ use io::concurrent::temp_reads::extra_data::{
 };
 use nightly_quirks::prelude::*;
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
+use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -161,13 +162,13 @@ pub trait ColorsMergeManager: Sized {
     fn process_colors<MH: HashFunctionFactory>(
         global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
-        map: &mut HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
+        map: &mut FxHashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
         k: usize,
         min_multiplicity: usize,
     );
 
     /// Struct used to hold color information about unitigs
-    type PartialUnitigsColorStructure: IdentSequenceWriter + Clone + 'static;
+    type PartialUnitigsColorStructure: Default + IdentSequenceWriter + Clone + 'static;
     /// Struct holding the result of joining multiple partial unitigs to build a final unitig
     type TempUnitigColorStructure: 'static + Send + Sync;
 

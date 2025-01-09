@@ -90,6 +90,10 @@ pub struct GGCATConfig {
 
     /// Output GFA format instead of FASTA
     pub gfa_output: bool,
+
+    /// Disables the disk optimization feature, that compacts intermediate data to
+    /// reduce maximum size of temporary files
+    pub disable_disk_optimization: bool,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -227,6 +231,8 @@ impl GGCATInstance {
         extra_elab: ExtraElaboration,
 
         gfa_output: bool,
+
+        disable_disk_optimization: bool,
     ) -> anyhow::Result<PathBuf> {
         let merging_hash_dispatch = utils::get_hash_static_id(
             debug::DEBUG_HASH_TYPE.lock().clone(),
@@ -251,6 +257,22 @@ impl GGCATInstance {
         };
 
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
+
+        let bucket_chunk_size = if disable_disk_optimization {
+            None
+        } else {
+            let estimated_bases_count: u64 = input_streams
+                .iter()
+                .map(|file| file.estimated_bases_count().unwrap())
+                .sum();
+
+            if colors {
+                None
+            } else {
+                // Heuristic for chunks used for maximum disk usage
+                Some((estimated_bases_count as u64) / 4 / 2)
+            }
+        };
 
         let output_file = assembler::dynamic_dispatch::run_assembler(
             (merging_hash_dispatch, colors_hash, output_mode),
@@ -277,6 +299,7 @@ impl GGCATInstance {
                 _ => None,
             },
             debug::DEBUG_ONLY_BSTATS.load(Ordering::Relaxed),
+            bucket_chunk_size,
         )?;
 
         remove_tempdir(temp_dir);

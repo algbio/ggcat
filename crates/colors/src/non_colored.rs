@@ -12,6 +12,7 @@ use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
+use rustc_hash::FxHashMap;
 use std::io::{Read, Write};
 use std::ops::Range;
 use std::path::Path;
@@ -174,7 +175,7 @@ impl ColorsMergeManager for NonColoredManager {
     fn process_colors<MH: HashFunctionFactory>(
         _global_colors_table: &Self::GlobalColorsTableWriter,
         _data: &mut Self::ColorsBufferTempStructure,
-        _map: &mut HashMap<
+        _map: &mut FxHashMap<
             <MH as HashFunctionFactory>::HashTypeUnextendable,
             MapEntry<Self::HashMapTempColorIndex>,
         >,

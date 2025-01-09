@@ -316,7 +316,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
                         if should_extend {
                             // Test for backward branches
-
                             if !COMPUTE_SIMPLITIGS {
                                 let mut ocount = 0;
                                 let new_hash = temp_data.0;

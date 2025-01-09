@@ -130,6 +130,7 @@ pub fn counters_sorting<CX: ColorsManager>(
                 MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
                 get_compression_level_info(),
             ),
+            &(),
         ))
     } else {
         Arc::new(MultiThreadBuckets::EMPTY)

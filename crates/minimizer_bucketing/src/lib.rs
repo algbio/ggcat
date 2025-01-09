@@ -19,7 +19,8 @@ use config::{MAXIMUM_SECOND_BUCKETS_COUNT, USE_SECOND_BUCKET};
 use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+    BucketModeFromBoolean, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+    NoMultiplicity,
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
@@ -41,6 +42,7 @@ use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
 use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInputAddressMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::{Mutex, RwLock};
+use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::future::Future;
 use std::marker::PhantomData;
@@ -49,6 +51,12 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+pub enum MinimizerBucketMode {
+    Single,
+    Compacted,
+}
 
 pub trait MinimizerInputSequence: HashableSequence + Copy {
     fn get_subslice(&self, range: Range<usize>) -> Self;
@@ -196,6 +204,7 @@ pub struct MinimizerBucketingExecutionContext<GlobalData> {
     pub total_files: usize,
     pub read_threads_count: usize,
     pub threads_count: usize,
+    pub output_path: PathBuf,
 
     pub bucket_compactors: Vec<Mutex<Option<ExecutorAddress>>>,
 
@@ -229,7 +238,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
             CompressedReadsBucketDataSerializer<
                 E::ExtraData,
                 E::FLAGS_COUNT,
-                { USE_SECOND_BUCKET },
+                BucketModeFromBoolean<USE_SECOND_BUCKET>,
+                NoMultiplicity,
             >,
         >::new(
             &context.buckets,
@@ -485,6 +495,7 @@ impl GenericMinimizerBucketing {
                 MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
                 get_compression_level_info(),
             ),
+            &MinimizerBucketMode::Single,
         ));
 
         let second_buckets_count = max(
@@ -509,6 +520,7 @@ impl GenericMinimizerBucketing {
                 global_data,
             )),
             threads_count: compute_threads_count,
+            output_path: output_path.to_path_buf(),
 
             bucket_compactors: (0..buckets_count).map(|_| Mutex::new(None)).collect(),
             partial_read_copyback,

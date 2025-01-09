@@ -3,15 +3,14 @@ use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{color_types, ColorsManager};
 use colors::colors_manager::{ColorsMergeManager, MinimizerBucketingSeqColorData};
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
-use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
 use hashes::HashFunction;
 use hashes::HashFunctionFactory;
 use hashes::HashableSequence;
-use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::varint::encode_varint;
 use kmers_transform::processor::KmersTransformProcessor;
+use kmers_transform::reads_buffer::ReadsVector;
 use kmers_transform::{
     GroupProcessStats, KmersTransformExecutorFactory, KmersTransformMapProcessor,
 };
@@ -21,6 +20,7 @@ use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::mt_debug_counters::counter::{AtomicCounter, AvgMode, MaxMode};
 use parallel_processor::mt_debug_counters::{declare_avg_counter_i64, declare_counter_i64};
 use parking_lot::RwLock;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::cmp::{max, min};
 use std::mem::size_of;
 use std::ops::{Deref, DerefMut};
@@ -34,7 +34,7 @@ pub(crate) static KMERGE_TEMP_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
 
 pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManager> {
     pub rhash_map:
-        HashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<CX>>>,
+        FxHashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<CX>>>,
     pub saved_reads: Vec<u8>,
     pub encoded_saved_reads_indexes: Vec<u8>,
     pub temp_colors: color_types::ColorsBufferTempStructure<CX>,
@@ -43,14 +43,14 @@ pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManage
 }
 
 #[inline]
-fn clear_hashmap<K, V>(hashmap: &mut HashMap<K, V>, suggested_size: usize) {
+fn clear_hashmap<K, V>(hashmap: &mut FxHashMap<K, V>, suggested_size: usize) {
     let suggested_capacity = (suggested_size / 2).next_power_of_two();
 
     if hashmap.capacity() < suggested_capacity {
         hashmap.clear();
     } else {
         // Reset the hashmap if it gets too big
-        *hashmap = HashMap::with_capacity(suggested_capacity);
+        *hashmap = FxHashMap::with_capacity_and_hasher(suggested_capacity, FxBuildHasher);
     }
 }
 
@@ -61,7 +61,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
 
     fn allocate_new(_init_data: &Self::InitData) -> Self {
         Self {
-            rhash_map: HashMap::with_capacity(4096),
+            rhash_map: FxHashMap::with_capacity_and_hasher(4096, FxBuildHasher),
             saved_reads: vec![],
             encoded_saved_reads_indexes: vec![],
             temp_colors: CX::ColorsMergeManagerType::allocate_temp_buffer_structure(
@@ -164,11 +164,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     fn process_group_batch_sequences(
         &mut self,
         global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
-        batch: &Vec<(
-            u8,
-            MinimizerBucketingSeqColorDataType<CX>,
-            CompressedReadIndipendent,
-        )>,
+        batch: &ReadsVector<MinimizerBucketingSeqColorDataType<CX>>,
         extra_data_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ref_sequences: &Vec<u8>,
     ) -> GroupProcessStats {
@@ -179,7 +175,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         let mut kmers_count = 0;
         let mut unique_kmers_count = 0;
 
-        for (flags, color, read) in batch.iter() {
+        for (flags, color, read, multiplicity) in batch.iter() {
             let read = read.as_reference(ref_sequences);
 
             let hashes = MH::new(read, k);
@@ -212,7 +208,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                         | ((end_ignored as u8) << (is_forward as u8)),
                 );
 
-                entry.incr();
+                let crossed_min_abundance =
+                    entry.incr_by_and_check(multiplicity, global_data.min_multiplicity);
 
                 CX::ColorsMergeManagerType::add_temp_buffer_structure_el::<MH>(
                     &mut map_packet.temp_colors,
@@ -221,7 +218,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                     entry,
                 );
 
-                if entry.get_counter() == global_data.min_multiplicity {
+                // Update the valid indexes to allow saving reads that cross the min abundance threshold
+                if !MH::INVERTIBLE && crossed_min_abundance {
                     min_idx = min(min_idx, idx / 4);
                     max_idx = max(max_idx, idx);
                 }
@@ -232,7 +230,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                 read,
                 global_data.k,
                 global_data.m,
-                *flags,
+                flags,
             );
 
             if !MH::INVERTIBLE {

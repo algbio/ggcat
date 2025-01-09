@@ -1,6 +1,6 @@
 use config::{
-    BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, READ_FLAG_INCL_END,
-    USE_SECOND_BUCKET,
+    BucketIndexType, MultiplicityCounterType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
+    READ_FLAG_INCL_END, USE_SECOND_BUCKET,
 };
 use hashes::default::MNHFactory;
 use hashes::{
@@ -8,7 +8,9 @@ use hashes::{
     MinimizerHashFunctionFactory,
 };
 use io::compressed_read::CompressedRead;
-use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketDataSerializer;
+use io::concurrent::temp_reads::creads_utils::{
+    BucketModeFromBoolean, CompressedReadsBucketDataSerializer, NoMultiplicity,
+};
 use parallel_processor::buckets::readers::async_binary_reader::{
     AsyncBinaryReader, AsyncReaderThread,
 };
@@ -19,7 +21,7 @@ use std::path::PathBuf;
 fn get_sequence_bucket<C>(
     k: usize,
     m: usize,
-    seq_data: &(u8, u8, C, CompressedRead),
+    seq_data: &(u8, u8, C, CompressedRead, MultiplicityCounterType),
     used_hash_bits: usize,
     bucket_bits_count: usize,
 ) -> BucketIndexType {
@@ -69,7 +71,8 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
     let mut items_iterator = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
         (),
         typenum::U2,
-        { USE_SECOND_BUCKET },
+        BucketModeFromBoolean<USE_SECOND_BUCKET>,
+        NoMultiplicity,
     >>(reader_thread.clone(), Vec::new(), ());
 
     let mut total_counters = vec![0; second_buckets_max];

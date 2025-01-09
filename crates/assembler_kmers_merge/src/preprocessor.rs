@@ -1,6 +1,7 @@
 use crate::ParallelKmersMergeFactory;
 use colors::colors_manager::ColorsManager;
 use config::BucketIndexType;
+use config::MultiplicityCounterType;
 use config::READ_FLAG_INCL_END;
 use hashes::default::MNHFactory;
 use hashes::ExtendableHashTraitType;
@@ -35,7 +36,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     fn get_sequence_bucket<C>(
         &self,
         global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
-        seq_data: &(u8, u8, C, CompressedRead),
+        seq_data: &(u8, u8, C, CompressedRead, MultiplicityCounterType),
         used_hash_bits: usize,
         bucket_bits_count: usize,
     ) -> BucketIndexType {

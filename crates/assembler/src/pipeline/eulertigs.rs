@@ -6,6 +6,7 @@ use hashes::HashFunctionFactory;
 use hashes::{ExtendableHashTraitType, HashFunction, HashableSequence};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
+use io::concurrent::temp_reads::creads_utils::{NoMultiplicity, NoSecondBucket};
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::concurrent::{
     structured_sequences::{
@@ -335,44 +336,70 @@ pub fn build_eulertigs<
             .for_each(|_thread_index| {
                 let mut kmers = vec![];
                 while circular_unitigs_reader
-                .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
-                    _,
-                    typenum::consts::U0,
-                    false,
-                >, _>(
-                Vec::new(),
-                <(u64, PartialUnitigsColorStructure<CX>, (), SequenceAbundanceType)>::new_temp_buffer(
-                ),
-                |(_, _, (_index, mut color, _, _), read): (
-                    _,
-                    _,
-                    (_, PartialUnitigsColorStructure<CX>, (), SequenceAbundanceType),
-                    _,
-                ),
-                colors_extra_buffer| {
-                    let unitig_index = joined.lock().add_unitig(read.get_length() - (k - 1));
-                    let mut buffer = unitigs_bases.lock();
+                    .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
+                        _,
+                        typenum::consts::U0,
+                        NoSecondBucket,
+                        NoMultiplicity,
+                    >, _>(
+                        Vec::new(),
+                        <(
+                            u64,
+                            PartialUnitigsColorStructure<CX>,
+                            (),
+                            SequenceAbundanceType,
+                        )>::new_temp_buffer(),
+                        |(_, _, (_index, mut color, _, _), read, _): (
+                            _,
+                            _,
+                            (
+                                _,
+                                PartialUnitigsColorStructure<CX>,
+                                (),
+                                SequenceAbundanceType,
+                            ),
+                            _,
+                            _,
+                        ),
+                         colors_extra_buffer| {
+                            let unitig_index =
+                                joined.lock().add_unitig(read.get_length() - (k - 1));
+                            let mut buffer = unitigs_bases.lock();
 
-                    // Save the current circular unitig for later usage
-                    let copied_read = CompressedReadIndipendent::from_read(&read, &mut buffer);
+                            // Save the current circular unitig for later usage
+                            let copied_read =
+                                CompressedReadIndipendent::from_read(&read, &mut buffer);
 
-                    if CX::COLORS_ENABLED {
-                        // Copy the color data to the temporary buffer
-                        color = PartialUnitigsColorStructure::<CX>::copy_extra_from(color, &colors_extra_buffer.0, &mut unitigs_color_buffer.lock());
-                    }
+                            if CX::COLORS_ENABLED {
+                                // Copy the color data to the temporary buffer
+                                color = PartialUnitigsColorStructure::<CX>::copy_extra_from(
+                                    color,
+                                    &colors_extra_buffer.0,
+                                    &mut unitigs_color_buffer.lock(),
+                                );
+                            }
 
-                    unitig_mapping.insert(unitig_index, (copied_read, color));
+                            unitig_mapping.insert(unitig_index, (copied_read, color));
 
-                    for (offset, hash) in MH::new(read.sub_slice(0..(copied_read.bases_count() - 1)), k - 1).iter().enumerate() {
-                        kmers.push((hash.to_unextendable(), unitig_index, KmerOffset::new(offset,!hash.is_forward())));
-                    }
-                },
-            ) {
-                continue;
-            }
-            kmers.sort_unstable_by_key(|x| x.0);
-            circular_unitigs_kmers.lock().push(kmers);
-        })
+                            for (offset, hash) in
+                                MH::new(read.sub_slice(0..(copied_read.bases_count() - 1)), k - 1)
+                                    .iter()
+                                    .enumerate()
+                            {
+                                kmers.push((
+                                    hash.to_unextendable(),
+                                    unitig_index,
+                                    KmerOffset::new(offset, !hash.is_forward()),
+                                ));
+                            }
+                        },
+                    )
+                {
+                    continue;
+                }
+                kmers.sort_unstable_by_key(|x| x.0);
+                circular_unitigs_kmers.lock().push(kmers);
+            })
     });
 
     let mut circular_unitigs_kmers = circular_unitigs_kmers.into_inner();
@@ -443,108 +470,125 @@ pub fn build_eulertigs<
 
     rayon::scope(|_s| {
         (0..rayon::current_num_threads())
-                .into_par_iter()
-                .for_each(|_thread_index| {
-            let mut output_unitigs_buffer = vec![];
-            let mut final_unitig_color =
-                CX::ColorsMergeManagerType::alloc_unitig_color_structure();
-            let mut final_color_extra_buffer = color_types::PartialUnitigsColorStructure::<CX>::new_temp_buffer();
-            let mut writer = FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
+            .into_par_iter()
+            .for_each(|_thread_index| {
+                let mut output_unitigs_buffer = vec![];
+                let mut final_unitig_color =
+                    CX::ColorsMergeManagerType::alloc_unitig_color_structure();
+                let mut final_color_extra_buffer =
+                    color_types::PartialUnitigsColorStructure::<CX>::new_temp_buffer();
+                let mut writer =
+                    FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
 
-            while flat_unitigs_reader
-                .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
-                    _,
-                    typenum::consts::U0,
-                    false,
-                >, _>(
-                Vec::new(),
-                <(u64, PartialUnitigsColorStructure<CX>, (), SequenceAbundanceType)>::new_temp_buffer(
-                ),
-                |(_, _, (_index, color, _, _), read): (
-                    _,
-                    _,
-                    (_, PartialUnitigsColorStructure<CX>, (), SequenceAbundanceType),
-                    _,
-                ),
-                color_extra_buffer| {
-                    output_unitigs_buffer.clear();
+                while flat_unitigs_reader
+                    .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
+                        _,
+                        typenum::consts::U0,
+                        NoSecondBucket,
+                        NoMultiplicity,
+                    >, _>(
+                        Vec::new(),
+                        <(
+                            u64,
+                            PartialUnitigsColorStructure<CX>,
+                            (),
+                            SequenceAbundanceType,
+                        )>::new_temp_buffer(),
+                        |(_, _, (_index, color, _, _), read, _): (
+                            _,
+                            _,
+                            (
+                                _,
+                                PartialUnitigsColorStructure<CX>,
+                                (),
+                                SequenceAbundanceType,
+                            ),
+                            _,
+                            _,
+                        ),
+                         color_extra_buffer| {
+                            output_unitigs_buffer.clear();
 
-                    CX::ColorsMergeManagerType::reset_unitig_color_structure(
-                        &mut final_unitig_color,
-                    );
+                            CX::ColorsMergeManagerType::reset_unitig_color_structure(
+                                &mut final_unitig_color,
+                            );
 
-                    let mut last_offset = 0;
+                            let mut last_offset = 0;
 
-                    for (offset, hash) in MH::new(read, k - 1).iter().enumerate() {
+                            for (offset, hash) in MH::new(read, k - 1).iter().enumerate() {
+                                if let Some(kmer) =
+                                    circular_unitigs_kmers_map.get(&hash.to_unextendable())
+                                {
+                                    let should_rc = kmer.1.is_rc() ^ !hash.is_forward();
+                                    let (index, rotation) = *kmer;
 
-                        if let Some(kmer) = circular_unitigs_kmers_map.get(&hash.to_unextendable()) {
+                                    let parent = joined.find_flatten(index);
 
-                            let should_rc = kmer.1.is_rc() ^ !hash.is_forward();
-                            let (index, rotation) = *kmer;
+                                    if joined.mappings[parent].used.swap(true, Ordering::Relaxed) {
+                                        continue;
+                                    }
 
-                            let parent = joined.find_flatten(index);
+                                    // Found match
+                                    let end_base_offset = offset;
+                                    read.sub_slice(last_offset..end_base_offset)
+                                        .write_unpacked_to_vec(&mut output_unitigs_buffer, false);
+                                    CX::ColorsMergeManagerType::join_structures::<false>(
+                                        &mut final_unitig_color,
+                                        &color,
+                                        &color_extra_buffer.0,
+                                        last_offset,
+                                        Some(end_base_offset - last_offset),
+                                    );
 
-                            if joined.mappings[parent].used.swap(true, Ordering::Relaxed) {
-                                continue;
+                                    // Dump the current circular unitig
+                                    let mut circular_unitig = joined.mappings[parent].clone();
+
+                                    circular_unitig.rotate(index, rotation.get_offset(), should_rc);
+
+                                    circular_unitig.write_unpacked::<MH, CX>(
+                                        &unitigs_bases,
+                                        &unitig_mapping,
+                                        &mut output_unitigs_buffer,
+                                        &unitigs_color_buffer,
+                                        &mut final_unitig_color,
+                                        k,
+                                        false,
+                                    );
+                                    last_offset = end_base_offset;
+                                }
                             }
 
-                            // Found match
-                            let end_base_offset = offset;
-                            read.sub_slice(last_offset..end_base_offset).write_unpacked_to_vec(&mut output_unitigs_buffer, false);
+                            // Write the last part of the unitig
+                            read.sub_slice(last_offset..read.bases_count())
+                                .write_unpacked_to_vec(&mut output_unitigs_buffer, false);
                             CX::ColorsMergeManagerType::join_structures::<false>(
                                 &mut final_unitig_color,
                                 &color,
                                 &color_extra_buffer.0,
                                 last_offset,
-                                Some(end_base_offset - last_offset),
+                                Some(read.bases_count() - last_offset),
                             );
 
-                            // Dump the current circular unitig
-                            let mut circular_unitig = joined.mappings[parent].clone();
+                            let writable_color =
+                                CX::ColorsMergeManagerType::encode_part_unitigs_colors(
+                                    &mut final_unitig_color,
+                                    &mut final_color_extra_buffer,
+                                );
 
-                            circular_unitig.rotate(index, rotation.get_offset(), should_rc);
-
-                            circular_unitig.write_unpacked::<MH, CX>(
-                                &unitigs_bases, &unitig_mapping,
-                                &mut output_unitigs_buffer,
-                                &unitigs_color_buffer,
-                                &mut final_unitig_color,
-                                k,
-                                false
+                            writer.add_read(
+                                &output_unitigs_buffer,
+                                None,
+                                writable_color,
+                                &final_color_extra_buffer,
+                                L::default(),
+                                &default_links_buffer,
                             );
-                            last_offset = end_base_offset;
-                        }
-                    }
-
-                    // Write the last part of the unitig
-                    read.sub_slice(last_offset..read.bases_count()).write_unpacked_to_vec(&mut output_unitigs_buffer, false);
-                    CX::ColorsMergeManagerType::join_structures::<false>(
-                        &mut final_unitig_color,
-                        &color,
-                        &color_extra_buffer.0,
-                        last_offset,
-                        Some(read.bases_count() - last_offset),
-                    );
-
-                    let writable_color =
-                        CX::ColorsMergeManagerType::encode_part_unitigs_colors(
-                            &mut final_unitig_color,
-                            &mut final_color_extra_buffer,
-                        );
-
-                    writer.add_read(
-                        &output_unitigs_buffer,
-                        None,
-                        writable_color,
-                        &final_color_extra_buffer,
-                        L::default(),
-                        &default_links_buffer,
-                    );
-                },
-            ) {
-                continue;
-            }
-        });
+                        },
+                    )
+                {
+                    continue;
+                }
+            });
     });
 
     let mut writer = FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);

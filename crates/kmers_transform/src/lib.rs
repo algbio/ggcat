@@ -4,15 +4,16 @@ use crate::processor::KmersTransformProcessor;
 use crate::reader::{InputBucketDesc, KmersTransformReader};
 use crate::resplitter::KmersTransformResplitter;
 use config::{
-    BucketIndexType, KEEP_FILES, KMERS_TRANSFORM_READS_CHUNKS_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS,
-    MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME, PACKETS_PRIORITY_FILES,
+    BucketIndexType, MultiplicityCounterType, KEEP_FILES, KMERS_TRANSFORM_READS_CHUNKS_SIZE,
+    MAXIMUM_JIT_PROCESSED_BUCKETS, MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME,
+    PACKETS_PRIORITY_FILES,
 };
-use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
+use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
 };
 use minimizer_bucketing::counters_analyzer::CountersAnalyzer;
-use minimizer_bucketing::MinimizerBucketingExecutorFactory;
+use minimizer_bucketing::{MinimizerBucketMode, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::MultiChunkBucket;
 use parallel_processor::execution_manager::execution_context::{ExecutionContext, PoolAllocMode};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
@@ -23,6 +24,7 @@ use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInp
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
+use reads_buffer::ReadsVector;
 use std::cmp::{max, min};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -32,7 +34,7 @@ use std::time::{Duration, Instant};
 
 pub mod debug_bucket_stats;
 pub mod processor;
-mod reads_buffer;
+pub mod reads_buffer;
 mod resplitter;
 
 pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
@@ -71,7 +73,7 @@ pub trait KmersTransformPreprocessor<F: KmersTransformExecutorFactory>:
     fn get_sequence_bucket<C>(
         &self,
         global_data: &F::GlobalExtraData,
-        seq_data: &(u8, u8, C, CompressedRead),
+        seq_data: &(u8, u8, C, CompressedRead, MultiplicityCounterType),
         used_hash_bits: usize,
         bucket_bits_count: usize,
     ) -> BucketIndexType;
@@ -96,7 +98,7 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
     fn process_group_batch_sequences(
         &mut self,
         global_data: &F::GlobalExtraData,
-        batch: &Vec<(u8, F::AssociatedExtraData, CompressedReadIndipendent)>,
+        batch: &ReadsVector<F::AssociatedExtraData>,
         extra_data_buffer: &<F::AssociatedExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ref_sequences: &Vec<u8>,
     ) -> GroupProcessStats;
@@ -213,6 +215,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     resplitted: false,
                     rewritten: false,
                     used_hash_bits: buckets_count.ilog2() as usize,
+                    out_data_format: if bucket_entries.was_compacted {
+                        MinimizerBucketMode::Compacted
+                    } else {
+                        MinimizerBucketMode::Single
+                    },
                 });
             }
 
@@ -239,6 +246,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     resplitted: false,
                     rewritten: false,
                     used_hash_bits: buckets_count.ilog2() as usize,
+                    out_data_format: if bucket_entry.was_compacted {
+                        MinimizerBucketMode::Compacted
+                    } else {
+                        MinimizerBucketMode::Single
+                    },
                 })
             }
             buckets_list

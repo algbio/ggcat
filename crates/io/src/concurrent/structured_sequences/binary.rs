@@ -1,6 +1,6 @@
 use crate::concurrent::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
 use crate::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+    CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMultiplicity, NoSecondBucket,
 };
 use crate::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataConsecutiveCompression,
@@ -15,6 +15,7 @@ use parallel_processor::buckets::writers::compressed_binary_writer::{
 };
 use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
+use serde::Serialize;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -48,16 +49,17 @@ impl<
         LinksInfo: IdentSequenceWriter + SequenceExtraData,
     > StructSeqBinaryWriter<ColorInfo, LinksInfo>
 {
-    pub fn new(
+    pub fn new<T: Serialize>(
         path: impl AsRef<Path>,
         file_mode: &(
             MemoryFileMode,
             CompressedCheckpointSize,
             CompressionLevelInfo,
         ),
+        data_format: &T,
     ) -> Self {
         Self {
-            writer: CompressedBinaryWriter::new(path.as_ref(), file_mode, 0),
+            writer: CompressedBinaryWriter::new(path.as_ref(), file_mode, 0, data_format),
             _phantom: Default::default(),
         }
     }
@@ -169,7 +171,8 @@ impl<
         CompressedReadsBucketDataSerializer<
             (u64, ColorInfo, LinksInfo, SequenceAbundanceType),
             typenum::consts::U0,
-            false,
+            NoSecondBucket,
+            NoMultiplicity,
         >,
     );
 
