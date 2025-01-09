@@ -4,7 +4,7 @@ use crate::{KmersTransformContext, KmersTransformExecutorFactory};
 use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
     DEFAULT_PER_CPU_BUFFER_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_RESPLIT_BUCKETS_COUNT_LOG,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DONE_RESPLIT,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DONE_RESPLIT, WORKERS_PRIORITY_HIGH,
 };
 use hashes::HashableSequence;
 use instrumenter::local_setup_instrumenter;
@@ -239,9 +239,12 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
         _memory_tracker: MemoryTracker<Self>,
     ) -> impl Future<Output = ()> + 'a {
         async move {
-            while let Ok((address, init_data)) =
-                track!(receiver.obtain_address().await, ADDR_WAITING_COUNTER)
-            {
+            while let Ok((address, init_data)) = track!(
+                receiver
+                    .obtain_address_with_priority(WORKERS_PRIORITY_HIGH)
+                    .await,
+                ADDR_WAITING_COUNTER
+            ) {
                 let resplit_info = Self::init_processing(global_context, &init_data);
 
                 let mut spawner = address.make_spawner();

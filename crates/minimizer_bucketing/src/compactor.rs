@@ -17,7 +17,7 @@ use colors::non_colored::NonColoredManager;
 use config::{
     get_compression_level_info, get_memory_mode, MultiplicityCounterType, SwapPriority,
     DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, WORKERS_PRIORITY_HIGH,
 };
 use io::{
     compressed_read::CompressedReadIndipendent,
@@ -121,9 +121,12 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 
             static COMPACTED_INDEX: AtomicUsize = AtomicUsize::new(0);
 
-            while let Ok((_, init_data)) =
-                track!(receiver.obtain_address().await, ADDR_WAITING_COUNTER)
-            {
+            while let Ok((_, init_data)) = track!(
+                receiver
+                    .obtain_address_with_priority(WORKERS_PRIORITY_HIGH)
+                    .await,
+                ADDR_WAITING_COUNTER
+            ) {
                 let mut chosen_buckets = vec![];
 
                 let bucket_index = init_data.bucket_index as usize;

@@ -1,5 +1,6 @@
 use crate::queue_data::MinimizerBucketingQueueData;
 use crate::MinimizerBucketingExecutionContext;
+use config::WORKERS_PRIORITY_BASE;
 use io::sequences_stream::GenericSequencesStream;
 use nightly_quirks::branch_pred::unlikely;
 use parallel_processor::execution_manager::executor::{
@@ -152,7 +153,10 @@ impl<
         _memory_tracker: MemoryTracker<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
-            while let Ok((address, _)) = receiver.obtain_address().await {
+            while let Ok((address, _)) = receiver
+                .obtain_address_with_priority(WORKERS_PRIORITY_BASE)
+                .await
+            {
                 let read_threads_count = global_params.read_threads_count;
 
                 let mut spawner = address.make_spawner();

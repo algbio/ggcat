@@ -1444,6 +1444,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "streaming-libdeflate-rs",
+ "tokio",
  "typenum",
 ]
 

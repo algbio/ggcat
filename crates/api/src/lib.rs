@@ -234,6 +234,8 @@ impl GGCATInstance {
 
         disable_disk_optimization: bool,
     ) -> anyhow::Result<PathBuf> {
+        // PriorityScheduler::set_max_threads_count(threads_count);
+
         let merging_hash_dispatch = utils::get_hash_static_id(
             debug::DEBUG_HASH_TYPE.lock().clone(),
             kmer_length,
@@ -270,7 +272,7 @@ impl GGCATInstance {
                 None
             } else {
                 // Heuristic for chunks used for maximum disk usage
-                Some((estimated_bases_count as u64) / 4 / 2)
+                Some((estimated_bases_count as u64) / 4)
             }
         };
 
@@ -333,6 +335,8 @@ impl GGCATInstance {
         // Query output format
         color_output_format: ColoredQueryOutputFormat,
     ) -> anyhow::Result<PathBuf> {
+        // PriorityScheduler::set_max_threads_count(threads_count);
+
         let merging_hash_dispatch = utils::get_hash_static_id(
             debug::DEBUG_HASH_TYPE.lock().clone(),
             kmer_length,
@@ -433,6 +437,8 @@ impl GGCATInstance {
         single_thread_output_function: bool,
         output_function: impl Fn(&[u8], &[ColorIndexType], bool) + Send + Sync,
     ) -> anyhow::Result<()> {
+        // PriorityScheduler::set_max_threads_count(threads_count);
+
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
 
         if colors {

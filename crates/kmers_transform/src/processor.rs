@@ -3,6 +3,7 @@ use crate::{
     KmersTransformContext, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
     KmersTransformMapProcessor,
 };
+use config::WORKERS_PRIORITY_BASE;
 use parallel_processor::execution_manager::executor::{AsyncExecutor, ExecutorReceiver};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
@@ -56,9 +57,12 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                 <F::MapProcessorType as KmersTransformMapProcessor<F>>::MapStruct::allocate_new(&()),
             );
 
-            while let Ok((address, proc_info)) =
-                track!(receiver.obtain_address().await, ADDR_WAITING_COUNTER)
-            {
+            while let Ok((address, proc_info)) = track!(
+                receiver
+                    .obtain_address_with_priority(WORKERS_PRIORITY_BASE)
+                    .await,
+                ADDR_WAITING_COUNTER
+            ) {
                 map_processor.process_group_start(packet, &global_context.global_extra_data);
 
                 let mut real_size = 0;

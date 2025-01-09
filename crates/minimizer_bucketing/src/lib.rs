@@ -14,6 +14,7 @@ use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
     DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_COMPACT,
     PACKETS_PRIORITY_DEFAULT, READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
+    WORKERS_PRIORITY_BASE,
 };
 use config::{MAXIMUM_SECOND_BUCKETS_COUNT, USE_SECOND_BUCKET};
 use hashes::HashableSequence;
@@ -307,6 +308,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                                         vec![new_address.clone()],
                                         PACKETS_PRIORITY_COMPACT,
                                     );
+
                                     *context.bucket_compactors[bucket_index as usize].lock() = Some(new_address);
                                 }
                             }
@@ -390,7 +392,10 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
         _memory_tracker: MemoryTracker<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
-            while let Ok((address, _)) = receiver.obtain_address().await {
+            while let Ok((address, _)) = receiver
+                .obtain_address_with_priority(WORKERS_PRIORITY_BASE)
+                .await
+            {
                 let max_concurrency = global_params.threads_count;
 
                 let mut spawner = address.make_spawner();
@@ -540,7 +545,9 @@ impl GenericMinimizerBucketing {
                 "mm_disk",
             );
             let compute_thread_pool =
-                ExecThreadPool::new(&execution_context, compute_threads_count, "mm_comp");
+                ExecThreadPool::new(&execution_context, compute_threads_count, "mm_compute");
+            let compaction_thread_pool =
+                ExecThreadPool::new(&execution_context, compute_threads_count, "mm_compact");
 
             let mut input_files = ExecutorInput::from_iter(
                 input_blocks.into_iter(),
@@ -565,7 +572,7 @@ impl GenericMinimizerBucketing {
                     &global_context,
                 );
 
-            let compactor_executors = compute_thread_pool
+            let compactor_executors = compaction_thread_pool
                 .register_executors::<compactor::MinimizerBucketingCompactor<E>>(
                     compute_threads_count,
                     PoolAllocMode::None,

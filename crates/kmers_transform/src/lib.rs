@@ -68,7 +68,7 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
 }
 
 pub trait KmersTransformPreprocessor<F: KmersTransformExecutorFactory>:
-    Sized + 'static + Sync + Send
+    Sized + 'static + Send
 {
     fn get_sequence_bucket<C>(
         &self,
@@ -85,7 +85,7 @@ pub struct GroupProcessStats {
 }
 
 pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
-    Sized + 'static + Sync + Send
+    Sized + 'static + Send
 {
     type MapStruct: PacketTrait + PoolObjectTrait<InitData = ()>;
     const MAP_SIZE: usize;
