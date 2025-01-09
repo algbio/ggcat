@@ -193,7 +193,8 @@ namespace ggcat
             bool colors,
             Slice<std::string> color_names,
             size_t minimizer_length,
-            bool output_gfa);
+            bool output_gfa,
+            uint32_t disk_optimization_level);
 
     public:
         static GGCATInstance *create(GGCATConfig config);
@@ -229,9 +230,12 @@ namespace ggcat
 
             // Overrides the default m-mers (minimizers) length
             size_t minimizer_length = -1,
-            
+
             // Output the result as a GFA file
-            bool gfa_output = false);
+            bool gfa_output = false,
+
+            // Disk optimization level
+            uint32_t disk_optimization_level = 5);
 
         /// Builds a new graph from the given input streams, with the specified parameters
         template <typename S>
@@ -265,9 +269,12 @@ namespace ggcat
 
             // Overrides the default m-mers (minimizers) length
             size_t minimizer_length = -1,
-            
+
             // Outputs the result as GFA
-            bool output_gfa = false)
+            bool output_gfa = false,
+
+            // Disk optimization level
+            uint32_t disk_optimization_level = 5)
         {
 
             thread_local std::unique_ptr<StreamReader> stream_reader = nullptr;
@@ -309,8 +316,9 @@ namespace ggcat
                                             extra_elab,
                                             colors,
                                             color_names,
-                                            minimizer_length, 
-                                            output_gfa);
+                                            minimizer_length,
+                                            output_gfa,
+                                            disk_optimization_level);
         }
 
         /// Queries a (optionally) colored graph with a specific set of sequences as queries

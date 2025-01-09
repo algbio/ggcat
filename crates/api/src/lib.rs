@@ -91,9 +91,8 @@ pub struct GGCATConfig {
     /// Output GFA format instead of FASTA
     pub gfa_output: bool,
 
-    /// Disables the disk optimization feature, that compacts intermediate data to
-    /// reduce maximum size of temporary files
-    pub disable_disk_optimization: bool,
+    /// Sets the level of disk usage reduction optimization
+    pub disk_optimization_level: u32,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -232,7 +231,7 @@ impl GGCATInstance {
 
         gfa_output: bool,
 
-        disable_disk_optimization: bool,
+        disk_optimization_level: u32,
     ) -> anyhow::Result<PathBuf> {
         // PriorityScheduler::set_max_threads_count(threads_count);
 
@@ -260,7 +259,7 @@ impl GGCATInstance {
 
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
 
-        let bucket_chunk_size = if disable_disk_optimization {
+        let bucket_chunk_size = if disk_optimization_level == 0 {
             None
         } else {
             let estimated_bases_count: u64 = input_streams
@@ -272,7 +271,7 @@ impl GGCATInstance {
                 None
             } else {
                 // Heuristic for chunks used for maximum disk usage
-                Some((estimated_bases_count as u64) / 4)
+                Some((estimated_bases_count as u64) / (disk_optimization_level as u64 + 1))
             }
         };
 
