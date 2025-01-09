@@ -159,9 +159,13 @@ pub fn run_assembler<
         )
     };
 
+    let fs_stats = MemoryFs::get_stats();
+
     ggcat_logging::info!(
-        "Temp buckets files size: {:.2} total buckets: {} total chunks: {}",
+        "Temp buckets files size: {:.2} [MAX SIZE: {:.2} / DISK SIZE: {:.2}] total buckets: {} total chunks: {}",
         MemoryDataSize::from_bytes(fs_extra::dir::get_size(&temp_dir).unwrap_or(0) as usize),
+        MemoryDataSize::from_bytes(fs_stats.max_files_usage as usize),
+        MemoryDataSize::from_bytes(fs_stats.max_files_usage as usize),
         buckets.len(),
         buckets.iter().map(|x| x.chunks.len()).sum::<usize>()
     );
