@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "devel-build", allow(unused_imports))]
+
 use crate::pipeline::build_unitigs::build_unitigs;
 use crate::pipeline::compute_matchtigs::MatchtigHelperTrait;
 use crate::pipeline::compute_matchtigs::{compute_matchtigs_thread, MatchtigsStorageBackend};

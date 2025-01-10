@@ -279,7 +279,7 @@ pub mod tests {
                         let sx = &test_bases[s..s + *kval];
 
                         if fx != sx {
-                            ggcat_logging::error!(
+                            println!(
                                 "Found collision {:?} {} != {}!",
                                 tmp[i - 1].0,
                                 std::str::from_utf8(fx).unwrap(),
@@ -410,17 +410,17 @@ pub mod tests {
                     kmer.copy_to_buffer(&mut buffer);
 
                     let buffer1 = FACTORY::invert(hash);
-                    ggcat_logging::info!("Original slice: {:?}", buffer);
+                    println!("Original slice: {:?}", buffer);
 
                     // assert_eq!(buffer, buffer1, "Hash: {}", hash);
 
                     // buffer1 = buffer.clone();
 
-                    ggcat_logging::info!(
+                    println!(
                         "Old decoded: {}",
                         CompressedRead::new_from_compressed(buffer.as_slice(), *kval).to_string()
                     );
-                    ggcat_logging::info!(
+                    println!(
                         "New decoded: {}",
                         CompressedRead::new_from_compressed(buffer1.as_ref(), *kval).to_string()
                     );

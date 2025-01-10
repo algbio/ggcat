@@ -47,7 +47,7 @@ impl IdentSequenceWriter for () {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 #[cfg(feature = "support_kmer_counters")]
 pub struct SequenceAbundance {
     pub first: u64,

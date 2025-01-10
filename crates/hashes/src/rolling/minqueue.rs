@@ -99,7 +99,7 @@ mod tests {
         const SIZE: usize = 10000000;
         const MINWINDOW: usize = 32;
 
-        let mut queue = RollingMinQueue::<ForwardNtHashIteratorFactory>::new(MINWINDOW);
+        let mut queue = RollingMinQueue::new(MINWINDOW);
 
         let mut items = Vec::new();
         items.reserve(SIZE);

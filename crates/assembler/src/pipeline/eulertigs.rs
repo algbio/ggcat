@@ -100,12 +100,20 @@ impl CircularUnitig {
     pub fn write_unpacked<MH: HashFunctionFactory, CX: ColorsManager>(
         &mut self,
         unitigs_kmers: &Vec<u8>,
-        unitigs: &DashMap<usize, (CompressedReadIndipendent, PartialUnitigsColorStructure<CX>)>,
+        unitigs: &DashMap<
+            usize,
+            (
+                CompressedReadIndipendent,
+                PartialUnitigsColorStructure<CX>,
+                SequenceAbundanceType,
+            ),
+        >,
         writer: &mut Vec<u8>,
         unitigs_colors_buffer: &<PartialUnitigsColorStructure<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
         colors_buffer: &mut <CX::ColorsMergeManagerType as ColorsMergeManager>::TempUnitigColorStructure,
         k: usize,
         write_full: bool,
+        #[allow(dead_code)] _out_abundance: &mut SequenceAbundanceType,
     ) {
         if self.rc {
             self.base_children.reverse();
@@ -113,10 +121,21 @@ impl CircularUnitig {
 
         let children_count = self.base_children.len();
 
+        #[cfg(feature = "support_kmer_counters")]
+        {
+            let first_unitig_entry = unitigs.get(&self.base_children[0].orig_index).unwrap();
+            _out_abundance.first = first_unitig_entry.2.first;
+        }
+
         for child in self.base_children.iter_mut().take(children_count - 1) {
             let unitig_entry = unitigs.get(&child.orig_index).unwrap();
-            let (unitig, src_color) = unitig_entry.value();
+            let (unitig, src_color, _abundance) = unitig_entry.value();
             let unitig = unitig.as_reference(unitigs_kmers);
+
+            #[cfg(feature = "support_kmer_counters")]
+            {
+                _out_abundance.sum += _abundance.sum;
+            }
 
             child.rc ^= self.rc;
             let should_rc = child.rc;
@@ -145,6 +164,17 @@ impl CircularUnitig {
 
         let last_part_entry = unitigs.get(&last.orig_index).unwrap();
 
+        #[cfg(feature = "support_kmer_counters")]
+        {
+            let abundance = &last_part_entry.2;
+            _out_abundance.sum += abundance.sum;
+            _out_abundance.last = if last.rc {
+                abundance.first
+            } else {
+                abundance.last
+            };
+        }
+
         let last_part_slice = last.start_pos..last.start_pos + last.length + end_offset;
         let last_part = last_part_entry
             .0
@@ -169,11 +199,19 @@ impl CircularUnitig {
         &mut self,
         k: usize,
         unitigs_kmers: &Vec<u8>,
-        unitigs: &DashMap<usize, (CompressedReadIndipendent, PartialUnitigsColorStructure<CX>)>,
+        unitigs: &DashMap<
+            usize,
+            (
+                CompressedReadIndipendent,
+                PartialUnitigsColorStructure<CX>,
+                SequenceAbundanceType,
+            ),
+        >,
     ) -> String {
         let mut colors_buffer = CX::ColorsMergeManagerType::alloc_unitig_color_structure();
         let dummy_buffer = color_types::PartialUnitigsColorStructure::<CX>::new_temp_buffer();
         let mut writer = vec![];
+        let mut abundance = SequenceAbundanceType::default();
         self.write_unpacked::<MH, CX>(
             unitigs_kmers,
             unitigs,
@@ -182,6 +220,7 @@ impl CircularUnitig {
             &mut colors_buffer,
             k,
             true,
+            &mut abundance,
         );
         String::from_utf8(writer).unwrap()
     }
@@ -324,8 +363,14 @@ pub fn build_eulertigs<
     let joined = Mutex::new(CircularUnionFind::new(DEFAULT_OUTPUT_BUFFER_SIZE));
 
     let unitigs_bases = Mutex::new(vec![]);
-    let unitig_mapping =
-        DashMap::<usize, (CompressedReadIndipendent, PartialUnitigsColorStructure<CX>)>::new();
+    let unitig_mapping = DashMap::<
+        usize,
+        (
+            CompressedReadIndipendent,
+            PartialUnitigsColorStructure<CX>,
+            SequenceAbundanceType,
+        ),
+    >::new();
 
     let circular_unitigs_kmers = Mutex::new(vec![]);
     let unitigs_color_buffer = Mutex::new(<CX::ColorsMergeManagerType as ColorsMergeManager>::PartialUnitigsColorStructure::new_temp_buffer());
@@ -349,7 +394,7 @@ pub fn build_eulertigs<
                             (),
                             SequenceAbundanceType,
                         )>::new_temp_buffer(),
-                        |(_, _, (_index, mut color, _, _), read, _): (
+                        |(_, _, (_index, mut color, _, abundance), read, _): (
                             _,
                             _,
                             (
@@ -379,7 +424,7 @@ pub fn build_eulertigs<
                                 );
                             }
 
-                            unitig_mapping.insert(unitig_index, (copied_read, color));
+                            unitig_mapping.insert(unitig_index, (copied_read, color, abundance));
 
                             for (offset, hash) in
                                 MH::new(read.sub_slice(0..(copied_read.bases_count() - 1)), k - 1)
@@ -494,7 +539,7 @@ pub fn build_eulertigs<
                             (),
                             SequenceAbundanceType,
                         )>::new_temp_buffer(),
-                        |(_, _, (_index, color, _, _), read, _): (
+                        |(_, _, (_index, color, _, mut _abundance), read, _): (
                             _,
                             _,
                             (
@@ -545,6 +590,7 @@ pub fn build_eulertigs<
 
                                     circular_unitig.rotate(index, rotation.get_offset(), should_rc);
 
+                                    let mut circular_abundance = SequenceAbundanceType::default();
                                     circular_unitig.write_unpacked::<MH, CX>(
                                         &unitigs_bases,
                                         &unitig_mapping,
@@ -553,7 +599,14 @@ pub fn build_eulertigs<
                                         &mut final_unitig_color,
                                         k,
                                         false,
+                                        &mut circular_abundance,
                                     );
+
+                                    #[cfg(feature = "support_kmer_counters")]
+                                    {
+                                        _abundance.sum += circular_abundance.sum;
+                                    }
+
                                     last_offset = end_base_offset;
                                 }
                             }
@@ -582,6 +635,8 @@ pub fn build_eulertigs<
                                 &final_color_extra_buffer,
                                 L::default(),
                                 &default_links_buffer,
+                                #[cfg(feature = "support_kmer_counters")]
+                                _abundance,
                             );
                         },
                     )
@@ -611,6 +666,8 @@ pub fn build_eulertigs<
 
         seq_buffer.clear();
 
+        let mut abundance = SequenceAbundanceType::default();
+
         unitig.write_unpacked::<MH, CX>(
             &unitigs_bases,
             &unitig_mapping,
@@ -619,6 +676,7 @@ pub fn build_eulertigs<
             &mut final_unitig_color,
             k,
             true,
+            &mut abundance,
         );
 
         let writable_color = CX::ColorsMergeManagerType::encode_part_unitigs_colors(
@@ -633,6 +691,8 @@ pub fn build_eulertigs<
             &final_color_extra_buffer,
             L::default(),
             &default_links_buffer,
+            #[cfg(feature = "support_kmer_counters")]
+            abundance,
         );
     }
 }
@@ -642,9 +702,7 @@ mod tests {
     use super::*;
     use colors::non_colored::NonColoredManager;
     use hashbrown::HashMap;
-    use hashes::{
-        cn_nthash::CanonicalNtHashIteratorFactory, cn_seqhash::u128::CanonicalSeqHashFactory,
-    };
+    use hashes::cn_seqhash::u128::CanonicalSeqHashFactory;
     use io::compressed_read::CompressedRead;
 
     #[test]
@@ -671,6 +729,7 @@ mod tests {
             (
                 CompressedReadIndipendent::from_read_inplace(&circular_unitig1, &stream),
                 NonColoredManager,
+                SequenceAbundanceType::default(),
             ),
         );
         unitigs_hashmap.insert(
@@ -678,6 +737,7 @@ mod tests {
             (
                 CompressedReadIndipendent::from_read_inplace(&circular_unitig2, &stream),
                 NonColoredManager,
+                SequenceAbundanceType::default(),
             ),
         );
 
@@ -708,11 +768,12 @@ mod tests {
                 println!(
                     "Joined unitig {} => {}",
                     result,
-                    unitigs.mappings[result].debug_to_string::<CanonicalNtHashIteratorFactory, CanonicalSeqHashFactory, NonColoredManager>(
-                        k,
-                        &stream,
-                        &unitigs_hashmap
-                    )
+                    unitigs.mappings[result]
+                        .debug_to_string::<CanonicalSeqHashFactory, NonColoredManager>(
+                            k,
+                            &stream,
+                            &unitigs_hashmap
+                        )
                 );
 
                 break;

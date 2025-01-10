@@ -368,6 +368,15 @@ pub fn compute_matchtigs_thread<
         })
         .flatten();
 
+    #[cfg(feature = "support_kmer_counters")]
+    {
+        if matches!(mode, MatchtigMode::GreedyTigs) {
+            ggcat_logging::warn!(
+                "Abundancies support with greedy matchtigs is not accurate for merged unitigs!"
+            );
+        }
+    }
+
     let mut graph: NodeBigraphWrapper<PetGraph<(), UnitigEdgeData<_>>> =
         genome_graph::generic::convert_generic_node_centric_bigraph_to_edge_centric::<(), _, _ ,_ ,_>(iterator)
             .unwrap();
@@ -531,7 +540,7 @@ pub fn compute_matchtigs_thread<
                 );
                 #[cfg(feature = "support_kmer_counters")]
                 {
-                    abundance.sum += handle.2.sum - handle.2.first;
+                    abundance.sum += handle.2.sum;
                     abundance.last = handle.2.last;
                 }
             } else {
@@ -549,7 +558,7 @@ pub fn compute_matchtigs_thread<
                 );
                 #[cfg(feature = "support_kmer_counters")]
                 {
-                    abundance.sum += handle.2.sum - handle.2.last;
+                    abundance.sum += handle.2.sum;
                     abundance.last = handle.2.last;
                 }
             }

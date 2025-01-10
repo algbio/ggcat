@@ -250,6 +250,7 @@ mod tests {
     use colors::non_colored::NonColoredManager;
     use config::{FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
     use io::generate_bucket_names;
+    use parallel_processor::buckets::SingleBucket;
     use parallel_processor::memory_data_size::MemoryDataSize;
     use parallel_processor::memory_fs::MemoryFs;
     use rayon::ThreadPoolBuilder;
@@ -266,7 +267,10 @@ mod tests {
         let buckets_count = 1024;
 
         let buckets =
-            generate_bucket_names(Path::new(TEMP_DIR).join("bucket"), buckets_count, None);
+            generate_bucket_names(Path::new(TEMP_DIR).join("bucket"), buckets_count, None)
+                .into_iter()
+                .map(SingleBucket::to_multi_chunk)
+                .collect();
 
         // let mut buckets = vec![buckets[322]];
 
@@ -282,7 +286,7 @@ mod tests {
         let counters = Path::new(TEMP_DIR).join("buckets-counters.dat");
 
         let global_colors_table = Arc::new(
-            <<NonColoredManager as ColorsManager>::ColorsMergeManagerType as ColorsMergeManager>::create_colors_table("", &[]),
+            <<NonColoredManager as ColorsManager>::ColorsMergeManagerType as ColorsMergeManager>::create_colors_table("", &[]).unwrap(),
         );
 
         let k = 63;
@@ -333,6 +337,7 @@ mod tests {
             Path::new(TEMP_DIR),
             k,
             m,
+            false,
             threads_count,
         );
     }

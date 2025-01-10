@@ -1,10 +1,8 @@
-#![cfg_attr(test, feature(test))]
-
 extern crate alloc;
-#[cfg(test)]
-extern crate test;
+// #[cfg(test)]
+// extern crate test;
 
-mod benchmarks;
+// mod benchmarks;
 
 use ahash::HashMap;
 use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance};
@@ -504,12 +502,6 @@ instrumenter::global_setup_instrumenter!();
 
 fn main() {
     let args: CliArgs = CliArgs::from_args();
-
-    #[cfg(feature = "mem-analysis")]
-    {
-        parallel_processor::mem_tracker::init_memory_info();
-        parallel_processor::mem_tracker::start_info_logging();
-    }
 
     panic::set_hook(Box::new(move |panic_info| {
         let stdout = std::io::stdout();
