@@ -9,6 +9,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use crate::resplit_bucket::RewriteBucketCompute;
 use crate::{
     queue_data::MinimizerBucketingQueueData, MinimizerBucketMode,
     MinimizerBucketingExecutionContext, MinimizerBucketingExecutorFactory,
@@ -16,7 +17,7 @@ use crate::{
 use colors::non_colored::NonColoredManager;
 use config::{
     get_compression_level_info, get_memory_mode, MultiplicityCounterType, SwapPriority,
-    DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAXIMUM_SECOND_BUCKETS_COUNT,
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE, WORKERS_PRIORITY_HIGH,
 };
 use io::{
@@ -174,20 +175,29 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 
                 drop(buckets);
 
-                // println!("Compacting bucket {} with total total size {} => chosen {} chunks with total size {}", bucket_index, total_size, chosen_buckets.len(), chosen_size);
-
                 let new_path = global_params.output_path.join(format!(
                     "compacted-{}.dat",
                     COMPACTED_INDEX.fetch_add(1, Ordering::Relaxed)
                 ));
 
-                let mut super_kmers_hashmap: FxHashMap<
-                    SuperKmerEntry,
-                    (u8, MultiplicityCounterType),
-                > = FxHashMap::default();
+                let mut super_kmers_hashmap: Vec<
+                    FxHashMap<SuperKmerEntry, (u8, MultiplicityCounterType)>,
+                > = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+                    .map(|_| FxHashMap::default())
+                    .collect();
+                // .try_into()
+                // .unwrap();
                 let mut kmers_storage = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
 
-                let mut sequences_delta = 0;
+                let mut sequences_deltas = vec![0i64; MAXIMUM_SECOND_BUCKETS_COUNT];
+
+                let used_hash_bits = global_params.buckets.count().ilog2() as usize;
+                let second_buckets_log_max = std::cmp::min(
+                    global_params.common.global_counters[bucket_index]
+                        .len()
+                        .ilog2() as usize,
+                    MAXIMUM_SECOND_BUCKETS_COUNT.ilog2() as usize,
+                );
 
                 for bucket_path in chosen_buckets {
                     // Reading the buckets
@@ -211,9 +221,18 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             read_thread.clone(),
                             matches!(format_data, MinimizerBucketMode::Compacted),
                             |data, _extra_buffer| {
+
+                                let rewrite_bucket = E::RewriteBucketCompute::get_rewrite_bucket(global_params.common.k,
+                                    global_params.common.m,
+                                    &data,
+                                    used_hash_bits,
+                                    second_buckets_log_max,
+                                );
+                                sequences_deltas[rewrite_bucket as usize] += 1;
+
                                 let (flags, _, _extra, read, multiplicity) = data;
 
-                                sequences_delta -= 1;
+                                let super_kmers_hashmap = &mut super_kmers_hashmap[rewrite_bucket as usize];
 
                                 if let Some(entry) = super_kmers_hashmap.get_mut(
                                     read.get_borrowable(),
@@ -260,23 +279,39 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     <NonColoredManager as SequenceExtraDataTempBufferManagement>::new_temp_buffer();
                 let empty_extra = NonColoredManager::default();
 
-                for (read, (flags, multiplicity)) in super_kmers_hashmap {
-                    let read = read.get_read();
-                    sequences_delta += 1;
+                for (rewrite_bucket, super_kmers_hashmap) in
+                    super_kmers_hashmap.into_iter().enumerate()
+                {
+                    // Flush the buffer before changing checkpoint
+                    if buffer.len() > 0 {
+                        new_bucket.write_data(&buffer);
+                        buffer.clear();
+                    }
+                    // new_bucket.set_checkpoint_data(
+                    //     &ReadsCheckpointData {
+                    //         target_subbucket: rewrite_bucket as BucketIndexType,
+                    //     },
+                    //     CheckpointStrategy::Passtrough,
+                    // );
+                    for (read, (flags, multiplicity)) in super_kmers_hashmap {
+                        let read = read.get_read();
+                        sequences_deltas[rewrite_bucket as usize] -= 1;
 
-                    for _ in 0..multiplicity {
                         serializer.write_to(
                             &CompressedReadsBucketData::new_packed_with_multiplicity(
-                                read, flags, 0, 1,
+                                read,
+                                flags,
+                                0,
+                                multiplicity,
                             ),
                             &mut buffer,
                             &empty_extra,
                             &out_extra_buffer,
                         );
-                    }
-                    if buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
-                        new_bucket.write_data(&buffer);
-                        buffer.clear();
+                        if buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
+                            new_bucket.write_data(&buffer);
+                            buffer.clear();
+                        }
                     }
                 }
 
@@ -291,8 +326,17 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 let mut buckets = global_params.buckets.get_stored_buckets().lock();
                 buckets[bucket_index].was_compacted = true;
                 buckets[bucket_index].chunks.push(new_path);
+
+                for (counter, global_counter) in sequences_deltas
+                    .iter()
+                    .zip(global_params.common.global_counters[bucket_index].iter())
+                {
+                    assert!(*counter >= 0);
+                    global_counter.fetch_sub(*counter as u64, Ordering::Relaxed);
+                }
+
                 global_params.common.compaction_offsets[bucket_index]
-                    .fetch_add(sequences_delta, Ordering::Relaxed);
+                    .fetch_add(sequences_deltas.iter().sum::<i64>(), Ordering::Relaxed);
             }
         }
     }
