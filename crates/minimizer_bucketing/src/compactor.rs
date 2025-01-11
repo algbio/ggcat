@@ -264,17 +264,16 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     let read = read.get_read();
                     sequences_delta += 1;
 
-                    serializer.write_to(
-                        &CompressedReadsBucketData::new_packed_with_multiplicity(
-                            read,
-                            flags,
-                            0,
-                            multiplicity,
-                        ),
-                        &mut buffer,
-                        &empty_extra,
-                        &out_extra_buffer,
-                    );
+                    for _ in 0..multiplicity {
+                        serializer.write_to(
+                            &CompressedReadsBucketData::new_packed_with_multiplicity(
+                                read, flags, 0, 1,
+                            ),
+                            &mut buffer,
+                            &empty_extra,
+                            &out_extra_buffer,
+                        );
+                    }
                     if buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
                         new_bucket.write_data(&buffer);
                         buffer.clear();

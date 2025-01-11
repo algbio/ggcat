@@ -1,7 +1,7 @@
 use crate::final_executor::ParallelKmersMergeFinalExecutor;
 use crate::map_processor::{ParallelKmersMergeMapProcessor, KMERGE_TEMP_DIR};
-use crate::preprocessor::ParallelKmersMergePreprocessor;
 use crate::structs::{ResultsBucket, RetType};
+use assembler_minimizer_bucketing::rewrite_bucket::RewriteBucketComputeAssembler;
 use assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
 use colors::colors_manager::color_types::{
     GlobalColorsTableWriter, MinimizerBucketingSeqColorDataType,
@@ -17,7 +17,9 @@ use hashes::HashFunctionFactory;
 use io::structs::hash_entry::HashEntry;
 use io::structs::hash_entry::{Direction, HashEntrySerializer};
 use kmers_transform::processor::KmersTransformProcessor;
-use kmers_transform::{KmersTransform, KmersTransformExecutorFactory};
+use kmers_transform::{
+    KmersTransform, KmersTransformExecutorFactory, KmersTransformGlobalExtraData,
+};
 use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
@@ -37,7 +39,6 @@ use utils::owned_drop::OwnedDrop;
 
 mod final_executor;
 mod map_processor;
-mod preprocessor;
 pub mod structs;
 
 pub struct GlobalMergeData<CX: ColorsManager> {
@@ -55,6 +56,17 @@ pub struct GlobalMergeData<CX: ColorsManager> {
     kmer_batches_count: AtomicU64,
 }
 
+impl<CX: ColorsManager> KmersTransformGlobalExtraData for GlobalMergeData<CX> {
+    #[inline(always)]
+    fn get_k(&self) -> usize {
+        self.k
+    }
+    #[inline(always)]
+    fn get_m(&self) -> usize {
+        self.m
+    }
+}
+
 pub struct ParallelKmersMergeFactory<
     MH: HashFunctionFactory,
     CX: ColorsManager,
@@ -68,7 +80,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     type GlobalExtraData = GlobalMergeData<CX>;
     type AssociatedExtraData = MinimizerBucketingSeqColorDataType<CX>;
 
-    type PreprocessorType = ParallelKmersMergePreprocessor<MH, CX, COMPUTE_SIMPLITIGS>;
+    type PreprocessorType = RewriteBucketComputeAssembler;
     type MapProcessorType = ParallelKmersMergeMapProcessor<MH, CX, COMPUTE_SIMPLITIGS>;
     type FinalExecutorType = ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>;
 
@@ -80,10 +92,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         global_data: &Arc<Self::GlobalExtraData>,
     ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType {
         AssemblerMinimizerBucketingExecutorFactory::new(&global_data.global_resplit_data)
-    }
-
-    fn new_preprocessor(_global_data: &Arc<Self::GlobalExtraData>) -> Self::PreprocessorType {
-        ParallelKmersMergePreprocessor::new()
     }
 
     fn new_map_processor(

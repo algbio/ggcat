@@ -1,3 +1,5 @@
+pub mod rewrite_bucket;
+
 use ::dynamic_dispatch::dynamic_dispatch;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
@@ -66,6 +68,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
     type StreamInfo = InputFileInfo;
 
     type ColorsManager = CX;
+    type RewriteBucketCompute = rewrite_bucket::RewriteBucketComputeAssembler;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U2;

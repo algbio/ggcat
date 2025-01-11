@@ -4,15 +4,14 @@ use crate::processor::KmersTransformProcessor;
 use crate::reader::{InputBucketDesc, KmersTransformReader};
 use crate::resplitter::KmersTransformResplitter;
 use config::{
-    BucketIndexType, MultiplicityCounterType, KEEP_FILES, KMERS_TRANSFORM_READS_CHUNKS_SIZE,
-    MAXIMUM_JIT_PROCESSED_BUCKETS, MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME,
-    PACKETS_PRIORITY_FILES,
+    BucketIndexType, KEEP_FILES, KMERS_TRANSFORM_READS_CHUNKS_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS,
+    MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME, PACKETS_PRIORITY_FILES,
 };
-use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
 };
 use minimizer_bucketing::counters_analyzer::CountersAnalyzer;
+use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{MinimizerBucketMode, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::MultiChunkBucket;
 use parallel_processor::execution_manager::execution_context::{ExecutionContext, PoolAllocMode};
@@ -37,13 +36,18 @@ pub mod processor;
 pub mod reads_buffer;
 mod resplitter;
 
+pub trait KmersTransformGlobalExtraData: Sync + Send {
+    fn get_k(&self) -> usize;
+    fn get_m(&self) -> usize;
+}
+
 pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
     type SequencesResplitterFactory: MinimizerBucketingExecutorFactory<
         ExtraData = Self::AssociatedExtraData,
     >;
-    type GlobalExtraData: Sync + Send;
+    type GlobalExtraData: KmersTransformGlobalExtraData;
     type AssociatedExtraData: SequenceExtraDataConsecutiveCompression;
-    type PreprocessorType: KmersTransformPreprocessor<Self>;
+    type PreprocessorType: RewriteBucketCompute;
     type MapProcessorType: KmersTransformMapProcessor<
         Self,
         MapStruct = <Self::FinalExecutorType as KmersTransformFinalExecutor<Self>>::MapStruct,
@@ -59,24 +63,11 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
         global_data: &Arc<Self::GlobalExtraData>,
     ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType;
 
-    fn new_preprocessor(global_data: &Arc<Self::GlobalExtraData>) -> Self::PreprocessorType;
     fn new_map_processor(
         global_data: &Arc<Self::GlobalExtraData>,
         mem_tracker: MemoryTracker<KmersTransformProcessor<Self>>,
     ) -> Self::MapProcessorType;
     fn new_final_executor(global_data: &Arc<Self::GlobalExtraData>) -> Self::FinalExecutorType;
-}
-
-pub trait KmersTransformPreprocessor<F: KmersTransformExecutorFactory>:
-    Sized + 'static + Send
-{
-    fn get_sequence_bucket<C>(
-        &self,
-        global_data: &F::GlobalExtraData,
-        seq_data: &(u8, u8, C, CompressedRead, MultiplicityCounterType),
-        used_hash_bits: usize,
-        bucket_bits_count: usize,
-    ) -> BucketIndexType;
 }
 
 pub struct GroupProcessStats {

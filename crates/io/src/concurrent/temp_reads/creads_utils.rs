@@ -4,7 +4,7 @@ use crate::varint::{
     VARINT_MAX_SIZE,
 };
 use byteorder::ReadBytesExt;
-use config::MultiplicityCounterType;
+use config::{BucketIndexType, MultiplicityCounterType};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use serde::{Deserialize, Serialize};
 use std::io::Read;
@@ -123,8 +123,8 @@ pub struct CompressedReadsBucketDataSerializer<
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct ReadsChunkData {
-    pub target_subbucket: u8,
+pub struct ReadsCheckpointData {
+    pub target_subbucket: BucketIndexType,
 }
 
 impl<
@@ -142,7 +142,7 @@ impl<
     type ExtraDataBuffer = E::TempBuffer;
     type ReadType<'b> = (u8, u8, E, CompressedRead<'b>, MultiplicityCounterType);
 
-    type ChunkData = ReadsChunkData;
+    type CheckpointData = ReadsCheckpointData;
 
     #[inline(always)]
     fn new() -> Self {

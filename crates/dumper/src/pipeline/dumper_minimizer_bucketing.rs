@@ -11,6 +11,7 @@ use io::concurrent::temp_reads::extra_data::{
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::fasta::FastaFileSequencesStream;
 use io::sequences_stream::SequenceInfo;
+use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
@@ -101,6 +102,26 @@ pub struct DumperMinimizerBucketingExecutor<CX: ColorsManager> {
     _phantom: PhantomData<CX>,
 }
 
+pub struct RewriteBucketComputeDumper;
+
+impl RewriteBucketCompute for RewriteBucketComputeDumper {
+    fn get_rewrite_bucket<C>(
+        _k: usize,
+        _m: usize,
+        _seq_data: &(
+            u8,
+            u8,
+            C,
+            io::compressed_read::CompressedRead,
+            config::MultiplicityCounterType,
+        ),
+        _used_hash_bits: usize,
+        _bucket_bits_count: usize,
+    ) -> BucketIndexType {
+        unimplemented!()
+    }
+}
+
 pub struct DumperMinimizerBucketingExecutorFactory<CX: ColorsManager>(PhantomData<CX>);
 
 impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
@@ -112,6 +133,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
     type StreamInfo = ();
 
     type ColorsManager = CX;
+    type RewriteBucketCompute = RewriteBucketComputeDumper;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U0;

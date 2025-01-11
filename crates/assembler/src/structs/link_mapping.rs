@@ -19,7 +19,7 @@ impl BucketItemSerializer for LinkMappingSerializer {
     type ExtraDataBuffer = ();
     type ReadType<'a> = LinkMapping;
 
-    type ChunkData = ();
+    type CheckpointData = ();
 
     #[inline(always)]
     fn new() -> Self {

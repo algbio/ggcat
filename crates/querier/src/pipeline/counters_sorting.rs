@@ -48,7 +48,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> BucketItemSer
     type ReadBuffer = ();
     type ReadType<'a> = (CounterEntry<CX>, CX);
 
-    type ChunkData = ();
+    type CheckpointData = ();
 
     #[inline(always)]
     fn new() -> Self {

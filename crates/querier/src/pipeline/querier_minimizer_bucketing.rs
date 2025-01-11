@@ -30,6 +30,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use super::parallel_kmers_query::RewriteBucketComputeQuery;
+
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct KmersQueryData(pub u64);
 
@@ -107,6 +109,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
     type StreamInfo = FileType;
 
     type ColorsManager = CX;
+    type RewriteBucketCompute = RewriteBucketComputeQuery;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U0;

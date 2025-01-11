@@ -25,8 +25,9 @@ use kmers_transform::processor::KmersTransformProcessor;
 use kmers_transform::reads_buffer::ReadsVector;
 use kmers_transform::{
     GroupProcessStats, KmersTransform, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
-    KmersTransformMapProcessor, KmersTransformPreprocessor,
+    KmersTransformGlobalExtraData, KmersTransformMapProcessor,
 };
+use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
@@ -147,6 +148,18 @@ struct GlobalQueryMergeData {
     global_resplit_data: Arc<MinimizerBucketingCommonData<QuerierMinimizerBucketingGlobalData>>,
 }
 
+impl KmersTransformGlobalExtraData for GlobalQueryMergeData {
+    #[inline(always)]
+    fn get_k(&self) -> usize {
+        self.k
+    }
+
+    #[inline(always)]
+    fn get_m(&self) -> usize {
+        self.m
+    }
+}
+
 struct ParallelKmersQueryFactory<MH: HashFunctionFactory, CX: ColorsManager>(PhantomData<(MH, CX)>);
 
 impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
@@ -156,7 +169,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
     type GlobalExtraData = GlobalQueryMergeData;
     type AssociatedExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
 
-    type PreprocessorType = ParallelKmersQueryPreprocessor<MH, CX>;
+    type PreprocessorType = RewriteBucketComputeQuery;
     type MapProcessorType = ParallelKmersQueryMapProcessor<MH, CX>;
     type FinalExecutorType = ParallelKmersQueryFinalExecutor<MH, CX>;
 
@@ -168,12 +181,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
         global_data: &Arc<Self::GlobalExtraData>,
     ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType {
         QuerierMinimizerBucketingExecutorFactory::new(&global_data.global_resplit_data)
-    }
-
-    fn new_preprocessor(_global_data: &Arc<Self::GlobalExtraData>) -> Self::PreprocessorType {
-        Self::PreprocessorType {
-            _phantom: PhantomData,
-        }
     }
 
     fn new_map_processor(
@@ -203,28 +210,23 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
     }
 }
 
-struct ParallelKmersQueryPreprocessor<MH: HashFunctionFactory, CX: ColorsManager> {
-    _phantom: PhantomData<(MH, CX)>,
-}
+pub struct RewriteBucketComputeQuery;
 
-impl<MH: HashFunctionFactory, CX: ColorsManager>
-    KmersTransformPreprocessor<ParallelKmersQueryFactory<MH, CX>>
-    for ParallelKmersQueryPreprocessor<MH, CX>
-{
-    fn get_sequence_bucket<C>(
-        &self,
-        global_data: &<ParallelKmersQueryFactory<MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+impl RewriteBucketCompute for RewriteBucketComputeQuery {
+    fn get_rewrite_bucket<C>(
+        k: usize,
+        m: usize,
         seq_data: &(u8, u8, C, CompressedRead, MultiplicityCounterType),
         used_hash_bits: usize,
         bucket_bits_count: usize,
     ) -> BucketIndexType {
         let read = &seq_data.3;
 
-        let hashes = MNHFactory::new(read.sub_slice(0..global_data.k), global_data.m);
+        let hashes = MNHFactory::new(read.sub_slice(0..k), m);
 
         let minimizer = hashes
             .iter()
-            .min_by_key(|k| MNHFactory::get_full_minimizer(k.to_unextendable()))
+            .min_by_key(|kh| MNHFactory::get_full_minimizer(kh.to_unextendable()))
             .unwrap();
 
         MNHFactory::get_bucket(

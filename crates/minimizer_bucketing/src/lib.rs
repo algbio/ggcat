@@ -2,6 +2,7 @@ pub mod compactor;
 pub mod counters_analyzer;
 mod queue_data;
 mod reader;
+pub mod resplit_bucket;
 mod sequences_splitter;
 
 use crate::counters_analyzer::CountersAnalyzer;
@@ -43,6 +44,7 @@ use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
 use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInputAddressMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::{Mutex, RwLock};
+use resplit_bucket::RewriteBucketCompute;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::future::Future;
@@ -101,6 +103,7 @@ pub trait MinimizerBucketingExecutorFactory: Sized {
     type StreamInfo: Clone + Sync + Send + Default + 'static;
 
     type ColorsManager: ColorsManager;
+    type RewriteBucketCompute: RewriteBucketCompute;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT: typenum::uint::Unsigned;

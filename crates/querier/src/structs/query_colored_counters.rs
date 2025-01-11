@@ -43,7 +43,7 @@ impl BucketItemSerializer for QueryColoredCountersSerializer {
     type ExtraDataBuffer = ();
     type ReadType<'b> = QueryColoredCounters<'b>;
 
-    type ChunkData = ();
+    type CheckpointData = ();
 
     fn new() -> Self {
         Self

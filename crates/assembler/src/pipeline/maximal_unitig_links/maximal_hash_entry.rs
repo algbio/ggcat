@@ -70,7 +70,7 @@ impl<H: Serialize + DeserializeOwned + Copy> BucketItemSerializer
     type ExtraDataBuffer = ();
     type ReadType<'a> = MaximalHashEntry<H>;
 
-    type ChunkData = ();
+    type CheckpointData = ();
 
     #[inline(always)]
     fn new() -> Self {

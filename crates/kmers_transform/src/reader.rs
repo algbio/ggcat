@@ -2,8 +2,8 @@ use crate::processor::{KmersProcessorInitData, KmersTransformProcessor};
 use crate::reads_buffer::ReadsBuffer;
 use crate::resplitter::{KmersTransformResplitter, ResplitterInitData};
 use crate::{
-    KmersTransformContext, KmersTransformExecutorFactory, KmersTransformMapProcessor,
-    KmersTransformPreprocessor,
+    KmersTransformContext, KmersTransformExecutorFactory, KmersTransformGlobalExtraData,
+    KmersTransformMapProcessor,
 };
 use config::{
     get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE,
@@ -21,6 +21,7 @@ use io::concurrent::temp_reads::creads_utils::{
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::creads_helper;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
+use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{MinimizerBucketMode, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::readers::async_binary_reader::{
@@ -415,8 +416,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             START_PACKET_ALLOC_COUNTER
         );
 
-        let preprocessor = F::new_preprocessor(&global_context.global_extra_data);
-
         let global_extra_data = &global_context.global_extra_data;
 
         let has_single_addr = bucket_info.addresses.len() == 1;
@@ -441,8 +440,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                         let bucket = if has_single_addr {
                             0
                         } else {
-                            let orig_bucket = preprocessor.get_sequence_bucket(
-                                global_extra_data,
+                            let orig_bucket = F::PreprocessorType::get_rewrite_bucket(
+                                global_extra_data.get_k(),
+                                global_extra_data.get_m(),
                                 &read_info,
                                 bucket_info.used_hash_bits,
                                 bucket_info.second_buckets_log_max,
