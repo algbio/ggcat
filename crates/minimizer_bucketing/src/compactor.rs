@@ -187,6 +187,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 > = FxHashMap::default();
                 let mut kmers_storage = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
 
+                let mut sequences_delta = 0;
+
                 for bucket_path in chosen_buckets {
                     // Reading the buckets
                     let reader = AsyncBinaryReader::new(
@@ -210,6 +212,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             matches!(format_data, MinimizerBucketMode::Compacted),
                             |data, _extra_buffer| {
                                 let (flags, _, _extra, read, multiplicity) = data;
+
+                                sequences_delta -= 1;
 
                                 if let Some(entry) = super_kmers_hashmap.get_mut(
                                     read.get_borrowable(),
@@ -258,6 +262,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 
                 for (read, (flags, multiplicity)) in super_kmers_hashmap {
                     let read = read.get_read();
+                    sequences_delta += 1;
 
                     serializer.write_to(
                         &CompressedReadsBucketData::new_packed_with_multiplicity(
@@ -287,6 +292,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 let mut buckets = global_params.buckets.get_stored_buckets().lock();
                 buckets[bucket_index].was_compacted = true;
                 buckets[bucket_index].chunks.push(new_path);
+                global_params.common.compaction_offsets[bucket_index]
+                    .fetch_add(sequences_delta, Ordering::Relaxed);
             }
         }
     }

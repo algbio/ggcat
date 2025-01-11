@@ -6,6 +6,7 @@ use crate::varint::{
 use byteorder::ReadBytesExt;
 use config::MultiplicityCounterType;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
+use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::marker::PhantomData;
 
@@ -121,6 +122,11 @@ pub struct CompressedReadsBucketDataSerializer<
     _phantom: PhantomData<(FlagsCount, BucketMode, MultiplicityMode)>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct ReadsChunkData {
+    pub target_subbucket: u8,
+}
+
 impl<
         'a,
         E: SequenceExtraDataConsecutiveCompression,
@@ -135,6 +141,8 @@ impl<
     type ReadBuffer = Vec<u8>;
     type ExtraDataBuffer = E::TempBuffer;
     type ReadType<'b> = (u8, u8, E, CompressedRead<'b>, MultiplicityCounterType);
+
+    type ChunkData = ReadsChunkData;
 
     #[inline(always)]
     fn new() -> Self {
@@ -278,24 +286,30 @@ pub mod helpers {
             let with_multiplicity = $with_multiplicity;
 
             if $with_multiplicity {
-                let mut items = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
-                    $E,
-                    $FlagsCount,
-                    $BucketMode,
-                    WithMultiplicity,
-                >>(read_thread, Vec::new(), <$E>::new_temp_buffer());
-                while let Some(($data, $extra_buffer)) = items.next() {
-                    $f
+                let mut items =
+                    reader.get_items_stream::<CompressedReadsBucketDataSerializer<
+                        $E,
+                        $FlagsCount,
+                        $BucketMode,
+                        WithMultiplicity,
+                    >, false>(read_thread, Vec::new(), <$E>::new_temp_buffer());
+                while let Some((items, _)) = items.get_next_checkpoint() {
+                    while let Some(($data, $extra_buffer)) = items.next() {
+                        $f
+                    }
                 }
             } else {
-                let mut items = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
-                    $E,
-                    $FlagsCount,
-                    $BucketMode,
-                    NoMultiplicity,
-                >>(read_thread, Vec::new(), <$E>::new_temp_buffer());
-                while let Some(($data, $extra_buffer)) = items.next() {
-                    $f
+                let mut items =
+                    reader.get_items_stream::<CompressedReadsBucketDataSerializer<
+                        $E,
+                        $FlagsCount,
+                        $BucketMode,
+                        NoMultiplicity,
+                    >, false>(read_thread, Vec::new(), <$E>::new_temp_buffer());
+                while let Some((items, _)) = items.get_next_checkpoint() {
+                    while let Some(($data, $extra_buffer)) = items.next() {
+                        $f
+                    }
                 }
             }
         };

@@ -68,29 +68,31 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
         .map(|_| HashSet::new())
         .collect::<Vec<_>>();
 
-    let mut items_iterator = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
+    let mut checkpoints_iterator = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
         (),
         typenum::U2,
         BucketModeFromBoolean<USE_SECOND_BUCKET>,
         NoMultiplicity,
-    >>(reader_thread.clone(), Vec::new(), ());
+    >, false>(reader_thread.clone(), Vec::new(), ());
 
     let mut total_counters = vec![0; second_buckets_max];
 
-    while let Some((read_info, _)) = items_iterator.next() {
-        let orig_bucket = get_sequence_bucket::<()>(
-            k,
-            m,
-            &read_info,
-            buckets_count.ilog2() as usize,
-            second_buckets_log_max,
-        ) as usize;
+    while let Some((items_iterator, _)) = checkpoints_iterator.get_next_checkpoint() {
+        while let Some((read_info, _)) = items_iterator.next() {
+            let orig_bucket = get_sequence_bucket::<()>(
+                k,
+                m,
+                &read_info,
+                buckets_count.ilog2() as usize,
+                second_buckets_log_max,
+            ) as usize;
 
-        let hashes = MH::new(read_info.3, k);
+            let hashes = MH::new(read_info.3, k);
 
-        for hash in hashes.iter() {
-            total_counters[orig_bucket] += 1;
-            hash_maps[orig_bucket].insert(hash.to_unextendable());
+            for hash in hashes.iter() {
+                total_counters[orig_bucket] += 1;
+                hash_maps[orig_bucket].insert(hash.to_unextendable());
+            }
         }
     }
 

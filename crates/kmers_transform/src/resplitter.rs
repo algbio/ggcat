@@ -285,6 +285,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
                         Packet::new_simple(InputBucketDesc {
                             paths: vec![bucket.path],
                             sub_bucket_counters: vec![sub_bucket_count],
+                            compaction_delta: 0,
                             resplitted: true,
                             rewritten: false,
                             used_hash_bits: 0,

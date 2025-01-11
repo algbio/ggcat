@@ -57,6 +57,7 @@ pub(crate) struct KmersTransformReader<F: KmersTransformExecutorFactory> {
 pub struct InputBucketDesc {
     pub(crate) paths: Vec<PathBuf>,
     pub(crate) sub_bucket_counters: Vec<BucketCounter>,
+    pub(crate) compaction_delta: i64,
     pub(crate) out_data_format: MinimizerBucketMode,
     pub(crate) resplitted: bool,
     pub(crate) rewritten: bool,
@@ -70,6 +71,7 @@ impl PoolObjectTrait for InputBucketDesc {
         Self {
             paths: vec![],
             sub_bucket_counters: Vec::new(),
+            compaction_delta: 0,
             resplitted: false,
             rewritten: false,
             used_hash_bits: 0,
@@ -165,6 +167,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             })
             .collect();
 
+        let compaction_ratio = sequences_count
+            .saturating_add_signed(file.compaction_delta)
+            .max(16) as f64
+            / sequences_count as f64;
+
         let total_file_size = readers.iter().map(|r| r.get_file_size()).sum();
 
         bucket_sizes.make_contiguous().sort();
@@ -194,7 +201,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
             let is_outlier = !file.resplitted
                 && (total_sequences > 0)
-                && (biggest_sub_bucket.0.count as f64 * unique_estimator_factor
+                && (biggest_sub_bucket.0.count as f64 * unique_estimator_factor * compaction_ratio
                     >= (MAX_INTERMEDIATE_MAP_SIZE / F::MapProcessorType::MAP_SIZE as u64) as f64);
 
             // if is_outlier {
@@ -634,6 +641,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
                                 sub_bucket_counters: vec![BucketCounter {
                                     count: seq_count.into_inner(),
                                 }],
+                                compaction_delta: 0,
                                 resplitted: false,
                                 rewritten: true,
                                 used_hash_bits: init_data.used_hash_bits

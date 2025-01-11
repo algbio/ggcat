@@ -275,6 +275,8 @@ impl BucketItemSerializer for UnitigLinkSerializer {
     type ExtraDataBuffer = ();
     type ReadType<'a> = UnitigLink;
 
+    type ChunkData = ();
+
     #[inline(always)]
     fn new() -> Self {
         Self

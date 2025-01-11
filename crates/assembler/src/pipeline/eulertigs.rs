@@ -15,6 +15,7 @@ use io::concurrent::{
     },
     temp_reads::creads_utils::CompressedReadsBucketDataSerializer,
 };
+use parallel_processor::buckets::CheckpointStrategy;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::{
     buckets::readers::compressed_binary_reader::CompressedBinaryReader, memory_fs::RemoveFileMode,
@@ -394,6 +395,7 @@ pub fn build_eulertigs<
                             (),
                             SequenceAbundanceType,
                         )>::new_temp_buffer(),
+                        CheckpointStrategy::Decompress,
                         |(_, _, (_index, mut color, _, abundance), read, _): (
                             _,
                             _,
@@ -406,7 +408,8 @@ pub fn build_eulertigs<
                             _,
                             _,
                         ),
-                         colors_extra_buffer| {
+                         colors_extra_buffer,
+                         _checkpoint_data| {
                             let unitig_index =
                                 joined.lock().add_unitig(read.get_length() - (k - 1));
                             let mut buffer = unitigs_bases.lock();
@@ -439,6 +442,7 @@ pub fn build_eulertigs<
                             }
                         },
                     )
+                    .is_some()
                 {
                     continue;
                 }
@@ -539,6 +543,7 @@ pub fn build_eulertigs<
                             (),
                             SequenceAbundanceType,
                         )>::new_temp_buffer(),
+                        CheckpointStrategy::Decompress,
                         |(_, _, (_index, color, _, mut _abundance), read, _): (
                             _,
                             _,
@@ -551,7 +556,8 @@ pub fn build_eulertigs<
                             _,
                             _,
                         ),
-                         color_extra_buffer| {
+                         color_extra_buffer,
+                         _checkpoint_data| {
                             output_unitigs_buffer.clear();
 
                             CX::ColorsMergeManagerType::reset_unitig_color_structure(
@@ -640,6 +646,7 @@ pub fn build_eulertigs<
                             );
                         },
                     )
+                    .is_some()
                 {
                     continue;
                 }

@@ -50,7 +50,7 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -162,6 +162,7 @@ pub struct MinimizerBucketingCommonData<GlobalData> {
     pub max_second_buckets_count: usize,
     pub max_second_buckets_count_bits: usize,
     pub global_counters: Vec<Vec<AtomicU64>>,
+    pub compaction_offsets: Vec<AtomicI64>,
     pub global_data: GlobalData,
 }
 
@@ -191,6 +192,7 @@ impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
                         .collect()
                 })
                 .collect(),
+            compaction_offsets: (0..buckets_count).map(|_| AtomicI64::new(0)).collect(),
             global_data,
         }
     }
@@ -613,7 +615,10 @@ impl GenericMinimizerBucketing {
         let common_context = Arc::try_unwrap(global_context.common)
             .unwrap_or_else(|_| panic!("Cannot get common execution context!"));
 
-        let counters_analyzer = CountersAnalyzer::new(common_context.global_counters);
+        let counters_analyzer = CountersAnalyzer::new(
+            common_context.global_counters,
+            common_context.compaction_offsets,
+        );
         // counters_analyzer.print_debug();
 
         let counters_file = output_path.join("buckets-counters.dat");

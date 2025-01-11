@@ -35,7 +35,7 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::buckets::{CheckpointStrategy, MultiThreadBuckets};
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -120,6 +120,7 @@ pub fn build_maximal_unitigs_links<
                                 (),
                                 SequenceAbundanceType,
                             )>::new_temp_buffer(),
+                            CheckpointStrategy::Decompress,
                             |(_, _, (index, _, _, _), read, _): (
                                 _,
                                 _,
@@ -132,7 +133,8 @@ pub fn build_maximal_unitigs_links<
                                 _,
                                 _,
                             ),
-                             _extra_buffer| {
+                             _extra_buffer,
+                             _checkpoint_data| {
                                 let read_len = read.bases_count();
                                 unitigs_partial_count += 1;
 
@@ -222,6 +224,7 @@ pub fn build_maximal_unitigs_links<
                                 }
                             },
                         )
+                        .is_some()
                     {
                         continue;
                     }
@@ -382,6 +385,7 @@ pub fn build_maximal_unitigs_links<
                                 (),
                                 SequenceAbundanceType,
                             )>::new_temp_buffer(),
+                            CheckpointStrategy::Decompress,
                             |(_, _, (index, color, _, _abundance), read, _): (
                                 _,
                                 _,
@@ -394,7 +398,8 @@ pub fn build_maximal_unitigs_links<
                                 _,
                                 _,
                             ),
-                             extra_buffer| {
+                             extra_buffer,
+                             _checkpoint_data| {
                                 temp_sequence_buffer.clear();
                                 temp_sequence_buffer.extend(read.as_bases_iter());
 
@@ -419,6 +424,7 @@ pub fn build_maximal_unitigs_links<
                                 );
                             },
                         )
+                        .is_some()
                     {
                         tmp_final_unitigs_buffer.flush();
                     }

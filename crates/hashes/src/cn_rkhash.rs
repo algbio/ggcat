@@ -26,6 +26,40 @@ pub mod u64 {
     pub const MULT_T: HashIntegerType = 0x759db32ccd931bb5;
 
     include!("base/cn_rkhash_base.rs");
+
+    #[cfg(test)]
+    mod tests_reverse {
+        use crate::{cn_seqhash::u64::CanonicalSeqHashFactory, HashFunctionFactory};
+
+        #[test]
+        fn cn_seqhash_reverse() {
+            let hash = 1531907577009573; // 11581873256642304;
+            let inverted = CanonicalSeqHashFactory::invert(hash);
+            const C_INV_LETTERS: [u8; 4] = [b'A', b'C', b'T', b'G'];
+
+            println!(
+                "{:?}",
+                String::from_utf8(
+                    inverted
+                        .iter()
+                        .map(|b| {
+                            let b = *b as usize;
+                            [
+                                C_INV_LETTERS[b & 0b11],
+                                C_INV_LETTERS[(b >> 2) & 0b11],
+                                C_INV_LETTERS[(b >> 4) & 0b11],
+                                C_INV_LETTERS[(b >> 6) & 0b11],
+                            ]
+                            .into_iter()
+                        })
+                        .flatten()
+                        .take(27)
+                        .collect::<Vec<u8>>()
+                )
+                .unwrap()
+            );
+        }
+    }
 }
 
 pub mod u128 {

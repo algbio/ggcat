@@ -123,6 +123,8 @@ impl BucketItemSerializer for MaximalUnitigLinkSerializer {
     type ExtraDataBuffer = ();
     type ReadType<'a> = MaximalUnitigLink;
 
+    type ChunkData = ();
+
     #[inline(always)]
     fn new() -> Self {
         Self

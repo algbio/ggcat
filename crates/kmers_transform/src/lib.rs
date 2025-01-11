@@ -212,6 +212,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     sub_bucket_counters: counters
                         .get_counters_for_bucket(bucket_entries.index as BucketIndexType)
                         .clone(),
+                    compaction_delta: counters
+                        .get_compaction_offset(bucket_entries.index as BucketIndexType),
                     resplitted: false,
                     rewritten: false,
                     used_hash_bits: buckets_count.ilog2() as usize,
@@ -243,6 +245,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     sub_bucket_counters: counters
                         .get_counters_for_bucket(bucket_entry.index as BucketIndexType)
                         .clone(),
+                    compaction_delta: counters
+                        .get_compaction_offset(bucket_entry.index as BucketIndexType),
                     resplitted: false,
                     rewritten: false,
                     used_hash_bits: buckets_count.ilog2() as usize,

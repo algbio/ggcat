@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicI64, AtomicU64};
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct BucketCounter {
@@ -13,11 +13,12 @@ pub struct BucketCounter {
 #[derive(Serialize, Deserialize)]
 pub struct CountersAnalyzer {
     counters: Vec<Vec<BucketCounter>>,
+    compaction_offsets: Vec<i64>,
     median: u64,
 }
 
 impl CountersAnalyzer {
-    pub fn new(counters: Vec<Vec<AtomicU64>>) -> Self {
+    pub fn new(counters: Vec<Vec<AtomicU64>>, offsets: Vec<AtomicI64>) -> Self {
         let mut sorted_counters: Vec<(u64, usize, usize)> = Vec::new();
 
         let counters: Vec<Vec<BucketCounter>> = counters
@@ -44,11 +45,21 @@ impl CountersAnalyzer {
             0
         };
 
-        Self { counters, median }
+        let compaction_offsets = offsets.into_iter().map(AtomicI64::into_inner).collect();
+
+        Self {
+            counters,
+            median,
+            compaction_offsets,
+        }
     }
 
     pub fn get_counters_for_bucket(&self, bucket: BucketIndexType) -> &Vec<BucketCounter> {
         &self.counters[bucket as usize]
+    }
+
+    pub fn get_compaction_offset(&self, bucket: BucketIndexType) -> i64 {
+        self.compaction_offsets[bucket as usize]
     }
 
     pub fn print_debug(&self) {
