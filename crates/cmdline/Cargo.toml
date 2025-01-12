@@ -50,7 +50,7 @@ dynamic-dispatch = "0.5.4"
 
 
 # Common libraries
-parallel-processor = "0.1.22"
+parallel-processor = "0.1.23"
 io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
 
