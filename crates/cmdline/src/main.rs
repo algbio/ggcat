@@ -179,11 +179,11 @@ struct AssemblerArgs {
     #[structopt(short = "g", long = "greedy-matchtigs", group = "output-mode")]
     pub greedy_matchtigs: bool,
 
-    /// Generate eulertigs instead of maximal unitigs
+    /// Generate simplitigs instead of maximal unitigs, faster version
     #[structopt(long = "fast-simplitigs", group = "output-mode")]
     pub fast_simplitigs: bool,
 
-    /// Generate eulertigs instead of maximal unitigs
+    /// Generate eulertigs instead of maximal unitigs, faster version
     #[structopt(long = "fast-eulertigs", group = "output-mode")]
     pub fast_eulertigs: bool,
 
