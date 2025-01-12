@@ -7,11 +7,12 @@ use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink, UnitigLinkS
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
+use parallel_processor::buckets::readers::async_binary_reader::AllowedCheckpointStrategy;
 use parallel_processor::buckets::readers::generic_binary_reader::ChunkReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::single::SingleBucketThreadDispatcher;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::{CheckpointStrategy, MultiThreadBuckets, SingleBucket};
+use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
@@ -90,7 +91,7 @@ pub fn links_compaction(
         let mut deserializer = UnitigLinkSerializer::new();
 
         while let Some(checkpoint) =
-            file_reader.get_read_parallel_stream(CheckpointStrategy::Decompress)
+            file_reader.get_read_parallel_stream(AllowedCheckpointStrategy::DecompressOnly)
         {
             match checkpoint {
                 ChunkReader::Reader(mut stream, _) => {

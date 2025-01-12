@@ -12,7 +12,7 @@ use io::concurrent::temp_reads::creads_utils::{
     BucketModeFromBoolean, CompressedReadsBucketDataSerializer, NoMultiplicity,
 };
 use parallel_processor::buckets::readers::async_binary_reader::{
-    AsyncBinaryReader, AsyncReaderThread,
+    AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
 };
 use parallel_processor::memory_fs::RemoveFileMode;
 use std::collections::HashSet;
@@ -73,7 +73,12 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
         typenum::U2,
         BucketModeFromBoolean<USE_SECOND_BUCKET>,
         NoMultiplicity,
-    >, false>(reader_thread.clone(), Vec::new(), ());
+    >>(
+        reader_thread.clone(),
+        Vec::new(),
+        (),
+        AllowedCheckpointStrategy::DecompressOnly,
+    );
 
     let mut total_counters = vec![0; second_buckets_max];
 

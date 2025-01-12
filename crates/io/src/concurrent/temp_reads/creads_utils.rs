@@ -122,9 +122,10 @@ pub struct CompressedReadsBucketDataSerializer<
     _phantom: PhantomData<(FlagsCount, BucketMode, MultiplicityMode)>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct ReadsCheckpointData {
     pub target_subbucket: BucketIndexType,
+    pub sequences_count: usize,
 }
 
 impl<
@@ -272,6 +273,8 @@ pub mod helpers {
                 $reader:expr,
                 $read_thread:expr,
                 $with_multiplicity:expr,
+                $allowed_passtrough:expr,
+                |$passtrough_info:ident| $p:expr,
                 |$checkpoint_data:ident| $c:expr,
                 |$data: ident, $extra_buffer: ident| $f:expr
             );
@@ -281,6 +284,7 @@ pub mod helpers {
                 BucketModeOption, CompressedReadsBucketDataSerializer, NoMultiplicity,
                 WithMultiplicity,
             };
+            use parallel_processor::buckets::readers::async_binary_reader::AsyncBinaryReaderIteratorData;
 
             let reader = $reader;
             let read_thread = $read_thread;
@@ -293,12 +297,25 @@ pub mod helpers {
                         $FlagsCount,
                         $BucketMode,
                         WithMultiplicity,
-                    >, false>(read_thread, Vec::new(), <$E>::new_temp_buffer());
-                while let Some((items, $checkpoint_data)) = items.get_next_checkpoint() {
-                    $c
-                    while let Some(($data, $extra_buffer)) = items.next() {
-                        $f
+                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough);
+                while let Some(checkpoint) = items.get_next_checkpoint_extended() {
+                    match checkpoint {
+                        AsyncBinaryReaderIteratorData::Stream(items, $checkpoint_data) => {
+                            $c
+                            while let Some(($data, $extra_buffer)) = items.next() {
+                                $f
+                            }
+                        },
+                        AsyncBinaryReaderIteratorData::Passtrough {
+                            file_range: $passtrough_info,
+                            checkpoint_data: $checkpoint_data,
+                        } => {
+                            #[allow(unused_assignments)]
+                            $c
+                            $p
+                        }
                     }
+
                 }
             } else {
                 let mut items =
@@ -307,11 +324,25 @@ pub mod helpers {
                         $FlagsCount,
                         $BucketMode,
                         NoMultiplicity,
-                    >, false>(read_thread, Vec::new(), <$E>::new_temp_buffer());
-                while let Some((items, _)) = items.get_next_checkpoint() {
-                    while let Some(($data, $extra_buffer)) = items.next() {
-                        $f
+                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough);
+                while let Some(checkpoint) = items.get_next_checkpoint_extended() {
+                    match checkpoint {
+                        AsyncBinaryReaderIteratorData::Stream(items, $checkpoint_data) => {
+                            $c
+                            while let Some(($data, $extra_buffer)) = items.next() {
+                                $f
+                            }
+                        },
+                        AsyncBinaryReaderIteratorData::Passtrough {
+                            file_range: $passtrough_info,
+                            checkpoint_data: $checkpoint_data,
+                        } => {
+                            #[allow(unused_assignments)]
+                            $c
+                            $p
+                        }
                     }
+
                 }
             }
         };

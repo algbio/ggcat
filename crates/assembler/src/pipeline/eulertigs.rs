@@ -15,7 +15,7 @@ use io::concurrent::{
     },
     temp_reads::creads_utils::CompressedReadsBucketDataSerializer,
 };
-use parallel_processor::buckets::CheckpointStrategy;
+use parallel_processor::buckets::readers::async_binary_reader::AllowedCheckpointStrategy;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::{
     buckets::readers::compressed_binary_reader::CompressedBinaryReader, memory_fs::RemoveFileMode,
@@ -395,7 +395,7 @@ pub fn build_eulertigs<
                             (),
                             SequenceAbundanceType,
                         )>::new_temp_buffer(),
-                        CheckpointStrategy::Decompress,
+                        AllowedCheckpointStrategy::DecompressOnly,
                         |(_, _, (_index, mut color, _, abundance), read, _): (
                             _,
                             _,
@@ -543,7 +543,7 @@ pub fn build_eulertigs<
                             (),
                             SequenceAbundanceType,
                         )>::new_temp_buffer(),
-                        CheckpointStrategy::Decompress,
+                        AllowedCheckpointStrategy::DecompressOnly,
                         |(_, _, (_index, color, _, mut _abundance), read, _): (
                             _,
                             _,

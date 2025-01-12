@@ -17,9 +17,10 @@ use crate::{
 use colors::non_colored::NonColoredManager;
 use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, MultiplicityCounterType,
-    SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    MAXIMUM_SECOND_BUCKETS_COUNT, MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, WORKERS_PRIORITY_HIGH,
+    SwapPriority, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS, DEFAULT_OUTPUT_BUFFER_SIZE,
+    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAXIMUM_SECOND_BUCKETS_COUNT,
+    MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    WORKERS_PRIORITY_HIGH,
 };
 use io::{
     compressed_read::CompressedReadIndipendent,
@@ -36,7 +37,10 @@ use io::{
     creads_helper,
 };
 use parallel_processor::{
-    buckets::{bucket_writer::BucketItemSerializer, CheckpointStrategy},
+    buckets::{
+        bucket_writer::BucketItemSerializer,
+        readers::async_binary_reader::AllowedCheckpointStrategy,
+    },
     memory_fs::MemoryFs,
 };
 use parallel_processor::{
@@ -136,7 +140,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
             > = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
                 .map(|_| {
                     FxHashMap::with_capacity_and_hasher(
-                        MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
+                        DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
                         FxBuildHasher,
                     )
                 })
@@ -237,7 +241,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     processed_buckets += 1;
 
                     let format_data: MinimizerBucketMode = reader.get_data_format_info().unwrap();
-                    let mut checkpoint_rewrite_bucket = None;
+                    let mut checkpoint_rewrite_bucket;
                     creads_helper! {
                         helper_read_bucket_with_opt_multiplicity::<
                             E::ExtraData,
@@ -247,6 +251,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             &reader,
                             read_thread.clone(),
                             matches!(format_data, MinimizerBucketMode::Compacted),
+                            AllowedCheckpointStrategy::DecompressOnly,
+                            |_passtrough| unreachable!(),
                             |checkpoint_data| { checkpoint_rewrite_bucket = checkpoint_data.map(|d| d.target_subbucket); } ,
                             |data, _extra_buffer| {
 
@@ -330,10 +336,11 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     }
 
                     new_bucket.set_checkpoint_data(
-                        &ReadsCheckpointData {
+                        Some(&ReadsCheckpointData {
                             target_subbucket: rewrite_bucket as BucketIndexType,
-                        },
-                        CheckpointStrategy::Decompress,
+                            sequences_count: super_kmers_hashmap.len(),
+                        }),
+                        None,
                     );
 
                     for (read, (flags, multiplicity)) in super_kmers_hashmap.drain() {
@@ -360,7 +367,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     // Reset the hashmap capacity
                     if super_kmers_hashmap.capacity() > MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS {
                         *super_kmers_hashmap = FxHashMap::with_capacity_and_hasher(
-                            MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
+                            DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
                             FxBuildHasher,
                         );
                     }

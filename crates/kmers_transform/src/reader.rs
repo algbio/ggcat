@@ -25,7 +25,7 @@ use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{MinimizerBucketMode, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::readers::async_binary_reader::{
-    AsyncBinaryReader, AsyncReaderThread,
+    AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
 };
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::LockFreeBucket;
@@ -118,9 +118,9 @@ enum AddressMode {
 struct BucketsInfo {
     readers: Vec<AsyncBinaryReader>,
     concurrency: usize,
-    addresses: Vec<AddressMode>,
+    addresses: Arc<Vec<AddressMode>>,
     register_addresses: Vec<ExecutorAddress>,
-    buckets_remapping: Vec<usize>,
+    buckets_remapping: Arc<Vec<usize>>,
     second_buckets_log_max: usize,
     total_file_size: usize,
     used_hash_bits: usize,
@@ -331,9 +331,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         BucketsInfo {
             readers,
             concurrency,
-            addresses,
+            addresses: Arc::new(addresses),
             register_addresses,
-            buckets_remapping,
+            buckets_remapping: Arc::new(buckets_remapping),
             second_buckets_log_max,
             total_file_size,
             used_hash_bits: file.used_hash_bits,
@@ -426,7 +426,10 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             }
 
             let data_format: MinimizerBucketMode = reader.get_data_format_info().unwrap();
-            let mut checkpoint_rewrite_bucket = None;
+            let mut checkpoint_rewrite_info;
+
+            let addresses_passtrough_check = bucket_info.addresses.clone();
+            let buckets_remapping_passtrough_check = bucket_info.buckets_remapping.clone();
 
             creads_helper! {
                 helper_read_bucket_with_opt_multiplicity::<
@@ -437,12 +440,29 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                     reader,
                     async_reader_thread.clone(),
                     matches!(data_format, MinimizerBucketMode::Compacted),
-                    |checkpoint_data| { checkpoint_rewrite_bucket = checkpoint_data.map(|d| d.target_subbucket); } ,
+                    AllowedCheckpointStrategy::AllowPasstrough(Arc::new(move |data| {
+                        if let Some(data) = data {
+                            matches!(&addresses_passtrough_check[buckets_remapping_passtrough_check[data.target_subbucket as usize]], AddressMode::Rewrite(_, _, _))
+                        } else {
+                            false
+                        }
+                    })),
+                    |passtrough| {
+                        let bucket = checkpoint_rewrite_info.unwrap().target_subbucket as usize;
+                        let sequences_count = checkpoint_rewrite_info.unwrap().sequences_count;
+                        if let AddressMode::Rewrite(writer, out_sequences_count, _) = &bucket_info.addresses[bucket_info.buckets_remapping[bucket]] {
+                            out_sequences_count.fetch_add(sequences_count as u64, Ordering::Relaxed);
+                            writer.set_checkpoint_data::<()>(None, Some(passtrough));
+                        } else {
+                            unreachable!();
+                        }
+                    },
+                    |checkpoint_data| { checkpoint_rewrite_info = checkpoint_data; } ,
                     |read_info, extra_buffer| {
                         let bucket = if has_single_addr {
                             0
                         } else {
-                            let orig_bucket = checkpoint_rewrite_bucket
+                            let orig_bucket = checkpoint_rewrite_info.map(|i| i.target_subbucket)
                             .unwrap_or_else(|| F::PreprocessorType::get_rewrite_bucket(
                                 global_extra_data.get_k(),
                                 global_extra_data.get_m(),
@@ -620,7 +640,10 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
                 spawner.executors_await().await;
                 drop(spawner);
 
-                for addr in buckets_info.addresses {
+                for addr in Arc::try_unwrap(buckets_info.addresses)
+                    .map_err(|_| ())
+                    .unwrap()
+                {
                     if let AddressMode::Rewrite(writer, seq_count, init_data) = addr {
                         let new_bucket_address =
                             KmersTransformReader::<F>::generate_new_address(());
