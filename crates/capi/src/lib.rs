@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::{mem::transmute, path::PathBuf};
 
 use ggcat_api::{
-    ColorIndexType, DnaSequence, DnaSequencesFileType, DynamicSequencesStream, SequenceInfo,
+    ColorIndexType, DnaSequence, DnaSequencesFileType, DynamicSequencesStream, GfaVersion,
+    SequenceInfo,
 };
 use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance, GeneralSequenceBlockData};
 
@@ -48,7 +49,6 @@ fn ggcat_create(config: ffi::GGCATConfigFFI) -> *const GGCATInstanceFFI {
                 }
             })
         },
-        gfa_output: config.gfa_output,
         disk_optimization_level: config.disk_optimization_level,
     })
     .ok();
@@ -85,7 +85,7 @@ fn ggcat_build(
     extra_elab: usize,
 
     // Output the result in GFA format
-    gfa_output: bool,
+    gfa_output_version: u32,
 
     // Sets the level of disk optimization
     disk_optimization_level: u32,
@@ -124,7 +124,12 @@ fn ggcat_build(
                 EXTRA_ELABORATION_STEP_PATHTIGS => ExtraElaboration::Pathtigs,
                 _ => panic!("Invalid extra_elab value: {}", extra_elab),
             },
-            gfa_output,
+            match gfa_output_version {
+                0 => None,
+                1 => Some(GfaVersion::V1),
+                2 => Some(GfaVersion::V2),
+                _ => panic!("Invalid gfa_output_version value: {}", gfa_output_version),
+            },
             disk_optimization_level,
         )
         .unwrap_or_default()
@@ -163,7 +168,7 @@ fn ggcat_build_from_files(
     extra_elab: usize,
 
     // Output the result in GFA format
-    gfa_output: bool,
+    gfa_output_version: u32,
 
     // Sets the level of disk optimization
     disk_optimization_level: u32,
@@ -190,7 +195,7 @@ fn ggcat_build_from_files(
         colors,
         min_multiplicity,
         extra_elab,
-        gfa_output,
+        gfa_output_version,
         disk_optimization_level,
     )
 }
@@ -225,7 +230,7 @@ fn ggcat_build_from_streams(
     extra_elab: usize,
 
     // Output the result in GFA format
-    gfa_output: bool,
+    gfa_output_version: u32,
 
     // Sets the level of disk optimization
     disk_optimization_level: u32,
@@ -323,7 +328,7 @@ fn ggcat_build_from_streams(
         colors,
         min_multiplicity,
         extra_elab,
-        gfa_output,
+        gfa_output_version,
         disk_optimization_level,
     )
 }
@@ -551,8 +556,9 @@ mod ffi {
         /// Function pointer with signature void (uint8_t, const char *) receiving messages
         pub messages_callback: usize,
 
-        /// Output the result in GFA format
-        pub gfa_output: bool,
+        /// Output the result in the specified version of GFA format, 0 outputs in FASTA (default)
+        /// Supported V1 and V2
+        pub gfa_output_version: u32,
 
         /// Sets the level of disk optimization
         pub disk_optimization_level: u32,
@@ -604,7 +610,7 @@ mod ffi {
             extra_elab: usize,
 
             // Output the result in GFA format
-            gfa_output: bool,
+            gfa_output_version: u32,
 
             // Sets the level of disk optimization
             disk_optimization_level: u32,
@@ -641,7 +647,7 @@ mod ffi {
             extra_elab: usize,
 
             // Output the result in GFA format
-            gfa_output: bool,
+            gfa_output_version: u32,
 
             // Sets the level of disk optimization
             disk_optimization_level: u32,

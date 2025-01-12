@@ -44,6 +44,8 @@ impl MaximalUnitigFlags {
 #[derive(Copy, Clone, Eq)]
 pub struct MaximalUnitigIndex {
     index: u64,
+    // The non reverse-complemented start of the link overlap (used for gfa2)
+    overlap_start: u64,
     pub flags: MaximalUnitigFlags,
 }
 
@@ -63,12 +65,18 @@ impl HasEmptyExtraBuffer for MaximalUnitigIndex {}
 impl SequenceExtraData for MaximalUnitigIndex {
     fn decode_extended(_: &mut (), reader: &mut impl Read) -> Option<Self> {
         let index = decode_varint(|| reader.read_u8().ok())?;
+        let overlap_start = decode_varint(|| reader.read_u8().ok())?;
         let flags = reader.read_u8().ok()?;
-        Some(MaximalUnitigIndex::new(index, MaximalUnitigFlags(flags)))
+        Some(MaximalUnitigIndex::new(
+            index,
+            overlap_start,
+            MaximalUnitigFlags(flags),
+        ))
     }
 
     fn encode_extended(&self, _: &(), writer: &mut impl Write) {
         encode_varint(|b| writer.write_all(b).ok(), self.index() as u64).unwrap();
+        encode_varint(|b| writer.write_all(b).ok(), self.overlap_start).unwrap();
         writer.write_all(&[self.flags.0]).unwrap();
     }
 
@@ -88,8 +96,12 @@ impl Debug for MaximalUnitigIndex {
 
 impl MaximalUnitigIndex {
     #[inline]
-    pub fn new(index: u64, flags: MaximalUnitigFlags) -> Self {
-        Self { index, flags }
+    pub fn new(index: u64, overlap_start: u64, flags: MaximalUnitigFlags) -> Self {
+        Self {
+            index,
+            overlap_start,
+            flags,
+        }
     }
 
     #[inline]
@@ -148,6 +160,7 @@ impl BucketItemSerializer for MaximalUnitigLinkSerializer {
 
         for entry in entries {
             encode_varint(|b| bucket.write_all(b), entry.index() as u64).unwrap();
+            encode_varint(|b| bucket.write_all(b), entry.overlap_start).unwrap();
             bucket.push(entry.flags.0);
         }
     }
@@ -165,8 +178,13 @@ impl BucketItemSerializer for MaximalUnitigLinkSerializer {
         let start = read_buffer.len();
         for _i in 0..len {
             let index = decode_varint(|| stream.read_u8().ok())?;
+            let overlap_start = decode_varint(|| stream.read_u8().ok())?;
             let flags = stream.read_u8().ok()?;
-            read_buffer.push(MaximalUnitigIndex::new(index, MaximalUnitigFlags(flags)));
+            read_buffer.push(MaximalUnitigIndex::new(
+                index,
+                overlap_start,
+                MaximalUnitigFlags(flags),
+            ));
         }
 
         Some(MaximalUnitigLink::new(entry, VecSlice::new(start, len)))
@@ -272,26 +290,61 @@ impl IdentSequenceWriter for DoubleMaximalUnitigLinks {
     }
 
     #[allow(unused_variables)]
-    fn write_as_gfa(
+    fn write_as_gfa<const VERSION: u32>(
         &self,
         k: u64,
         index: u64,
+        length: u64,
         stream: &mut impl Write,
         extra_buffer: &Self::TempBuffer,
     ) {
         for entries in &self.links {
             let entries = entries.entries.get_slice(extra_buffer);
-            for entry in entries {
-                writeln!(
-                    stream,
-                    "L\t{}\t{}\t{}\t{}\t{}M",
-                    index,
-                    if entry.flags.flip_current() { "-" } else { "+" },
-                    entry.index,
-                    if entry.flags.flip_other() { "-" } else { "+" },
-                    k - 1
-                )
-                .unwrap();
+            if VERSION == 1 {
+                for entry in entries {
+                    // L <index> < +/- > <other_index> < +/- > <overlap>
+                    writeln!(
+                        stream,
+                        "L\t{}\t{}\t{}\t{}\t{}M",
+                        index,
+                        if entry.flags.flip_current() { '-' } else { '+' },
+                        entry.index,
+                        if entry.flags.flip_other() { '-' } else { '+' },
+                        k - 1
+                    )
+                    .unwrap();
+                }
+            } else if VERSION == 2 {
+                for entry in entries {
+                    let (b1, e1, is_end1) = if entry.flags.flip_current() {
+                        (0, k - 1, false)
+                    } else {
+                        (length - k + 1, length, true)
+                    };
+
+                    let (b2, e2, is_end2) = (
+                        entry.overlap_start,
+                        entry.overlap_start + k - 1,
+                        entry.overlap_start > 0,
+                    );
+
+                    // E * <index>< +/- > <other_index>< +/- > <b1> <e1> <b2> <e2>
+                    writeln!(
+                        stream,
+                        "E\t*\t{}{}\t{}{}\t{}\t{}{}\t{}\t{}{}",
+                        index,
+                        if entry.flags.flip_current() { '-' } else { '+' },
+                        entry.index,
+                        if entry.flags.flip_other() { '-' } else { '+' },
+                        b1,
+                        e1,
+                        if is_end1 { "$" } else { "" },
+                        b2,
+                        e2,
+                        if is_end2 { "$" } else { "" }
+                    )
+                    .unwrap();
+                }
             }
         }
     }

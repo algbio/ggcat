@@ -19,4 +19,11 @@ for feature in ${TESTABLE_FEATURES}; do
     cargo check --release --features "$feature"
 done
 
+pushd crates/api/example/
+    cargo check
+popd
+pushd crates/capi/ggcat-cpp-api/example
+    make -j
+popd
+
 cargo clean

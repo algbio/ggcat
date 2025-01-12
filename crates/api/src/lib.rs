@@ -9,7 +9,7 @@ use config::{MAX_BUCKET_CHUNK_SIZE, MIN_BUCKET_CHUNK_SIZE};
 pub use ggcat_logging::MessageLevel;
 use ggcat_logging::UnrecoverableErrorLogging;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
-use io::concurrent::structured_sequences::gfa::GFAWriterWrapper;
+use io::concurrent::structured_sequences::gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2};
 use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
 use io::sequences_stream::fasta::FastaFileSequencesStream;
 use io::sequences_stream::GenericSequencesStream;
@@ -59,9 +59,16 @@ pub mod debug {
     pub static BUCKETS_COUNT_LOG_FORCE: Mutex<Option<usize>> = Mutex::new(None);
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum LoggingMode {
     Log,
     ForceStdout,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum GfaVersion {
+    V1,
+    V2,
 }
 
 /// Main config of GGCAT. This config is global and should be passed to GGCATInstance::create
@@ -89,9 +96,6 @@ pub struct GGCATConfig {
 
     /// The messages callback, if present, no output will be automatically written to stdout
     pub messages_callback: Option<fn(MessageLevel, &str)>,
-
-    /// Output GFA format instead of FASTA
-    pub gfa_output: bool,
 
     /// Sets the level of disk usage reduction optimization
     pub disk_optimization_level: u32,
@@ -231,7 +235,7 @@ impl GGCATInstance {
 
         extra_elab: ExtraElaboration,
 
-        gfa_output: bool,
+        gfa_output_version: Option<GfaVersion>,
 
         disk_optimization_level: u32,
     ) -> anyhow::Result<PathBuf> {
@@ -249,14 +253,14 @@ impl GGCATInstance {
             NonColoredManager::dynamic_dispatch_id()
         };
 
-        if gfa_output && colors {
+        if gfa_output_version.is_some() && colors {
             anyhow::bail!("GFA output is not supported with colors");
         }
 
-        let output_mode = if gfa_output {
-            GFAWriterWrapper::dynamic_dispatch_id()
-        } else {
-            FastaWriterWrapper::dynamic_dispatch_id()
+        let output_mode = match gfa_output_version {
+            None => FastaWriterWrapper::dynamic_dispatch_id(),
+            Some(GfaVersion::V1) => GFAWriterWrapperV1::dynamic_dispatch_id(),
+            Some(GfaVersion::V2) => GFAWriterWrapperV2::dynamic_dispatch_id(),
         };
 
         let temp_dir = create_tempdir(self.0.temp_dir.clone());

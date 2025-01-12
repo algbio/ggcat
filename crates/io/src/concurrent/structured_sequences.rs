@@ -13,10 +13,11 @@ pub mod stream_finish;
 
 pub trait IdentSequenceWriter: SequenceExtraDataConsecutiveCompression + Sized {
     fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer);
-    fn write_as_gfa(
+    fn write_as_gfa<const VERSION: u32>(
         &self,
         k: u64,
         index: u64,
+        length: u64,
         stream: &mut impl Write,
         extra_buffer: &Self::TempBuffer,
     );
@@ -29,10 +30,11 @@ pub trait IdentSequenceWriter: SequenceExtraDataConsecutiveCompression + Sized {
 impl IdentSequenceWriter for () {
     fn write_as_ident(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
 
-    fn write_as_gfa(
+    fn write_as_gfa<const VERSION: u32>(
         &self,
         _k: u64,
         _index: u64,
+        _length: u64,
         _stream: &mut impl Write,
         _extra_buffer: &Self::TempBuffer,
     ) {

@@ -11,7 +11,7 @@ fn main() {
             std::env::var("OUT_DIR").unwrap(),
             "/cxxbridge/include/ggcat-cpp-bindings/src/lib.rs.h"
         ),
-        "ggcat-cpp-api/src/ggcat-cpp-bindings.hh",
+        "ggcat-cpp-api/include/ggcat-cpp-bindings.hh",
     )
     .unwrap();
 

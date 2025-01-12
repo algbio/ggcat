@@ -27,7 +27,6 @@ fn main() {
                 panic!("Unrecoverable error: {}", msg);
             }
         }),
-        gfa_output: false,
         disk_optimization_level: 5,
     })
     .unwrap();
@@ -63,7 +62,7 @@ fn main() {
             true,
             1,
             ExtraElaboration::UnitigLinks,
-            false,
+            None,
             5,
         )
         .unwrap();

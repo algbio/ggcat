@@ -19,7 +19,8 @@ use config::{
 use hashes::HashFunctionFactory;
 use io::concurrent::structured_sequences::binary::StructSeqBinaryWriter;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
-use io::concurrent::structured_sequences::gfa::GFAWriterWrapper;
+use io::concurrent::structured_sequences::gfa::GFAWriterWrapperV1;
+use io::concurrent::structured_sequences::gfa::GFAWriterWrapperV2;
 use io::concurrent::structured_sequences::{
     IdentSequenceWriter, StructuredSequenceBackend, StructuredSequenceBackendInit,
     StructuredSequenceBackendWrapper, StructuredSequenceWriter,
@@ -95,7 +96,8 @@ fn get_writer<
     colors::non_colored::NonColoredManager,
 ], OutputMode = [
     FastaWriterWrapper,
-    #[cfg(not(feature = "devel-build"))] GFAWriterWrapper
+    #[cfg(not(feature = "devel-build"))] GFAWriterWrapperV1,
+    #[cfg(not(feature = "devel-build"))] GFAWriterWrapperV2
 ])]
 pub fn run_assembler<
     MergingHash: HashFunctionFactory,

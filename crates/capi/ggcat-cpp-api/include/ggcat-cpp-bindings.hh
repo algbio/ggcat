@@ -125,6 +125,9 @@ public:
   Slice() noexcept;
   Slice(T *, std::size_t count) noexcept;
 
+  template <typename C>
+  explicit Slice(C& c) : Slice(c.data(), c.size()) {}
+
   Slice &operator=(const Slice<T> &) &noexcept = default;
   Slice &operator=(Slice<T> &&) &noexcept = default;
 
@@ -337,7 +340,8 @@ typename Slice<T>::iterator::difference_type
 Slice<T>::iterator::operator-(const iterator &other) const noexcept {
   auto diff = std::distance(static_cast<char *>(other.pos),
                             static_cast<char *>(this->pos));
-  return diff / this->stride;
+  return diff / static_cast<typename Slice<T>::iterator::difference_type>(
+                    this->stride);
 }
 
 template <typename T>
@@ -717,6 +721,7 @@ std::size_t align_of() {
 } // namespace rust
 
 struct GGCATConfigFFI;
+struct InputStreamFFI;
 struct GGCATInstanceFFI;
 
 #ifndef CXXBRIDGE1_STRUCT_GGCATConfigFFI
@@ -742,10 +747,28 @@ struct GGCATConfigFFI final {
   bool use_stats_file;
   // The path to an optional json-formatted real time stats file
   ::rust::String stats_file;
+  // Function pointer with signature void (uint8_t, const char *) receiving messages
+  ::std::size_t messages_callback;
+  // Output the result in the specified version of GFA format, 0 outputs in FASTA (default)
+  // Supported V1 and V2
+  ::std::uint32_t gfa_output_version;
+  // Sets the level of disk optimization
+  ::std::uint32_t disk_optimization_level;
 
   using IsRelocatable = ::std::true_type;
 };
 #endif // CXXBRIDGE1_STRUCT_GGCATConfigFFI
+
+#ifndef CXXBRIDGE1_STRUCT_InputStreamFFI
+#define CXXBRIDGE1_STRUCT_InputStreamFFI
+struct InputStreamFFI final {
+  ::std::size_t virtual_read_block;
+  ::std::size_t virtual_estimated_base_count;
+  ::std::size_t block_data;
+
+  using IsRelocatable = ::std::true_type;
+};
+#endif // CXXBRIDGE1_STRUCT_InputStreamFFI
 
 #ifndef CXXBRIDGE1_STRUCT_GGCATInstanceFFI
 #define CXXBRIDGE1_STRUCT_GGCATInstanceFFI
@@ -762,13 +785,16 @@ private:
 #endif // CXXBRIDGE1_STRUCT_GGCATInstanceFFI
 
 // Creates a new GGCATInstance. If an instance already exists, it will be returned, ignoring the new config.
-const ::GGCATInstanceFFI &ggcat_create(::GGCATConfigFFI config) noexcept;
+::GGCATInstanceFFI const *ggcat_create(::GGCATConfigFFI config) noexcept;
 
 // Builds a new graph from the given input files, with the specified parameters
-::rust::String ggcat_build_from_files(const ::GGCATInstanceFFI &instance, ::rust::Slice<const ::rust::String> input_files, ::rust::String output_file, ::rust::Slice<const ::rust::String> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab) noexcept;
+::rust::String ggcat_build_from_files(::GGCATInstanceFFI const &instance, ::rust::Slice<::rust::String const> input_files, ::rust::String output_file, ::rust::Slice<::rust::String const> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab, ::std::uint32_t gfa_output_version, ::std::uint32_t disk_optimization_level) noexcept;
+
+// Builds a new graph from the given input streams, with the specified parameters
+::rust::String ggcat_build_from_streams(::GGCATInstanceFFI const &instance, ::rust::Slice<::InputStreamFFI const> input_streams, ::rust::String output_file, ::rust::Slice<::rust::String const> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab, ::std::uint32_t gfa_output_version, ::std::uint32_t disk_optimization_level) noexcept;
 
 // Queries a (optionally) colored graph with a specific set of sequences as queries
-::rust::String ggcat_query_graph(const ::GGCATInstanceFFI &instance, ::rust::String input_graph, ::rust::String input_query, ::rust::String output_file_prefix, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t color_output_format) noexcept;
+::rust::String ggcat_query_graph(::GGCATInstanceFFI const &instance, ::rust::String input_graph, ::rust::String input_query, ::rust::String output_file_prefix, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t color_output_format) noexcept;
 
 ::rust::String ggcat_get_colormap_file(::rust::String graph_file) noexcept;
 
@@ -782,7 +808,6 @@ const ::GGCATInstanceFFI &ggcat_create(::GGCATConfigFFI config) noexcept;
 // are returned as whole unitigs to speedup colormap reading times
 void ggcat_dump_unitigs(::GGCATInstanceFFI const &instance, ::rust::String graph_input, ::std::size_t kmer_length, ::std::size_t minimizer_length, bool colors, ::std::size_t threads_count, bool single_thread_output_function, ::std::size_t output_function_context, ::std::size_t output_function_ptr) noexcept;
 
-
-/// Queries specified color subsets of the colormap, returning
-/// the color indices corresponding to the colors of each subset
-void ggcat_query_colormap(::GGCATInstanceFFI const &instance, ::rust::String colormap_file, ::std::size_t output_function_context, ::std::size_t output_function_ptr) noexcept;
+// Queries specified color subsets of the colormap, returning
+// the color indices corresponding to the colors of each subset
+void ggcat_query_colormap(::GGCATInstanceFFI const &instance, ::rust::String colormap, ::rust::Vec<::std::uint32_t> subsets, bool single_thread_output_function, ::std::size_t output_function_context, ::std::size_t output_function_ptr) noexcept;

@@ -172,6 +172,7 @@ pub fn build_maximal_unitigs_links<
                                         index,
                                         MaximalUnitigPosition::Beginning,
                                         first_hash.is_forward(),
+                                        0,
                                     ),
                                 );
 
@@ -188,6 +189,7 @@ pub fn build_maximal_unitigs_links<
                                             index,
                                             MaximalUnitigPosition::Beginning,
                                             !first_hash.is_forward(),
+                                            0,
                                         ),
                                     );
                                 }
@@ -204,6 +206,7 @@ pub fn build_maximal_unitigs_links<
                                         index,
                                         MaximalUnitigPosition::Ending,
                                         !last_hash.is_forward(),
+                                        read_len as u64 - k as u64 + 1,
                                     ),
                                 );
 
@@ -220,6 +223,7 @@ pub fn build_maximal_unitigs_links<
                                             index,
                                             MaximalUnitigPosition::Ending,
                                             last_hash.is_forward(),
+                                            read_len as u64 - k as u64 + 1,
                                         ),
                                     );
                                 }
@@ -310,6 +314,7 @@ pub fn build_maximal_unitigs_links<
                             .map(|v| {
                                 MaximalUnitigIndex::new(
                                     v.entry(),
+                                    v.overlap_start(),
                                     MaximalUnitigFlags::new_direction(
                                         val.position() == MaximalUnitigPosition::Beginning,
                                         v.position() == MaximalUnitigPosition::Ending,

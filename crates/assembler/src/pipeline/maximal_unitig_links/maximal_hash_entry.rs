@@ -19,6 +19,7 @@ pub enum MaximalUnitigPosition {
 pub struct MaximalHashEntry<H: Copy> {
     pub hash: H,
     encoded: u64,
+    overlap_start: u64,
 }
 
 impl<H: Copy> MaximalHashEntry<H> {
@@ -31,6 +32,7 @@ impl<H: Copy> MaximalHashEntry<H> {
         entry: u64,
         position: MaximalUnitigPosition,
         direction_forward: bool,
+        overlap_start: u64,
     ) -> Self {
         Self {
             hash,
@@ -40,11 +42,16 @@ impl<H: Copy> MaximalHashEntry<H> {
                     MaximalUnitigPosition::Beginning => 0,
                 }) << Self::POSITION_OFFSET)
                 | ((if direction_forward { 1 } else { 0 }) << Self::DIRECTION_OFFSET),
+            overlap_start,
         }
     }
 
     pub fn entry(&self) -> u64 {
         self.encoded >> Self::ENTRY_OFFSET
+    }
+
+    pub fn overlap_start(&self) -> u64 {
+        self.overlap_start
     }
 
     pub fn position(&self) -> MaximalUnitigPosition {

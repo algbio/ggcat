@@ -5,7 +5,7 @@ extern crate alloc;
 // mod benchmarks;
 
 use ahash::HashMap;
-use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance};
+use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance, GfaVersion};
 use ggcat_logging::UnrecoverableErrorLogging;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
@@ -198,9 +198,13 @@ struct AssemblerArgs {
     #[structopt(flatten)]
     pub common_args: CommonArgs,
 
-    /// Output the graph in GFA format
-    #[structopt(short = "h", long = "gfa")]
-    pub gfa_output: bool,
+    /// Output the graph in GFA format v1
+    #[structopt(long = "gfa-v1")]
+    pub gfa_output_v1: bool,
+
+    /// Output the graph in GFA format v2
+    #[structopt(long = "gfa-v2")]
+    pub gfa_output_v2: bool,
 
     /// Sets the level of disk optimization (0 disabled)
     #[structopt(long = "disk-optimization-level", default_value = "5")]
@@ -257,7 +261,6 @@ struct QueryArgs {
 fn initialize(
     args: &CommonArgs,
     out_file: &PathBuf,
-    gfa_output: bool,
     disk_optimization_level: u32,
 ) -> &'static GGCATInstance {
     let instance = GGCATInstance::create(GGCATConfig {
@@ -268,7 +271,6 @@ fn initialize(
         intermediate_compression_level: args.intermediate_compression_level,
         stats_file: Some(out_file.with_extension("stats.log")),
         messages_callback: None,
-        gfa_output,
         disk_optimization_level,
     });
 
@@ -316,6 +318,11 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
 
     if (args.input_lists.len() > 0 || args.input.len() > 0) && args.colored_input_lists.len() > 0 {
         println!("Cannot specify both colored input lists and other files/lists");
+        exit(1);
+    }
+
+    if args.gfa_output_v1 && args.gfa_output_v2 {
+        println!("Cannot specify both GFA v1 and GFA v2 output");
         exit(1);
     }
 
@@ -453,7 +460,13 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
             } else {
                 ExtraElaboration::None
             },
-            args.gfa_output,
+            if args.gfa_output_v1 {
+                Some(GfaVersion::V1)
+            } else if args.gfa_output_v2 {
+                Some(GfaVersion::V2)
+            } else {
+                None
+            },
             args.disk_optimization_level,
         )
         .unwrap();
@@ -525,7 +538,6 @@ fn main() {
             let instance = initialize(
                 &args.common_args,
                 &args.output_file,
-                args.gfa_output,
                 args.disk_optimization_level,
             );
 
@@ -561,7 +573,7 @@ fn main() {
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
 
-            let instance = initialize(&args.common_args, &args.output_file_prefix, false, 0);
+            let instance = initialize(&args.common_args, &args.output_file_prefix, 0);
 
             let output_file_name = run_querier_from_args(&instance, args);
             println!("Final output saved to: {}", output_file_name.display());

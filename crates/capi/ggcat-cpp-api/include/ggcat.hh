@@ -231,8 +231,8 @@ namespace ggcat
             // Overrides the default m-mers (minimizers) length
             size_t minimizer_length = -1,
 
-            // Output the result as a GFA file
-            bool gfa_output = false,
+            // Output the result as a GFA file with the specific version (0 to disable)
+            uint32_t gfa_output_version = 0,
 
             // Disk optimization level
             uint32_t disk_optimization_level = 5);

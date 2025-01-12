@@ -239,10 +239,11 @@ impl SequenceExtraData for UnitigColorDataSerializer {
 impl IdentSequenceWriter for UnitigColorDataSerializer {
     fn write_as_ident(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
 
-    fn write_as_gfa(
+    fn write_as_gfa<const VERSION: u32>(
         &self,
         _k: u64,
         _index: u64,
+        _length: u64,
         _stream: &mut impl Write,
         _extra_buffer: &Self::TempBuffer,
     ) {
