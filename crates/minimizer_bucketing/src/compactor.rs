@@ -16,16 +16,16 @@ use crate::{
 };
 use colors::non_colored::NonColoredManager;
 use config::{
-    get_compression_level_info, get_memory_mode, MultiplicityCounterType, SwapPriority,
-    DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAXIMUM_SECOND_BUCKETS_COUNT,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, WORKERS_PRIORITY_HIGH,
+    get_compression_level_info, get_memory_mode, BucketIndexType, MultiplicityCounterType,
+    SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    MAXIMUM_SECOND_BUCKETS_COUNT, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, WORKERS_PRIORITY_HIGH,
 };
 use io::{
     compressed_read::CompressedReadIndipendent,
     concurrent::temp_reads::{
         creads_utils::{
             CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoSecondBucket,
-            WithMultiplicity,
+            ReadsCheckpointData, WithMultiplicity,
         },
         extra_data::SequenceExtraDataTempBufferManagement,
     },
@@ -34,7 +34,10 @@ use io::{
     compressed_read::{BorrowableCompressedRead, CompressedRead},
     creads_helper,
 };
-use parallel_processor::{buckets::bucket_writer::BucketItemSerializer, memory_fs::MemoryFs};
+use parallel_processor::{
+    buckets::{bucket_writer::BucketItemSerializer, CheckpointStrategy},
+    memory_fs::MemoryFs,
+};
 use parallel_processor::{
     buckets::{
         readers::async_binary_reader::{AsyncBinaryReader, AsyncReaderThread},
@@ -68,6 +71,8 @@ pub struct CompactorInitData {
 }
 
 struct SuperKmerEntry(*const Vec<u8>, CompressedReadIndipendent);
+unsafe impl Sync for SuperKmerEntry {}
+unsafe impl Send for SuperKmerEntry {}
 
 impl SuperKmerEntry {
     fn get_read(&self) -> CompressedRead {
@@ -121,6 +126,12 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
             let read_thread = AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE, 4);
 
             static COMPACTED_INDEX: AtomicUsize = AtomicUsize::new(0);
+
+            let mut super_kmers_hashmap: Vec<
+                FxHashMap<SuperKmerEntry, (u8, MultiplicityCounterType)>,
+            > = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+                .map(|_| FxHashMap::default())
+                .collect();
 
             while let Ok((_, init_data)) = track!(
                 receiver
@@ -180,11 +191,6 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     COMPACTED_INDEX.fetch_add(1, Ordering::Relaxed)
                 ));
 
-                let mut super_kmers_hashmap: Vec<
-                    FxHashMap<SuperKmerEntry, (u8, MultiplicityCounterType)>,
-                > = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
-                    .map(|_| FxHashMap::default())
-                    .collect();
                 // .try_into()
                 // .unwrap();
                 let mut kmers_storage = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
@@ -280,20 +286,26 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 let empty_extra = NonColoredManager::default();
 
                 for (rewrite_bucket, super_kmers_hashmap) in
-                    super_kmers_hashmap.into_iter().enumerate()
+                    super_kmers_hashmap.iter_mut().enumerate()
                 {
                     // Flush the buffer before changing checkpoint
                     if buffer.len() > 0 {
                         new_bucket.write_data(&buffer);
                         buffer.clear();
                     }
-                    // new_bucket.set_checkpoint_data(
-                    //     &ReadsCheckpointData {
-                    //         target_subbucket: rewrite_bucket as BucketIndexType,
-                    //     },
-                    //     CheckpointStrategy::Passtrough,
-                    // );
-                    for (read, (flags, multiplicity)) in super_kmers_hashmap {
+
+                    if super_kmers_hashmap.is_empty() {
+                        continue;
+                    }
+
+                    new_bucket.set_checkpoint_data(
+                        &ReadsCheckpointData {
+                            target_subbucket: rewrite_bucket as BucketIndexType,
+                        },
+                        CheckpointStrategy::Decompress,
+                    );
+
+                    for (read, (flags, multiplicity)) in super_kmers_hashmap.drain() {
                         let read = read.get_read();
                         sequences_deltas[rewrite_bucket as usize] -= 1;
 
