@@ -5,6 +5,7 @@ use colors::colors_manager::ColorsManager;
 use colors::{
     bundles::multifile_building::ColorBundleMultifileBuilding, non_colored::NonColoredManager,
 };
+use config::{MAX_BUCKET_CHUNK_SIZE, MIN_BUCKET_CHUNK_SIZE};
 pub use ggcat_logging::MessageLevel;
 use ggcat_logging::UnrecoverableErrorLogging;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
@@ -272,7 +273,11 @@ impl GGCATInstance {
                 None
             } else {
                 // Heuristic for chunks used for maximum disk usage
-                Some((estimated_bases_count as u64) / (disk_optimization_level as u64 + 1))
+                Some(
+                    ((estimated_bases_count as u64) / (disk_optimization_level as u64 + 1))
+                        .min(MAX_BUCKET_CHUNK_SIZE)
+                        .max(MIN_BUCKET_CHUNK_SIZE),
+                )
             }
         };
 

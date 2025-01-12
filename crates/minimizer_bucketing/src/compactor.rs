@@ -170,7 +170,13 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 buckets[bucket_index].chunks.sort_by_cached_key(|c| {
                     let file_size = MemoryFs::get_file_size(c).unwrap();
                     total_size += file_size;
-                    Reverse(file_size)
+                    let is_compacted = c
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .contains("compacted");
+                    Reverse((is_compacted, file_size))
                 });
 
                 let mut chosen_size = 0;
@@ -178,12 +184,17 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 // Choose the buckets to compact, taking all the buckets that strictly do not exceed half of the total buckets size.
                 // this allows to keep a linear time complexity
 
+                // println!(
+                //     "Buckets tot size: {} tbc: {:?}",
+                //     total_size, buckets[bucket_index].chunks
+                // );
+
                 let mut last = buckets[bucket_index].chunks.pop().unwrap();
                 let mut last_size = MemoryFs::get_file_size(&last).unwrap();
 
                 // Choose buckets until one of two conditions is met:
                 // 1. The next bucket would add up to a size greater than half ot the total size
-                // 2. Two buckets were already selected and the number of sequences is greater than the maximum amount
+                // 2. Four buckets were already selected and the number of sequences is greater than the maximum amount
                 // The second condition is checked below, after the processing of each bucket
                 while chosen_size + last_size < total_size / 2 {
                     chosen_size += last_size;
@@ -201,6 +212,9 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     buckets[bucket_index]
                         .chunks
                         .extend(chosen_buckets.drain(..));
+                }
+
+                if chosen_buckets.is_empty() {
                     continue;
                 }
 
@@ -295,7 +309,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 
                     // Do not process more buckets if it will increase the maximum number of allowed sequences
                     if !global_params.common.is_active.load(Ordering::Relaxed)
-                        || processed_buckets >= 2 && total_sequences > MAXIMUM_SEQUENCES
+                        || processed_buckets >= 4 && total_sequences > MAXIMUM_SEQUENCES
                     {
                         break;
                     }
