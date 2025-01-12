@@ -963,7 +963,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat-api"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "dynamic-dispatch",
@@ -985,7 +985,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat-cpp-bindings"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "cxx",
  "cxx-build",
@@ -995,14 +995,14 @@ dependencies = [
 
 [[package]]
 name = "ggcat-logging"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "parking_lot",
 ]
 
 [[package]]
 name = "ggcat_assembler"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1037,7 +1037,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_assembler_kmerge"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "crossbeam",
  "fdlimit",
@@ -1064,7 +1064,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_assembler_minibuck"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "dynamic-dispatch",
  "ggcat_colors",
@@ -1080,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_cmdline"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "ahash",
  "atoi",
@@ -1128,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_colors"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "atoi",
@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_config"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "parallel-processor",
  "parking_lot",
@@ -1198,7 +1198,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_hashes"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "ahash",
  "criterion",
@@ -1213,7 +1213,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_io"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1237,7 +1237,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_kmers_transform"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "ggcat-logging",
  "ggcat_config",
@@ -1257,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_minimizer_bucketing"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "bincode",
  "byteorder",
@@ -1308,7 +1308,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_structs"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "bincode",
  "byteorder",
@@ -1320,7 +1320,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_utils"
-version = "1.1.1"
+version = "2.0.0"
 dependencies = [
  "parallel-processor",
  "parking_lot",
