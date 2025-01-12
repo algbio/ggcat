@@ -65,7 +65,7 @@ ggcat-logging = { version = "1.1.1", path = "../logging" }
 [features]
 mem-analysis = ["parallel-processor/track-usage"]
 no-stats = ["parallel-processor/no-stats"]
-process-stats = ["parallel-processor/process-stats"]
+process-stats = ["parallel-processor/process-stats", "ggcat-logging/stats"]
 tracing = ["instrumenter/enabled"]
 devel-build = ["assembler/devel-build", "querier/devel-build"]
 kmer-counters = ["assembler/support_kmer_counters"]

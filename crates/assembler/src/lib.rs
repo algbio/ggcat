@@ -14,7 +14,7 @@ use colors::colors_manager::ColorsMergeManager;
 use config::{
     get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
     INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES,
-    MAXIMUM_SECOND_BUCKETS_LOG, MINIMUM_LOG_DELTA_TIME,
+    MAXIMUM_SECOND_BUCKETS_LOG, MINIMUM_LOG_DELTA_TIME, PRIORITY_SCHEDULING_BASE,
 };
 use hashes::HashFunctionFactory;
 use io::concurrent::structured_sequences::binary::StructSeqBinaryWriter;
@@ -33,6 +33,7 @@ use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parallel_processor::scheduler::PriorityScheduler;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use pipeline::eulertigs::build_eulertigs;
 use std::fs::remove_file;
@@ -187,6 +188,7 @@ pub fn run_assembler<
         buckets.par_iter().enumerate().for_each(|(index, bucket)| {
             ggcat_logging::info!("Stats for bucket index: {}", index);
             for chunk in &bucket.chunks {
+                let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_BASE);
                 kmers_transform::debug_bucket_stats::compute_stats_for_bucket::<MergingHash>(
                     chunk.clone(),
                     index,
@@ -194,6 +196,7 @@ pub fn run_assembler<
                     MAXIMUM_SECOND_BUCKETS_LOG,
                     k,
                     m,
+                    &thread_handle,
                 );
             }
         });

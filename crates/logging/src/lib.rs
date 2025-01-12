@@ -1,3 +1,5 @@
+pub mod stats;
+
 use std::fmt::{Debug, Display};
 
 use parking_lot::Mutex;

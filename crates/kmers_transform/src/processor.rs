@@ -3,13 +3,14 @@ use crate::{
     KmersTransformContext, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
     KmersTransformMapProcessor,
 };
-use config::WORKERS_PRIORITY_BASE;
+use config::{PRIORITY_SCHEDULING_HIGH, WORKERS_PRIORITY_BASE};
 use parallel_processor::execution_manager::executor::{AsyncExecutor, ExecutorReceiver};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::mt_debug_counters::counter::{AtomicCounter, SumMode};
 use parallel_processor::mt_debug_counters::declare_counter_i64;
+use parallel_processor::scheduler::PriorityScheduler;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::path::PathBuf;
@@ -57,9 +58,11 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                 <F::MapProcessorType as KmersTransformMapProcessor<F>>::MapStruct::allocate_new(&()),
             );
 
+            let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_HIGH);
+
             while let Ok((address, proc_info)) = track!(
                 receiver
-                    .obtain_address_with_priority(WORKERS_PRIORITY_BASE)
+                    .obtain_address_with_priority(WORKERS_PRIORITY_BASE, &thread_handle)
                     .await,
                 ADDR_WAITING_COUNTER
             ) {
@@ -69,9 +72,10 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                 let mut total_kmers = 0;
                 let mut unique_kmers = 0;
 
-                while let Some(input_packet) =
-                    track!(address.receive_packet().await, PACKET_WAITING_COUNTER)
-                {
+                while let Some(input_packet) = track!(
+                    address.receive_packet(&thread_handle).await,
+                    PACKET_WAITING_COUNTER
+                ) {
                     real_size += input_packet.reads.len() as usize;
                     let stats = map_processor.process_group_batch_sequences(
                         &global_context.global_extra_data,

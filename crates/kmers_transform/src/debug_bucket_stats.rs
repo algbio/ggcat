@@ -15,6 +15,7 @@ use parallel_processor::buckets::readers::async_binary_reader::{
     AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
 };
 use parallel_processor::memory_fs::RemoveFileMode;
+use parallel_processor::scheduler::ThreadPriorityHandle;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -50,6 +51,7 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
     second_buckets_log_max: usize,
     k: usize,
     m: usize,
+    thread_handle: &ThreadPriorityHandle,
 ) {
     let reader = AsyncBinaryReader::new(
         &bucket,
@@ -78,6 +80,7 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
         Vec::new(),
         (),
         AllowedCheckpointStrategy::DecompressOnly,
+        thread_handle,
     );
 
     let mut total_counters = vec![0; second_buckets_max];

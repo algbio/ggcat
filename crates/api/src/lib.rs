@@ -16,6 +16,7 @@ use parallel_processor::enable_counters_logging;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parallel_processor::scheduler::PriorityScheduler;
 use parking_lot::Mutex;
 use std::cmp::max;
 use std::fs::create_dir_all;
@@ -233,7 +234,7 @@ impl GGCATInstance {
 
         disk_optimization_level: u32,
     ) -> anyhow::Result<PathBuf> {
-        // PriorityScheduler::set_max_threads_count(threads_count);
+        PriorityScheduler::set_max_threads_count(threads_count);
 
         let merging_hash_dispatch = utils::get_hash_static_id(
             debug::DEBUG_HASH_TYPE.lock().clone(),
@@ -334,7 +335,7 @@ impl GGCATInstance {
         // Query output format
         color_output_format: ColoredQueryOutputFormat,
     ) -> anyhow::Result<PathBuf> {
-        // PriorityScheduler::set_max_threads_count(threads_count);
+        PriorityScheduler::set_max_threads_count(threads_count);
 
         let merging_hash_dispatch = utils::get_hash_static_id(
             debug::DEBUG_HASH_TYPE.lock().clone(),
@@ -436,7 +437,7 @@ impl GGCATInstance {
         single_thread_output_function: bool,
         output_function: impl Fn(&[u8], &[ColorIndexType], bool) + Send + Sync,
     ) -> anyhow::Result<()> {
-        // PriorityScheduler::set_max_threads_count(threads_count);
+        PriorityScheduler::set_max_threads_count(threads_count);
 
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
 

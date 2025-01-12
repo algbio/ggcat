@@ -20,7 +20,7 @@ use config::{
     SwapPriority, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS, DEFAULT_OUTPUT_BUFFER_SIZE,
     DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAXIMUM_SECOND_BUCKETS_COUNT,
     MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-    WORKERS_PRIORITY_HIGH,
+    PRIORITY_SCHEDULING_HIGH, WORKERS_PRIORITY_HIGH,
 };
 use io::{
     compressed_read::CompressedReadIndipendent,
@@ -42,6 +42,7 @@ use parallel_processor::{
         readers::async_binary_reader::AllowedCheckpointStrategy,
     },
     memory_fs::MemoryFs,
+    scheduler::PriorityScheduler,
 };
 use parallel_processor::{
     buckets::{
@@ -146,9 +147,11 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 })
                 .collect();
 
+            let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_HIGH);
+
             while let Ok((_, init_data)) = track!(
                 receiver
-                    .obtain_address_with_priority(WORKERS_PRIORITY_HIGH)
+                    .obtain_address_with_priority(WORKERS_PRIORITY_HIGH, &thread_handle)
                     .await,
                 ADDR_WAITING_COUNTER
             ) {
@@ -285,7 +288,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                                     );
                                     total_sequences += 1;
                                 }
-                            }
+                            },
+                            thread_handle
                         );
                     }
 

@@ -5,3 +5,7 @@ edition = "2021"
 
 [dependencies]
 parking_lot = "0.12.3"
+
+
+[features]
+stats = []

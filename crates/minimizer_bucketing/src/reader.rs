@@ -1,12 +1,13 @@
 use crate::queue_data::MinimizerBucketingQueueData;
 use crate::MinimizerBucketingExecutionContext;
-use config::WORKERS_PRIORITY_BASE;
+use config::{PRIORITY_SCHEDULING_LOW, WORKERS_PRIORITY_BASE};
 use io::sequences_stream::GenericSequencesStream;
 use nightly_quirks::branch_pred::unlikely;
 use parallel_processor::execution_manager::executor::{
     AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
 };
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
+use parallel_processor::scheduler::PriorityScheduler;
 use replace_with::replace_with_or_abort;
 use std::cmp::max;
 use std::future::Future;
@@ -48,11 +49,13 @@ impl<
         context: &MinimizerBucketingExecutionContext<GlobalData>,
         ops: &ExecutorAddressOperations<'_, Self>,
     ) {
-        let packets_pool = ops.pool_alloc_await(0).await;
+        let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_LOW);
+
+        let packets_pool = ops.pool_alloc_await(0, &thread_handle).await;
 
         let mut sequences_stream = SequencesStream::new();
 
-        while let Some(mut input_packet) = ops.receive_packet().await {
+        while let Some(mut input_packet) = ops.receive_packet(&thread_handle).await {
             let mut data_packet = packets_pool.alloc_packet().await;
             let stream_info = input_packet.1.clone();
 
@@ -94,6 +97,7 @@ impl<
                                     .unwrap()
                                     .clone(),
                                 packet,
+                                &thread_handle,
                             );
                             packets_pool.alloc_packet_blocking()
                         });
@@ -121,6 +125,7 @@ impl<
                         .unwrap()
                         .clone(),
                     data_packet,
+                    &thread_handle,
                 );
             }
 
@@ -153,8 +158,10 @@ impl<
         _memory_tracker: MemoryTracker<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
+            let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_LOW);
+
             while let Ok((address, _)) = receiver
-                .obtain_address_with_priority(WORKERS_PRIORITY_BASE)
+                .obtain_address_with_priority(WORKERS_PRIORITY_BASE, &thread_handle)
                 .await
             {
                 let read_threads_count = global_params.read_threads_count;

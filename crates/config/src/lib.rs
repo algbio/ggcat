@@ -76,6 +76,10 @@ pub const QUERIES_COUNT_MIN_BATCH: u64 = 1000;
 pub const DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS: usize = 512;
 pub const MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS: usize = 1024 * 4;
 
+pub const PRIORITY_SCHEDULING_HIGH: usize = 0;
+pub const PRIORITY_SCHEDULING_BASE: usize = 1;
+pub const PRIORITY_SCHEDULING_LOW: usize = 2;
+
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]
 impl SwapPriority {

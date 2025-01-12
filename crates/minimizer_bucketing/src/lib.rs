@@ -14,8 +14,8 @@ use compactor::CompactorInitData;
 use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
     DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_COMPACT,
-    PACKETS_PRIORITY_DEFAULT, READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
-    WORKERS_PRIORITY_BASE,
+    PACKETS_PRIORITY_DEFAULT, PRIORITY_SCHEDULING_HIGH, PRIORITY_SCHEDULING_LOW,
+    READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER, WORKERS_PRIORITY_BASE,
 };
 use config::{MAXIMUM_SECOND_BUCKETS_COUNT, USE_SECOND_BUCKET};
 use hashes::HashableSequence;
@@ -43,6 +43,7 @@ use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
 use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInputAddressMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use parallel_processor::scheduler::PriorityScheduler;
 use parking_lot::{Mutex, RwLock};
 use resplit_bucket::RewriteBucketCompute;
 use serde::{Deserialize, Serialize};
@@ -259,7 +260,9 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
         // ]);
         let global_counters = &context.common.global_counters;
 
-        while let Some(input_packet) = ops.receive_packet().await {
+        let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_HIGH);
+
+        while let Some(input_packet) = ops.receive_packet(&thread_handle).await {
             let mut total_bases = 0;
             let mut sequences_splitter = SequencesSplitter::new(context.common.k);
             let mut buckets_processor = E::new(&context.common);
@@ -398,9 +401,11 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
         mut receiver: ExecutorReceiver<Self>,
         _memory_tracker: MemoryTracker<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
+        let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_LOW);
+
         async move {
             while let Ok((address, _)) = receiver
-                .obtain_address_with_priority(WORKERS_PRIORITY_BASE)
+                .obtain_address_with_priority(WORKERS_PRIORITY_BASE, &thread_handle)
                 .await
             {
                 let max_concurrency = global_params.threads_count;

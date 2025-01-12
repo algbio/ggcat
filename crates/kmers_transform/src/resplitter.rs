@@ -4,7 +4,8 @@ use crate::{KmersTransformContext, KmersTransformExecutorFactory};
 use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
     DEFAULT_PER_CPU_BUFFER_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_RESPLIT_BUCKETS_COUNT_LOG,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DONE_RESPLIT, WORKERS_PRIORITY_HIGH,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DONE_RESPLIT, PRIORITY_SCHEDULING_HIGH,
+    WORKERS_PRIORITY_HIGH,
 };
 use hashes::HashableSequence;
 use instrumenter::local_setup_instrumenter;
@@ -28,6 +29,7 @@ use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::packet::Packet;
 use parallel_processor::mt_debug_counters::counter::{AtomicCounter, SumMode};
 use parallel_processor::mt_debug_counters::declare_counter_i64;
+use parallel_processor::scheduler::{PriorityScheduler, ThreadPriorityHandle};
 use std::cmp::{max, min};
 use std::future::Future;
 use std::marker::PhantomData;
@@ -123,14 +125,26 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
         global_context: &KmersTransformContext<F>,
         resplit_info: &BucketsResplitInfo,
         ops: &ExecutorAddressOperations<'_, Self>,
+        thread_handle: &ThreadPriorityHandle,
     ) {
         match resplit_info.data_format {
             MinimizerBucketMode::Single => {
-                Self::do_resplit_internal::<NoMultiplicity>(global_context, resplit_info, ops).await
+                Self::do_resplit_internal::<NoMultiplicity>(
+                    global_context,
+                    resplit_info,
+                    ops,
+                    thread_handle,
+                )
+                .await
             }
             MinimizerBucketMode::Compacted => {
-                Self::do_resplit_internal::<WithMultiplicity>(global_context, resplit_info, ops)
-                    .await
+                Self::do_resplit_internal::<WithMultiplicity>(
+                    global_context,
+                    resplit_info,
+                    ops,
+                    thread_handle,
+                )
+                .await
             }
         }
     }
@@ -139,6 +153,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
         global_context: &KmersTransformContext<F>,
         resplit_info: &BucketsResplitInfo,
         ops: &ExecutorAddressOperations<'_, Self>,
+        thread_handle: &ThreadPriorityHandle,
     ) {
         let mut resplitter = F::new_resplitter(&global_context.global_extra_data);
         let mut thread_local_buffers = BucketsThreadDispatcher::<
@@ -160,7 +175,10 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
         //     DEFAULT_PER_CPU_BUFFER_SIZE.octets as usize * mt_buckets.count()
         // ]);
 
-        while let Some(input_packet) = track!(ops.receive_packet().await, PACKET_WAITING_COUNTER) {
+        while let Some(input_packet) = track!(
+            ops.receive_packet(thread_handle).await,
+            PACKET_WAITING_COUNTER
+        ) {
             let input_packet = input_packet.deref();
 
             let mut preprocess_info = Default::default();
@@ -239,9 +257,11 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
         _memory_tracker: MemoryTracker<Self>,
     ) -> impl Future<Output = ()> + 'a {
         async move {
+            let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_HIGH);
+
             while let Ok((address, init_data)) = track!(
                 receiver
-                    .obtain_address_with_priority(WORKERS_PRIORITY_HIGH)
+                    .obtain_address_with_priority(WORKERS_PRIORITY_HIGH, &thread_handle)
                     .await,
                 ADDR_WAITING_COUNTER
             ) {
@@ -251,7 +271,11 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
 
                 for _ in 0..resplit_info.executors_count {
                     spawner.spawn_executor(async {
-                        Self::do_resplit(global_context, &resplit_info, &address).await
+                        let thread_handle =
+                            PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_HIGH);
+
+                        Self::do_resplit(global_context, &resplit_info, &address, &thread_handle)
+                            .await
                     });
                 }
                 spawner.executors_await().await;
@@ -291,6 +315,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
                             used_hash_bits: 0,
                             out_data_format: resplit_info.data_format,
                         }),
+                        &thread_handle,
                     );
                 }
             }

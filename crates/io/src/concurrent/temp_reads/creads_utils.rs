@@ -276,7 +276,8 @@ pub mod helpers {
                 $allowed_passtrough:expr,
                 |$passtrough_info:ident| $p:expr,
                 |$checkpoint_data:ident| $c:expr,
-                |$data: ident, $extra_buffer: ident| $f:expr
+                |$data: ident, $extra_buffer: ident| $f:expr,
+                $thread_handle:ident
             );
 
         ) => {
@@ -297,7 +298,7 @@ pub mod helpers {
                         $FlagsCount,
                         $BucketMode,
                         WithMultiplicity,
-                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough);
+                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle);
                 while let Some(checkpoint) = items.get_next_checkpoint_extended() {
                     match checkpoint {
                         AsyncBinaryReaderIteratorData::Stream(items, $checkpoint_data) => {
@@ -324,7 +325,7 @@ pub mod helpers {
                         $FlagsCount,
                         $BucketMode,
                         NoMultiplicity,
-                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough);
+                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle);
                 while let Some(checkpoint) = items.get_next_checkpoint_extended() {
                     match checkpoint {
                         AsyncBinaryReaderIteratorData::Stream(items, $checkpoint_data) => {
