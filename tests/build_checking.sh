@@ -1,6 +1,8 @@
 set -e
 mkdir -p target/checking
-export CARGO_TARGET_DIR=target/checking
+export CARGO_TARGET_DIR="$PWD/target/checking"
+
+pushd ../
 
 # cargo clean
 
