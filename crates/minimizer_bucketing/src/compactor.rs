@@ -155,6 +155,10 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     .await,
                 ADDR_WAITING_COUNTER
             ) {
+                if !global_params.common.is_active.load(Ordering::Relaxed) {
+                    continue;
+                }
+
                 let mut chosen_buckets = vec![];
 
                 let bucket_index = init_data.bucket_index as usize;
