@@ -73,6 +73,8 @@ pub const READ_FLAG_INCL_END: u8 = 1 << 1;
 pub const COLORS_SINGLE_BATCH_SIZE: u64 = 20000;
 pub const QUERIES_COUNT_MIN_BATCH: u64 = 1000;
 
+pub const MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS: usize = 1024 * 4;
+
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]
 impl SwapPriority {

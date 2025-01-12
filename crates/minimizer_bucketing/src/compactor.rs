@@ -18,7 +18,8 @@ use colors::non_colored::NonColoredManager;
 use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, MultiplicityCounterType,
     SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    MAXIMUM_SECOND_BUCKETS_COUNT, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, WORKERS_PRIORITY_HIGH,
+    MAXIMUM_SECOND_BUCKETS_COUNT, MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, WORKERS_PRIORITY_HIGH,
 };
 use io::{
     compressed_read::CompressedReadIndipendent,
@@ -54,7 +55,7 @@ use parallel_processor::{
         declare_counter_i64,
     },
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use utils::track;
 
 pub struct MinimizerBucketingCompactor<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static>
@@ -127,10 +128,18 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 
             static COMPACTED_INDEX: AtomicUsize = AtomicUsize::new(0);
 
+            const MAXIMUM_SEQUENCES: usize =
+                MAXIMUM_SECOND_BUCKETS_COUNT * MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS;
+
             let mut super_kmers_hashmap: Vec<
                 FxHashMap<SuperKmerEntry, (u8, MultiplicityCounterType)>,
             > = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
-                .map(|_| FxHashMap::default())
+                .map(|_| {
+                    FxHashMap::with_capacity_and_hasher(
+                        MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
+                        FxBuildHasher,
+                    )
+                })
                 .collect();
 
             while let Ok((_, init_data)) = track!(
@@ -165,6 +174,10 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 let mut last = buckets[bucket_index].chunks.pop().unwrap();
                 let mut last_size = MemoryFs::get_file_size(&last).unwrap();
 
+                // Choose buckets until one of two conditions is met:
+                // 1. The next bucket would add up to a size greater than half ot the total size
+                // 2. Two buckets were already selected and the number of sequences is greater than the maximum amount
+                // The second condition is checked below, after the processing of each bucket
                 while chosen_size + last_size < total_size / 2 {
                     chosen_size += last_size;
                     chosen_buckets.push(last);
@@ -186,6 +199,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 
                 drop(buckets);
 
+                chosen_buckets.reverse();
+
                 let new_path = global_params.output_path.join(format!(
                     "compacted-{}.dat",
                     COMPACTED_INDEX.fetch_add(1, Ordering::Relaxed)
@@ -205,7 +220,10 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     MAXIMUM_SECOND_BUCKETS_COUNT.ilog2() as usize,
                 );
 
-                for bucket_path in chosen_buckets {
+                let mut total_sequences = 0;
+                let mut processed_buckets = 0;
+
+                while let Some(bucket_path) = chosen_buckets.pop() {
                     // Reading the buckets
                     let reader = AsyncBinaryReader::new(
                         &bucket_path,
@@ -215,6 +233,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                         },
                         DEFAULT_PREFETCH_AMOUNT,
                     );
+
+                    processed_buckets += 1;
 
                     let format_data: MinimizerBucketMode = reader.get_data_format_info().unwrap();
                     creads_helper! {
@@ -254,9 +274,15 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                                         SuperKmerEntry(&kmers_storage as *const _, new_read),
                                         (flags, multiplicity),
                                     );
+                                    total_sequences += 1;
                                 }
                             }
                         );
+                    }
+
+                    // Do not process more buckets if it will increase the maximum number of allowed sequences
+                    if processed_buckets >= 2 && total_sequences > MAXIMUM_SEQUENCES {
+                        break;
                     }
                 }
 
@@ -325,6 +351,14 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             buffer.clear();
                         }
                     }
+
+                    // Reset the hashmap capacity
+                    if super_kmers_hashmap.capacity() > MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS {
+                        *super_kmers_hashmap = FxHashMap::with_capacity_and_hasher(
+                            MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
+                            FxBuildHasher,
+                        );
+                    }
                 }
 
                 if buffer.len() > 0 {
@@ -338,6 +372,10 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 let mut buckets = global_params.buckets.get_stored_buckets().lock();
                 buckets[bucket_index].was_compacted = true;
                 buckets[bucket_index].chunks.push(new_path);
+
+                for unused_bucket in chosen_buckets {
+                    buckets[bucket_index].chunks.push(unused_bucket);
+                }
 
                 for (counter, global_counter) in sequences_deltas
                     .iter()
