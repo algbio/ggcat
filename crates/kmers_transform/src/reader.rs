@@ -426,6 +426,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             }
 
             let data_format: MinimizerBucketMode = reader.get_data_format_info().unwrap();
+            let mut checkpoint_rewrite_bucket = None;
 
             creads_helper! {
                 helper_read_bucket_with_opt_multiplicity::<
@@ -436,17 +437,19 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                     reader,
                     async_reader_thread.clone(),
                     matches!(data_format, MinimizerBucketMode::Compacted),
+                    |checkpoint_data| { checkpoint_rewrite_bucket = checkpoint_data.map(|d| d.target_subbucket); } ,
                     |read_info, extra_buffer| {
                         let bucket = if has_single_addr {
                             0
                         } else {
-                            let orig_bucket = F::PreprocessorType::get_rewrite_bucket(
+                            let orig_bucket = checkpoint_rewrite_bucket
+                            .unwrap_or_else(|| F::PreprocessorType::get_rewrite_bucket(
                                 global_extra_data.get_k(),
                                 global_extra_data.get_m(),
                                 &read_info,
                                 bucket_info.used_hash_bits,
                                 bucket_info.second_buckets_log_max,
-                            ) as usize;
+                            )) as usize;
 
                             bucket_info.buckets_remapping[orig_bucket]
                         };

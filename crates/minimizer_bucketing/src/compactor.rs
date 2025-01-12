@@ -237,6 +237,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     processed_buckets += 1;
 
                     let format_data: MinimizerBucketMode = reader.get_data_format_info().unwrap();
+                    let mut checkpoint_rewrite_bucket = None;
                     creads_helper! {
                         helper_read_bucket_with_opt_multiplicity::<
                             E::ExtraData,
@@ -246,14 +247,16 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             &reader,
                             read_thread.clone(),
                             matches!(format_data, MinimizerBucketMode::Compacted),
+                            |checkpoint_data| { checkpoint_rewrite_bucket = checkpoint_data.map(|d| d.target_subbucket); } ,
                             |data, _extra_buffer| {
 
-                                let rewrite_bucket = E::RewriteBucketCompute::get_rewrite_bucket(global_params.common.k,
+                                let rewrite_bucket = checkpoint_rewrite_bucket
+                                .unwrap_or_else(|| E::RewriteBucketCompute::get_rewrite_bucket(global_params.common.k,
                                     global_params.common.m,
                                     &data,
                                     used_hash_bits,
                                     second_buckets_log_max,
-                                );
+                                ));
                                 sequences_deltas[rewrite_bucket as usize] += 1;
 
                                 let (flags, _, _extra, read, multiplicity) = data;
@@ -281,7 +284,9 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     }
 
                     // Do not process more buckets if it will increase the maximum number of allowed sequences
-                    if processed_buckets >= 2 && total_sequences > MAXIMUM_SEQUENCES {
+                    if !global_params.common.is_active.load(Ordering::Relaxed)
+                        || processed_buckets >= 2 && total_sequences > MAXIMUM_SEQUENCES
+                    {
                         break;
                     }
                 }

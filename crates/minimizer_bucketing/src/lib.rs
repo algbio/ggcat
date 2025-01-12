@@ -52,7 +52,7 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -167,6 +167,7 @@ pub struct MinimizerBucketingCommonData<GlobalData> {
     pub global_counters: Vec<Vec<AtomicU64>>,
     pub compaction_offsets: Vec<AtomicI64>,
     pub global_data: GlobalData,
+    pub is_active: AtomicBool,
 }
 
 impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
@@ -197,6 +198,7 @@ impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
                 .collect(),
             compaction_offsets: (0..buckets_count).map(|_| AtomicI64::new(0)).collect(),
             global_data,
+            is_active: AtomicBool::new(true),
         }
     }
 }
@@ -607,6 +609,14 @@ impl GenericMinimizerBucketing {
             global_context.executor_group_address.write().take();
 
             execution_context.wait_for_completion(writer_executors);
+
+            // Let compactors know that the phase is finishing,
+            // so they can shortcut and avoid processing other buckets
+            global_context
+                .common
+                .is_active
+                .store(false, Ordering::Relaxed);
+
             execution_context.wait_for_completion(compactor_executors);
 
             execution_context.join_all();

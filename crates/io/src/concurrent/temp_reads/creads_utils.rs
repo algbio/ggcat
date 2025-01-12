@@ -272,6 +272,7 @@ pub mod helpers {
                 $reader:expr,
                 $read_thread:expr,
                 $with_multiplicity:expr,
+                |$checkpoint_data:ident| $c:expr,
                 |$data: ident, $extra_buffer: ident| $f:expr
             );
 
@@ -293,7 +294,8 @@ pub mod helpers {
                         $BucketMode,
                         WithMultiplicity,
                     >, false>(read_thread, Vec::new(), <$E>::new_temp_buffer());
-                while let Some((items, _)) = items.get_next_checkpoint() {
+                while let Some((items, $checkpoint_data)) = items.get_next_checkpoint() {
+                    $c
                     while let Some(($data, $extra_buffer)) = items.next() {
                         $f
                     }
