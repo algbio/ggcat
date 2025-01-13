@@ -156,10 +156,12 @@ pub fn reorganize_reads<
     CX: ColorsManager,
     BK: StructuredSequenceBackend<PartialUnitigsColorStructure<CX>, ()>,
 >(
+    k: usize,
     mut reads: Vec<SingleBucket>,
     mut mapping_files: Vec<SingleBucket>,
     temp_path: &Path,
     out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<CX>, (), BK>,
+    circular_out_file: Option<&StructuredSequenceWriter<PartialUnitigsColorStructure<CX>, (), BK>>,
     buckets_count: usize,
 ) -> (Vec<SingleBucket>, PathBuf) {
     PHASES_TIMES_MONITOR
@@ -199,9 +201,12 @@ pub fn reorganize_reads<
                 NoMultiplicity,
             >,
         >::new(&buckets, buffers.take());
-
         let mut tmp_lonely_unitigs_buffer =
             FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
+
+        let mut tmp_circular_unitigs_buffer = circular_out_file.map(|out_file| {
+            FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true)
+        });
 
         let mut mappings = Vec::new();
 
@@ -268,23 +273,49 @@ pub fn reorganize_reads<
                     );
                     map_index += 1;
                 } else {
-                    // No mapping, write unitig to file
+                    // Loop to allow skipping code parts with break
+                    'skip_writing: loop {
+                        let first_kmer_node = &seq[0..k - 1];
+                        let last_kmer_node = &seq[seq.len() - k + 1..];
+                        if let Some(circular_unitigs_buffer) = &mut tmp_circular_unitigs_buffer {
+                            // Check if unitig is circular
+                            if first_kmer_node == last_kmer_node {
+                                circular_unitigs_buffer.add_read(
+                                    seq,
+                                    None,
+                                    extra_data.colors,
+                                    color_buffer,
+                                    (),
+                                    &(),
+                                    #[cfg(feature = "support_kmer_counters")]
+                                    SequenceAbundance {
+                                        first: extra_data.counters.first,
+                                        sum: extra_data.counters.sum,
+                                        last: extra_data.counters.last,
+                                    },
+                                );
+                                break 'skip_writing;
+                            }
+                        }
 
-                    tmp_lonely_unitigs_buffer.add_read(
-                        seq,
-                        None,
-                        extra_data.colors,
-                        color_buffer,
-                        (),
-                        &(),
-                        #[cfg(feature = "support_kmer_counters")]
-                        SequenceAbundance {
-                            first: extra_data.counters.first,
-                            sum: extra_data.counters.sum,
-                            last: extra_data.counters.last,
-                        },
-                    );
+                        // No mapping, write unitig to file
+                        tmp_lonely_unitigs_buffer.add_read(
+                            seq,
+                            None,
+                            extra_data.colors,
+                            color_buffer,
+                            (),
+                            &(),
+                            #[cfg(feature = "support_kmer_counters")]
+                            SequenceAbundance {
+                                first: extra_data.counters.first,
+                                sum: extra_data.counters.sum,
+                                last: extra_data.counters.last,
+                            },
+                        );
 
+                        break;
+                    }
                     // write_fasta_entry::<MH, CX, _>(
                     //     &mut fasta_temp_buffer,
                     //     &mut tmp_lonely_unitigs_buffer,

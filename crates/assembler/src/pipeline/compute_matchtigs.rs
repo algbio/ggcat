@@ -317,6 +317,7 @@ pub enum MatchtigMode {
 
 pub trait MatchtigHelperTrait {
     fn needs_simplitigs(&self) -> bool;
+    fn needs_temporary_tigs(&self) -> bool;
     fn needs_matchtigs_library(&self) -> bool;
     fn get_matchtigs_mode(&self) -> Self;
 }
@@ -324,6 +325,13 @@ pub trait MatchtigHelperTrait {
 impl MatchtigHelperTrait for Option<MatchtigMode> {
     fn needs_simplitigs(&self) -> bool {
         *self == Some(MatchtigMode::FastSimpliTigs) || *self == Some(MatchtigMode::FastEulerTigs)
+    }
+
+    fn needs_temporary_tigs(&self) -> bool {
+        *self == Some(MatchtigMode::EulerTigs)
+            || *self == Some(MatchtigMode::GreedyTigs)
+            || *self == Some(MatchtigMode::PathTigs)
+            || *self == Some(MatchtigMode::FastEulerTigs)
     }
 
     fn needs_matchtigs_library(&self) -> bool {

@@ -162,6 +162,7 @@ impl CircularUnitig {
         last.rc ^= self.rc;
 
         let end_offset = if !last.rc && !write_full { 0 } else { k - 1 };
+        let start_offset = if last.rc && !write_full { k - 1 } else { 0 };
 
         let last_part_entry = unitigs.get(&last.orig_index).unwrap();
 
@@ -176,7 +177,8 @@ impl CircularUnitig {
             };
         }
 
-        let last_part_slice = last.start_pos..last.start_pos + last.length + end_offset;
+        let last_part_slice =
+            last.start_pos + start_offset..last.start_pos + last.length + end_offset;
         let last_part = last_part_entry
             .0
             .as_reference(unitigs_kmers)

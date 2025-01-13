@@ -427,20 +427,24 @@ pub fn run_assembler<
     let (reorganized_reads, _final_unitigs_bucket) = if step
         <= AssemblerStartingStep::ReorganizeReads
     {
-        if generate_maximal_unitigs_links || compute_tigs_mode.needs_matchtigs_library() {
+        if generate_maximal_unitigs_links || compute_tigs_mode.needs_temporary_tigs() {
             reorganize_reads::<MergingHash, AssemblerColorsManager, StructSeqBinaryWriter<_, _>>(
+                k,
                 sequences,
                 reads_map,
                 temp_dir.as_path(),
                 compressed_temp_unitigs_file.as_ref().unwrap(),
+                circular_temp_unitigs_file.as_ref(),
                 buckets_count,
             )
         } else {
             reorganize_reads::<MergingHash, AssemblerColorsManager, OutputMode::Backend<_, _>>(
+                k,
                 sequences,
                 reads_map,
                 temp_dir.as_path(),
                 &final_unitigs_file,
+                None,
                 buckets_count,
             )
         }
