@@ -23,6 +23,11 @@ impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> 
         }
     }
 
+    #[allow(dead_code)]
+    pub fn get_total_size(&self) -> usize {
+        self.data.len()
+    }
+
     pub fn push_sequences(&mut self, seq: DnaSequence, seq_info: SequenceInfo) -> bool {
         let ident_len = seq.ident_data.len();
         let seq_len = seq.seq.len();

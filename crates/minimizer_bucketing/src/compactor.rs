@@ -22,6 +22,7 @@ use config::{
     MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
     PRIORITY_SCHEDULING_HIGH, WORKERS_PRIORITY_HIGH,
 };
+use ggcat_logging::{get_stat_opt, stats};
 use io::{
     compressed_read::CompressedReadIndipendent,
     concurrent::temp_reads::{
@@ -226,6 +227,11 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 
                 chosen_buckets.reverse();
 
+                stats!(
+                    let stat_start_time = get_stat_opt!(stats.start_time).elapsed();
+                    let mut pop_stats = vec![];
+                );
+
                 let new_path = global_params.output_path.join(format!(
                     "compacted-{}.dat",
                     COMPACTED_INDEX.fetch_add(1, Ordering::Relaxed)
@@ -249,6 +255,9 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 let mut processed_buckets = 0;
 
                 while let Some(bucket_path) = chosen_buckets.pop() {
+                    stats!(
+                        let pop_time = get_stat_opt!(stats.start_time).elapsed();
+                    );
                     // Reading the buckets
                     let reader = AsyncBinaryReader::new(
                         &bucket_path,
@@ -311,6 +320,17 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                         );
                     }
 
+                    stats!(
+                        let end_process_time = get_stat_opt!(stats.start_time).elapsed();
+                        pop_stats.push(
+                            ggcat_logging::stats::InputFileStats {
+                                file_name: bucket_path.clone(),
+                                start_time: pop_time.into(),
+                                end_time: end_process_time.into(),
+                            }
+                        );
+                    );
+
                     // Do not process more buckets if it will increase the maximum number of allowed sequences
                     if !global_params.common.is_active.load(Ordering::Relaxed)
                         || processed_buckets >= 4 && total_sequences > MAXIMUM_SEQUENCES
@@ -337,6 +357,10 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     WithMultiplicity,
                 >::new();
 
+                stats!(
+                    let mut stat_subbucket_compactions = vec![];
+                );
+
                 let mut buffer = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
 
                 // TODO: SUPPORT COLORS?
@@ -347,7 +371,6 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 for (rewrite_bucket, super_kmers_hashmap) in
                     super_kmers_hashmap.iter_mut().enumerate()
                 {
-                    // Flush the buffer before changing checkpoint
                     if buffer.len() > 0 {
                         new_bucket.write_data(&buffer);
                         buffer.clear();
@@ -363,6 +386,11 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             sequences_count: super_kmers_hashmap.len(),
                         }),
                         None,
+                    );
+
+                    stats!(
+                        let start_subbucket = get_stat_opt!(stats.start_time).elapsed();
+                        let super_kmers_count = super_kmers_hashmap.len();
                     );
 
                     for (read, (flags, multiplicity)) in super_kmers_hashmap.drain() {
@@ -386,6 +414,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                         }
                     }
 
+                    stats!(let reset_capacity_start = get_stat_opt!(stats.start_time).elapsed(););
+
                     // Reset the hashmap capacity
                     if super_kmers_hashmap.capacity() > MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS {
                         *super_kmers_hashmap = FxHashMap::with_capacity_and_hasher(
@@ -393,6 +423,19 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             FxBuildHasher,
                         );
                     }
+
+                    stats!(
+                        let reset_capacity_end = get_stat_opt!(stats.start_time).elapsed();
+                        stat_subbucket_compactions.push(
+                            ggcat_logging::stats::SubbucketReport {
+                                subbucket_index: rewrite_bucket,
+                                super_kmers_count,
+                                start_time: start_subbucket.into(),
+                                reset_capacity_time: reset_capacity_end.into(),
+                                end_reset_capacity_time: reset_capacity_start.into(),
+                            }
+                        )
+                    );
                 }
 
                 if buffer.len() > 0 {
@@ -405,7 +448,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 // Update the final buckets with new info
                 let mut buckets = global_params.buckets.get_stored_buckets().lock();
                 buckets[bucket_index].was_compacted = true;
-                buckets[bucket_index].chunks.push(new_path);
+                buckets[bucket_index].chunks.push(new_path.clone());
 
                 for unused_bucket in chosen_buckets {
                     buckets[bucket_index].chunks.push(unused_bucket);
@@ -421,6 +464,18 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 
                 global_params.common.compaction_offsets[bucket_index]
                     .fetch_add(sequences_deltas.iter().sum::<i64>(), Ordering::Relaxed);
+
+                stats!(stats
+                    .assembler
+                    .compact_reports
+                    .push(ggcat_logging::stats::CompactReport {
+                        bucket_index: init_data.bucket_index as usize,
+                        input_files: pop_stats,
+                        output_file: new_path,
+                        start_time: stat_start_time.into(),
+                        end_time: get_stat_opt!(stats.start_time).elapsed().into(),
+                        subbucket_reports: stat_subbucket_compactions,
+                    }))
             }
         }
     }

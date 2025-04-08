@@ -471,6 +471,8 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
         )
         .unwrap();
 
+    ggcat_logging::stats::write_stats(&output_file.with_extension("elab.stats.json"));
+
     println!("Final output saved to: {}", output_file.display());
 }
 

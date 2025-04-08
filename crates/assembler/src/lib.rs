@@ -16,6 +16,7 @@ use config::{
     INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES,
     MAXIMUM_SECOND_BUCKETS_LOG, MINIMUM_LOG_DELTA_TIME, PRIORITY_SCHEDULING_BASE,
 };
+use ggcat_logging::{get_stat_opt, stats};
 use hashes::HashFunctionFactory;
 use io::concurrent::structured_sequences::binary::StructSeqBinaryWriter;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
@@ -126,6 +127,8 @@ pub fn run_assembler<
 
     PHASES_TIMES_MONITOR.write().init();
 
+    stats!(let stats.start_time = Instant::now());
+
     let file_stats = compute_stats_from_input_blocks(&input_blocks)?;
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
@@ -143,6 +146,8 @@ pub fn run_assembler<
             color_names,
         )?,
     );
+
+    stats!(stats.assembler.preprocess_time = get_stat_opt!(stats.start_time).elapsed().into());
 
     let (buckets, counters) = if step <= AssemblerStartingStep::MinimizerBucketing {
         assembler_minimizer_bucketing::static_dispatch::minimizer_bucketing::<AssemblerColorsManager>(
@@ -578,6 +583,8 @@ pub fn run_assembler<
     PHASES_TIMES_MONITOR
         .write()
         .print_stats("Compacted De Bruijn graph construction completed.".to_string());
+
+    ggcat_logging::stats::write_stats(&output_file);
 
     Ok(output_file)
 }

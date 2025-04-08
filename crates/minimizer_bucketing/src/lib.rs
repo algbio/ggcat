@@ -18,6 +18,7 @@ use config::{
     READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER, WORKERS_PRIORITY_BASE,
 };
 use config::{MAXIMUM_SECOND_BUCKETS_COUNT, USE_SECOND_BUCKET};
+use ggcat_logging::{get_stat_opt, stats};
 use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::{
@@ -309,6 +310,11 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
 
                             // New chunks were produced, spawn new compactors
                             if let ChunkingStatus::NewChunks { bucket_indexes } = chunking_status {
+                                stats!(stats.assembler.compact_checkpoints.push(ggcat_logging::stats::CompactCheckpointStats {
+                                    trigger_time: get_stat_opt!(stats.start_time).elapsed().into(),
+                                    buckets: bucket_indexes.clone(),
+                                }));
+
                                 for bucket_index in bucket_indexes {
                                     let new_address = compactor::MinimizerBucketingCompactor::<E>::generate_new_address(
                                         CompactorInitData { bucket_index }
