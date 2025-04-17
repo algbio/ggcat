@@ -16,7 +16,7 @@ use config::{
     INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES,
     MAXIMUM_SECOND_BUCKETS_LOG, MINIMUM_LOG_DELTA_TIME, PRIORITY_SCHEDULING_BASE,
 };
-use ggcat_logging::{get_stat_opt, stats};
+use ggcat_logging::stats;
 use hashes::HashFunctionFactory;
 use io::concurrent::structured_sequences::binary::StructSeqBinaryWriter;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
@@ -147,7 +147,11 @@ pub fn run_assembler<
         )?,
     );
 
-    stats!(stats.assembler.preprocess_time = get_stat_opt!(stats.start_time).elapsed().into());
+    stats!(
+        stats.assembler.preprocess_time = ggcat_logging::get_stat_opt!(stats.start_time)
+            .elapsed()
+            .into()
+    );
 
     let (buckets, counters) = if step <= AssemblerStartingStep::MinimizerBucketing {
         assembler_minimizer_bucketing::static_dispatch::minimizer_bucketing::<AssemblerColorsManager>(
@@ -189,6 +193,9 @@ pub fn run_assembler<
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
     }
+
+    // write partial stats to allow early debug interruption
+    ggcat_logging::stats::write_stats(&output_file.with_extension("elab.stats.json"));
 
     if only_bstats {
         use rayon::prelude::*;
@@ -238,6 +245,9 @@ pub fn run_assembler<
         MemoryFs::flush_all_to_disk();
         MemoryFs::free_memory();
     }
+
+    // write partial stats to allow early debug interruption
+    ggcat_logging::stats::write_stats(&output_file.with_extension("elab.stats.json"));
 
     AssemblerColorsManager::ColorsMergeManagerType::print_color_stats(&global_colors_table);
 

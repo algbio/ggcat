@@ -3,6 +3,8 @@ use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{color_types, ColorsManager};
 use colors::colors_manager::{ColorsMergeManager, MinimizerBucketingSeqColorData};
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
+use ggcat_logging::stats;
+use ggcat_logging::stats::KmersMergeBucketReport;
 use hashes::ExtendableHashTraitType;
 use hashes::HashFunction;
 use hashes::HashFunctionFactory;
@@ -33,6 +35,7 @@ instrumenter::use_instrumenter!();
 pub(crate) static KMERGE_TEMP_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
 
 pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManager> {
+    pub detailed_stats: KmersMergeBucketReport,
     pub rhash_map:
         FxHashMap<MH::HashTypeUnextendable, MapEntry<color_types::HashMapTempColorIndex<CX>>>,
     pub saved_reads: Vec<u8>,
@@ -61,6 +64,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
 
     fn allocate_new(_init_data: &Self::InitData) -> Self {
         Self {
+            detailed_stats: Default::default(),
             rhash_map: FxHashMap::with_capacity_and_hasher(4096, FxBuildHasher),
             saved_reads: vec![],
             encoded_saved_reads_indexes: vec![],
@@ -156,6 +160,11 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         map_struct: Packet<Self::MapStruct>,
         _global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) {
+        stats!(
+            let mut map_struct = map_struct;
+            map_struct.detailed_stats.report_id = ggcat_logging::generate_stat_id!();
+            map_struct.detailed_stats.start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();
+        );
         self.map_packet = Some(map_struct);
         self.last_saved_len = 0;
     }
@@ -174,6 +183,10 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
         let mut kmers_count = 0;
         let mut unique_kmers_count = 0;
+
+        stats!(
+            let start_batch_time = std::time::Instant::now();
+        );
 
         for (flags, color, read, multiplicity) in batch.iter() {
             let read = read.as_reference(ref_sequences);
@@ -252,6 +265,10 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         self.mem_tracker
             .update_memory_usage(&[map_packet.get_size(), 0]);
 
+        stats!(
+            map_packet.detailed_stats.elapsed_processor_time += start_batch_time.elapsed();
+        );
+
         GroupProcessStats {
             total_kmers: kmers_count,
             unique_kmers: unique_kmers_count,
@@ -292,6 +309,12 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         COUNTER_KMERS_MAX.max(all_kmers as i64);
         COUNTER_READS_AVG.add_value(all_kmers as i64);
         self.mem_tracker.update_memory_usage(&[0, 0]);
+
+        stats!(
+            map_packet.detailed_stats.end_processor_time += ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();
+            map_packet.detailed_stats.sequences_sizes = sequences_sizes;
+            map_packet.detailed_stats.all_kmers_count = all_kmers;
+        );
 
         map_packet
     }

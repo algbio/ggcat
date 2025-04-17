@@ -6,6 +6,7 @@ use colors::colors_manager::{color_types, ColorsManager};
 use config::DEFAULT_PER_CPU_BUFFER_SIZE;
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use core::slice::from_raw_parts;
+use ggcat_logging::stats;
 use hashes::HashFunction;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use instrumenter::local_setup_instrumenter;
@@ -180,6 +181,11 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
             self.current_bucket = Some(global_data.output_results_buckets.pop().unwrap());
         }
 
+        stats!(
+            map_struct_packet.detailed_stats.start_finalize_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();
+            let mut stat_output_kmers_count = 0;
+        );
+
         let map_struct = map_struct_packet.deref_mut();
 
         let k = global_data.k;
@@ -205,6 +211,10 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         }
 
         Self::get_kmers(global_data, map_struct, |hash, cread, rhentry| {
+            stats!(
+                stat_output_kmers_count += 1;
+            );
+
             let ignored_status = rhentry.get_flags();
 
             let (begin_ignored, end_ignored) = if hash.is_forward() {
@@ -464,6 +474,14 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                 .output_results_buckets
                 .push(self.current_bucket.take().unwrap());
         }
+
+        stats!(
+            map_struct_packet.detailed_stats.end_finalize_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();
+            map_struct_packet.detailed_stats.output_kmers_count = stat_output_kmers_count;
+        );
+
+        stats!(stats.assembler.kmers_merge_stats.push(map_struct_packet.detailed_stats.clone()););
+
         // DEBUG_MAPS_HOLDER.lock().push(Box::new(map_struct_packet));
         map_struct_packet
     }

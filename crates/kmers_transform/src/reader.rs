@@ -12,6 +12,8 @@ use config::{
     PACKETS_PRIORITY_DEFAULT, PACKETS_PRIORITY_REWRITTEN, PARTIAL_VECS_CHECKPOINT_SIZE,
     PRIORITY_SCHEDULING_BASE, PRIORITY_SCHEDULING_LOW, USE_SECOND_BUCKET, WORKERS_PRIORITY_BASE,
 };
+use ggcat_logging::stats::StatId;
+use ggcat_logging::{generate_stat_id, stats};
 use instrumenter::local_setup_instrumenter;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::creads_utils::{
@@ -107,6 +109,7 @@ static PACKET_ALLOC_COUNTER: AtomicCounter<SumMode> =
 
 #[derive(Clone)]
 struct RewriterInitData {
+    pub _rewrite_stat_id: StatId,
     pub buckets_hash_bits: usize,
     pub used_hash_bits: usize,
     pub data_format: MinimizerBucketMode,
@@ -118,6 +121,7 @@ enum AddressMode {
 }
 
 struct BucketsInfo {
+    _stats_id: StatId,
     readers: Vec<AsyncBinaryReader>,
     concurrency: usize,
     addresses: Arc<Vec<AddressMode>>,
@@ -137,6 +141,19 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         let second_buckets_log_max = min(
             file.sub_bucket_counters.len().ilog2() as usize,
             global_context.max_second_buckets_count_log2,
+        );
+
+        // Id used to track this bucket for stats
+        let stats_id = generate_stat_id!();
+        stats!(
+            let mut bucket_stat = ggcat_logging::stats::KmersTransformInputBucketStats::default();
+            bucket_stat.stat_id = stats_id;
+            bucket_stat.paths = file.paths.clone();
+            bucket_stat.sub_bucket_counters = file.sub_bucket_counters.iter().map(|b| b.count).collect();
+            bucket_stat.compaction_delta = file.compaction_delta;
+            bucket_stat.compacted = file.out_data_format == MinimizerBucketMode::Compacted;
+            bucket_stat.resplitted = file.resplitted;
+            bucket_stat.rewritten = file.rewritten;
         );
 
         let readers: Vec<_> = file
@@ -243,12 +260,28 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
         let allow_online_processing = !has_outliers && queue.len() <= MAXIMUM_JIT_PROCESSED_BUCKETS;
 
+        stats!(
+            bucket_stat.allow_online_processing = allow_online_processing;
+            bucket_stat.queue = queue.clone();
+        );
+
         for (count, index, outlier) in queue.into_iter() {
             dbg_counters[index] = count.0;
             addresses[index] = if outlier {
                 // ggcat_logging::info!("Sub-bucket {} is an outlier with size {}!", index, count.0);
+
+                let resplit_stat_id = generate_stat_id!();
+
+                stats!(
+                    bucket_stat.resplits.push(ggcat_logging::stats::ResplitInfo {
+                        resplit_id: resplit_stat_id,
+                        bucket_index: index,
+                    });
+                );
+
                 let new_address =
                     KmersTransformResplitter::<F>::generate_new_address(ResplitterInitData {
+                        _resplit_stat_id: resplit_stat_id,
                         bucket_size: count.0 as usize,
                         data_format: file.out_data_format,
                     });
@@ -256,18 +289,30 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                 Some(AddressMode::Send(new_address))
             } else {
                 if allow_online_processing {
+                    let process_stat_id = generate_stat_id!();
+
+                    stats!(
+                        bucket_stat.processed.push(ggcat_logging::stats::ProcessOnlineInfo {
+                            process_id: process_stat_id,
+                            bucket_index: index,
+                        });
+                    );
+
                     let new_address = KmersTransformProcessor::<F>::generate_new_address(
                         KmersProcessorInitData {
+                            process_stat_id,
                             sequences_count: count.0 as usize,
                             sub_bucket: index,
                             is_resplitted: file.resplitted,
-                            bucket_paths: file.paths.clone(),
+                            debug_bucket_first_path: file.paths.first().cloned(),
                         },
                     );
                     register_addresses.push(new_address.clone());
                     Some(AddressMode::Send(new_address))
                 } else {
                     static SUBSPLIT_INDEX: AtomicUsize = AtomicUsize::new(0);
+
+                    let rewrite_stat_id = generate_stat_id!();
 
                     let writer = CompressedBinaryWriter::new(
                         &global_context.temp_dir.join(&format!("bucket-rewrite-",)),
@@ -280,10 +325,19 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                         &file.out_data_format,
                     );
 
+                    stats!(
+                        bucket_stat.rewrites.push(ggcat_logging::stats::RewriteInfo {
+                            rewrite_id: rewrite_stat_id,
+                            bucket_index: index,
+                            file_name: writer.get_path(),
+                        });
+                    );
+
                     Some(AddressMode::Rewrite(
                         writer,
                         AtomicU64::new(0),
                         RewriterInitData {
+                            _rewrite_stat_id: rewrite_stat_id,
                             buckets_hash_bits: second_buckets_max.ilog2() as usize,
                             used_hash_bits: file.used_hash_bits,
                             data_format: file.out_data_format,
@@ -310,6 +364,19 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             min(addr_concurrency, chunks_concurrency),
         );
 
+        stats!(
+            bucket_stat.threads_ratio = threads_ratio;
+            bucket_stat.addr_concurrency = addr_concurrency;
+            bucket_stat.chunks_concurrency = chunks_concurrency;
+            bucket_stat.concurrency = concurrency;
+            bucket_stat.total_file_size = total_file_size;
+            bucket_stat.used_hash_bits = file.used_hash_bits;
+        );
+
+        stats!(
+            stats.transform.buckets.push(bucket_stat);
+        );
+
         //     ggcat_logging::info!(
         //     "File:{}\nChunks {} concurrency: {} REMAPPINGS: {:?} // {:?} // {:?} RATIO: {:.2} ADDR_COUNT: {}",
         //     file.path.display(),
@@ -326,6 +393,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         // );
 
         BucketsInfo {
+            _stats_id: stats_id,
             readers,
             concurrency,
             addresses: Arc::new(addresses),

@@ -18,7 +18,7 @@ use config::{
     READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER, WORKERS_PRIORITY_BASE,
 };
 use config::{MAXIMUM_SECOND_BUCKETS_COUNT, USE_SECOND_BUCKET};
-use ggcat_logging::{get_stat_opt, stats};
+use ggcat_logging::stats;
 use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::{
@@ -57,7 +57,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MinimizerBucketMode {
     Single,
     Compacted,
@@ -218,16 +218,16 @@ pub struct MinimizerBucketingExecutionContext<GlobalData> {
 
     pub bucket_compactors: Vec<Mutex<Option<ExecutorAddress>>>,
 
+    pub seq_count: AtomicU64,
+    pub last_total_count: AtomicU64,
+    pub tot_bases_count: AtomicU64,
+    pub valid_bases_count: AtomicU64,
+
     pub partial_read_copyback: Option<usize>,
     pub copy_ident: bool,
 }
 
 pub struct GenericMinimizerBucketing;
-
-static SEQ_COUNT: AtomicU64 = AtomicU64::new(0);
-static LAST_TOTAL_COUNT: AtomicU64 = AtomicU64::new(0);
-static TOT_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
-static VALID_BASES_COUNT: AtomicU64 = AtomicU64::new(0);
 
 struct MinimizerBucketingExecWriter<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> {
     _phantom: PhantomData<E>, // mem_tracker: MemoryTracker<Self>,
@@ -263,6 +263,10 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
 
         let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_HIGH);
 
+        stats!(
+            let thread_id = ggcat_logging::generate_stat_id!();
+        );
+
         while let Some(input_packet) = ops.receive_packet(&thread_handle).await {
             let mut total_bases = 0;
             let mut sequences_splitter = SequencesSplitter::new(context.common.k);
@@ -272,6 +276,10 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
 
             let mut preprocess_info = Default::default();
             let input_packet = input_packet.deref();
+
+            stats!(
+                let stat_start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+            );
 
             for (index, (x, seq_info)) in input_packet.iter_sequences().enumerate() {
                 total_bases += x.seq.len() as u64;
@@ -310,9 +318,12 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
 
                             // New chunks were produced, spawn new compactors
                             if let ChunkingStatus::NewChunks { bucket_indexes } = chunking_status {
+                                stats!(let trigger_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed(););
                                 stats!(stats.assembler.compact_checkpoints.push(ggcat_logging::stats::CompactCheckpointStats {
-                                    trigger_time: get_stat_opt!(stats.start_time).elapsed().into(),
+                                    trigger_time: trigger_time.into(),
                                     buckets: bucket_indexes.clone(),
+                                    trigger_input_chunk: input_packet.stats_block_id,
+                                    thread_id,
                                 }));
 
                                 for bucket_index in bucket_indexes {
@@ -335,16 +346,36 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                 sequences_count += 1;
             }
 
-            SEQ_COUNT.fetch_add(sequences_count, Ordering::Relaxed);
-            let total_bases_count =
-                TOT_BASES_COUNT.fetch_add(total_bases, Ordering::Relaxed) + total_bases;
-            VALID_BASES_COUNT.fetch_add(sequences_splitter.valid_bases, Ordering::Relaxed);
+            context
+                .seq_count
+                .fetch_add(sequences_count, Ordering::Relaxed);
+            let total_bases_count = context
+                .tot_bases_count
+                .fetch_add(total_bases, Ordering::Relaxed)
+                + total_bases;
+            context
+                .valid_bases_count
+                .fetch_add(sequences_splitter.valid_bases, Ordering::Relaxed);
+
+            stats!(
+                let end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+            );
+
+            stats!(stats.assembler.input_process_stats.push(
+                ggcat_logging::stats::InputChunkProcessStats {
+                    id: input_packet.stats_block_id,
+                    start_time: stat_start_time.into(),
+                    end_time: end_time.into(),
+                    thread_id,
+                }
+            ));
 
             const TOTAL_BASES_DIFF_LOG: u64 = 10000000000;
 
-            let do_print_log = LAST_TOTAL_COUNT
+            let do_print_log = context
+                .last_total_count
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
-                    if total_bases_count - x > TOTAL_BASES_DIFF_LOG {
+                    if total_bases_count > x + TOTAL_BASES_DIFF_LOG {
                         Some(total_bases_count)
                     } else {
                         None
@@ -358,10 +389,10 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
 
                 ggcat_logging::info!(
                     "Elaborated {} sequences! [{} | {:.2}% qb] ({}[{}]/{} => {:.2}%) {}",
-                    SEQ_COUNT.load(Ordering::Relaxed),
-                    VALID_BASES_COUNT.load(Ordering::Relaxed),
-                    (VALID_BASES_COUNT.load(Ordering::Relaxed) as f64)
-                        / (max(1, TOT_BASES_COUNT.load(Ordering::Relaxed)) as f64)
+                    context.seq_count.load(Ordering::Relaxed),
+                    context.valid_bases_count.load(Ordering::Relaxed),
+                    (context.valid_bases_count.load(Ordering::Relaxed) as f64)
+                        / (max(1, context.tot_bases_count.load(Ordering::Relaxed)) as f64)
                         * 100.0,
                     processed_files,
                     current_file,
@@ -546,6 +577,12 @@ impl GenericMinimizerBucketing {
             output_path: output_path.to_path_buf(),
 
             bucket_compactors: (0..buckets_count).map(|_| Mutex::new(None)).collect(),
+
+            seq_count: AtomicU64::new(0),
+            last_total_count: AtomicU64::new(0),
+            tot_bases_count: AtomicU64::new(0),
+            valid_bases_count: AtomicU64::new(0),
+
             partial_read_copyback,
             read_threads_count,
             copy_ident,

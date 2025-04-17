@@ -1,4 +1,30 @@
+#[cfg(feature = "detailed-stats")]
 pub mod stats;
+
+#[cfg(not(feature = "detailed-stats"))]
+pub mod stats {
+    use serde::{Deserialize, Serialize};
+    use std::path::Path;
+
+    #[derive(Default, Serialize)]
+    pub struct KmersMergeBucketReport;
+
+    #[macro_export]
+    macro_rules! stats {
+        ($($stats:tt)*) => {};
+    }
+    #[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
+    pub struct StatId;
+
+    #[macro_export]
+    macro_rules! generate_stat_id {
+        () => {
+            $crate::stats::StatId
+        };
+    }
+
+    pub fn write_stats(_output_file: &Path) {}
+}
 
 use std::fmt::{Debug, Display};
 

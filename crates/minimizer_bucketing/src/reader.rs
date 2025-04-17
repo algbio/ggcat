@@ -1,7 +1,7 @@
 use crate::queue_data::MinimizerBucketingQueueData;
 use crate::MinimizerBucketingExecutionContext;
 use config::{PRIORITY_SCHEDULING_LOW, WORKERS_PRIORITY_BASE};
-use ggcat_logging::{get_stat, get_stat_opt, stats};
+use ggcat_logging::stats;
 use io::sequences_stream::GenericSequencesStream;
 use nightly_quirks::branch_pred::unlikely;
 use parallel_processor::execution_manager::executor::{
@@ -71,7 +71,7 @@ impl<
             let mut max_len = 0;
 
             stats!(
-                let mut stat_start_time = get_stat_opt!(stats.start_time).elapsed();
+                let mut stat_start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
             );
 
             sequences_stream.read_block(
@@ -95,10 +95,13 @@ impl<
 
                         replace_with_or_abort(&mut data_packet, |packet| {
                             stats!(
-                                let stat_end_time = get_stat_opt!(stats.start_time).elapsed();
-                                let chunk_index = { let counter = &mut get_stat!(stats.input_counter); *counter += 1; *counter };
+                                let stat_end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+                                let chunk_index = { let counter = &mut ggcat_logging::get_stat!(stats.input_counter); *counter += 1; *counter };
                                 let stat_seq_count = packet.sequences.len();
                                 let stat_seq_size = packet.get_total_size();
+                                let stats_id = ggcat_logging::generate_stat_id!();
+                                let mut packet = packet;
+                                packet.stats_block_id = stats_id;
                             );
 
                             ops.packet_send(
@@ -113,9 +116,10 @@ impl<
                             );
                             let new_packet = packets_pool.alloc_packet_blocking();
 
-                            stats!(let finished_send_time = get_stat_opt!(stats.start_time).elapsed(););
+                            stats!(let finished_send_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed(););
                             stats!(
                                 stats.assembler.input_chunks.push(ggcat_logging::stats::InputChunkStats {
+                                    id: stats_id,
                                     index: chunk_index,
                                     sequences_count: stat_seq_count,
                                     sequences_size: stat_seq_size,
@@ -146,10 +150,12 @@ impl<
 
             if data_packet.sequences.len() > 0 {
                 stats!(
-                    let stat_end_time = get_stat_opt!(stats.start_time).elapsed();
-                    let chunk_index = { let counter = &mut get_stat!(stats.input_counter); *counter += 1; *counter };
+                    let stat_end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+                    let chunk_index = { let counter = &mut ggcat_logging::get_stat!(stats.input_counter); *counter += 1; *counter };
                     let stat_seq_count = data_packet.sequences.len();
                     let stat_seq_size = data_packet.get_total_size();
+                    let stats_id = ggcat_logging::generate_stat_id!();
+                    data_packet.stats_block_id = stats_id;
                 );
 
                 ops.packet_send(
@@ -164,11 +170,12 @@ impl<
                 );
 
                 stats!(
-                    let finished_send_time = get_stat_opt!(stats.start_time).elapsed();
+                    let finished_send_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
                 );
 
                 stats!(
                     stats.assembler.input_chunks.push(ggcat_logging::stats::InputChunkStats {
+                        id: stats_id,
                         index: chunk_index,
                         sequences_count: stat_seq_count,
                         sequences_size: stat_seq_size,

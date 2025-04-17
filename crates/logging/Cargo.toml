@@ -10,4 +10,4 @@ serde_json = "1.0.137"
 
 
 [features]
-stats = []
+detailed-stats = []

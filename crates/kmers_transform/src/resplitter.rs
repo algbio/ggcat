@@ -7,6 +7,8 @@ use config::{
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DONE_RESPLIT, PRIORITY_SCHEDULING_HIGH,
     WORKERS_PRIORITY_HIGH,
 };
+use ggcat_logging::stats;
+use ggcat_logging::stats::StatId;
 use hashes::HashableSequence;
 use instrumenter::local_setup_instrumenter;
 use io::concurrent::temp_reads::creads_utils::{
@@ -236,6 +238,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
 
 #[derive(Clone)]
 pub struct ResplitterInitData {
+    pub _resplit_stat_id: StatId,
     pub bucket_size: usize,
     pub data_format: MinimizerBucketMode,
 }
@@ -265,6 +268,10 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
                     .await,
                 ADDR_WAITING_COUNTER
             ) {
+                stats!(
+                    let start_resplit_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+                );
+
                 let resplit_info = Self::init_processing(global_context, &init_data);
 
                 let mut spawner = address.make_spawner();
@@ -290,20 +297,32 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
                     PACKETS_PRIORITY_DONE_RESPLIT,
                 );
 
-                for ((i, bucket), sub_bucket_count) in resplit_info
-                    .buckets
-                    .finalize_single()
-                    .into_iter()
-                    .enumerate()
-                    .zip(
-                        resplit_info
-                            .global_counters
-                            .into_iter()
-                            .map(|x| BucketCounter {
-                                count: x.into_inner(),
-                            }),
-                    )
-                {
+                let buckets = resplit_info.buckets.finalize_single();
+
+                stats!(
+                    let end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+                );
+
+                stats!(
+                    stats.transform.resplits.push(ggcat_logging::stats::ResplitFinalInfo {
+                        resplit_id: init_data._resplit_stat_id,
+                        start_time: start_resplit_time.into(),
+                        end_time: end_time.into(),
+                        out_files: buckets
+                            .iter()
+                            .map(|addr| addr.path.clone())
+                            .collect(),
+                    });
+                );
+
+                for ((i, bucket), sub_bucket_count) in buckets.into_iter().enumerate().zip(
+                    resplit_info
+                        .global_counters
+                        .into_iter()
+                        .map(|x| BucketCounter {
+                            count: x.into_inner(),
+                        }),
+                ) {
                     address.packet_send(
                         resplit_info.output_addresses[i].clone(),
                         Packet::new_simple(InputBucketDesc {

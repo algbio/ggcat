@@ -4,6 +4,7 @@ use crate::{
     KmersTransformMapProcessor,
 };
 use config::{PRIORITY_SCHEDULING_HIGH, WORKERS_PRIORITY_BASE};
+use ggcat_logging::stats::StatId;
 use parallel_processor::execution_manager::executor::{AsyncExecutor, ExecutorReceiver};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
@@ -27,10 +28,11 @@ static PACKET_WAITING_COUNTER: AtomicCounter<SumMode> =
 
 #[derive(Clone)]
 pub struct KmersProcessorInitData {
+    pub process_stat_id: StatId,
     pub sequences_count: usize,
     pub sub_bucket: usize,
     pub is_resplitted: bool,
-    pub bucket_paths: Vec<PathBuf>,
+    pub debug_bucket_first_path: Option<PathBuf>,
 }
 
 impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor<F> {
@@ -107,9 +109,9 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                 if real_size != proc_info.sequences_count {
                     //MAX_PACKET_SIZE.fetch_max(current_size, Ordering::Relaxed) < current_size {
                     ggcat_logging::info!(
-                        "Found bucket with max size {} ==> {} // EXPECTED_SIZE: {} REAL_SIZE: {} SUB: {}",
+                        "Found bucket with max size {} ==> {:?} // EXPECTED_SIZE: {} REAL_SIZE: {} SUB: {}",
                         current_size,
-                        proc_info.bucket_paths[0].display(),
+                        proc_info.debug_bucket_first_path.as_ref().map(|p| p.display()),
                         proc_info.sequences_count,
                         real_size,
                         proc_info.sub_bucket
