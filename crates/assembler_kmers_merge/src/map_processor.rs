@@ -162,6 +162,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     ) {
         stats!(
             let mut map_struct = map_struct;
+            map_struct.detailed_stats = Default::default();
             map_struct.detailed_stats.report_id = ggcat_logging::generate_stat_id!();
             map_struct.detailed_stats.start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();
         );
@@ -311,7 +312,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         self.mem_tracker.update_memory_usage(&[0, 0]);
 
         stats!(
-            map_packet.detailed_stats.end_processor_time += ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();
+            map_packet.detailed_stats.end_processor_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();
             map_packet.detailed_stats.sequences_sizes = sequences_sizes;
             map_packet.detailed_stats.all_kmers_count = all_kmers;
         );
