@@ -71,6 +71,7 @@ USAGE:
 
 FLAGS:
     -c, --colors                            Enable colors
+        --disable-disk-optimization         Disables the disk compaction optimization
         --eulertigs                         Generate eulertigs instead of maximal unitigs
         --fast-eulertigs                    Generate eulertigs instead of maximal unitigs, faster version
         --fast-simplitigs                   Generate simplitigs instead of maximal unitigs, faster version
@@ -90,9 +91,6 @@ OPTIONS:
     -b, --buckets-count-log <buckets-count-log>                              The log2 of the number of buckets
     -d, --colored-input-lists <colored-input-lists>...
             The lists of input files with colors in format <COLOR_NAME><TAB><FILE_PATH>
-
-        --disk-optimization-level <disk-optimization-level>
-            Sets the level of disk optimization (0 disabled) [default: 5]
 
     -w, --hash-type <hash-type>
             Hash type used to identify kmers [default: Auto]

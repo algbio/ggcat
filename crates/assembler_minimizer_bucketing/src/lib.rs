@@ -227,7 +227,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     threads_count: usize,
     k: usize,
     m: usize,
-    minimizer_bucketing_chunk_size: Option<u64>,
+    minimizer_bucketing_compaction_threshold: Option<u64>,
 ) -> (Vec<MultiChunkBucket>, PathBuf) {
     MNHFactory::initialize(k);
 
@@ -268,6 +268,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         Some(k - 1),
         false,
         k,
-        minimizer_bucketing_chunk_size,
+        minimizer_bucketing_compaction_threshold,
     )
 }

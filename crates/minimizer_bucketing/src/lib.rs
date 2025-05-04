@@ -205,6 +205,13 @@ impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
     }
 }
 
+pub struct CompationRatioInfo {
+    pub avg_ratio: f64,
+    pub compactions: usize,
+    pub skip_step: usize,
+    pub skipped: usize,
+}
+
 pub struct MinimizerBucketingExecutionContext<GlobalData> {
     pub buckets: Arc<MultiThreadBuckets<CompressedBinaryWriter>>,
     pub common: Arc<MinimizerBucketingCommonData<GlobalData>>,
@@ -222,6 +229,8 @@ pub struct MinimizerBucketingExecutionContext<GlobalData> {
     pub last_total_count: AtomicU64,
     pub tot_bases_count: AtomicU64,
     pub valid_bases_count: AtomicU64,
+
+    pub compaction_ratios: Vec<Mutex<CompationRatioInfo>>,
 
     pub partial_read_copyback: Option<usize>,
     pub copy_ident: bool,
@@ -582,6 +591,17 @@ impl GenericMinimizerBucketing {
             last_total_count: AtomicU64::new(0),
             tot_bases_count: AtomicU64::new(0),
             valid_bases_count: AtomicU64::new(0),
+
+            compaction_ratios: (0..buckets_count)
+                .map(|_| {
+                    Mutex::new(CompationRatioInfo {
+                        avg_ratio: 0.0,
+                        compactions: 0,
+                        skip_step: 0,
+                        skipped: 0,
+                    })
+                })
+                .collect(),
 
             partial_read_copyback,
             read_threads_count,

@@ -206,9 +206,9 @@ struct AssemblerArgs {
     #[structopt(long = "gfa-v2")]
     pub gfa_output_v2: bool,
 
-    /// Sets the level of disk optimization (0 disabled)
-    #[structopt(long = "disk-optimization-level", default_value = "5")]
-    pub disk_optimization_level: u32,
+    /// Disables the disk compaction optimization
+    #[structopt(long = "disable-disk-optimization")]
+    pub disable_disk_optimization: bool,
 }
 
 #[derive(StructOpt, Debug)]
@@ -261,7 +261,7 @@ struct QueryArgs {
 fn initialize(
     args: &CommonArgs,
     out_file: &PathBuf,
-    disk_optimization_level: u32,
+    enable_disk_optimization: bool,
 ) -> &'static GGCATInstance {
     let instance = GGCATInstance::create(GGCATConfig {
         temp_dir: Some(args.temp_dir.clone()),
@@ -271,7 +271,7 @@ fn initialize(
         intermediate_compression_level: args.intermediate_compression_level,
         stats_file: Some(out_file.with_extension("stats.log")),
         messages_callback: None,
-        disk_optimization_level,
+        enable_disk_optimization,
     });
 
     ggcat_api::debug::DEBUG_KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
@@ -467,7 +467,7 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
             } else {
                 None
             },
-            args.disk_optimization_level,
+            !args.disable_disk_optimization,
         )
         .unwrap();
 
@@ -540,7 +540,7 @@ fn main() {
             let instance = initialize(
                 &args.common_args,
                 &args.output_file,
-                args.disk_optimization_level,
+                !args.disable_disk_optimization,
             );
 
             run_assembler_from_args(&instance, args);
@@ -575,7 +575,7 @@ fn main() {
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
 
-            let instance = initialize(&args.common_args, &args.output_file_prefix, 0);
+            let instance = initialize(&args.common_args, &args.output_file_prefix, false);
 
             let output_file_name = run_querier_from_args(&instance, args);
             println!("Final output saved to: {}", output_file_name.display());

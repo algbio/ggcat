@@ -6,6 +6,7 @@ use std::{
     future::Future,
     hash::Hash,
     marker::PhantomData,
+    path::Path,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -137,6 +138,28 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
             const MAXIMUM_SEQUENCES: usize =
                 MAXIMUM_SECOND_BUCKETS_COUNT * MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS;
 
+            // Outline of the compaction algorithm:
+            // OBJECTIVE: Compact the new buckets avoiding too much overhead in compaction
+            // - An increasing in i/o factor of 1.2..1.5 is acceptable
+            // - The compaction of non-compacted buckets has priority
+            // - When compacting new buckets care must be taken in not reading again compressed buckets in a quadratic complexity
+            // STRATEGY:
+            // Compact buckets when one of the following applies:
+            // - either there are no other compacted buckets
+            // - the sum in sizes of the new buckets is larger than the smallest already compacted bucket
+            // - the uncompacted buckets reach a minimum size threshold (20% of the total sizes of the buckets or ?= 64MB)
+            // And the sizes of the bucket to compact is greater than a small threshold (1MB)
+            // -----
+            // To choose which buckets to compact, first take the uncompacted from the smallest to the largest,
+            // then all the compacted from the smallest to the largest so that their size does not exceed 1/1.5 of the size of the non-compacted buckets
+
+            // Min 1MB size for compaction
+            const MINIMUM_INPUT_SIZE: usize = 1024 * 1024 * 1;
+
+            const COMPACT_THRESHOLD_RATIO: f64 = 0.2;
+            const COMPACT_THRESHOLD_BYTES: usize = 1024 * 1024 * 64;
+            const MAX_COMPACTED_IO_RATIO: f64 = 1.5;
+
             let mut super_kmers_hashmap: Vec<
                 FxHashMap<SuperKmerEntry, (u8, MultiplicityCounterType)>,
             > = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
@@ -163,57 +186,82 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 let mut chosen_buckets = vec![];
 
                 let bucket_index = init_data.bucket_index as usize;
+
+                let should_skip = {
+                    let mut ratios = global_params.compaction_ratios[bucket_index].lock();
+                    ratios.skipped += 1;
+                    ratios.skipped < ratios.skip_step
+                };
+                if should_skip {
+                    continue;
+                }
+
                 let mut buckets = global_params.buckets.get_stored_buckets().lock();
 
-                let mut total_size = 0;
+                let mut total_uncompacted_size = 0;
+                let mut total_compacted_size = 0;
 
                 // Avoid crashing in case there are no chunks and this is called
                 if buckets[bucket_index].chunks.is_empty() {
                     continue;
                 }
 
-                buckets[bucket_index].chunks.sort_by_cached_key(|c| {
-                    let file_size = MemoryFs::get_file_size(c).unwrap();
-                    total_size += file_size;
-                    let is_compacted = c
-                        .file_name()
+                fn is_compacted(path: &Path) -> bool {
+                    path.file_name()
                         .unwrap()
                         .to_str()
                         .unwrap()
-                        .contains("compacted");
+                        .contains("compacted")
+                }
+
+                buckets[bucket_index].chunks.sort_by_cached_key(|c| {
+                    let file_size = MemoryFs::get_file_size(c).unwrap();
+                    let is_compacted = is_compacted(c);
+
+                    if is_compacted {
+                        total_compacted_size += file_size;
+                    } else {
+                        total_uncompacted_size += file_size;
+                    }
+                    // The first taken is the smallest non-compacted bucket
                     Reverse((is_compacted, file_size))
                 });
 
-                let mut chosen_size = 0;
-
-                // Choose the buckets to compact, taking all the buckets that strictly do not exceed half of the total buckets size.
-                // this allows to keep a linear time complexity
-
-                // println!(
-                //     "Buckets tot size: {} tbc: {:?}",
-                //     total_size, buckets[bucket_index].chunks
-                // );
-
-                let mut last = buckets[bucket_index].chunks.pop().unwrap();
-                let mut last_size = MemoryFs::get_file_size(&last).unwrap();
-
-                // Choose buckets until one of two conditions is met:
-                // 1. The next bucket would add up to a size greater than half ot the total size
-                // 2. Four buckets were already selected and the number of sequences is greater than the maximum amount
-                // The second condition is checked below, after the processing of each bucket
-                while chosen_size + last_size < total_size / 2 {
-                    chosen_size += last_size;
-                    chosen_buckets.push(last);
-
-                    last = buckets[bucket_index].chunks.pop().unwrap();
-                    last_size = MemoryFs::get_file_size(&last).unwrap();
+                if total_uncompacted_size < COMPACT_THRESHOLD_BYTES
+                    && (total_uncompacted_size as f64)
+                        < COMPACT_THRESHOLD_RATIO * (total_compacted_size as f64)
+                {
+                    // Skip compaction if thresholds are not met
+                    continue;
                 }
 
-                // Add back the last unused chunk
-                buckets[bucket_index].chunks.push(last);
+                let mut chosen_size = 0;
+                let mut taken_compacted_size = 0;
+
+                // Choose buckets until one of two conditions is met:
+                // 1. The next bucket would add up to a size of compacted buckets / uncompacted buckets > 1/1.5
+                // 2. Four buckets were already selected and the number of sequences is greater than the maximum amount
+                // The second condition is checked below, after the processing of each bucket
+                while let Some(bucket) = buckets[bucket_index].chunks.pop() {
+                    let bucket_size = MemoryFs::get_file_size(&bucket).unwrap();
+
+                    if is_compacted(&bucket) {
+                        if (taken_compacted_size + bucket_size) as f64 * MAX_COMPACTED_IO_RATIO
+                            > total_uncompacted_size as f64
+                        {
+                            // Add back the last unused chunk
+                            buckets[bucket_index].chunks.push(bucket);
+                            break;
+                        }
+                        taken_compacted_size += bucket_size;
+                    }
+
+                    chosen_size += bucket_size;
+                    chosen_buckets.push(bucket);
+                }
 
                 // Do not compact if we have only one bucket
-                if chosen_buckets.len() == 1 {
+                if chosen_buckets.len() == 1 || chosen_size < MINIMUM_INPUT_SIZE {
                     buckets[bucket_index]
                         .chunks
                         .extend(chosen_buckets.drain(..));
@@ -232,6 +280,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     let mut pop_stats = vec![];
                 );
 
+                let mut input_files_size = 0;
                 let new_path = global_params.output_path.join(format!(
                     "compacted-{}.dat",
                     COMPACTED_INDEX.fetch_add(1, Ordering::Relaxed)
@@ -319,6 +368,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             thread_handle
                         );
                     }
+
+                    input_files_size += MemoryFs::get_file_size(&bucket_path).unwrap();
 
                     stats!(
                         let end_process_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
@@ -466,12 +517,30 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 global_params.common.compaction_offsets[bucket_index]
                     .fetch_add(sequences_deltas.iter().sum::<i64>(), Ordering::Relaxed);
 
+                let output_files_size = MemoryFs::get_file_size(&new_path).unwrap();
+                let compression_ratio = input_files_size as f64 / output_files_size as f64;
+
+                // Update the average compression ratio
+                {
+                    // Emprirically chosen to avoid too many compactions on non compactable datasets
+                    const TARGET_COMPACTION_RATIO: f64 = 1.5;
+
+                    let mut ratios = global_params.compaction_ratios[bucket_index].lock();
+                    ratios.avg_ratio = (ratios.avg_ratio * (ratios.compactions as f64)
+                        + compression_ratio)
+                        / (ratios.compactions as f64 + 1.0);
+                    ratios.compactions += 1;
+                    ratios.skipped = 0;
+
+                    if ratios.avg_ratio * 0.5 + compression_ratio * 0.5 < TARGET_COMPACTION_RATIO {
+                        ratios.skip_step = 10.min(ratios.skip_step + 2);
+                    } else {
+                        ratios.skip_step = ratios.skip_step.saturating_sub(4);
+                    }
+                }
+
                 stats!(
-                    let output_total_size = MemoryFs::get_file_size(&new_path).unwrap();
                     let end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
-                    let input_total_size = pop_stats.iter().map(|s| s.file_size).sum::<usize>();
-                    let compression_ratio =
-                        input_total_size as f64 / output_total_size as f64;
                 );
 
                 stats!(stats
@@ -485,8 +554,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                         start_time: stat_start_time.into(),
                         end_time: end_time.into(),
                         subbucket_reports: stat_subbucket_compactions,
-                        input_total_size,
-                        output_total_size,
+                        input_total_size: input_files_size,
+                        output_total_size: output_files_size,
                         compression_ratio,
                     }));
             }

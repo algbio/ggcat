@@ -5,7 +5,7 @@ use colors::colors_manager::ColorsManager;
 use colors::{
     bundles::multifile_building::ColorBundleMultifileBuilding, non_colored::NonColoredManager,
 };
-use config::{MAX_BUCKET_CHUNK_SIZE, MIN_BUCKET_CHUNK_SIZE};
+use config::{MAX_BUCKETS_CHUNKING_THRESHOLD, MIN_BUCKETS_CHUNKING_THRESHOLD};
 pub use ggcat_logging::MessageLevel;
 use ggcat_logging::UnrecoverableErrorLogging;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
@@ -97,8 +97,8 @@ pub struct GGCATConfig {
     /// The messages callback, if present, no output will be automatically written to stdout
     pub messages_callback: Option<fn(MessageLevel, &str)>,
 
-    /// Sets the level of disk usage reduction optimization
-    pub disk_optimization_level: u32,
+    /// Enables disk compaction optimization
+    pub enable_disk_optimization: bool,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -237,7 +237,7 @@ impl GGCATInstance {
 
         gfa_output_version: Option<GfaVersion>,
 
-        disk_optimization_level: u32,
+        enable_disk_optimization: bool,
     ) -> anyhow::Result<PathBuf> {
         PriorityScheduler::set_max_threads_count(threads_count);
 
@@ -265,9 +265,7 @@ impl GGCATInstance {
 
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
 
-        let bucket_chunk_size = if disk_optimization_level == 0 {
-            None
-        } else {
+        let bucket_size_compaction_threshold = if enable_disk_optimization {
             let estimated_bases_count: u64 = input_streams
                 .iter()
                 .map(|file| file.estimated_bases_count().unwrap())
@@ -278,11 +276,13 @@ impl GGCATInstance {
             } else {
                 // Heuristic for chunks used for maximum disk usage
                 Some(
-                    ((estimated_bases_count as u64) / (disk_optimization_level as u64 + 1))
-                        .min(MAX_BUCKET_CHUNK_SIZE)
-                        .max(MIN_BUCKET_CHUNK_SIZE),
+                    (estimated_bases_count as u64 / 5)
+                        .min(MAX_BUCKETS_CHUNKING_THRESHOLD)
+                        .max(MIN_BUCKETS_CHUNKING_THRESHOLD),
                 )
             }
+        } else {
+            None
         };
 
         let output_file = assembler::dynamic_dispatch::run_assembler(
@@ -310,7 +310,7 @@ impl GGCATInstance {
                 _ => None,
             },
             debug::DEBUG_ONLY_BSTATS.load(Ordering::Relaxed),
-            bucket_chunk_size,
+            bucket_size_compaction_threshold,
         )?;
 
         remove_tempdir(temp_dir);

@@ -80,8 +80,8 @@ pub const PRIORITY_SCHEDULING_HIGH: usize = 0;
 pub const PRIORITY_SCHEDULING_BASE: usize = 1;
 pub const PRIORITY_SCHEDULING_LOW: usize = 2;
 
-pub const MIN_BUCKET_CHUNK_SIZE: u64 = 1024 * 1024 * 8;
-pub const MAX_BUCKET_CHUNK_SIZE: u64 = 1024 * 1024 * 1024;
+pub const MIN_BUCKETS_CHUNKING_THRESHOLD: u64 = 1024 * 1024 * 512;
+pub const MAX_BUCKETS_CHUNKING_THRESHOLD: u64 = 1024 * 1024 * 1024 * 64;
 
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]

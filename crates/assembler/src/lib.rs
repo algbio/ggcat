@@ -121,7 +121,7 @@ pub fn run_assembler<
     generate_maximal_unitigs_links: bool,
     compute_tigs_mode: Option<MatchtigMode>,
     only_bstats: bool,
-    minimizer_bucketing_chunk_size: Option<u64>,
+    minimizer_bucketing_compaction_threshold: Option<u64>,
 ) -> anyhow::Result<PathBuf> {
     let temp_dir = temp_dir.unwrap_or(PathBuf::new());
 
@@ -161,7 +161,7 @@ pub fn run_assembler<
             threads_count,
             k,
             m,
-            minimizer_bucketing_chunk_size,
+            minimizer_bucketing_compaction_threshold,
         )
     } else {
         (
