@@ -110,7 +110,7 @@ impl MinimizerBucketingSeqColorData for MinBkSingleColor {
         std::iter::repeat(self.0)
     }
 
-    fn get_subslice(&self, _range: Range<usize>) -> Self {
+    fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
         *self
     }
 }

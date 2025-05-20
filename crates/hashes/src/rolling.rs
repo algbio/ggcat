@@ -1,2 +1,2 @@
-pub mod kseq_iterator;
-pub mod minqueue;
+pub mod batch_minqueue;
+pub mod minqueue_testing;

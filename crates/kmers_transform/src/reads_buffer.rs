@@ -10,6 +10,7 @@ pub struct ReadsVector<E> {
     extra_data: Vec<E>,
     flags: Vec<u8>,
     multiplicities: Vec<MultiplicityCounterType>,
+    pub minimizer_size: usize,
     pub total_multiplicity: u64,
 }
 
@@ -159,6 +160,7 @@ impl<E: SequenceExtraDataTempBufferManagement + 'static> PoolObjectTrait for Rea
                 extra_data: Vec::with_capacity(*init_data),
                 flags: Vec::with_capacity(*init_data),
                 multiplicities: Vec::with_capacity(*init_data),
+                minimizer_size: 0,
                 total_multiplicity: 0,
             },
             sub_bucket: 0,

@@ -47,14 +47,16 @@ impl<N: HashableSequence> ForwardSeqHashIterator<N> {
 impl<N: HashableSequence> HashFunction<ForwardSeqHashFactory> for ForwardSeqHashIterator<N> {
     fn iter(
         mut self,
-    ) -> impl Iterator<Item = <ForwardSeqHashFactory as HashFunctionFactory>::HashTypeExtendable>
+    ) -> impl ExactSizeIterator
+           + Iterator<Item = <ForwardSeqHashFactory as HashFunctionFactory>::HashTypeExtendable>
     {
         (self.k_minus1..self.seq.bases_count()).map(move |idx| self.roll_hash(idx))
     }
 
     fn iter_enumerate(
         mut self,
-    ) -> impl Iterator<
+    ) -> impl ExactSizeIterator
+           + Iterator<
         Item = (
             usize,
             <ForwardSeqHashFactory as HashFunctionFactory>::HashTypeExtendable,

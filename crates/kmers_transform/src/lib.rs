@@ -5,7 +5,8 @@ use crate::reader::{InputBucketDesc, KmersTransformReader};
 use crate::resplitter::KmersTransformResplitter;
 use config::{
     BucketIndexType, KEEP_FILES, KMERS_TRANSFORM_READS_CHUNKS_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS,
-    MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME, PACKETS_PRIORITY_FILES,
+    MAXIMUM_SECOND_BUCKETS_COUNT, MAX_KMERS_TRANSFORM_READERS_PER_BUCKET, MINIMUM_LOG_DELTA_TIME,
+    PACKETS_PRIORITY_FILES,
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
@@ -39,6 +40,7 @@ mod resplitter;
 pub trait KmersTransformGlobalExtraData: Sync + Send {
     fn get_k(&self) -> usize;
     fn get_m(&self) -> usize;
+    fn get_m_resplit(&self) -> usize;
 }
 
 pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
@@ -312,7 +314,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         let bucket_readers = disk_thread_pool.register_executors::<KmersTransformReader<F>>(
             read_threads_count,
             PoolAllocMode::Distinct {
-                capacity: self.global_context.max_buckets,
+                // The capacity of each packets pool
+                capacity: MAX_KMERS_TRANSFORM_READERS_PER_BUCKET * 2,
             },
             max(
                 16,

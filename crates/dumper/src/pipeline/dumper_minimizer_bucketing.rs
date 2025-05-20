@@ -215,7 +215,8 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer),
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer, bool),
+        const SEPARATE_DUPLICATES: bool,
     >(
         &mut self,
         preprocess_info: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -249,6 +250,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
                     0,
                     DumperKmersReferenceData { color: last_color },
                     &(),
+                    false,
                 );
 
                 last_index = index + 1;
@@ -267,6 +269,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
             0,
             DumperKmersReferenceData { color: last_color },
             &(),
+            false,
         );
     }
 }

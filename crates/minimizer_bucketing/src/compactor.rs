@@ -1,16 +1,13 @@
 pub mod extra_data;
 
 use std::{
-    borrow::Borrow,
     cmp::Reverse,
     future::Future,
-    hash::Hash,
     marker::PhantomData,
     path::Path,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crate::resplit_bucket::RewriteBucketCompute;
 use crate::{
     queue_data::MinimizerBucketingQueueData, MinimizerBucketMode,
     MinimizerBucketingExecutionContext, MinimizerBucketingExecutorFactory,
@@ -21,22 +18,20 @@ use config::{
     SwapPriority, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS, DEFAULT_OUTPUT_BUFFER_SIZE,
     DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAXIMUM_SECOND_BUCKETS_COUNT,
     MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-    PRIORITY_SCHEDULING_HIGH, WORKERS_PRIORITY_HIGH,
+    PRIORITY_SCHEDULING_HIGH, USE_SECOND_BUCKET, WORKERS_PRIORITY_HIGH,
 };
 use ggcat_logging::stats;
+use io::creads_helper;
 use io::{
     compressed_read::CompressedReadIndipendent,
     concurrent::temp_reads::{
         creads_utils::{
-            CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoSecondBucket,
-            ReadsCheckpointData, WithMultiplicity,
+            BucketModeFromBoolean, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+            NoSecondBucket, ReadsCheckpointData, WithMultiplicity,
         },
         extra_data::SequenceExtraDataTempBufferManagement,
+        superkmers::SuperKmerEntry,
     },
-};
-use io::{
-    compressed_read::{BorrowableCompressedRead, CompressedRead},
-    creads_helper,
 };
 use parallel_processor::{
     buckets::{
@@ -78,38 +73,6 @@ pub struct CompactorInitData {
     pub bucket_index: u16,
 }
 
-struct SuperKmerEntry(*const Vec<u8>, CompressedReadIndipendent);
-unsafe impl Sync for SuperKmerEntry {}
-unsafe impl Send for SuperKmerEntry {}
-
-impl SuperKmerEntry {
-    fn get_read(&self) -> CompressedRead {
-        let storage = unsafe { &*self.0 };
-        self.1.as_reference(storage)
-    }
-}
-
-impl<'a> Borrow<BorrowableCompressedRead> for SuperKmerEntry {
-    fn borrow(&self) -> &BorrowableCompressedRead {
-        let storage = unsafe { &*self.0 };
-        self.1.as_reference(storage).get_borrowable()
-    }
-}
-
-impl Hash for SuperKmerEntry {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.get_read().get_borrowable().hash(state);
-    }
-}
-
-impl PartialEq for SuperKmerEntry {
-    fn eq(&self, other: &Self) -> bool {
-        self.get_read().get_borrowable() == other.get_read().get_borrowable()
-    }
-}
-
-impl Eq for SuperKmerEntry {}
-
 impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
     for MinimizerBucketingCompactor<E>
 {
@@ -131,6 +94,9 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
         _memory_tracker: MemoryTracker<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
+            // Needed to correctly perform the splitting without recomputing the minimizers
+            assert!(USE_SECOND_BUCKET);
+
             let read_thread = AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE, 4);
 
             static COMPACTED_INDEX: AtomicUsize = AtomicUsize::new(0);
@@ -292,13 +258,13 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 
                 let mut sequences_deltas = vec![0i64; MAXIMUM_SECOND_BUCKETS_COUNT];
 
-                let used_hash_bits = global_params.buckets.count().ilog2() as usize;
-                let second_buckets_log_max = std::cmp::min(
-                    global_params.common.global_counters[bucket_index]
-                        .len()
-                        .ilog2() as usize,
-                    MAXIMUM_SECOND_BUCKETS_COUNT.ilog2() as usize,
-                );
+                // let used_hash_bits = global_params.buckets.count().ilog2() as usize;
+                // let second_buckets_log_max = std::cmp::min(
+                //     global_params.common.global_counters[bucket_index]
+                //         .len()
+                //         .ilog2() as usize,
+                //     MAXIMUM_SECOND_BUCKETS_COUNT.ilog2() as usize,
+                // );
 
                 let mut total_sequences = 0;
                 let mut processed_buckets = 0;
@@ -321,11 +287,12 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 
                     let format_data: MinimizerBucketMode = reader.get_data_format_info().unwrap();
                     let mut checkpoint_rewrite_bucket;
+
                     creads_helper! {
                         helper_read_bucket_with_opt_multiplicity::<
                             E::ExtraData,
                             E::FLAGS_COUNT,
-                            NoSecondBucket
+                            BucketModeFromBoolean<USE_SECOND_BUCKET>
                         >(
                             &reader,
                             read_thread.clone(),
@@ -335,16 +302,19 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             |checkpoint_data| { checkpoint_rewrite_bucket = checkpoint_data.map(|d| d.target_subbucket); } ,
                             |data, _extra_buffer| {
 
-                                let rewrite_bucket = checkpoint_rewrite_bucket
-                                .unwrap_or_else(|| E::RewriteBucketCompute::get_rewrite_bucket(global_params.common.k,
-                                    global_params.common.m,
-                                    &data,
-                                    used_hash_bits,
-                                    second_buckets_log_max,
-                                ));
+                                let (flags, second_bucket, _extra, read, multiplicity) = data;
+
+                                let rewrite_bucket = checkpoint_rewrite_bucket.unwrap_or(second_bucket as u16);
+
+                                // Restore if needed!
+                                // .unwrap_or_else(|| E::RewriteBucketCompute::get_rewrite_bucket(global_params.common.k,
+                                //     global_params.common.m,
+                                //     &data,
+                                //     used_hash_bits,
+                                //     second_buckets_log_max,
+                                // ));
                                 sequences_deltas[rewrite_bucket as usize] += 1;
 
-                                let (flags, _, _extra, read, multiplicity) = data;
 
                                 let super_kmers_hashmap = &mut super_kmers_hashmap[rewrite_bucket as usize];
 
@@ -356,10 +326,10 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                                     entry.1 += multiplicity;
                                 } else {
                                     let new_read = CompressedReadIndipendent::from_read(&read, &mut kmers_storage);
-                                    assert!(!super_kmers_hashmap.contains_key(read.get_borrowable()));
-                                    assert!(!super_kmers_hashmap.contains_key(&SuperKmerEntry(&kmers_storage as *const _, new_read)));
+                                    // assert!(!super_kmers_hashmap.contains_key(read.get_borrowable()));
+                                    // assert!(!super_kmers_hashmap.contains_key(&SuperKmerEntry::new(&kmers_storage, new_read)));
                                     super_kmers_hashmap.insert(
-                                        SuperKmerEntry(&kmers_storage as *const _, new_read),
+                                        SuperKmerEntry::new(&kmers_storage, new_read),
                                         (flags, multiplicity),
                                     );
                                     total_sequences += 1;

@@ -5,9 +5,8 @@ use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
 use hashes::default::MNHFactory;
-use hashes::rolling::minqueue::RollingMinQueue;
+use hashes::rolling::batch_minqueue::BatchMinQueue;
 use hashes::HashFunction;
-use hashes::MinimizerHashFunctionFactory;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
@@ -93,7 +92,7 @@ pub struct QuerierMinimizerBucketingGlobalData {
 }
 
 pub struct QuerierMinimizerBucketingExecutor<CX: ColorsManager> {
-    minimizer_queue: RollingMinQueue,
+    minimizer_queue: BatchMinQueue<()>,
     global_data: Arc<MinimizerBucketingCommonData<QuerierMinimizerBucketingGlobalData>>,
     _phantom: PhantomData<CX>,
 }
@@ -120,7 +119,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
         global_data: &Arc<MinimizerBucketingCommonData<Self::GlobalData>>,
     ) -> Self::ExecutorType {
         Self::ExecutorType {
-            minimizer_queue: RollingMinQueue::new(global_data.k - global_data.m + 1),
+            minimizer_queue: BatchMinQueue::new(global_data.k - global_data.m + 1),
             global_data: global_data.clone(),
             _phantom: PhantomData,
         }
@@ -210,7 +209,8 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer),
+        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer, bool),
+        const SEPARATE_DUPLICATES: bool,
     >(
         &mut self,
         preprocess_info: &<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -222,50 +222,32 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
         mut push_sequence: F,
     ){
         let hashes = MNHFactory::new(sequence, self.global_data.m);
-
-        let mut rolling_iter = self
-            .minimizer_queue
-            .make_iter(hashes.iter().map(|x| x.to_unextendable()));
-
         let mut last_index = 0;
-        let mut last_hash = rolling_iter.next().unwrap();
 
-        for (index, min_hash) in rolling_iter.enumerate() {
-            if MNHFactory::get_full_minimizer(min_hash) != MNHFactory::get_full_minimizer(last_hash)
-            {
+        self.minimizer_queue.get_minimizer_splits::<_, false>(
+            hashes.iter().map(|x| (x.to_unextendable(), ())),
+            0,
+            0,
+            #[inline(always)]
+            |index, min_hash, _, _| {
                 push_sequence(
-                    MNHFactory::get_bucket(used_bits, first_bits, last_hash),
-                    MNHFactory::get_bucket(used_bits + first_bits, second_bits, last_hash),
+                    MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
+                    MNHFactory::get_bucket(used_bits + first_bits, second_bits, min_hash.0),
                     sequence.get_subslice(last_index..(index + self.global_data.k)),
                     0,
                     match &preprocess_info.read_type {
                         ReadType::Graph { color } => QueryKmersReferenceData::Graph(
-                            color.get_subslice(last_index..(index + 1)),
+                            color.get_subslice(last_index..index, false),
                         ),
 
                         ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
                     },
                     &preprocess_info.colors_buffer,
+                    false,
                 );
 
-                last_index = index + 1;
-                last_hash = min_hash;
-            }
-        }
-
-        push_sequence(
-            MNHFactory::get_bucket(used_bits, first_bits, last_hash),
-            MNHFactory::get_bucket(used_bits + first_bits, second_bits, last_hash),
-            sequence.get_subslice(last_index..sequence.seq_len()),
-            0,
-            match &preprocess_info.read_type {
-                ReadType::Graph { color } => QueryKmersReferenceData::Graph(
-                    color.get_subslice(last_index..(sequence.seq_len() + 1 - self.global_data.k)),
-                ),
-
-                ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
+                last_index = index;
             },
-            &preprocess_info.colors_buffer,
         );
     }
 }

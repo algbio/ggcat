@@ -13,9 +13,9 @@ use config::{
 };
 use hashbrown::HashMap;
 use hashes::default::MNHFactory;
+use hashes::ExtendableHashTraitType;
 use hashes::HashFunction;
 use hashes::HashFunctionFactory;
-use hashes::{ExtendableHashTraitType, MinimizerHashFunctionFactory};
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
@@ -158,6 +158,10 @@ impl KmersTransformGlobalExtraData for GlobalQueryMergeData {
     fn get_m(&self) -> usize {
         self.m
     }
+
+    fn get_m_resplit(&self) -> usize {
+        self.global_resplit_data.m
+    }
 }
 
 struct ParallelKmersQueryFactory<MH: HashFunctionFactory, CX: ColorsManager>(PhantomData<(MH, CX)>);
@@ -224,10 +228,7 @@ impl RewriteBucketCompute for RewriteBucketComputeQuery {
 
         let hashes = MNHFactory::new(read.sub_slice(0..k), m);
 
-        let minimizer = hashes
-            .iter()
-            .min_by_key(|kh| MNHFactory::get_full_minimizer(kh.to_unextendable()))
-            .unwrap();
+        let minimizer = hashes.iter().min_by_key(|kh| kh.to_unextendable()).unwrap();
 
         MNHFactory::get_bucket(
             used_hash_bits,

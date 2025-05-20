@@ -41,6 +41,11 @@ impl Utils {
     }
 
     #[inline(always)]
+    pub fn compress_base_complement(base: u8) -> u8 {
+        (base >> 1) & 0x3 ^ 2
+    }
+
+    #[inline(always)]
     pub fn decompress_base(cbase: u8) -> u8 {
         C_INV_LETTERS[cbase as usize]
     }

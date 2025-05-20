@@ -11,7 +11,7 @@ use config::{
 use hashbrown::HashMap;
 use hashes::default::MNHFactory;
 use hashes::ExtendableHashTraitType;
-use hashes::{HashFunction, HashFunctionFactory, HashableSequence, MinimizerHashFunctionFactory};
+use hashes::{HashFunction, HashFunctionFactory, HashableSequence};
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
@@ -201,11 +201,7 @@ impl ColorsMergeManager for MultipleColorsManager {
             ((sequence.bases_count() == k) && (flags & READ_FLAG_INCL_END) == 0) as usize;
         let hashes = MNHFactory::new(sequence.sub_slice((1 - decr_val)..(k - decr_val)), m);
 
-        let minimizer = hashes
-            .iter()
-            .map(|m| MNHFactory::get_full_minimizer(m.to_unextendable()))
-            .min()
-            .unwrap();
+        let minimizer = hashes.iter().map(|m| m.to_unextendable()).min().unwrap();
 
         const MINIMIZER_SHIFT: usize =
             size_of::<MinimizerType>() * 8 - (2 * COLOR_SEQUENCES_SUBBUKETS.ilog2() as usize);

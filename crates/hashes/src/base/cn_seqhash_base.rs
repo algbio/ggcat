@@ -60,14 +60,16 @@ impl<N: HashableSequence> CanonicalSeqHashIterator<N> {
 impl<N: HashableSequence> HashFunction<CanonicalSeqHashFactory> for CanonicalSeqHashIterator<N> {
     fn iter(
         mut self,
-    ) -> impl Iterator<Item = <CanonicalSeqHashFactory as HashFunctionFactory>::HashTypeExtendable>
+    ) -> impl ExactSizeIterator
+           + Iterator<Item = <CanonicalSeqHashFactory as HashFunctionFactory>::HashTypeExtendable>
     {
         (self.k_minus1..self.seq.bases_count()).map(move |idx| self.roll_hash(idx))
     }
 
     fn iter_enumerate(
         mut self,
-    ) -> impl Iterator<
+    ) -> impl ExactSizeIterator
+           + Iterator<
         Item = (
             usize,
             <CanonicalSeqHashFactory as HashFunctionFactory>::HashTypeExtendable,

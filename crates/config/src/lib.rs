@@ -34,6 +34,9 @@ pub const KMERS_TRANSFORM_READS_CHUNKS_SIZE: usize = 1024 * 24;
 /// 2MB read file prefetch
 pub const DEFAULT_PREFETCH_AMOUNT: Option<usize> = Some(1024 * 1024 * 2);
 
+/// The maximum number of threads that can be spawned for each bucket
+pub const MAX_KMERS_TRANSFORM_READERS_PER_BUCKET: usize = 4;
+
 pub const FLUSH_QUEUE_FACTOR: usize = 16;
 
 pub const PARTIAL_VECS_CHECKPOINT_SIZE: CompressedCheckpointSize =
@@ -55,7 +58,7 @@ pub const MAX_RESPLIT_BUCKETS_COUNT_LOG: usize = 9;
 
 pub const MIN_BUCKET_CHUNKS_FOR_READING_THREAD: usize = 2;
 
-pub const USE_SECOND_BUCKET: bool = false;
+pub const USE_SECOND_BUCKET: bool = true;
 
 pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 10;
 

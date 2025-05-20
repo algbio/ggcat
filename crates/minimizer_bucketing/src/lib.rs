@@ -145,7 +145,9 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
             u8,
             Factory::ExtraData,
             &<Factory::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+            bool, // rc
         ),
+        const SEPARATE_DUPLICATES: bool,
     >(
         &mut self,
         preprocess_info: &Factory::PreprocessInfo,
@@ -301,14 +303,14 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                 );
 
                 sequences_splitter.process_sequences(&x, &mut |sequence: &[u8], range| {
-                    buckets_processor.process_sequence(
+                    buckets_processor.process_sequence::<_, _, true>(
                         &preprocess_info,
                         sequence,
                         range,
                         0,
                         context.common.buckets_count_bits,
                         context.common.max_second_buckets_count_bits,
-                        |bucket, next_bucket, seq, flags, extra, extra_buffer| {
+                        |bucket, next_bucket, seq, flags, extra, extra_buffer, rc| {
                             let counter = &mut counters
                                 [((bucket as usize) << counters_log) + (next_bucket as usize)];
 
@@ -322,7 +324,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                                 bucket,
                                 &extra,
                                 extra_buffer,
-                                &CompressedReadsBucketData::new(seq, flags, next_bucket as u8),
+                                &CompressedReadsBucketData::new_plain_opt_rc(seq, flags, next_bucket as u8, rc),
                             );
 
                             // New chunks were produced, spawn new compactors
@@ -609,8 +611,9 @@ impl GenericMinimizerBucketing {
         });
 
         {
-            let max_read_buffers_count =
-                compute_threads_count * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed);
+            let max_read_buffers_count = compute_threads_count
+                * READ_INTERMEDIATE_QUEUE_MULTIPLIER.load(Ordering::Relaxed)
+                + 4;
 
             let execution_context = ExecutionContext::new();
 

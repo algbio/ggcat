@@ -5,12 +5,13 @@ use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
     DEFAULT_PER_CPU_BUFFER_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_RESPLIT_BUCKETS_COUNT_LOG,
     MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DONE_RESPLIT, PRIORITY_SCHEDULING_HIGH,
-    WORKERS_PRIORITY_HIGH,
+    USE_SECOND_BUCKET, WORKERS_PRIORITY_HIGH,
 };
 use ggcat_logging::stats;
 use ggcat_logging::stats::StatId;
 use hashes::HashableSequence;
 use instrumenter::local_setup_instrumenter;
+use io::concurrent::temp_reads::creads_utils::{BucketModeFromBoolean, BucketModeOption};
 use io::concurrent::temp_reads::creads_utils::{
     CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMultiplicity,
     WithMultiplicity,
@@ -130,17 +131,15 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
         thread_handle: &ThreadPriorityHandle,
     ) {
         match resplit_info.data_format {
-            MinimizerBucketMode::Single => {
-                Self::do_resplit_internal::<NoMultiplicity>(
-                    global_context,
-                    resplit_info,
-                    ops,
-                    thread_handle,
-                )
-                .await
-            }
+            MinimizerBucketMode::Single => Self::do_resplit_internal::<
+                BucketModeFromBoolean<USE_SECOND_BUCKET>,
+                NoMultiplicity,
+            >(
+                global_context, resplit_info, ops, thread_handle
+            )
+            .await,
             MinimizerBucketMode::Compacted => {
-                Self::do_resplit_internal::<WithMultiplicity>(
+                Self::do_resplit_internal::<NoSecondBucket, WithMultiplicity>(
                     global_context,
                     resplit_info,
                     ops,
@@ -151,19 +150,23 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
         }
     }
 
-    async fn do_resplit_internal<MultiplicityMode: MultiplicityModeOption>(
+    async fn do_resplit_internal<
+        BucketMode: BucketModeOption,
+        MultiplicityMode: MultiplicityModeOption,
+    >(
         global_context: &KmersTransformContext<F>,
         resplit_info: &BucketsResplitInfo,
         ops: &ExecutorAddressOperations<'_, Self>,
         thread_handle: &ThreadPriorityHandle,
     ) {
+        let buckets_count = 1 << resplit_info.subsplit_buckets_count_log;
         let mut resplitter = F::new_resplitter(&global_context.global_extra_data);
         let mut thread_local_buffers = BucketsThreadDispatcher::<
             _,
             CompressedReadsBucketDataSerializer<
                 _,
                 <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,
-                NoSecondBucket,
+                BucketMode, // This is always zero but it is needed to preserve consistency
                 MultiplicityMode,
             >,
         >::new(
@@ -171,7 +174,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
             BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, resplit_info.buckets.count()),
         );
 
-        let mut local_counters = vec![0u8; resplit_info.global_counters.len()];
+        let mut local_counters = vec![0u8; buckets_count];
 
         // mem_tracker.update_memory_usage(&[
         //     DEFAULT_PER_CPU_BUFFER_SIZE.octets as usize * mt_buckets.count()
@@ -194,14 +197,16 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                     &mut preprocess_info,
                 );
 
-                resplitter.process_sequence::<_, _>(
+                resplitter.process_sequence::<_, _, false>(
                     &preprocess_info,
                     sequence,
                     0..sequence.bases_count(),
                     0,
                     resplit_info.subsplit_buckets_count_log,
                     0,
-                    |bucket, _next_bucket, seq, flags, extra, extra_buffer| {
+                    |bucket, _next_bucket, seq, flags, extra, extra_buffer, rc| {
+                        // rc should always be false for resplitting, as all the k-mers already have a fixed orientation
+                        debug_assert!(!rc);
                         let bucket = bucket as usize;
 
                         let counter = &mut local_counters[bucket];

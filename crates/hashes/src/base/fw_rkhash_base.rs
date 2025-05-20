@@ -74,14 +74,16 @@ impl<N: HashableSequence> HashFunction<ForwardRabinKarpHashFactory>
 {
     fn iter(
         mut self,
-    ) -> impl Iterator<Item = <ForwardRabinKarpHashFactory as HashFunctionFactory>::HashTypeExtendable>
+    ) -> impl ExactSizeIterator
+           + Iterator<Item = <ForwardRabinKarpHashFactory as HashFunctionFactory>::HashTypeExtendable>
     {
         (self.k_minus1..self.seq.bases_count()).map(move |idx| self.roll_hash(idx))
     }
 
     fn iter_enumerate(
         mut self,
-    ) -> impl Iterator<
+    ) -> impl ExactSizeIterator
+           + Iterator<
         Item = (
             usize,
             <ForwardRabinKarpHashFactory as HashFunctionFactory>::HashTypeExtendable,

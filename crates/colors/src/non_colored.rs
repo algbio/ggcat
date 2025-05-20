@@ -78,7 +78,7 @@ impl MinimizerBucketingSeqColorData for NonColoredManager {
         std::iter::repeat(NonColoredManager)
     }
 
-    fn get_subslice(&self, _range: Range<usize>) -> Self {
+    fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
         Self
     }
 }

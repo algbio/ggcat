@@ -15,6 +15,9 @@ use super::extra_data::SequenceExtraDataConsecutiveCompression;
 enum ReadData<'a> {
     Plain(&'a [u8]),
     Packed(CompressedRead<'a>),
+    PlainRc(&'a [u8]),
+    #[allow(dead_code)]
+    PackedRc(CompressedRead<'a>),
 }
 
 pub struct CompressedReadsBucketData<'a> {
@@ -29,6 +32,20 @@ impl<'a> CompressedReadsBucketData<'a> {
     pub fn new(read: &'a [u8], flags: u8, extra_bucket: u8) -> Self {
         Self {
             read: ReadData::Plain(read),
+            extra_bucket,
+            flags,
+            multiplicity: 1,
+        }
+    }
+
+    #[inline(always)]
+    pub fn new_plain_opt_rc(read: &'a [u8], flags: u8, extra_bucket: u8, rc: bool) -> Self {
+        Self {
+            read: if rc {
+                ReadData::PlainRc(read)
+            } else {
+                ReadData::Plain(read)
+            },
             extra_bucket,
             flags,
             multiplicity: 1,
@@ -178,20 +195,27 @@ impl<
         self.last_data = extra_data.obtain_last_data(self.last_data);
 
         match element.read {
-            ReadData::Plain(read) => {
+            ReadData::Plain(read) | ReadData::PlainRc(read) => {
+                let is_rc = matches!(element.read, ReadData::PlainRc(_));
                 CompressedRead::from_plain_write_directly_to_buffer_with_flags::<FlagsCount>(
                     read,
                     bucket,
                     element.flags,
+                    is_rc,
                 );
             }
-            ReadData::Packed(read) => {
+            ReadData::Packed(read) | ReadData::PackedRc(read) => {
+                let is_rc = matches!(element.read, ReadData::PackedRc(_));
                 encode_varint_flags::<_, _, FlagsCount>(
                     |b| bucket.extend_from_slice(b),
                     read.size as u64,
                     element.flags,
                 );
-                read.copy_to_buffer(bucket);
+                if is_rc {
+                    read.copy_to_buffer_rc(bucket);
+                } else {
+                    read.copy_to_buffer(bucket);
+                }
             }
         }
     }
@@ -247,8 +271,8 @@ impl<
     #[inline(always)]
     fn get_size(&self, element: &Self::InputElementType<'_>, extra: &Self::ExtraData) -> usize {
         let bases_count = match element.read {
-            ReadData::Plain(read) => read.len(),
-            ReadData::Packed(read) => read.size,
+            ReadData::Plain(read) | ReadData::PlainRc(read) => read.len(),
+            ReadData::Packed(read) | ReadData::PackedRc(read) => read.size,
         };
 
         ((bases_count + 3) / 4)
@@ -296,7 +320,7 @@ pub mod helpers {
                     reader.get_items_stream::<CompressedReadsBucketDataSerializer<
                         $E,
                         $FlagsCount,
-                        $BucketMode,
+                        NoSecondBucket,
                         WithMultiplicity,
                     >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle);
                 while let Some(checkpoint) = items.get_next_checkpoint_extended() {

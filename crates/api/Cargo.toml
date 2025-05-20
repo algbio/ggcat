@@ -24,7 +24,7 @@ colors = { package = "ggcat_colors", path = "../colors" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 fdlimit = "0.3.0"
-parallel-processor = "0.1.24"
+parallel-processor = "0.1.25"
 rayon = "1.10.0"
 dynamic-dispatch = "0.5.4"
 parking_lot = "0.12.3"

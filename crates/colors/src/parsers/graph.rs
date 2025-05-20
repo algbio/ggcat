@@ -254,13 +254,14 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
         }
     }
 
-    fn get_subslice(&self, range: Range<usize>) -> Self {
-        assert!(
+    fn get_subslice(&self, range: Range<usize>, reverse: bool) -> Self {
+        debug_assert!(
             self.colors_subslice.len() >= range.end,
             "{} >= {}",
             self.colors_subslice.len(),
             range.end
         );
+        debug_assert!(!reverse);
         let start = self.colors_subslice.start + range.start;
         let end = self.colors_subslice.start + range.end;
         Self {

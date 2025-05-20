@@ -52,7 +52,7 @@ impl<
     ) {
         let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_LOW);
 
-        let packets_pool = ops.pool_alloc_await(0, &thread_handle).await;
+        let packets_pool = ops.pool_alloc_await(0, &thread_handle, true).await;
 
         let mut sequences_stream = SequencesStream::new();
 

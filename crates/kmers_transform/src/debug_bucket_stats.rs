@@ -3,10 +3,7 @@ use config::{
     READ_FLAG_INCL_END, USE_SECOND_BUCKET,
 };
 use hashes::default::MNHFactory;
-use hashes::{
-    ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
-    MinimizerHashFunctionFactory,
-};
+use hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::{
     BucketModeFromBoolean, CompressedReadsBucketDataSerializer, NoMultiplicity,
@@ -32,10 +29,7 @@ fn get_sequence_bucket<C>(
 
     let hashes = MNHFactory::new(read.sub_slice((1 - decr_val)..(k - decr_val)), m);
 
-    let minimizer = hashes
-        .iter()
-        .min_by_key(|k| MNHFactory::get_full_minimizer(k.to_unextendable()))
-        .unwrap();
+    let minimizer = hashes.iter().min_by_key(|k| k.to_unextendable()).unwrap();
 
     MNHFactory::get_bucket(
         used_hash_bits,

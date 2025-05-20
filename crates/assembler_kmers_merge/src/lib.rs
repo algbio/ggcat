@@ -65,6 +65,10 @@ impl<CX: ColorsManager> KmersTransformGlobalExtraData for GlobalMergeData<CX> {
     fn get_m(&self) -> usize {
         self.m
     }
+
+    fn get_m_resplit(&self) -> usize {
+        self.global_resplit_data.m
+    }
 }
 
 pub struct ParallelKmersMergeFactory<
