@@ -92,6 +92,16 @@ impl CompressedReadIndipendent {
         }
     }
 
+    pub unsafe fn from_start_buffer_position(
+        start: usize,
+        size: usize,
+    ) -> CompressedReadIndipendent {
+        Self {
+            start: start * 4,
+            size,
+        }
+    }
+
     pub fn from_read_inplace(read: &CompressedRead, storage: &[u8]) -> CompressedReadIndipendent {
         CompressedReadIndipendent {
             start: read.start as usize + (read.data as usize - storage.as_ptr() as usize) * 4,
@@ -108,6 +118,17 @@ impl CompressedReadIndipendent {
         }
     }
 
+    #[inline(always)]
+    pub fn get_packed_slice_aligned(&self, buffer: &[u8]) -> &[u8] {
+        debug_assert_eq!(self.start % 4, 0);
+        unsafe {
+            from_raw_parts(
+                buffer.as_ptr().add(self.buffer_start_index()),
+                (self.size + 3) / 4,
+            )
+        }
+    }
+
     pub fn as_reference<'a>(&self, storage: &'a Vec<u8>) -> CompressedRead<'a> {
         CompressedRead {
             size: self.size,
@@ -115,6 +136,10 @@ impl CompressedReadIndipendent {
             data: unsafe { storage.as_ptr().add(self.start / 4) },
             _phantom: Default::default(),
         }
+    }
+
+    pub fn buffer_start_index(&self) -> usize {
+        self.start / 4
     }
 
     pub fn bases_count(&self) -> usize {
@@ -234,7 +259,7 @@ impl<'a> CompressedRead<'a> {
     }
 
     #[inline(always)]
-    pub fn get_packed_slice(&self) -> &[u8] {
+    pub fn get_packed_slice(&self) -> &'a [u8] {
         unsafe { from_raw_parts(self.data, (self.size + self.start as usize + 3) / 4) }
     }
 

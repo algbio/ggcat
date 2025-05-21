@@ -30,3 +30,4 @@ utils = { package = "ggcat_utils", path = "../utils" }
 colors = { package = "ggcat_colors", path = "../colors" }
 byteorder = "1.5.0"
 rustc-hash = "2.1.0"
+hashbrown = "0.15.3"

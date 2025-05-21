@@ -3,6 +3,7 @@ pub mod extra_data;
 use std::{
     cmp::Reverse,
     future::Future,
+    hash::{Hash, Hasher},
     marker::PhantomData,
     path::Path,
     sync::atomic::{AtomicUsize, Ordering},
@@ -15,12 +16,14 @@ use crate::{
 use colors::non_colored::NonColoredManager;
 use config::{
     get_compression_level_info, get_memory_mode, BucketIndexType, MultiplicityCounterType,
-    SwapPriority, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS, DEFAULT_OUTPUT_BUFFER_SIZE,
+    SwapPriority, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
+    DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE, DEFAULT_OUTPUT_BUFFER_SIZE,
     DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAXIMUM_SECOND_BUCKETS_COUNT,
     MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
     PRIORITY_SCHEDULING_HIGH, USE_SECOND_BUCKET, WORKERS_PRIORITY_HIGH,
 };
 use ggcat_logging::stats;
+use hashbrown::{hash_table::Entry, HashTable};
 use io::creads_helper;
 use io::{
     compressed_read::CompressedReadIndipendent,
@@ -30,7 +33,6 @@ use io::{
             NoSecondBucket, ReadsCheckpointData, WithMultiplicity,
         },
         extra_data::SequenceExtraDataTempBufferManagement,
-        superkmers::SuperKmerEntry,
     },
 };
 use parallel_processor::{
@@ -57,7 +59,7 @@ use parallel_processor::{
         declare_counter_i64,
     },
 };
-use rustc_hash::{FxBuildHasher, FxHashMap};
+use rustc_hash::FxBuildHasher;
 use utils::track;
 
 pub struct MinimizerBucketingCompactor<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static>
@@ -71,6 +73,17 @@ static ADDR_WAITING_COUNTER: AtomicCounter<SumMode> =
 #[derive(Clone, Debug)]
 pub struct CompactorInitData {
     pub bucket_index: u16,
+}
+
+#[inline(always)]
+fn compute_hash(buffer: &[u8], read: &CompressedReadIndipendent) -> u64 {
+    use std::hash::BuildHasher;
+
+    let slice = read.get_packed_slice_aligned(buffer);
+
+    let mut hasher = FxBuildHasher.build_hasher();
+    Hash::hash_slice(slice, &mut hasher);
+    hasher.finish()
 }
 
 impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
@@ -127,17 +140,77 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
             const MAX_COMPACTED_IO_RATIO: f64 = 1.5;
 
             let mut super_kmers_hashmap: Vec<
-                FxHashMap<SuperKmerEntry, (u8, MultiplicityCounterType)>,
+                HashTable<(CompressedReadIndipendent, (u8, MultiplicityCounterType))>,
             > = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
-                .map(|_| {
-                    FxHashMap::with_capacity_and_hasher(
-                        DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
-                        FxBuildHasher,
-                    )
-                })
+                .map(|_| HashTable::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
+                .collect();
+
+            let mut super_kmers_buffer: Vec<
+                Vec<(CompressedReadIndipendent, (u8, MultiplicityCounterType))>,
+            > = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+                .map(|_| Vec::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
+                .collect();
+
+            let mut super_kmers_storage: Vec<Vec<u8>> = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+                .map(|_| Vec::with_capacity(DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE))
                 .collect();
 
             let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_HIGH);
+
+            // use hashbrown::HashTable;
+            fn process_superkmers(
+                super_kmers_hashmap: &mut HashTable<(
+                    CompressedReadIndipendent,
+                    (u8, MultiplicityCounterType),
+                )>,
+                super_kmers_buffer: &mut Vec<(CompressedReadIndipendent, (u8, u32))>,
+                super_kmers_storage: &mut Vec<u8>,
+                total_sequences: &mut usize,
+            ) {
+                debug_assert!(super_kmers_storage.len() > 0);
+                let mut copy_pos = super_kmers_buffer[0].0.buffer_start_index();
+
+                for (read, (flags, multiplicity)) in super_kmers_buffer.drain(..) {
+                    let read_hash = compute_hash(super_kmers_storage, &read);
+                    let read_slice = read.get_packed_slice_aligned(super_kmers_storage);
+
+                    match super_kmers_hashmap.entry(
+                        read_hash,
+                        |a| {
+                            a.0.bases_count() == read.bases_count()
+                                && a.0.get_packed_slice_aligned(super_kmers_storage) == read_slice
+                        },
+                        |v| compute_hash(super_kmers_storage, &v.0),
+                    ) {
+                        Entry::Occupied(mut entry) => {
+                            // Combine the flags from the two super-kmers
+                            entry.get_mut().1 .0 |= flags;
+                            entry.get_mut().1 .1 += multiplicity;
+                        }
+                        Entry::Vacant(position) => {
+                            let bytes_count = read_slice.len();
+                            let new_read = unsafe {
+                                std::ptr::copy(
+                                    super_kmers_storage.as_ptr().add(read.buffer_start_index()),
+                                    super_kmers_storage.as_mut_ptr().add(copy_pos),
+                                    bytes_count,
+                                );
+
+                                CompressedReadIndipendent::from_start_buffer_position(
+                                    copy_pos,
+                                    read.bases_count(),
+                                )
+                            };
+                            copy_pos += bytes_count;
+
+                            position.insert((new_read, (flags, multiplicity)));
+                            *total_sequences += 1;
+                        }
+                    }
+                }
+
+                super_kmers_storage.truncate(copy_pos);
+            }
 
             while let Ok((_, init_data)) = track!(
                 receiver
@@ -252,10 +325,6 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     COMPACTED_INDEX.fetch_add(1, Ordering::Relaxed)
                 ));
 
-                // .try_into()
-                // .unwrap();
-                let mut kmers_storage = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
-
                 let mut sequences_deltas = vec![0i64; MAXIMUM_SECOND_BUCKETS_COUNT];
 
                 // let used_hash_bits = global_params.buckets.count().ilog2() as usize;
@@ -315,24 +384,15 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                                 // ));
                                 sequences_deltas[rewrite_bucket as usize] += 1;
 
+                                let super_kmers_buffer = &mut super_kmers_buffer[rewrite_bucket as usize];
+                                let super_kmers_storage = &mut super_kmers_storage[rewrite_bucket as usize];
 
-                                let super_kmers_hashmap = &mut super_kmers_hashmap[rewrite_bucket as usize];
+                                let new_read = CompressedReadIndipendent::from_read(&read, super_kmers_storage);
+                                super_kmers_buffer.push((new_read, (flags, multiplicity)));
 
-                                if let Some(entry) = super_kmers_hashmap.get_mut(
-                                    read.get_borrowable(),
-                                ) {
-                                    // Combine the flags from the two super-kmers
-                                    entry.0 |= flags;
-                                    entry.1 += multiplicity;
-                                } else {
-                                    let new_read = CompressedReadIndipendent::from_read(&read, &mut kmers_storage);
-                                    // assert!(!super_kmers_hashmap.contains_key(read.get_borrowable()));
-                                    // assert!(!super_kmers_hashmap.contains_key(&SuperKmerEntry::new(&kmers_storage, new_read)));
-                                    super_kmers_hashmap.insert(
-                                        SuperKmerEntry::new(&kmers_storage, new_read),
-                                        (flags, multiplicity),
-                                    );
-                                    total_sequences += 1;
+                                if super_kmers_buffer.len() == super_kmers_buffer.capacity() {
+                                    let super_kmers_hashmap = &mut super_kmers_hashmap[rewrite_bucket as usize];
+                                    process_superkmers(super_kmers_hashmap, super_kmers_buffer, super_kmers_storage, &mut total_sequences);
                                 }
                             },
                             thread_handle
@@ -340,7 +400,6 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     }
 
                     input_files_size += MemoryFs::get_file_size(&bucket_path).unwrap();
-
                     stats!(
                         let end_process_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
                         pop_stats.push(
@@ -358,6 +417,18 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                         || processed_buckets >= 4 && total_sequences > MAXIMUM_SEQUENCES
                     {
                         break;
+                    }
+                }
+
+                // Flush all the buffers
+                for i in 0..super_kmers_buffer.len() {
+                    if super_kmers_buffer[i].len() > 0 {
+                        process_superkmers(
+                            &mut super_kmers_hashmap[i],
+                            &mut super_kmers_buffer[i],
+                            &mut super_kmers_storage[i],
+                            &mut total_sequences,
+                        );
                     }
                 }
 
@@ -414,9 +485,10 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     //     let start_subbucket = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
                     //     let super_kmers_count = super_kmers_hashmap.len();
                     // );
+                    let super_kmers_storage = &mut super_kmers_storage[rewrite_bucket];
 
                     for (read, (flags, multiplicity)) in super_kmers_hashmap.drain() {
-                        let read = read.get_read();
+                        let read = read.as_reference(super_kmers_storage);
                         sequences_deltas[rewrite_bucket as usize] -= 1;
 
                         serializer.write_to(
@@ -436,14 +508,14 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                         }
                     }
 
+                    super_kmers_storage.clear();
+
                     // stats!(let reset_capacity_start = ggcat_logging::get_stat_opt!(stats.start_time).elapsed(););
 
                     // Reset the hashmap capacity
                     if super_kmers_hashmap.capacity() > MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS {
-                        *super_kmers_hashmap = FxHashMap::with_capacity_and_hasher(
-                            DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
-                            FxBuildHasher,
-                        );
+                        *super_kmers_hashmap =
+                            HashTable::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS);
                     }
 
                     // stats!(
