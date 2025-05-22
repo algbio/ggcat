@@ -14,6 +14,7 @@ use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagemen
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
 use io::sequences_stream::SequenceInfo;
+use minimizer_bucketing::PushSequenceInfo;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
@@ -27,6 +28,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct MinimizerExtraData {
+    index: u32,
     is_forward: bool,
 }
 
@@ -149,7 +151,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer, bool),
+        F: FnMut(PushSequenceInfo<S, AssemblerMinimizerBucketingExecutorFactory<CX>>),
         const SEPARATE_DUPLICATES: bool,
     >(
         &mut self,
@@ -160,7 +162,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
         first_bits: usize,
         second_bits: usize,
         mut push_sequence: F,
-    ){
+    ) {
         let hashes = MNHFactory::new(sequence, self.global_data.m);
 
         let mut last_index = 1;
@@ -176,12 +178,13 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
 
         self.minimizer_queue
             .get_minimizer_splits::<_, SEPARATE_DUPLICATES>(
-                hashes.iter().map(|x| {
+                hashes.iter_enumerate().map(|(index, x)| {
                     (
                         x.to_unextendable()
             // Set the unique flag if the minimizer is not rc_symmetric
             | (SEPARATE_DUPLICATES || !x.is_rc_symmetric()) as u64,
                         MinimizerExtraData {
+                            index: index as u32,
                             is_forward: x.is_forward(),
                         },
                     )
@@ -193,7 +196,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
                     let include_last = preprocess_info.include_last && is_last;
 
                     // HS2
-                    let (bucket, rc) = if SEPARATE_DUPLICATES
+                    let (bucket, rc, min_position) = if SEPARATE_DUPLICATES
                         && (min_hash.0
                             & BatchMinQueue::<MinimizerExtraData>::unique_flag::<
                                 SEPARATE_DUPLICATES,
@@ -201,7 +204,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
                             == 0)
                     {
                         cold();
-                        (self.duplicates_bucket, false)
+                        (self.duplicates_bucket, false, min_hash.1.index as usize - last_index + 1)
                     } else {
                         // use std::sync::atomic::AtomicUsize;
                         // static TOT_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -229,23 +232,31 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
 
                         }
 
+                        let rc = SEPARATE_DUPLICATES && !min_hash.1.is_forward;
                         (
                             MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
-                            SEPARATE_DUPLICATES && !min_hash.1.is_forward,
+                            rc,
+                            if rc {
+                                index - (min_hash.1.index as usize) - self.global_data.m
+                            } else {
+                                (min_hash.1.index as usize) - last_index + 1
+                            }
                         )
                     };
 
                     // TODO: Check for non-min-duplicated k-1 adjacents that have the same minimizer value
                     push_sequence(
-                        bucket,
-                        MNHFactory::get_bucket(used_bits + first_bits, second_bits, min_hash.0),
-                        sequence.get_subslice((last_index - 1)..(index + self.global_data.k - 1)),
-                        ((include_first as u8) << (rc as u8)) | ((include_last as u8) << (!rc as u8)),
-                        preprocess_info
-                            .color_info
-                            .get_subslice((last_index - 1)..index, rc), // FIXME: Check if the subslice is correct
-                        &preprocess_info.color_info_buffer,
-                        rc,
+                        PushSequenceInfo {
+                            bucket,
+                            second_bucket: MNHFactory::get_bucket(used_bits + first_bits, second_bits, min_hash.0),
+                            sequence: sequence.get_subslice((last_index - 1)..(index + self.global_data.k - 1)),
+                            flags: ((include_first as u8) << (rc as u8)) | ((include_last as u8) << (!rc as u8)),
+                            extra_data: preprocess_info
+                                .color_info
+                                .get_subslice((last_index - 1)..index, rc), // FIXME: Check if the subslice is correct
+                            temp_buffer: &preprocess_info.color_info_buffer,
+                            rc,
+                        },
                     );
                     last_index = index;
                     include_first = false;

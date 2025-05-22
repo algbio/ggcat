@@ -14,7 +14,7 @@ use io::sequences_stream::SequenceInfo;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
-    MinimizerBucketingExecutorFactory, MinimizerInputSequence,
+    MinimizerBucketingExecutorFactory, MinimizerInputSequence, PushSequenceInfo,
 };
 use parallel_processor::buckets::SingleBucket;
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
@@ -215,7 +215,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer, bool),
+        F: FnMut(PushSequenceInfo<S, DumperMinimizerBucketingExecutorFactory<CX>>),
         const SEPARATE_DUPLICATES: bool,
     >(
         &mut self,
@@ -226,7 +226,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
         _first_bits: usize,
         _second_bits: usize,
         mut push_sequence: F,
-    ){
+    ) {
         let mut rolling_iter = preprocess_info
             .read_data
             .as_ref()
@@ -239,38 +239,37 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
 
         for (index, kmer_color) in rolling_iter.enumerate() {
             if kmer_color != last_color {
-                push_sequence(
-                    CX::get_bucket_from_color(
+                push_sequence(PushSequenceInfo {
+                    bucket: CX::get_bucket_from_color(
                         &last_color,
                         self.global_data.global_data.colors_count,
                         self.global_data.global_data.buckets_count_log,
                     ),
-                    0,
-                    sequence.get_subslice(last_index..(index + self.global_data.k)),
-                    0,
-                    DumperKmersReferenceData { color: last_color },
-                    &(),
-                    false,
-                );
-
+                    second_bucket: 0,
+                    sequence: sequence.get_subslice(last_index..(index + self.global_data.k)),
+                    extra_data: DumperKmersReferenceData { color: last_color },
+                    temp_buffer: &(),
+                    flags: 0,
+                    rc: false,
+                });
                 last_index = index + 1;
                 last_color = kmer_color;
             }
         }
 
-        push_sequence(
-            CX::get_bucket_from_color(
+        push_sequence(PushSequenceInfo {
+            bucket: CX::get_bucket_from_color(
                 &last_color,
                 self.global_data.global_data.colors_count,
                 self.global_data.global_data.buckets_count_log,
             ),
-            0,
-            sequence.get_subslice(last_index..sequence.seq_len()),
-            0,
-            DumperKmersReferenceData { color: last_color },
-            &(),
-            false,
-        );
+            second_bucket: 0,
+            sequence: sequence.get_subslice(last_index..sequence.seq_len()),
+            extra_data: DumperKmersReferenceData { color: last_color },
+            temp_buffer: &(),
+            flags: 0,
+            rc: false,
+        });
     }
 }
 

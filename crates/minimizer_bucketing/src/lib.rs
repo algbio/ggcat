@@ -98,6 +98,16 @@ impl MinimizerInputSequence for &[u8] {
     }
 }
 
+pub struct PushSequenceInfo<'a, S, F: MinimizerBucketingExecutorFactory> {
+    pub bucket: BucketIndexType,
+    pub second_bucket: BucketIndexType,
+    pub sequence: S,
+    pub extra_data: F::ExtraData,
+    pub temp_buffer: &'a <F::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    pub flags: u8,
+    pub rc: bool,
+}
+
 pub trait MinimizerBucketingExecutorFactory: Sized {
     type GlobalData: Sync + Send + 'static;
     type ExtraData: SequenceExtraDataConsecutiveCompression;
@@ -138,15 +148,7 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(
-            BucketIndexType,
-            BucketIndexType,
-            S,
-            u8,
-            Factory::ExtraData,
-            &<Factory::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
-            bool, // rc
-        ),
+        F: FnMut(PushSequenceInfo<S, Factory>),
         const SEPARATE_DUPLICATES: bool,
     >(
         &mut self,
@@ -311,21 +313,24 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                         0,
                         context.common.buckets_count_bits,
                         context.common.max_second_buckets_count_bits,
-                        |bucket, next_bucket, seq, flags, extra, extra_buffer, rc| {
+                        |info| {
+
+                            let PushSequenceInfo { bucket, second_bucket, sequence, flags, extra_data, temp_buffer, rc } = info;
+
                             let counter = &mut counters
-                                [((bucket as usize) << counters_log) + (next_bucket as usize)];
+                                [((bucket as usize) << counters_log) + (second_bucket as usize)];
 
                             *counter = counter.wrapping_add(1);
                             if *counter == 0 {
-                                global_counters[bucket as usize][next_bucket as usize]
+                                global_counters[bucket as usize][second_bucket as usize]
                                     .fetch_add(256, Ordering::Relaxed);
                             }
 
                             let chunking_status = tmp_reads_buffer.add_element_extended(
                                 bucket,
-                                &extra,
-                                extra_buffer,
-                                &CompressedReadsBucketData::new_plain_opt_rc(seq, flags, next_bucket as u8, rc),
+                                &extra_data,
+                                temp_buffer,
+                                &CompressedReadsBucketData::new_plain_opt_rc(sequence, flags, second_bucket as u8, rc),
                             );
 
                             // New chunks were produced, spawn new compactors

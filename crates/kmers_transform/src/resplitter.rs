@@ -20,6 +20,7 @@ use io::concurrent::temp_reads::creads_utils::{MultiplicityModeOption, NoSecondB
 use minimizer_bucketing::counters_analyzer::BucketCounter;
 use minimizer_bucketing::{
     MinimizerBucketMode, MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory,
+    PushSequenceInfo,
 };
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
@@ -205,7 +206,18 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                     0,
                     resplit_info.subsplit_buckets_count_log,
                     0,
-                    |bucket, _next_bucket, seq, flags, extra, extra_buffer, rc| {
+                    #[inline(always)]
+                    |info| {
+                        let PushSequenceInfo {
+                            bucket,
+                            second_bucket,
+                            sequence,
+                            extra_data,
+                            temp_buffer,
+                            flags,
+                            rc,
+                        } = info;
+
                         // rc should always be false for resplitting, as all the k-mers already have a fixed orientation
                         debug_assert!(!rc);
                         let bucket = bucket as usize;
@@ -220,10 +232,10 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
 
                         thread_local_buffers.add_element_extended(
                             bucket as BucketIndexType,
-                            &extra,
-                            extra_buffer,
+                            &extra_data,
+                            temp_buffer,
                             &CompressedReadsBucketData::new_packed_with_multiplicity(
-                                seq,
+                                sequence,
                                 flags,
                                 0,
                                 multiplicity,
