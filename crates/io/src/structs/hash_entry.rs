@@ -67,11 +67,12 @@ impl<H: Serialize + DeserializeOwned + Copy> BucketItemSerializer for HashEntryS
     type ReadBuffer = ();
     type ExtraDataBuffer = ();
     type ReadType<'a> = HashEntry<H>;
+    type InitData = ();
 
     type CheckpointData = ();
 
     #[inline(always)]
-    fn new() -> Self {
+    fn new(_: ()) -> Self {
         Self(PhantomData)
     }
 

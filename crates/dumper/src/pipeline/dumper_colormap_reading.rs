@@ -26,6 +26,7 @@ pub fn colormap_reading<
     CX: ColorsManager<SingleKmerColorDataType = ColorIndexType>,
     CD: ColorsSerializerTrait,
 >(
+    k: usize,
     colormap_file: PathBuf,
     colored_unitigs_buckets: Vec<SingleBucket>,
     single_thread_output_function: bool,
@@ -64,10 +65,15 @@ pub fn colormap_reading<
             typenum::consts::U0,
             NoSecondBucket,
             NoMultiplicity,
-        >, _>(vec![], &mut (), |(_, _, color_extra, read, _), _| {
-            let new_read = CompressedReadIndipendent::from_read(&read, &mut temp_bases);
-            temp_sequences.push((new_read, color_extra));
-        });
+        >, _>(
+            vec![],
+            &mut (),
+            |(_, _, color_extra, read, _), _| {
+                let new_read = CompressedReadIndipendent::from_read(&read, &mut temp_bases);
+                temp_sequences.push((new_read, color_extra));
+            },
+            k,
+        );
 
         struct ColoredUnitigsCompare<CX: ColorsManager>(PhantomData<&'static CX>);
         impl<CX: ColorsManager>

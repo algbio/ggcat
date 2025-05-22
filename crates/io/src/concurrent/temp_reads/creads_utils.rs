@@ -1,7 +1,6 @@
 use crate::compressed_read::CompressedRead;
 use crate::varint::{
-    decode_varint, decode_varint_flags, encode_varint, encode_varint_flags, VARINT_FLAGS_MAX_SIZE,
-    VARINT_MAX_SIZE,
+    decode_varint, encode_varint, encode_varint_flags, VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE,
 };
 use byteorder::ReadBytesExt;
 use config::{BucketIndexType, MultiplicityCounterType};
@@ -135,6 +134,7 @@ pub struct CompressedReadsBucketDataSerializer<
     BucketMode: BucketModeOption,
     MultiplicityMode: MultiplicityModeOption,
 > {
+    min_size: usize,
     last_data: E::LastData,
     _phantom: PhantomData<(FlagsCount, BucketMode, MultiplicityMode)>,
 }
@@ -159,12 +159,14 @@ impl<
     type ReadBuffer = Vec<u8>;
     type ExtraDataBuffer = E::TempBuffer;
     type ReadType<'b> = (u8, u8, E, CompressedRead<'b>, MultiplicityCounterType);
+    type InitData = usize;
 
     type CheckpointData = ReadsCheckpointData;
 
     #[inline(always)]
-    fn new() -> Self {
+    fn new(min_size: Self::InitData) -> Self {
         Self {
+            min_size,
             last_data: Default::default(),
             _phantom: PhantomData,
         }
@@ -202,13 +204,14 @@ impl<
                     bucket,
                     element.flags,
                     is_rc,
+                    self.min_size,
                 );
             }
             ReadData::Packed(read) | ReadData::PackedRc(read) => {
                 let is_rc = matches!(element.read, ReadData::PackedRc(_));
                 encode_varint_flags::<_, _, FlagsCount>(
                     |b| bucket.extend_from_slice(b),
-                    read.size as u64,
+                    (read.size - self.min_size) as u64,
                     element.flags,
                 );
                 if is_rc {
@@ -242,28 +245,18 @@ impl<
         let extra = E::decode_extended(extra_read_buffer, &mut stream, self.last_data)?;
         self.last_data = extra.obtain_last_data(self.last_data);
 
-        let (size, flags) = decode_varint_flags::<_, FlagsCount>(|| stream.read_u8().ok())?;
-
-        if size == 0 {
-            return None;
-        }
-
         read_buffer.clear();
-
-        let bytes = ((size + 3) / 4) as usize;
-        read_buffer.reserve(bytes);
-        let buffer_start = read_buffer.len();
-        unsafe {
-            read_buffer.set_len(buffer_start + bytes);
-        }
-
-        stream.read_exact(&mut read_buffer[buffer_start..]).unwrap();
+        let (read, flags) = CompressedRead::read_from_stream::<_, FlagsCount>(
+            read_buffer,
+            &mut stream,
+            self.min_size,
+        )?;
 
         Some((
             flags,
             second_bucket,
             extra,
-            CompressedRead::new_from_compressed(&read_buffer[buffer_start..], size as usize),
+            read,
             multiplicity as MultiplicityCounterType,
         ))
     }
@@ -301,7 +294,8 @@ pub mod helpers {
                 |$passtrough_info:ident| $p:expr,
                 |$checkpoint_data:ident| $c:expr,
                 |$data: ident, $extra_buffer: ident| $f:expr,
-                $thread_handle:ident
+                $thread_handle:ident,
+                $k:expr
             );
 
         ) => {
@@ -322,7 +316,7 @@ pub mod helpers {
                         $FlagsCount,
                         NoSecondBucket,
                         WithMultiplicity,
-                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle);
+                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle, $k);
                 while let Some(checkpoint) = items.get_next_checkpoint_extended() {
                     match checkpoint {
                         AsyncBinaryReaderIteratorData::Stream(items, $checkpoint_data) => {
@@ -349,7 +343,7 @@ pub mod helpers {
                         $FlagsCount,
                         $BucketMode,
                         NoMultiplicity,
-                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle);
+                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle, $k);
                 while let Some(checkpoint) = items.get_next_checkpoint_extended() {
                     match checkpoint {
                         AsyncBinaryReaderIteratorData::Stream(items, $checkpoint_data) => {

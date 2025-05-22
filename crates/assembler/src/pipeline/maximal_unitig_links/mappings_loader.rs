@@ -56,7 +56,7 @@ impl MaximalUnitigLinksMapping {
 
         let mut stream = reader.get_single_stream();
 
-        let mut deserializer = MaximalUnitigLinkSerializer::new();
+        let mut deserializer = MaximalUnitigLinkSerializer::new(());
 
         while let Some(item) =
             deserializer.read_from(&mut stream, &mut self_.mappings_data, &mut ())

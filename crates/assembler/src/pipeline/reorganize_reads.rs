@@ -200,12 +200,12 @@ pub fn reorganize_reads<
                 NoSecondBucket,
                 NoMultiplicity,
             >,
-        >::new(&buckets, buffers.take());
+        >::new(&buckets, buffers.take(), k);
         let mut tmp_lonely_unitigs_buffer =
-            FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
+            FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
 
         let mut tmp_circular_unitigs_buffer = circular_out_file.map(|out_file| {
-            FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true)
+            FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true, k)
         });
 
         let mut mappings = Vec::new();
@@ -221,9 +221,14 @@ pub fn reorganize_reads<
             },
             DEFAULT_PREFETCH_AMOUNT,
         )
-        .decode_all_bucket_items::<LinkMappingSerializer, _>((), &mut (), |link, _| {
-            mappings.push(link);
-        });
+        .decode_all_bucket_items::<LinkMappingSerializer, _>(
+            (),
+            &mut (),
+            |link, _| {
+                mappings.push(link);
+            },
+            (),
+        );
 
         parallel_processor::make_comparer!(Compare, LinkMapping, entry: u64);
         fast_smart_radix_sort::<_, Compare, false>(&mut mappings[..]);
@@ -330,6 +335,7 @@ pub fn reorganize_reads<
 
                 index += 1;
             },
+            k,
         );
 
         buffers.put_back(tmp_reads_buffer.finalize().0);

@@ -72,6 +72,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             BucketsThreadDispatcher::<_, QueryColoredCountersSerializer>::new(
                 &correct_color_buckets,
                 thread_buffer.take(),
+                (),
             );
 
         let mut counters_vec: Vec<(CounterEntry<ColorIndexType>, ColorIndexType)> = Vec::new();
@@ -88,6 +89,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             |h, _| {
                 counters_vec.push(h);
             },
+            (),
         );
 
         struct CountersCompare;

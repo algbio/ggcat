@@ -47,11 +47,12 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> BucketItemSer
     type ExtraDataBuffer = ();
     type ReadBuffer = ();
     type ReadType<'a> = (CounterEntry<CX>, CX);
+    type InitData = ();
 
     type CheckpointData = ();
 
     #[inline(always)]
-    fn new() -> Self {
+    fn new(_: ()) -> Self {
         Self(Default::default())
     }
 
@@ -153,7 +154,7 @@ pub fn counters_sorting<CX: ColorsManager>(
         let mut colored_buckets_writer = BucketsThreadDispatcher::<
             _,
             CounterEntrySerializer<SingleKmerColorDataType<CX>>,
-        >::new(&color_buckets, thread_buffer.take());
+        >::new(&color_buckets, thread_buffer.take(), ());
 
         let mut counters_vec: Vec<(
             CounterEntry<SingleKmerColorDataType<CX>>,
@@ -172,6 +173,7 @@ pub fn counters_sorting<CX: ColorsManager>(
             |h, _| {
                 counters_vec.push(h);
             },
+            (),
         );
 
         struct CountersCompare;

@@ -31,13 +31,14 @@ impl<
         target: &'a StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>,
         max_size: usize,
         auto_flush: bool,
+        k: usize,
     ) -> Self {
         Self {
             target,
             sequences: Vec::with_capacity(max_size / 128),
             seq_buf: Vec::with_capacity(max_size),
             extra_buffers: (ColorInfo::new_temp_buffer(), LinksInfo::new_temp_buffer()),
-            temp_buffer: Backend::alloc_temp_buffer(),
+            temp_buffer: Backend::alloc_temp_buffer(k),
             current_index: None,
             auto_flush,
         }

@@ -54,7 +54,8 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
             let mut buffers = buckets_thread_buffers.get();
             let mut links_tmp = BucketsThreadDispatcher::<_, UnitigLinkSerializer>::new(
                 &links_buckets,
-                buffers.take()
+                buffers.take(),
+                ()
             );
 
             let mut rand_bool = FastRandBool::<1>::new();
@@ -65,7 +66,7 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed)
             }, DEFAULT_PREFETCH_AMOUNT).decode_all_bucket_items::<HashEntrySerializer<H::HashTypeUnextendable>, _>((), &mut (), |h, _| {
                 hashes_vec.push(h);
-            });
+            }, ());
 
             fast_smart_radix_sort::<_, HashCompare<H>, false>(&mut hashes_vec[..]);
 

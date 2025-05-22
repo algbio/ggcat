@@ -82,6 +82,7 @@ pub fn dump_unitigs(
 
     let colormap_file = graph_input.as_ref().with_extension("colors.dat");
     colormap_reading::<ColorBundleGraphQuerying, DefaultColorsSerializer>(
+        k,
         colormap_file,
         reorganized_unitigs,
         single_thread_output_function,

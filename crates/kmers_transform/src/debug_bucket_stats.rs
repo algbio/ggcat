@@ -75,6 +75,7 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
         (),
         AllowedCheckpointStrategy::DecompressOnly,
         thread_handle,
+        k,
     );
 
     let mut total_counters = vec![0; second_buckets_max];

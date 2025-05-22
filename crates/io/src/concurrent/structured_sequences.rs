@@ -89,7 +89,7 @@ pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: I
 {
     type SequenceTempBuffer;
 
-    fn alloc_temp_buffer() -> Self::SequenceTempBuffer;
+    fn alloc_temp_buffer(k: usize) -> Self::SequenceTempBuffer;
 
     fn write_sequence(
         k: usize,

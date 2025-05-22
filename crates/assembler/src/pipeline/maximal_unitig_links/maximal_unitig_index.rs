@@ -134,11 +134,12 @@ impl BucketItemSerializer for MaximalUnitigLinkSerializer {
     type ReadBuffer = Vec<MaximalUnitigIndex>;
     type ExtraDataBuffer = ();
     type ReadType<'a> = MaximalUnitigLink;
+    type InitData = ();
 
     type CheckpointData = ();
 
     #[inline(always)]
-    fn new() -> Self {
+    fn new(_: ()) -> Self {
         Self
     }
 

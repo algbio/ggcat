@@ -395,7 +395,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                                     process_superkmers(super_kmers_hashmap, super_kmers_buffer, super_kmers_storage, &mut total_sequences);
                                 }
                             },
-                            thread_handle
+                            thread_handle,
+                            global_params.common.k
                         );
                     }
 
@@ -448,7 +449,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     E::FLAGS_COUNT,
                     NoSecondBucket,
                     WithMultiplicity,
-                >::new();
+                >::new(global_params.common.k);
 
                 stats!(
                     let stat_subbucket_compactions = vec![];

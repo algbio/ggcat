@@ -197,7 +197,7 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
 {
     type SequenceTempBuffer = StructuredUnitigsStorage<ColorInfo>;
 
-    fn alloc_temp_buffer() -> Self::SequenceTempBuffer {
+    fn alloc_temp_buffer(_: usize) -> Self::SequenceTempBuffer {
         StructuredUnitigsStorage::new()
     }
 
@@ -445,7 +445,7 @@ pub fn compute_matchtigs_thread<
         .start_phase(format!("phase: {} building [step2]", phase_name));
 
     let mut output_buffer =
-        FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
+        FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
 
     let mut read_buffer = Vec::new();
 

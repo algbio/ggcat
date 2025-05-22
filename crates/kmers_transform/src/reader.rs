@@ -418,6 +418,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         writer: &CompressedBinaryWriter,
         seq_count: &AtomicU64,
         rewrite_buffer: &mut Vec<u8>,
+        k: usize,
     ) {
         assert_eq!(rewrite_buffer.len(), 0);
 
@@ -426,7 +427,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,
             BucketMode,
             MultiplicityMode,
-        >::new();
+        >::new(k);
 
         for (flags, extra, bases, multiplicity) in input_buffer.reads.iter() {
             // sequences_count[input_packet.sub_bucket] += 1;
@@ -465,7 +466,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
     #[instrumenter::track]
     async fn read_bucket<const WITH_SECOND_BUCKET: bool, const WITH_MULTIPLICITY: bool>(
-        _global_context: &KmersTransformContext<F>,
+        global_context: &KmersTransformContext<F>,
         ops: &ExecutorAddressOperations<'_, Self>,
         bucket_info: &BucketsInfo,
         async_reader_thread: Arc<AsyncReaderThread>,
@@ -587,13 +588,15 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                                         writer,
                                         seq_count,
                                         &mut rewrite_buffer,
+                                        global_context.k,
                                     );
                                 }
                             }
                         }
                         F::AssociatedExtraData::clear_temp_buffer(extra_buffer);
                     },
-                    thread_handle
+                    thread_handle,
+                    global_context.k
                 );
             }
         }
@@ -615,7 +618,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                             BucketModeFromBoolean<WITH_SECOND_BUCKET>,
                             MultiplicityModeFromBoolean<WITH_MULTIPLICITY>,
                         >(
-                            &mut packet, writer, seq_count, &mut rewrite_buffer
+                            &mut packet,
+                            writer,
+                            seq_count,
+                            &mut rewrite_buffer,
+                            global_context.k,
                         );
                     }
                 }

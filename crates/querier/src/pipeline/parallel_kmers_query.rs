@@ -207,6 +207,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
             counters_tmp: BucketsThreadDispatcher::new(
                 &global_data.counters_buckets,
                 counters_buffers,
+                (),
             ),
             query_map: HashMap::new(),
             _phantom: PhantomData,

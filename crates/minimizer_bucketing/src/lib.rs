@@ -265,6 +265,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
         >::new(
             &context.buckets,
             BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, context.buckets.count()),
+            context.common.k,
         );
 
         // self.mem_tracker.update_memory_usage(&[

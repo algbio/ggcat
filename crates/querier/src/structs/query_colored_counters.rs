@@ -42,10 +42,11 @@ impl BucketItemSerializer for QueryColoredCountersSerializer {
     type ReadBuffer = (Vec<QueryColorDesc>, Vec<ColorIndexType>);
     type ExtraDataBuffer = ();
     type ReadType<'b> = QueryColoredCounters<'b>;
+    type InitData = ();
 
     type CheckpointData = ();
 
-    fn new() -> Self {
+    fn new(_: ()) -> Self {
         Self
     }
 

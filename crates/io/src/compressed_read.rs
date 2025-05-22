@@ -1,8 +1,9 @@
-use crate::varint::encode_varint_flags;
+use crate::varint::{decode_varint_flags, encode_varint_flags};
+use byteorder::ReadBytesExt;
 use core::fmt::{Debug, Formatter};
 use hashes::HashableSequence;
 use std::hash::Hash;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -155,10 +156,11 @@ impl<'a> CompressedRead<'a> {
         buffer: &mut Vec<u8>,
         flags: u8,
         rc: bool,
+        min_size: usize,
     ) {
         encode_varint_flags::<_, _, FLAGS_COUNT>(
             |b| buffer.extend_from_slice(b),
-            seq.len() as u64,
+            (seq.len() - min_size) as u64,
             flags,
         );
         if rc {
@@ -191,15 +193,42 @@ impl<'a> CompressedRead<'a> {
         seq: &'a [u8],
         stream: &mut W,
         flags: u8,
+        min_size: usize,
     ) {
         encode_varint_flags::<_, _, FLAGS_COUNT>(
             |b| stream.write(b).unwrap(),
-            seq.len() as u64,
+            (seq.len() - min_size) as u64,
             flags,
         );
         Self::compress_from_plain(seq, |b| {
             stream.write(b).unwrap();
         });
+    }
+
+    #[inline(always)]
+    #[allow(non_camel_case_types)]
+    pub fn read_from_stream<S: Read, FLAGS_COUNT: typenum::Unsigned>(
+        temp_buffer: &'a mut Vec<u8>,
+        stream: &mut S,
+        min_size: usize,
+    ) -> Option<(Self, u8)> {
+        let (size, flags) = decode_varint_flags::<_, FLAGS_COUNT>(|| stream.read_u8().ok())?;
+
+        let size = size as usize + min_size;
+
+        let bytes = (size + 3) / 4;
+        temp_buffer.reserve(bytes);
+        let buffer_start = temp_buffer.len();
+        unsafe {
+            temp_buffer.set_len(buffer_start + bytes);
+        }
+
+        stream.read_exact(&mut temp_buffer[buffer_start..]).ok()?;
+
+        Some((
+            CompressedRead::new_from_compressed(&temp_buffer[buffer_start..], size),
+            flags,
+        ))
     }
 
     #[inline(always)]

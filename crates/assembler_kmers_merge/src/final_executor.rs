@@ -54,7 +54,11 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
             BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, global_data.buckets_count);
 
         Self {
-            hashes_tmp: BucketsThreadDispatcher::new(&global_data.hashes_buckets, hashes_buffer),
+            hashes_tmp: BucketsThreadDispatcher::new(
+                &global_data.hashes_buckets,
+                hashes_buffer,
+                (),
+            ),
             forward_seq: Vec::with_capacity(global_data.k),
             backward_seq: Vec::with_capacity(global_data.k),
             unitigs_temp_colors: CX::ColorsMergeManagerType::alloc_unitig_color_structure(),

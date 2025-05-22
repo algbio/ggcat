@@ -105,6 +105,7 @@ pub fn build_maximal_unitigs_links<
                     >::new(
                         &maximal_unitigs_extremities_hashes_buckets,
                         BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count),
+                        (),
                     );
 
                     while maximal_unitigs_reader_step1
@@ -228,6 +229,7 @@ pub fn build_maximal_unitigs_links<
                                     );
                                 }
                             },
+                            k,
                         )
                         .is_some()
                     {
@@ -275,6 +277,7 @@ pub fn build_maximal_unitigs_links<
             let mut links_tmp = BucketsThreadDispatcher::<_, MaximalUnitigLinkSerializer>::new(
                 &maximal_links_buckets,
                 buffers.take(),
+                (),
             );
 
             let mut hashes_vec = Vec::new();
@@ -293,6 +296,7 @@ pub fn build_maximal_unitigs_links<
                 |h, _| {
                     hashes_vec.push(h);
                 },
+                (),
             );
 
             fast_smart_radix_sort::<_, MaximalHashCompare<MH>, false>(&mut hashes_vec[..]);
@@ -371,6 +375,7 @@ pub fn build_maximal_unitigs_links<
                         out_file,
                         DEFAULT_OUTPUT_BUFFER_SIZE,
                         false,
+                        k,
                     );
 
                     let mut temp_sequence_buffer = Vec::new();
@@ -429,6 +434,7 @@ pub fn build_maximal_unitigs_links<
                                     _abundance,
                                 );
                             },
+                            k,
                         )
                         .is_some()
                     {

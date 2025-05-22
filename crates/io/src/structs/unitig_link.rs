@@ -274,11 +274,12 @@ impl BucketItemSerializer for UnitigLinkSerializer {
     type ReadBuffer = Vec<UnitigIndex>;
     type ExtraDataBuffer = ();
     type ReadType<'a> = UnitigLink;
+    type InitData = ();
 
     type CheckpointData = ();
 
     #[inline(always)]
-    fn new() -> Self {
+    fn new(_: ()) -> Self {
         Self
     }
 

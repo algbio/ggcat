@@ -168,6 +168,7 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
                             }
                         }
                     },
+                    (),
                 );
 
                 let bucket_index = input.index;

@@ -176,10 +176,10 @@ impl<
         >,
     );
 
-    fn alloc_temp_buffer() -> Self::SequenceTempBuffer {
+    fn alloc_temp_buffer(k: usize) -> Self::SequenceTempBuffer {
         (
             Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes()),
-            CompressedReadsBucketDataSerializer::new(),
+            CompressedReadsBucketDataSerializer::new(k),
         )
     }
 

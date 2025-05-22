@@ -97,7 +97,7 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
 {
     type SequenceTempBuffer = Vec<u8>;
 
-    fn alloc_temp_buffer() -> Self::SequenceTempBuffer {
+    fn alloc_temp_buffer(_: usize) -> Self::SequenceTempBuffer {
         Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes())
     }
 

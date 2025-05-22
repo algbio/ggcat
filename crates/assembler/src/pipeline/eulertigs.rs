@@ -443,6 +443,7 @@ pub fn build_eulertigs<
                                 ));
                             }
                         },
+                        k,
                     )
                     .is_some()
                 {
@@ -529,7 +530,7 @@ pub fn build_eulertigs<
                 let mut final_color_extra_buffer =
                     color_types::PartialUnitigsColorStructure::<CX>::new_temp_buffer();
                 let mut writer =
-                    FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
+                    FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
 
                 while flat_unitigs_reader
                     .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
@@ -647,6 +648,7 @@ pub fn build_eulertigs<
                                 _abundance,
                             );
                         },
+                        k,
                     )
                     .is_some()
                 {
@@ -655,7 +657,8 @@ pub fn build_eulertigs<
             });
     });
 
-    let mut writer = FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
+    let mut writer =
+        FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
 
     // Write all not used circular kmers
     let mut seq_buffer = vec![];

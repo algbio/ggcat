@@ -72,7 +72,7 @@ pub fn build_unitigs<
             .enumerate()
             .for_each(|(_index, (read_file, unitigs_map_file))| {
                 let mut tmp_final_unitigs_buffer =
-                    FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
+                    FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
 
                 let mut tmp_final_circular_unitigs_buffer =
                     circular_out_file.map(|circular_out_file| {
@@ -80,6 +80,7 @@ pub fn build_unitigs<
                             circular_out_file,
                             DEFAULT_OUTPUT_BUFFER_SIZE,
                             true,
+                            k,
                         )
                     });
 
@@ -100,7 +101,7 @@ pub fn build_unitigs<
                 let mut unitigs_hashmap = HashMap::new();
                 let mut unitigs_tmp_vec = Vec::new();
 
-                let mut deserializer = UnitigLinkSerializer::new();
+                let mut deserializer = UnitigLinkSerializer::new(());
 
                 let mut counter: usize = 0;
                 while let Some(link) =
@@ -191,6 +192,7 @@ pub fn build_unitigs<
                             index.counters,
                         ));
                     },
+                    k,
                 );
 
                 let mut temp_sequence = Vec::new();

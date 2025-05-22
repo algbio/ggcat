@@ -172,6 +172,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
         >::new(
             &resplit_info.buckets,
             BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, resplit_info.buckets.count()),
+            global_context.k,
         );
 
         let mut local_counters = vec![0u8; buckets_count];

@@ -189,7 +189,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             temp_buffer: Vec::with_capacity(256),
             bucket_index: index as BucketIndexType,
             _phantom: PhantomData,
-            serializer: BucketItemSerializer::new(),
+            serializer: BucketItemSerializer::new(k),
         };
         sequences.push(SingleBucket {
             index,
