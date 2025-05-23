@@ -1,6 +1,6 @@
 use crate::compressed_read::CompressedRead;
 use crate::varint::{
-    decode_varint, encode_varint, encode_varint_flags, VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE,
+    VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, decode_varint, encode_varint, encode_varint_flags,
 };
 use byteorder::ReadBytesExt;
 use config::{BucketIndexType, MultiplicityCounterType};
@@ -22,23 +22,40 @@ enum ReadData<'a> {
 pub struct CompressedReadsBucketData<'a> {
     read: ReadData<'a>,
     multiplicity: MultiplicityCounterType,
+    minimizer_pos: u16,
     extra_bucket: u8,
     flags: u8,
+    is_window_duplicate: bool,
 }
 
 impl<'a> CompressedReadsBucketData<'a> {
     #[inline(always)]
-    pub fn new(read: &'a [u8], flags: u8, extra_bucket: u8) -> Self {
+    pub fn new(
+        read: &'a [u8],
+        flags: u8,
+        extra_bucket: u8,
+        minimizer_pos: u16,
+        is_window_duplicate: bool,
+    ) -> Self {
         Self {
             read: ReadData::Plain(read),
             extra_bucket,
-            flags,
             multiplicity: 1,
+            minimizer_pos,
+            flags,
+            is_window_duplicate,
         }
     }
 
     #[inline(always)]
-    pub fn new_plain_opt_rc(read: &'a [u8], flags: u8, extra_bucket: u8, rc: bool) -> Self {
+    pub fn new_plain_opt_rc(
+        read: &'a [u8],
+        flags: u8,
+        extra_bucket: u8,
+        rc: bool,
+        minimizer_pos: u16,
+        is_window_duplicate: bool,
+    ) -> Self {
         Self {
             read: if rc {
                 ReadData::PlainRc(read)
@@ -48,6 +65,8 @@ impl<'a> CompressedReadsBucketData<'a> {
             extra_bucket,
             flags,
             multiplicity: 1,
+            minimizer_pos,
+            is_window_duplicate,
         }
     }
 
@@ -57,22 +76,34 @@ impl<'a> CompressedReadsBucketData<'a> {
         flags: u8,
         extra_bucket: u8,
         multiplicity: MultiplicityCounterType,
+        minimizer_pos: u16,
+        is_window_duplicate: bool,
     ) -> Self {
         Self {
             read: ReadData::Plain(read),
             extra_bucket,
             flags,
             multiplicity,
+            minimizer_pos,
+            is_window_duplicate,
         }
     }
 
     #[inline(always)]
-    pub fn new_packed(read: CompressedRead<'a>, flags: u8, extra_bucket: u8) -> Self {
+    pub fn new_packed(
+        read: CompressedRead<'a>,
+        flags: u8,
+        extra_bucket: u8,
+        minimizer_pos: u16,
+        is_window_duplicate: bool,
+    ) -> Self {
         Self {
             read: ReadData::Packed(read),
             flags,
             extra_bucket,
             multiplicity: 1,
+            minimizer_pos,
+            is_window_duplicate,
         }
     }
 
@@ -82,12 +113,16 @@ impl<'a> CompressedReadsBucketData<'a> {
         flags: u8,
         extra_bucket: u8,
         multiplicity: MultiplicityCounterType,
+        minimizer_pos: u16,
+        is_window_duplicate: bool,
     ) -> Self {
         Self {
             read: ReadData::Packed(read),
             flags,
             extra_bucket,
             multiplicity,
+            minimizer_pos,
+            is_window_duplicate,
         }
     }
 }
@@ -123,6 +158,19 @@ impl MultiplicityModeOption for WithMultiplicity {
     const ENABLED: bool = true;
 }
 
+pub struct NoMinimizerPosition;
+pub struct AssemblerMinimizerPosition;
+
+pub trait MinimizerModeOption {
+    const ENABLED: bool;
+}
+impl MinimizerModeOption for NoMinimizerPosition {
+    const ENABLED: bool = false;
+}
+impl MinimizerModeOption for AssemblerMinimizerPosition {
+    const ENABLED: bool = true;
+}
+
 pub struct MultiplicityModeFromBoolean<const ENABLED: bool>;
 impl<const ENABLED: bool> MultiplicityModeOption for MultiplicityModeFromBoolean<ENABLED> {
     const ENABLED: bool = ENABLED;
@@ -133,10 +181,12 @@ pub struct CompressedReadsBucketDataSerializer<
     FlagsCount: typenum::Unsigned,
     BucketMode: BucketModeOption,
     MultiplicityMode: MultiplicityModeOption,
+    MinimizerMode: MinimizerModeOption,
 > {
     min_size: usize,
     last_data: E::LastData,
-    _phantom: PhantomData<(FlagsCount, BucketMode, MultiplicityMode)>,
+    min_size_log: u8,
+    _phantom: PhantomData<(FlagsCount, BucketMode, MultiplicityMode, MinimizerMode)>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -145,20 +195,37 @@ pub struct ReadsCheckpointData {
     pub sequences_count: usize,
 }
 
+pub struct DeserializedRead<'a, E> {
+    pub read: CompressedRead<'a>,
+    pub extra: E,
+    pub multiplicity: MultiplicityCounterType,
+    pub flags: u8,
+    pub second_bucket: u8,
+    pub minimizer_pos: u16,
+    pub is_window_duplicate: bool,
+}
+
 impl<
-        'a,
-        E: SequenceExtraDataConsecutiveCompression,
-        FlagsCount: typenum::Unsigned,
-        BucketMode: BucketModeOption,
-        MultiplicityMode: MultiplicityModeOption,
-    > BucketItemSerializer
-    for CompressedReadsBucketDataSerializer<E, FlagsCount, BucketMode, MultiplicityMode>
+    'a,
+    E: SequenceExtraDataConsecutiveCompression,
+    FlagsCount: typenum::Unsigned,
+    BucketMode: BucketModeOption,
+    MultiplicityMode: MultiplicityModeOption,
+    MinimizerMode: MinimizerModeOption,
+> BucketItemSerializer
+    for CompressedReadsBucketDataSerializer<
+        E,
+        FlagsCount,
+        BucketMode,
+        MultiplicityMode,
+        MinimizerMode,
+    >
 {
     type InputElementType<'b> = CompressedReadsBucketData<'b>;
     type ExtraData = E;
     type ReadBuffer = Vec<u8>;
     type ExtraDataBuffer = E::TempBuffer;
-    type ReadType<'b> = (u8, u8, E, CompressedRead<'b>, MultiplicityCounterType);
+    type ReadType<'b> = DeserializedRead<'b, E>;
     type InitData = usize;
 
     type CheckpointData = ReadsCheckpointData;
@@ -167,6 +234,7 @@ impl<
     fn new(min_size: Self::InitData) -> Self {
         Self {
             min_size,
+            min_size_log: min_size.next_power_of_two().ilog2() as u8,
             last_data: Default::default(),
             _phantom: PhantomData,
         }
@@ -199,21 +267,32 @@ impl<
         match element.read {
             ReadData::Plain(read) | ReadData::PlainRc(read) => {
                 let is_rc = matches!(element.read, ReadData::PlainRc(_));
-                CompressedRead::from_plain_write_directly_to_buffer_with_flags::<FlagsCount>(
+                CompressedRead::from_plain_write_directly_to_buffer_with_flags::<
+                    MinimizerMode,
+                    FlagsCount,
+                >(
                     read,
                     bucket,
+                    self.min_size,
+                    element.minimizer_pos,
+                    self.min_size_log,
                     element.flags,
                     is_rc,
-                    self.min_size,
+                    element.is_window_duplicate,
                 );
             }
             ReadData::Packed(read) | ReadData::PackedRc(read) => {
                 let is_rc = matches!(element.read, ReadData::PackedRc(_));
-                encode_varint_flags::<_, _, FlagsCount>(
-                    |b| bucket.extend_from_slice(b),
-                    (read.size - self.min_size) as u64,
+                CompressedRead::encode_length::<MinimizerMode, FlagsCount>(
+                    bucket,
+                    read.size,
+                    self.min_size,
+                    element.minimizer_pos,
+                    self.min_size_log,
                     element.flags,
+                    element.is_window_duplicate,
                 );
+
                 if is_rc {
                     read.copy_to_buffer_rc(bucket);
                 } else {
@@ -246,19 +325,24 @@ impl<
         self.last_data = extra.obtain_last_data(self.last_data);
 
         read_buffer.clear();
-        let (read, flags) = CompressedRead::read_from_stream::<_, FlagsCount>(
-            read_buffer,
-            &mut stream,
-            self.min_size,
-        )?;
+        let (read, minimizer_pos, flags, is_window_duplicate) =
+            CompressedRead::read_from_stream::<_, MinimizerMode, FlagsCount>(
+                read_buffer,
+                &mut stream,
+                self.min_size,
+                self.min_size_log,
+            )?;
 
-        Some((
+        Some(DeserializedRead {
+            read,
+            extra,
+            multiplicity: multiplicity as MultiplicityCounterType,
             flags,
             second_bucket,
-            extra,
-            read,
-            multiplicity as MultiplicityCounterType,
-        ))
+
+            minimizer_pos,
+            is_window_duplicate,
+        })
     }
 
     #[inline(always)]
@@ -286,7 +370,7 @@ pub mod helpers {
     #[macro_export]
     macro_rules! creads_helper {
         (
-            helper_read_bucket_with_opt_multiplicity::<$E:ty, $FlagsCount:ty, $BucketMode:ty>(
+            helper_read_bucket_with_opt_multiplicity::<$E:ty, $FlagsCount:ty, $BucketMode:ty, $MinimizerMode:ty>(
                 $reader:expr,
                 $read_thread:expr,
                 $with_multiplicity:expr,
@@ -316,6 +400,7 @@ pub mod helpers {
                         $FlagsCount,
                         NoSecondBucket,
                         WithMultiplicity,
+                        $MinimizerMode,
                     >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle, $k);
                 while let Some(checkpoint) = items.get_next_checkpoint_extended() {
                     match checkpoint {
@@ -343,6 +428,7 @@ pub mod helpers {
                         $FlagsCount,
                         $BucketMode,
                         NoMultiplicity,
+                        $MinimizerMode,
                     >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle, $k);
                 while let Some(checkpoint) = items.get_next_checkpoint_extended() {
                     match checkpoint {

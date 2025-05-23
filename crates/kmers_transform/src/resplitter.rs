@@ -1,30 +1,30 @@
 use crate::reader::{InputBucketDesc, KmersTransformReader};
-use crate::reads_buffer::ReadsBuffer;
+use crate::reads_buffer::{DeserializedReadIndependent, ReadsBuffer};
 use crate::{KmersTransformContext, KmersTransformExecutorFactory};
 use config::{
-    get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
-    DEFAULT_PER_CPU_BUFFER_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_RESPLIT_BUCKETS_COUNT_LOG,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DONE_RESPLIT, PRIORITY_SCHEDULING_HIGH,
-    USE_SECOND_BUCKET, WORKERS_PRIORITY_HIGH,
+    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, MAX_RESPLIT_BUCKETS_COUNT_LOG,
+    MAXIMUM_JIT_PROCESSED_BUCKETS, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    PACKETS_PRIORITY_DONE_RESPLIT, PRIORITY_SCHEDULING_HIGH, SwapPriority, USE_SECOND_BUCKET,
+    WORKERS_PRIORITY_HIGH, get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats;
 use ggcat_logging::stats::StatId;
 use hashes::HashableSequence;
 use instrumenter::local_setup_instrumenter;
-use io::concurrent::temp_reads::creads_utils::{BucketModeFromBoolean, BucketModeOption};
 use io::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMultiplicity,
-    WithMultiplicity,
+    AssemblerMinimizerPosition, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+    NoMultiplicity, WithMultiplicity,
 };
+use io::concurrent::temp_reads::creads_utils::{BucketModeFromBoolean, BucketModeOption};
 use io::concurrent::temp_reads::creads_utils::{MultiplicityModeOption, NoSecondBucket};
 use minimizer_bucketing::counters_analyzer::BucketCounter;
 use minimizer_bucketing::{
     MinimizerBucketMode, MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory,
     PushSequenceInfo,
 };
+use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::execution_manager::executor::{
     AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
 };
@@ -38,8 +38,8 @@ use std::cmp::{max, min};
 use std::future::Future;
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use utils::track;
 
 local_setup_instrumenter!();
@@ -169,6 +169,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                 <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,
                 BucketMode, // This is always zero but it is needed to preserve consistency
                 MultiplicityMode,
+                AssemblerMinimizerPosition,
             >,
         >::new(
             &resplit_info.buckets,
@@ -190,11 +191,19 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
 
             let mut preprocess_info = Default::default();
 
-            for (flags, extra, bases, multiplicity) in input_packet.reads.iter() {
-                let sequence = bases.as_reference(&input_packet.reads_buffer);
+            for DeserializedReadIndependent {
+                read,
+                extra,
+                multiplicity,
+                flags,
+                minimizer_pos: _,
+                is_window_duplicate: _,
+            } in input_packet.reads.iter()
+            {
+                let sequence = read.as_reference(&input_packet.reads_buffer);
                 resplitter.reprocess_sequence(
                     flags,
-                    extra,
+                    &extra,
                     &input_packet.extra_buffer,
                     &mut preprocess_info,
                 );
@@ -210,12 +219,14 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                     |info| {
                         let PushSequenceInfo {
                             bucket,
-                            second_bucket,
+                            second_bucket: _,
                             sequence,
                             extra_data,
                             temp_buffer,
+                            minimizer_pos,
                             flags,
                             rc,
+                            is_window_duplicate,
                         } = info;
 
                         // rc should always be false for resplitting, as all the k-mers already have a fixed orientation
@@ -239,6 +250,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                                 flags,
                                 0,
                                 multiplicity,
+                                minimizer_pos,
+                                is_window_duplicate,
                             ),
                         );
                     },

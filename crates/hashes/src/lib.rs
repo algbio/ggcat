@@ -13,8 +13,8 @@ pub mod rolling;
 use std::fmt::{Debug, Display};
 use std::hash::{BuildHasher, Hash};
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use config::BucketIndexType;
 
@@ -42,20 +42,20 @@ pub trait UnextendableHashTraitType:
 }
 
 impl<
-        T: Copy
-            + Clone
-            + Debug
-            + Default
-            + Display
-            + Eq
-            + Ord
-            + Hash
-            + Send
-            + Sync
-            + Serialize
-            + DeserializeOwned
-            + 'static,
-    > UnextendableHashTraitType for T
+    T: Copy
+        + Clone
+        + Debug
+        + Default
+        + Display
+        + Eq
+        + Ord
+        + Hash
+        + Send
+        + Sync
+        + Serialize
+        + DeserializeOwned
+        + 'static,
+> UnextendableHashTraitType for T
 {
 }
 
@@ -148,7 +148,7 @@ impl HashableSequence for &[u8] {
     const IS_COMPRESSED: bool = false;
     #[inline(always)]
     unsafe fn get_unchecked_cbase(&self, index: usize) -> u8 {
-        *self.get_unchecked(index)
+        unsafe { *self.get_unchecked(index) }
     }
 
     #[inline(always)]

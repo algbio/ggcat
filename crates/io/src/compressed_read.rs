@@ -1,9 +1,10 @@
+use crate::concurrent::temp_reads::creads_utils::MinimizerModeOption;
 use crate::varint::{decode_varint_flags, encode_varint_flags};
 use byteorder::ReadBytesExt;
 use core::fmt::{Debug, Formatter};
 use hashes::HashableSequence;
 use std::hash::Hash;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -149,19 +150,78 @@ impl CompressedReadIndipendent {
 }
 
 impl<'a> CompressedRead<'a> {
+    const WINDOW_DUPLICATE_SENTINEL: u64 = u64::MAX >> 16;
+
     #[inline(always)]
-    #[allow(non_camel_case_types)]
-    pub fn from_plain_write_directly_to_buffer_with_flags<FLAGS_COUNT: typenum::Unsigned>(
+    pub fn encode_length<MinimizerMode: MinimizerModeOption, FlagsCount: typenum::Unsigned>(
+        buffer: &mut Vec<u8>,
+        length: usize,
+        min_size: usize,
+        minimizer_position: u16,
+        min_size_log: u8,
+        flags: u8,
+        is_window_duplicate: bool,
+    ) {
+        let encoded_length = if MinimizerMode::ENABLED {
+            #[cold]
+            fn cold() {}
+
+            if is_window_duplicate {
+                cold();
+                encode_varint_flags::<_, _, FlagsCount>(
+                    |b| buffer.extend_from_slice(b),
+                    Self::WINDOW_DUPLICATE_SENTINEL,
+                    0,
+                )
+            }
+
+            debug_assert!(
+                (minimizer_position as usize) < min_size,
+                "Minimizer: {} >= {}",
+                minimizer_position,
+                min_size
+            );
+            debug_assert!(
+                minimizer_position < (1 << min_size_log),
+                "Minimizer: {} >= {}",
+                minimizer_position,
+                (1 << min_size_log)
+            );
+
+            (((length - min_size) as u64) << min_size_log) | (minimizer_position as u64)
+        } else {
+            (length - min_size) as u64
+        };
+
+        encode_varint_flags::<_, _, FlagsCount>(
+            |b| buffer.extend_from_slice(b),
+            encoded_length,
+            flags,
+        );
+    }
+
+    #[inline(always)]
+    pub fn from_plain_write_directly_to_buffer_with_flags<
+        MinimizerMode: MinimizerModeOption,
+        FlagsCount: typenum::Unsigned,
+    >(
         seq: &'a [u8],
         buffer: &mut Vec<u8>,
+        min_size: usize,
+        minimizer_position: u16,
+        min_size_log: u8,
         flags: u8,
         rc: bool,
-        min_size: usize,
+        is_window_duplicate: bool,
     ) {
-        encode_varint_flags::<_, _, FLAGS_COUNT>(
-            |b| buffer.extend_from_slice(b),
-            (seq.len() - min_size) as u64,
+        Self::encode_length::<MinimizerMode, FlagsCount>(
+            buffer,
+            seq.len(),
+            min_size,
+            minimizer_position,
+            min_size_log,
             flags,
+            is_window_duplicate,
         );
         if rc {
             Self::compress_from_plain_rc(seq, |b| {
@@ -185,36 +245,40 @@ impl<'a> CompressedRead<'a> {
     }
 
     #[inline(always)]
-    #[allow(non_camel_case_types)]
-    pub fn from_plain_write_directly_to_stream_with_flags<
-        W: Write,
-        FLAGS_COUNT: typenum::Unsigned,
+    pub fn read_from_stream<
+        S: Read,
+        MinimizerMode: MinimizerModeOption,
+        FlagsCount: typenum::Unsigned,
     >(
-        seq: &'a [u8],
-        stream: &mut W,
-        flags: u8,
-        min_size: usize,
-    ) {
-        encode_varint_flags::<_, _, FLAGS_COUNT>(
-            |b| stream.write(b).unwrap(),
-            (seq.len() - min_size) as u64,
-            flags,
-        );
-        Self::compress_from_plain(seq, |b| {
-            stream.write(b).unwrap();
-        });
-    }
-
-    #[inline(always)]
-    #[allow(non_camel_case_types)]
-    pub fn read_from_stream<S: Read, FLAGS_COUNT: typenum::Unsigned>(
         temp_buffer: &'a mut Vec<u8>,
         stream: &mut S,
         min_size: usize,
-    ) -> Option<(Self, u8)> {
-        let (size, flags) = decode_varint_flags::<_, FLAGS_COUNT>(|| stream.read_u8().ok())?;
+        min_size_log: u8,
+    ) -> Option<(Self, u16, u8, bool)> {
+        let (mut encoded_size, mut flags) =
+            decode_varint_flags::<_, FlagsCount>(|| stream.read_u8().ok())?;
 
-        let size = size as usize + min_size;
+        let (size, minimizer_pos, is_window_duplicate) = if MinimizerMode::ENABLED {
+            #[cold]
+            fn cold() {}
+
+            let is_window_duplicate = encoded_size == Self::WINDOW_DUPLICATE_SENTINEL;
+            if is_window_duplicate {
+                cold();
+                (encoded_size, flags) =
+                    decode_varint_flags::<_, FlagsCount>(|| stream.read_u8().ok())?;
+            }
+
+            let size = encoded_size >> min_size_log;
+            let minimizer_pos = size & ((1 << min_size_log) - 1);
+            (
+                size as usize + min_size,
+                minimizer_pos as u16,
+                is_window_duplicate,
+            )
+        } else {
+            (encoded_size as usize + min_size, 0, false)
+        };
 
         let bytes = (size + 3) / 4;
         temp_buffer.reserve(bytes);
@@ -227,7 +291,9 @@ impl<'a> CompressedRead<'a> {
 
         Some((
             CompressedRead::new_from_compressed(&temp_buffer[buffer_start..], size),
+            minimizer_pos,
             flags,
+            is_window_duplicate,
         ))
     }
 
@@ -399,7 +465,7 @@ impl<'a> CompressedRead<'a> {
     #[inline(always)]
     pub unsafe fn get_base_unchecked(&self, index: usize) -> u8 {
         let index = index + self.start as usize;
-        (*self.data.add(index / 4) >> ((index % 4) * 2)) & 0x3
+        unsafe { (*self.data.add(index / 4) >> ((index % 4) * 2)) & 0x3 }
     }
 
     pub fn write_unpacked_to_vec(&self, vec: &mut Vec<u8>, rc: bool) {
@@ -480,7 +546,7 @@ impl<'a> HashableSequence for CompressedRead<'a> {
     const IS_COMPRESSED: bool = true;
     #[inline(always)]
     unsafe fn get_unchecked_cbase(&self, index: usize) -> u8 {
-        self.get_base_unchecked(index)
+        unsafe { self.get_base_unchecked(index) }
     }
 
     #[inline(always)]

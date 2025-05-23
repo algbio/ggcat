@@ -1,18 +1,19 @@
 use assembler_kmers_merge::structs::PartialUnitigExtraData;
 use config::{
-    get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
-    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    SwapPriority, get_compression_level_info, get_memory_mode,
 };
 use hashes::{HashFunctionFactory, HashableSequence};
 use io::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMultiplicity, NoSecondBucket,
+    CompressedReadsBucketData, CompressedReadsBucketDataSerializer, DeserializedRead,
+    NoMinimizerPosition, NoMultiplicity, NoSecondBucket,
 };
 #[cfg(feature = "support_kmer_counters")]
 use structs::unitigs_counters::UnitigsCounters;
 
 use crate::structs::link_mapping::{LinkMapping, LinkMappingSerializer};
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
-use colors::colors_manager::{color_types, ColorsManager};
+use colors::colors_manager::{ColorsManager, color_types};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
@@ -22,12 +23,12 @@ use io::concurrent::temp_reads::extra_data::{
 };
 use io::structs::unitig_link::UnitigIndex;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
+use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
-use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
-use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
@@ -36,8 +37,8 @@ use rayon::iter::ParallelIterator;
 use std::io::{Read, Write};
 use std::mem::transmute;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 #[cfg(feature = "support_kmer_counters")]
 use io::concurrent::structured_sequences::SequenceAbundance;
@@ -199,6 +200,7 @@ pub fn reorganize_reads<
                 typenum::U0,
                 NoSecondBucket,
                 NoMultiplicity,
+                NoMinimizerPosition,
             >,
         >::new(&buckets, buffers.take(), k);
         let mut tmp_lonely_unitigs_buffer =
@@ -252,16 +254,17 @@ pub fn reorganize_reads<
             typenum::U0,
             NoSecondBucket,
             NoMultiplicity,
+            NoMinimizerPosition,
         >, _>(
             Vec::new(),
             &mut colors_buffer,
-            |(_, _, extra_data, seq, _), color_buffer| {
-                if seq.bases_count() > decompress_buffer.len() {
-                    decompress_buffer.resize(seq.bases_count(), 0);
+            |DeserializedRead { read, extra, .. }, color_buffer| {
+                if read.bases_count() > decompress_buffer.len() {
+                    decompress_buffer.resize(read.bases_count(), 0);
                 }
-                seq.write_unpacked_to_slice(&mut decompress_buffer[..seq.bases_count()]);
+                read.write_unpacked_to_slice(&mut decompress_buffer[..read.bases_count()]);
 
-                let seq = &decompress_buffer[..seq.bases_count()];
+                let read = &decompress_buffer[..read.bases_count()];
 
                 if map_index < mappings.len() && mappings[map_index].entry == index {
                     // Mapping found
@@ -269,26 +272,26 @@ pub fn reorganize_reads<
                         mappings[map_index].bucket,
                         &ReorganizedReadsExtraData {
                             unitig: UnitigIndex::new(bucket_index, index as usize, false),
-                            colors: extra_data.colors,
+                            colors: extra.colors,
                             #[cfg(feature = "support_kmer_counters")]
                             counters: extra_data.counters,
                         },
                         ReorganizedReadsBuffer::from_inner(color_buffer),
-                        &CompressedReadsBucketData::new(seq, 0, 0),
+                        &CompressedReadsBucketData::new(read, 0, 0, 0, false),
                     );
                     map_index += 1;
                 } else {
                     // Loop to allow skipping code parts with break
                     'skip_writing: loop {
-                        let first_kmer_node = &seq[0..k - 1];
-                        let last_kmer_node = &seq[seq.len() - k + 1..];
+                        let first_kmer_node = &read[0..k - 1];
+                        let last_kmer_node = &read[read.len() - k + 1..];
                         if let Some(circular_unitigs_buffer) = &mut tmp_circular_unitigs_buffer {
                             // Check if unitig is circular
                             if first_kmer_node == last_kmer_node {
                                 circular_unitigs_buffer.add_read(
-                                    seq,
+                                    read,
                                     None,
-                                    extra_data.colors,
+                                    extra.colors,
                                     color_buffer,
                                     (),
                                     &(),
@@ -305,9 +308,9 @@ pub fn reorganize_reads<
 
                         // No mapping, write unitig to file
                         tmp_lonely_unitigs_buffer.add_read(
-                            seq,
+                            read,
                             None,
-                            extra_data.colors,
+                            extra.colors,
                             color_buffer,
                             (),
                             &(),
@@ -326,7 +329,7 @@ pub fn reorganize_reads<
                     //     &mut tmp_lonely_unitigs_buffer,
                     //     color,
                     //     color_buffer,
-                    //     seq,
+                    //     read,
                     //     0,
                     // );
                 }

@@ -32,7 +32,7 @@ impl<T> VecSlice<T> {
         self.len
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = usize> {
+    pub fn iter(&self) -> impl Iterator<Item = usize> + use<T> {
         (self.pos..self.pos + self.len).into_iter()
     }
 

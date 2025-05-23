@@ -22,7 +22,7 @@ use io::concurrent::temp_reads::extra_data::{
 };
 use io::varint::{decode_varint, encode_varint};
 use kmers_transform::processor::KmersTransformProcessor;
-use kmers_transform::reads_buffer::ReadsVector;
+use kmers_transform::reads_buffer::{DeserializedReadIndependent, ReadsVector};
 use kmers_transform::{
     GroupProcessStats, KmersTransform, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
     KmersTransformGlobalExtraData, KmersTransformMapProcessor,
@@ -302,7 +302,12 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
 
         let mut kmers_count = 0;
 
-        for (_, sequence_type, read, _) in batch.iter() {
+        for DeserializedReadIndependent {
+            read,
+            extra: sequence_type,
+            ..
+        } in batch.iter()
+        {
             let hashes = MH::new(read.as_reference(ref_sequences), k);
 
             kmers_count += (read.bases_count() - k + 1) as u64;

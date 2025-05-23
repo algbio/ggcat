@@ -1,6 +1,7 @@
 use config::BucketIndexType;
 use io::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMultiplicity, NoSecondBucket,
+    CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMinimizerPosition,
+    NoMultiplicity, NoSecondBucket,
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
@@ -23,6 +24,7 @@ pub struct ResultsBucket<X: SequenceExtraDataConsecutiveCompression> {
         typenum::U0,
         NoSecondBucket,
         NoMultiplicity,
+        NoMinimizerPosition,
     >,
     pub _phantom: PhantomData<X>,
 }
@@ -115,7 +117,7 @@ impl<X: SequenceExtraDataConsecutiveCompression> ResultsBucket<X> {
     ) -> u64 {
         self.temp_buffer.clear();
         self.serializer.write_to(
-            &CompressedReadsBucketData::new(read, 0, 0),
+            &CompressedReadsBucketData::new(read, 0, 0, 0, false),
             &mut self.temp_buffer,
             &el,
             extra_buffer,

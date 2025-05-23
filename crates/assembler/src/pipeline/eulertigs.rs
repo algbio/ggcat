@@ -1,12 +1,15 @@
-use colors::colors_manager::{color_types, ColorsManager};
-use colors::colors_manager::{color_types::PartialUnitigsColorStructure, ColorsMergeManager};
+use colors::colors_manager::{ColorsManager, color_types};
+use colors::colors_manager::{ColorsMergeManager, color_types::PartialUnitigsColorStructure};
 use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
 use dashmap::DashMap;
 use hashes::HashFunctionFactory;
 use hashes::{ExtendableHashTraitType, HashFunction, HashableSequence};
 use io::compressed_read::CompressedReadIndipendent;
+use io::concurrent::structured_sequences::binary::SequenceDataWithAbundance;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
-use io::concurrent::temp_reads::creads_utils::{NoMultiplicity, NoSecondBucket};
+use io::concurrent::temp_reads::creads_utils::{
+    DeserializedRead, NoMinimizerPosition, NoMultiplicity, NoSecondBucket,
+};
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::concurrent::{
     structured_sequences::{
@@ -389,27 +392,16 @@ pub fn build_eulertigs<
                         typenum::consts::U0,
                         NoSecondBucket,
                         NoMultiplicity,
+                        NoMinimizerPosition,
                     >, _>(
                         Vec::new(),
-                        <(
-                            u64,
-                            PartialUnitigsColorStructure<CX>,
-                            (),
-                            SequenceAbundanceType,
-                        )>::new_temp_buffer(),
+                        SequenceDataWithAbundance::<PartialUnitigsColorStructure<CX>, ()>::new_temp_buffer(),
                         AllowedCheckpointStrategy::DecompressOnly,
-                        |(_, _, (_index, mut color, _, abundance), read, _): (
-                            _,
-                            _,
-                            (
-                                _,
-                                PartialUnitigsColorStructure<CX>,
-                                (),
-                                SequenceAbundanceType,
-                            ),
-                            _,
-                            _,
-                        ),
+                        |DeserializedRead {
+                             read,
+                             extra: SequenceDataWithAbundance::<_, ()> { index: _, mut color, link: _, abundance },
+                             ..
+                         },
                          colors_extra_buffer,
                          _checkpoint_data| {
                             let unitig_index =
@@ -538,27 +530,12 @@ pub fn build_eulertigs<
                         typenum::consts::U0,
                         NoSecondBucket,
                         NoMultiplicity,
+                        NoMinimizerPosition,
                     >, _>(
                         Vec::new(),
-                        <(
-                            u64,
-                            PartialUnitigsColorStructure<CX>,
-                            (),
-                            SequenceAbundanceType,
-                        )>::new_temp_buffer(),
+                        SequenceDataWithAbundance::<PartialUnitigsColorStructure<CX>, ()>::new_temp_buffer(),
                         AllowedCheckpointStrategy::DecompressOnly,
-                        |(_, _, (_index, color, _, mut _abundance), read, _): (
-                            _,
-                            _,
-                            (
-                                _,
-                                PartialUnitigsColorStructure<CX>,
-                                (),
-                                SequenceAbundanceType,
-                            ),
-                            _,
-                            _,
-                        ),
+                        |DeserializedRead { read, extra: SequenceDataWithAbundance::<_, ()> { color, .. }, .. },
                          color_extra_buffer,
                          _checkpoint_data| {
                             output_unitigs_buffer.clear();

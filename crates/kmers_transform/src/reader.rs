@@ -1,37 +1,37 @@
 use crate::processor::{KmersProcessorInitData, KmersTransformProcessor};
-use crate::reads_buffer::ReadsBuffer;
+use crate::reads_buffer::{DeserializedReadIndependent, ReadsBuffer};
 use crate::resplitter::{KmersTransformResplitter, ResplitterInitData};
 use crate::{
     KmersTransformContext, KmersTransformExecutorFactory, KmersTransformGlobalExtraData,
     KmersTransformMapProcessor,
 };
 use config::{
-    get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_OUTPUT_BUFFER_SIZE,
-    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_INTERMEDIATE_MAP_SIZE,
-    MAX_KMERS_TRANSFORM_READERS_PER_BUCKET, MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
-    PACKETS_PRIORITY_DEFAULT, PACKETS_PRIORITY_REWRITTEN, PARTIAL_VECS_CHECKPOINT_SIZE,
-    PRIORITY_SCHEDULING_BASE, PRIORITY_SCHEDULING_LOW, USE_SECOND_BUCKET, WORKERS_PRIORITY_BASE,
+    DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    MAX_INTERMEDIATE_MAP_SIZE, MAX_KMERS_TRANSFORM_READERS_PER_BUCKET,
+    MAXIMUM_JIT_PROCESSED_BUCKETS, MIN_BUCKET_CHUNKS_FOR_READING_THREAD, PACKETS_PRIORITY_DEFAULT,
+    PACKETS_PRIORITY_REWRITTEN, PARTIAL_VECS_CHECKPOINT_SIZE, PRIORITY_SCHEDULING_BASE,
+    PRIORITY_SCHEDULING_LOW, SwapPriority, USE_SECOND_BUCKET, WORKERS_PRIORITY_BASE,
+    get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats::StatId;
 use ggcat_logging::{generate_stat_id, stats};
 use instrumenter::local_setup_instrumenter;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::creads_utils::{
-    BucketModeFromBoolean, BucketModeOption, CompressedReadsBucketData,
-    CompressedReadsBucketDataSerializer, MultiplicityModeFromBoolean, MultiplicityModeOption,
-    NoSecondBucket,
+    AssemblerMinimizerPosition, BucketModeFromBoolean, BucketModeOption, CompressedReadsBucketData,
+    CompressedReadsBucketDataSerializer, DeserializedRead, MultiplicityModeFromBoolean,
+    MultiplicityModeOption, NoSecondBucket,
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::creads_helper;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
 use minimizer_bucketing::{MinimizerBucketMode, MinimizerBucketingExecutorFactory};
+use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::readers::async_binary_reader::{
     AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
 };
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::execution_manager::executor::{
     AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
 };
@@ -44,13 +44,13 @@ use parallel_processor::mt_debug_counters::counter::{AtomicCounter, SumMode};
 use parallel_processor::mt_debug_counters::declare_counter_i64;
 use parallel_processor::scheduler::{PriorityScheduler, ThreadPriorityHandle};
 use parallel_processor::utils::replace_with_async::replace_with_async;
-use std::cmp::{max, min, Reverse};
+use std::cmp::{Reverse, max, min};
 use std::collections::{BinaryHeap, VecDeque};
 use std::future::Future;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use utils::track;
 
 local_setup_instrumenter!();
@@ -231,8 +231,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
             // Alloc a new bucket
             if (smallest_bucket.2 == is_outlier)
-                && smallest_bucket.0 .0 > 0
-                && (biggest_sub_bucket.0.count + smallest_bucket.0 .0) as f64
+                && smallest_bucket.0.0 > 0
+                && (biggest_sub_bucket.0.count + smallest_bucket.0.0) as f64
                     * unique_estimator_factor
                     > global_context.min_bucket_size as f64
             {
@@ -248,7 +248,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             }
 
             // Assign the sub-bucket to the current smallest bucket
-            smallest_bucket.0 .0 += biggest_sub_bucket.0.count;
+            smallest_bucket.0.0 += biggest_sub_bucket.0.count;
             smallest_bucket.2 |= is_outlier;
             has_outliers |= is_outlier;
             buckets_remapping[biggest_sub_bucket.1] = smallest_bucket.1;
@@ -427,19 +427,30 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,
             BucketMode,
             MultiplicityMode,
+            AssemblerMinimizerPosition,
         >::new(k);
 
-        for (flags, extra, bases, multiplicity) in input_buffer.reads.iter() {
+        for DeserializedReadIndependent {
+            read,
+            extra,
+            multiplicity,
+            flags,
+            minimizer_pos,
+            is_window_duplicate,
+        } in input_buffer.reads.iter()
+        {
             // sequences_count[input_packet.sub_bucket] += 1;
 
             let element_to_write = CompressedReadsBucketData::new_packed_with_multiplicity(
-                bases.as_reference(&input_buffer.reads_buffer),
+                read.as_reference(&input_buffer.reads_buffer),
                 flags,
                 0,
                 multiplicity,
+                minimizer_pos,
+                is_window_duplicate,
             );
 
-            if serializer.get_size(&element_to_write, extra) + rewrite_buffer.len()
+            if serializer.get_size(&element_to_write, &extra) + rewrite_buffer.len()
                 > rewrite_buffer.capacity()
             {
                 writer.write_data(&rewrite_buffer[..]);
@@ -450,7 +461,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             serializer.write_to(
                 &element_to_write,
                 rewrite_buffer,
-                extra,
+                &extra,
                 &input_buffer.extra_buffer,
             );
         }
@@ -508,7 +519,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                 helper_read_bucket_with_opt_multiplicity::<
                     F::AssociatedExtraData,
                     F::FLAGS_COUNT,
-                    BucketModeFromBoolean<USE_SECOND_BUCKET>
+                    BucketModeFromBoolean<USE_SECOND_BUCKET>,
+                    AssemblerMinimizerPosition
                 >(
                     reader,
                     async_reader_thread.clone(),
@@ -533,7 +545,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                     |checkpoint_data| { checkpoint_rewrite_info = checkpoint_data; } ,
                     |read_info, extra_buffer| {
 
-                        let (flags, second_bucket, mut extra_data, read, multiplicity) = read_info;
+                        let DeserializedRead { read, mut extra, multiplicity, flags, second_bucket, minimizer_pos, is_window_duplicate } = read_info;
 
                         let bucket = if has_single_addr {
                             0
@@ -560,15 +572,22 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                             &read,
                             &mut buffers[bucket].reads_buffer,
                         );
-                        extra_data = F::AssociatedExtraData::copy_extra_from(
-                            extra_data,
+                        extra = F::AssociatedExtraData::copy_extra_from(
+                            extra,
                             extra_buffer,
                             &mut buffers[bucket].extra_buffer,
                         );
 
                         buffers[bucket]
                             .reads
-                            .push::<WITH_MULTIPLICITY>(ind_read, extra_data, flags, multiplicity);
+                            .push::<WITH_MULTIPLICITY>(DeserializedReadIndependent {
+                                read: ind_read,
+                                extra,
+                                flags,
+                                multiplicity,
+                                minimizer_pos,
+                                is_window_duplicate
+                            });
 
                         let packets_pool = &packets_pool;
                         if buffers[bucket].reads.len() == buffers[bucket].reads.capacity() {

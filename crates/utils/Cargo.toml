@@ -1,7 +1,7 @@
 [package]
 name = "ggcat_utils"
 version = "2.0.0"
-edition = "2021"
+edition = "2024"
 [dependencies]
 parking_lot = "0.12.3"
 rand = "0.8.5"

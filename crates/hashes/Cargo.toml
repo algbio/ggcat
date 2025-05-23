@@ -1,7 +1,7 @@
 [package]
 name = "ggcat_hashes"
 version = "2.0.0"
-edition = "2021"
+edition = "2024"
 [lib]
 name = "ggcat_hashes"
 

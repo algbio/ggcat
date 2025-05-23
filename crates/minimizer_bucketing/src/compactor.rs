@@ -10,44 +10,37 @@ use std::{
 };
 
 use crate::{
-    queue_data::MinimizerBucketingQueueData, MinimizerBucketMode,
-    MinimizerBucketingExecutionContext, MinimizerBucketingExecutorFactory,
+    MinimizerBucketMode, MinimizerBucketingExecutionContext, MinimizerBucketingExecutorFactory,
+    queue_data::MinimizerBucketingQueueData,
 };
 use colors::non_colored::NonColoredManager;
 use config::{
-    get_compression_level_info, get_memory_mode, BucketIndexType, MultiplicityCounterType,
-    SwapPriority, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
+    BucketIndexType, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
     DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE, DEFAULT_OUTPUT_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAXIMUM_SECOND_BUCKETS_COUNT,
-    MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-    PRIORITY_SCHEDULING_HIGH, USE_SECOND_BUCKET, WORKERS_PRIORITY_HIGH,
+    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
+    MAXIMUM_SECOND_BUCKETS_COUNT, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, MultiplicityCounterType,
+    PRIORITY_SCHEDULING_HIGH, SwapPriority, USE_SECOND_BUCKET, WORKERS_PRIORITY_HIGH,
+    get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats;
-use hashbrown::{hash_table::Entry, HashTable};
-use io::creads_helper;
+use hashbrown::{HashTable, hash_table::Entry};
 use io::{
     compressed_read::CompressedReadIndipendent,
     concurrent::temp_reads::{
         creads_utils::{
-            BucketModeFromBoolean, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
-            NoSecondBucket, ReadsCheckpointData, WithMultiplicity,
+            AssemblerMinimizerPosition, BucketModeFromBoolean, CompressedReadsBucketData,
+            CompressedReadsBucketDataSerializer, NoSecondBucket, ReadsCheckpointData,
+            WithMultiplicity,
         },
         extra_data::SequenceExtraDataTempBufferManagement,
     },
 };
+use io::{concurrent::temp_reads::creads_utils::DeserializedRead, creads_helper};
 use parallel_processor::{
     buckets::{
-        bucket_writer::BucketItemSerializer,
-        readers::async_binary_reader::AllowedCheckpointStrategy,
-    },
-    memory_fs::MemoryFs,
-    scheduler::PriorityScheduler,
-};
-use parallel_processor::{
-    buckets::{
+        LockFreeBucket,
         readers::async_binary_reader::{AsyncBinaryReader, AsyncReaderThread},
         writers::compressed_binary_writer::CompressedBinaryWriter,
-        LockFreeBucket,
     },
     execution_manager::{
         executor::{AsyncExecutor, ExecutorReceiver},
@@ -58,6 +51,14 @@ use parallel_processor::{
         counter::{AtomicCounter, SumMode},
         declare_counter_i64,
     },
+};
+use parallel_processor::{
+    buckets::{
+        bucket_writer::BucketItemSerializer,
+        readers::async_binary_reader::AllowedCheckpointStrategy,
+    },
+    memory_fs::MemoryFs,
+    scheduler::PriorityScheduler,
 };
 use rustc_hash::FxBuildHasher;
 use utils::track;
@@ -132,6 +133,14 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
             // To choose which buckets to compact, first take the uncompacted from the smallest to the largest,
             // then all the compacted from the smallest to the largest so that their size does not exceed 1/1.5 of the size of the non-compacted buckets
 
+            struct SuperKmerEntry {
+                read: CompressedReadIndipendent,
+                multiplicity: MultiplicityCounterType,
+                minimizer_pos: u16,
+                flags: u8,
+                is_window_duplicate: bool,
+            }
+
             // Min 1MB size for compaction
             const MINIMUM_INPUT_SIZE: usize = 1024 * 1024 * 1;
 
@@ -139,15 +148,13 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
             const COMPACT_THRESHOLD_BYTES: usize = 1024 * 1024 * 64;
             const MAX_COMPACTED_IO_RATIO: f64 = 1.5;
 
-            let mut super_kmers_hashmap: Vec<
-                HashTable<(CompressedReadIndipendent, (u8, MultiplicityCounterType))>,
-            > = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+            let mut super_kmers_hashmap: Vec<HashTable<SuperKmerEntry>> = (0
+                ..MAXIMUM_SECOND_BUCKETS_COUNT)
                 .map(|_| HashTable::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
                 .collect();
 
-            let mut super_kmers_buffer: Vec<
-                Vec<(CompressedReadIndipendent, (u8, MultiplicityCounterType))>,
-            > = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+            let mut super_kmers_buffer: Vec<Vec<SuperKmerEntry>> = (0
+                ..MAXIMUM_SECOND_BUCKETS_COUNT)
                 .map(|_| Vec::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
                 .collect();
 
@@ -159,33 +166,38 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 
             // use hashbrown::HashTable;
             fn process_superkmers(
-                super_kmers_hashmap: &mut HashTable<(
-                    CompressedReadIndipendent,
-                    (u8, MultiplicityCounterType),
-                )>,
-                super_kmers_buffer: &mut Vec<(CompressedReadIndipendent, (u8, u32))>,
+                super_kmers_hashmap: &mut HashTable<SuperKmerEntry>,
+                super_kmers_buffer: &mut Vec<SuperKmerEntry>,
                 super_kmers_storage: &mut Vec<u8>,
                 total_sequences: &mut usize,
             ) {
                 debug_assert!(super_kmers_storage.len() > 0);
-                let mut copy_pos = super_kmers_buffer[0].0.buffer_start_index();
+                let mut copy_pos = super_kmers_buffer[0].read.buffer_start_index();
 
-                for (read, (flags, multiplicity)) in super_kmers_buffer.drain(..) {
+                for SuperKmerEntry {
+                    read,
+                    multiplicity,
+                    minimizer_pos,
+                    flags,
+                    is_window_duplicate,
+                } in super_kmers_buffer.drain(..)
+                {
                     let read_hash = compute_hash(super_kmers_storage, &read);
                     let read_slice = read.get_packed_slice_aligned(super_kmers_storage);
 
                     match super_kmers_hashmap.entry(
                         read_hash,
                         |a| {
-                            a.0.bases_count() == read.bases_count()
-                                && a.0.get_packed_slice_aligned(super_kmers_storage) == read_slice
+                            a.read.bases_count() == read.bases_count()
+                                && a.read.get_packed_slice_aligned(super_kmers_storage)
+                                    == read_slice
                         },
-                        |v| compute_hash(super_kmers_storage, &v.0),
+                        |v| compute_hash(super_kmers_storage, &v.read),
                     ) {
                         Entry::Occupied(mut entry) => {
                             // Combine the flags from the two super-kmers
-                            entry.get_mut().1 .0 |= flags;
-                            entry.get_mut().1 .1 += multiplicity;
+                            entry.get_mut().flags |= flags;
+                            entry.get_mut().multiplicity += multiplicity;
                         }
                         Entry::Vacant(position) => {
                             let bytes_count = read_slice.len();
@@ -203,7 +215,13 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             };
                             copy_pos += bytes_count;
 
-                            position.insert((new_read, (flags, multiplicity)));
+                            position.insert(SuperKmerEntry {
+                                read: new_read,
+                                multiplicity,
+                                minimizer_pos,
+                                flags,
+                                is_window_duplicate,
+                            });
                             *total_sequences += 1;
                         }
                     }
@@ -361,7 +379,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                         helper_read_bucket_with_opt_multiplicity::<
                             E::ExtraData,
                             E::FLAGS_COUNT,
-                            BucketModeFromBoolean<USE_SECOND_BUCKET>
+                            BucketModeFromBoolean<USE_SECOND_BUCKET>,
+                            AssemblerMinimizerPosition
                         >(
                             &reader,
                             read_thread.clone(),
@@ -371,7 +390,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             |checkpoint_data| { checkpoint_rewrite_bucket = checkpoint_data.map(|d| d.target_subbucket); } ,
                             |data, _extra_buffer| {
 
-                                let (flags, second_bucket, _extra, read, multiplicity) = data;
+                                let DeserializedRead { read, extra: _, multiplicity, flags, second_bucket, minimizer_pos, is_window_duplicate } = data;
 
                                 let rewrite_bucket = checkpoint_rewrite_bucket.unwrap_or(second_bucket as u16);
 
@@ -388,7 +407,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                                 let super_kmers_storage = &mut super_kmers_storage[rewrite_bucket as usize];
 
                                 let new_read = CompressedReadIndipendent::from_read(&read, super_kmers_storage);
-                                super_kmers_buffer.push((new_read, (flags, multiplicity)));
+                                super_kmers_buffer.push(SuperKmerEntry { read: new_read, multiplicity, minimizer_pos, flags, is_window_duplicate });
 
                                 if super_kmers_buffer.len() == super_kmers_buffer.capacity() {
                                     let super_kmers_hashmap = &mut super_kmers_hashmap[rewrite_bucket as usize];
@@ -449,6 +468,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     E::FLAGS_COUNT,
                     NoSecondBucket,
                     WithMultiplicity,
+                    AssemblerMinimizerPosition,
                 >::new(global_params.common.k);
 
                 stats!(
@@ -488,7 +508,14 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     // );
                     let super_kmers_storage = &mut super_kmers_storage[rewrite_bucket];
 
-                    for (read, (flags, multiplicity)) in super_kmers_hashmap.drain() {
+                    for SuperKmerEntry {
+                        read,
+                        multiplicity,
+                        minimizer_pos,
+                        flags,
+                        is_window_duplicate,
+                    } in super_kmers_hashmap.drain()
+                    {
                         let read = read.as_reference(super_kmers_storage);
                         sequences_deltas[rewrite_bucket as usize] -= 1;
 
@@ -498,6 +525,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                                 flags,
                                 0,
                                 multiplicity,
+                                minimizer_pos,
+                                is_window_duplicate,
                             ),
                             &mut buffer,
                             &empty_extra,
@@ -586,21 +615,23 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     let end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
                 );
 
-                stats!(stats
-                    .assembler
-                    .compact_reports
-                    .push(ggcat_logging::stats::CompactReport {
-                        report_id: generate_stat_id!(),
-                        bucket_index: init_data.bucket_index as usize,
-                        input_files: pop_stats,
-                        output_file: new_path,
-                        start_time: stat_start_time.into(),
-                        end_time: end_time.into(),
-                        subbucket_reports: stat_subbucket_compactions,
-                        input_total_size: input_files_size,
-                        output_total_size: output_files_size,
-                        compression_ratio,
-                    }));
+                stats!(
+                    stats
+                        .assembler
+                        .compact_reports
+                        .push(ggcat_logging::stats::CompactReport {
+                            report_id: generate_stat_id!(),
+                            bucket_index: init_data.bucket_index as usize,
+                            input_files: pop_stats,
+                            output_file: new_path,
+                            start_time: stat_start_time.into(),
+                            end_time: end_time.into(),
+                            subbucket_reports: stat_subbucket_compactions,
+                            input_total_size: input_files_size,
+                            output_total_size: output_files_size,
+                            compression_ratio,
+                        })
+                );
             }
         }
     }

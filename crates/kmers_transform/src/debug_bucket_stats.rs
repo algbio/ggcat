@@ -1,12 +1,12 @@
 use config::{
-    BucketIndexType, MultiplicityCounterType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
-    READ_FLAG_INCL_END, USE_SECOND_BUCKET,
+    BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, READ_FLAG_INCL_END,
+    USE_SECOND_BUCKET,
 };
 use hashes::default::MNHFactory;
 use hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
-use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::{
-    BucketModeFromBoolean, CompressedReadsBucketDataSerializer, NoMultiplicity,
+    AssemblerMinimizerPosition, BucketModeFromBoolean, CompressedReadsBucketDataSerializer,
+    DeserializedRead, NoMultiplicity,
 };
 use parallel_processor::buckets::readers::async_binary_reader::{
     AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
@@ -19,15 +19,14 @@ use std::path::PathBuf;
 fn get_sequence_bucket<C>(
     k: usize,
     m: usize,
-    seq_data: &(u8, u8, C, CompressedRead, MultiplicityCounterType),
+    seq_data: &DeserializedRead<'_, C>,
     used_hash_bits: usize,
     bucket_bits_count: usize,
 ) -> BucketIndexType {
-    let read = &seq_data.3;
-    let flags = seq_data.0;
-    let decr_val = ((read.bases_count() == k) && (flags & READ_FLAG_INCL_END) == 0) as usize;
+    let decr_val =
+        ((seq_data.read.bases_count() == k) && (seq_data.flags & READ_FLAG_INCL_END) == 0) as usize;
 
-    let hashes = MNHFactory::new(read.sub_slice((1 - decr_val)..(k - decr_val)), m);
+    let hashes = MNHFactory::new(seq_data.read.sub_slice((1 - decr_val)..(k - decr_val)), m);
 
     let minimizer = hashes.iter().min_by_key(|k| k.to_unextendable()).unwrap();
 
@@ -69,6 +68,7 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
         typenum::U2,
         BucketModeFromBoolean<USE_SECOND_BUCKET>,
         NoMultiplicity,
+        AssemblerMinimizerPosition,
     >>(
         reader_thread.clone(),
         Vec::new(),
@@ -90,7 +90,7 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
                 second_buckets_log_max,
             ) as usize;
 
-            let hashes = MH::new(read_info.3, k);
+            let hashes = MH::new(read_info.read, k);
 
             for hash in hashes.iter() {
                 total_counters[orig_bucket] += 1;

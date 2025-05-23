@@ -1,7 +1,7 @@
 use crate::pipeline::reorganize_reads::ReorganizedReadsExtraData;
-use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::ColorsMergeManager;
-use colors::colors_manager::{color_types, ColorsManager};
+use colors::colors_manager::color_types::PartialUnitigsColorStructure;
+use colors::colors_manager::{ColorsManager, color_types};
 use config::{BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use hashbrown::HashMap;
 use hashes::{HashFunctionFactory, HashableSequence};
@@ -9,16 +9,17 @@ use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
 use io::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketDataSerializer, NoMultiplicity, NoSecondBucket,
+    CompressedReadsBucketDataSerializer, DeserializedRead, NoMinimizerPosition, NoMultiplicity,
+    NoSecondBucket,
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLinkSerializer};
 use nightly_quirks::slice_group_by::SliceGroupBy;
+use parallel_processor::buckets::SingleBucket;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
+use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
-use parallel_processor::buckets::readers::BucketReader;
-use parallel_processor::buckets::SingleBucket;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::prelude::*;
@@ -40,6 +41,7 @@ type CompressedReadsDataSerializerUnitigsBuilding<CX> = CompressedReadsBucketDat
     typenum::U0,
     NoSecondBucket,
     NoMultiplicity,
+    NoMinimizerPosition,
 >;
 
 pub fn build_unitigs<
@@ -182,10 +184,13 @@ pub fn build_unitigs<
                 .decode_all_bucket_items::<CompressedReadsDataSerializerUnitigsBuilding<CX>, _>(
                     Vec::new(),
                     &mut color_extra_buffer,
-                    |(_, _, index, seq, _), _color_extra_buffer| {
+                    |DeserializedRead {
+                         read, extra: index, ..
+                     },
+                     _color_extra_buffer| {
                         let &(findex, unitig_info) = unitigs_hashmap.get(&index.unitig).unwrap();
                         final_sequences[findex] = Some((
-                            CompressedReadIndipendent::from_read(&seq, &mut temp_storage),
+                            CompressedReadIndipendent::from_read(&read, &mut temp_storage),
                             unitig_info,
                             index.colors,
                             #[cfg(feature = "support_kmer_counters")]

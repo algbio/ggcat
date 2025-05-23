@@ -6,14 +6,14 @@ use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::{BucketIndexType, ColorIndexType};
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
+use hashes::HashFunction;
 use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
-use hashes::HashFunction;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
-use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
 use io::sequences_stream::SequenceInfo;
+use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
 use minimizer_bucketing::PushSequenceInfo;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
@@ -196,7 +196,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
                     let include_last = preprocess_info.include_last && is_last;
 
                     // HS2
-                    let (bucket, rc, min_position) = if SEPARATE_DUPLICATES
+                    let (bucket, rc, minimizer_pos, is_window_duplicate) = if SEPARATE_DUPLICATES
                         && (min_hash.0
                             & BatchMinQueue::<MinimizerExtraData>::unique_flag::<
                                 SEPARATE_DUPLICATES,
@@ -204,43 +204,47 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
                             == 0)
                     {
                         cold();
-                        (self.duplicates_bucket, false, min_hash.1.index as usize - last_index + 1)
+                        (self.duplicates_bucket, false, 0, false)
                     } else {
                         // use std::sync::atomic::AtomicUsize;
                         // static TOT_COUNT: AtomicUsize = AtomicUsize::new(0);
                         // let tot_count = TOT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                        if is_dupl {
-                            // static DUPL_COUNT: AtomicUsize = AtomicUsize::new(0);
-                            //     println!("Found duplicate: {}/{} {}", DUPL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1, tot_count, sequence.get_subslice((last_index - 1)..(index + self.global_data.k - 1)).debug_to_string());
+                        // static DUPL_COUNT: AtomicUsize = AtomicUsize::new(0);
+                        //     println!("Found duplicate: {}/{} {}", DUPL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1, tot_count, sequence.get_subslice((last_index - 1)..(index + self.global_data.k - 1)).debug_to_string());
 
 
-                                // let hashes = MNHFactory::new(sequence, self.global_data.m);
-                                // let collected_hashes: Vec<_> = hashes.iter().map(|x| {
-                                //         x.to_unextendable()
-                                // }).collect();
-                                // let path = "/tmp/hashes";
-                                // let mut contents = String::new();
-                                // let mut file = std::fs::File::create(path).expect("Unable to create file");
-                                // for (i, hash) in collected_hashes.iter().enumerate() {
-                                //     if i > 0 {
-                                //         contents.push(',');
-                                //     }
-                                //     contents.push_str(&format!("{}", hash));
-                                // }
-                                // file.write_all(contents.as_bytes()).expect("Unable to write hashes to file");
-                                // println!("Duplicate hashes: {:?}", collected_hashes);
+                        // let hashes = MNHFactory::new(sequence, self.global_data.m);
+                        // let collected_hashes: Vec<_> = hashes.iter().map(|x| {
+                        //         x.to_unextendable()
+                        // }).collect();
+                        // let path = "/tmp/hashes";
+                        // let mut contents = String::new();
+                        // let mut file = std::fs::File::create(path).expect("Unable to create file");
+                        // for (i, hash) in collected_hashes.iter().enumerate() {
+                        //     if i > 0 {
+                        //         contents.push(',');
+                        //     }
+                        //     contents.push_str(&format!("{}", hash));
+                        // }
+                        // file.write_all(contents.as_bytes()).expect("Unable to write hashes to file");
+                        // println!("Duplicate hashes: {:?}", collected_hashes);
 
-                        }
 
                         let rc = SEPARATE_DUPLICATES && !min_hash.1.is_forward;
                         (
                             MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
                             rc,
-                            if rc {
-                                index - (min_hash.1.index as usize) - self.global_data.m
+                            if is_dupl {
+                                cold();
+                                0
                             } else {
-                                (min_hash.1.index as usize) - last_index + 1
-                            }
+                                if rc {
+                                    (index + self.global_data.k - 1 - (min_hash.1.index as usize) - self.global_data.m) as u16
+                                } else {
+                                    (min_hash.1.index - (last_index as u32 - 1)) as u16
+                                }
+                            },
+                            is_dupl
                         )
                     };
 
@@ -250,12 +254,14 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
                             bucket,
                             second_bucket: MNHFactory::get_bucket(used_bits + first_bits, second_bits, min_hash.0),
                             sequence: sequence.get_subslice((last_index - 1)..(index + self.global_data.k - 1)),
-                            flags: ((include_first as u8) << (rc as u8)) | ((include_last as u8) << (!rc as u8)),
                             extra_data: preprocess_info
                                 .color_info
                                 .get_subslice((last_index - 1)..index, rc), // FIXME: Check if the subslice is correct
                             temp_buffer: &preprocess_info.color_info_buffer,
+                            minimizer_pos,
+                            flags: ((include_first as u8) << (rc as u8)) | ((include_last as u8) << (!rc as u8)),
                             rc,
+                            is_window_duplicate,
                         },
                     );
                     last_index = index;

@@ -249,8 +249,10 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
                     sequence: sequence.get_subslice(last_index..(index + self.global_data.k)),
                     extra_data: DumperKmersReferenceData { color: last_color },
                     temp_buffer: &(),
+                    minimizer_pos: 0,
                     flags: 0,
                     rc: false,
+                    is_window_duplicate: false,
                 });
                 last_index = index + 1;
                 last_color = kmer_color;
@@ -267,8 +269,10 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
             sequence: sequence.get_subslice(last_index..sequence.seq_len()),
             extra_data: DumperKmersReferenceData { color: last_color },
             temp_buffer: &(),
+            minimizer_pos: 0,
             flags: 0,
             rc: false,
+            is_window_duplicate: false,
         });
     }
 }

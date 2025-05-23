@@ -51,7 +51,7 @@ pub mod color_types {
 
 /// Encoded color(s) of a minimizer bucketing step sequence
 pub trait MinimizerBucketingSeqColorData:
-    Default + Clone + SequenceExtraDataConsecutiveCompression + Send + Sync + 'static
+    Default + Clone + Copy + SequenceExtraDataConsecutiveCompression + Send + Sync + 'static
 {
     type KmerColor;
     type KmerColorIterator<'a>: Iterator<Item = Self::KmerColor>

@@ -3,7 +3,6 @@ use byteorder::ReadBytesExt;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
-use config::BucketIndexType;
 use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
 use hashes::HashFunction;
@@ -246,8 +245,10 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
                         ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
                     },
                     temp_buffer: &preprocess_info.colors_buffer,
+                    minimizer_pos: 0,
                     flags: 0,
                     rc: false,
+                    is_window_duplicate: false,
                 });
 
                 last_index = index;

@@ -5,7 +5,7 @@ use config::ColorIndexType;
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraDataConsecutiveCompression,
 };
-use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use std::io::{Read, Write};
 use std::ops::Range;
 
@@ -58,7 +58,7 @@ impl SequenceExtraDataConsecutiveCompression for MinBkSingleColor {
         last_data: Self::LastData,
     ) -> Option<Self> {
         decode_minbk_single_color(
-            || {
+            || unsafe {
                 let data = *ptr;
                 ptr = ptr.add(1);
                 Some(data)

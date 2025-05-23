@@ -12,18 +12,18 @@ use crate::sequences_splitter::SequencesSplitter;
 use colors::colors_manager::ColorsManager;
 use compactor::CompactorInitData;
 use config::{
-    get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
-    DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_COMPACT,
-    PACKETS_PRIORITY_DEFAULT, PRIORITY_SCHEDULING_HIGH, PRIORITY_SCHEDULING_LOW,
-    READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER, WORKERS_PRIORITY_BASE,
+    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    PACKETS_PRIORITY_COMPACT, PACKETS_PRIORITY_DEFAULT, PRIORITY_SCHEDULING_HIGH,
+    PRIORITY_SCHEDULING_LOW, READ_INTERMEDIATE_CHUNKS_SIZE, READ_INTERMEDIATE_QUEUE_MULTIPLIER,
+    SwapPriority, WORKERS_PRIORITY_BASE, get_compression_level_info, get_memory_mode,
 };
 use config::{MAXIMUM_SECOND_BUCKETS_COUNT, USE_SECOND_BUCKET};
 use ggcat_logging::stats;
 use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::{
-    BucketModeFromBoolean, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
-    NoMultiplicity,
+    AssemblerMinimizerPosition, BucketModeFromBoolean, CompressedReadsBucketData,
+    CompressedReadsBucketDataSerializer, NoMultiplicity,
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
@@ -54,8 +54,8 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MinimizerBucketMode {
@@ -104,8 +104,10 @@ pub struct PushSequenceInfo<'a, S, F: MinimizerBucketingExecutorFactory> {
     pub sequence: S,
     pub extra_data: F::ExtraData,
     pub temp_buffer: &'a <F::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    pub minimizer_pos: u16,
     pub flags: u8,
     pub rc: bool,
+    pub is_window_duplicate: bool,
 }
 
 pub trait MinimizerBucketingExecutorFactory: Sized {
@@ -123,7 +125,7 @@ pub trait MinimizerBucketingExecutorFactory: Sized {
     type ExecutorType: MinimizerBucketingExecutor<Self>;
 
     fn new(global_data: &Arc<MinimizerBucketingCommonData<Self::GlobalData>>)
-        -> Self::ExecutorType;
+    -> Self::ExecutorType;
 }
 
 pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>:
@@ -263,6 +265,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                 E::FLAGS_COUNT,
                 BucketModeFromBoolean<USE_SECOND_BUCKET>,
                 NoMultiplicity,
+                AssemblerMinimizerPosition,
             >,
         >::new(
             &context.buckets,
@@ -315,7 +318,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                         context.common.max_second_buckets_count_bits,
                         |info| {
 
-                            let PushSequenceInfo { bucket, second_bucket, sequence, flags, extra_data, temp_buffer, rc } = info;
+                            let PushSequenceInfo { bucket, second_bucket, sequence, minimizer_pos, flags, extra_data, temp_buffer, rc, is_window_duplicate } = info;
 
                             let counter = &mut counters
                                 [((bucket as usize) << counters_log) + (second_bucket as usize)];
@@ -330,7 +333,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                                 bucket,
                                 &extra_data,
                                 temp_buffer,
-                                &CompressedReadsBucketData::new_plain_opt_rc(sequence, flags, second_bucket as u8, rc),
+                                &CompressedReadsBucketData::new_plain_opt_rc(sequence, flags, second_bucket as u8, rc, minimizer_pos, is_window_duplicate),
                             );
 
                             // New chunks were produced, spawn new compactors
@@ -671,12 +674,14 @@ impl GenericMinimizerBucketing {
             );
 
             execution_context.register_executors_batch(
-                vec![global_context
-                    .executor_group_address
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .clone()],
+                vec![
+                    global_context
+                        .executor_group_address
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .clone(),
+                ],
                 PACKETS_PRIORITY_DEFAULT,
             );
 

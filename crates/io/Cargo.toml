@@ -2,7 +2,7 @@
 name = "ggcat_io"
 version = "2.0.0"
 authors = ["Andrea Cracco <guilucand@gmail.com>"]
-edition = "2021"
+edition = "2024"
 categories = []
 description = "GGCAT io crate"
 license = "MIT OR Apache-2.0"

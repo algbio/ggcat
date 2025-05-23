@@ -12,7 +12,7 @@ use hashes::HashableSequence;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::varint::encode_varint;
 use kmers_transform::processor::KmersTransformProcessor;
-use kmers_transform::reads_buffer::ReadsVector;
+use kmers_transform::reads_buffer::{DeserializedReadIndependent, ReadsVector};
 use kmers_transform::{
     GroupProcessStats, KmersTransformExecutorFactory, KmersTransformMapProcessor,
 };
@@ -189,7 +189,15 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
             let start_batch_time = std::time::Instant::now();
         );
 
-        for (flags, color, read, multiplicity) in batch.iter() {
+        for DeserializedReadIndependent {
+            read,
+            extra: color,
+            multiplicity,
+            flags,
+            minimizer_pos,
+            is_window_duplicate,
+        } in batch.iter()
+        {
             let read = read.as_reference(ref_sequences);
 
             let hashes = MH::new(read, k);

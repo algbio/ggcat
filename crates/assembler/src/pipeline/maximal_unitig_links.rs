@@ -12,31 +12,31 @@ use crate::pipeline::maximal_unitig_links::maximal_unitig_index::{
     DoubleMaximalUnitigLinks, MaximalUnitigFlags, MaximalUnitigIndex, MaximalUnitigLink,
     MaximalUnitigLinkSerializer,
 };
-use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::ColorsManager;
+use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use config::{
-    get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
-    DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE,
+    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, SwapPriority, get_compression_level_info, get_memory_mode,
 };
 use dashmap::DashSet;
 use hashbrown::HashSet;
 use hashes::HashFunctionFactory;
 use hashes::{ExtendableHashTraitType, HashFunction, HashableSequence};
+use io::concurrent::structured_sequences::binary::SequenceDataWithAbundance;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
-use io::concurrent::structured_sequences::{
-    SequenceAbundanceType, StructuredSequenceBackend, StructuredSequenceWriter,
-};
+use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
 use io::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketDataSerializer, NoMultiplicity, NoSecondBucket,
+    CompressedReadsBucketDataSerializer, DeserializedRead, NoMinimizerPosition, NoMultiplicity,
+    NoSecondBucket,
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use nightly_quirks::slice_group_by::SliceGroupBy;
+use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
+use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::readers::async_binary_reader::AllowedCheckpointStrategy;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
-use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -44,8 +44,8 @@ use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::prelude::*;
 use std::cmp::max;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use utils::vec_slice::VecSlice;
 
 pub fn build_maximal_unitigs_links<
@@ -114,27 +114,16 @@ pub fn build_maximal_unitigs_links<
                             typenum::consts::U0,
                             NoSecondBucket,
                             NoMultiplicity,
+                            NoMinimizerPosition,
                         >, _>(
                             Vec::new(),
-                            <(
-                                u64,
-                                PartialUnitigsColorStructure<CX>,
-                                (),
-                                SequenceAbundanceType,
-                            )>::new_temp_buffer(),
+                            SequenceDataWithAbundance::<PartialUnitigsColorStructure<CX>, ()>::new_temp_buffer(),
                             AllowedCheckpointStrategy::DecompressOnly,
-                            |(_, _, (index, _, _, _), read, _): (
-                                _,
-                                _,
-                                (
-                                    _,
-                                    PartialUnitigsColorStructure<CX>,
-                                    (),
-                                    SequenceAbundanceType,
-                                ),
-                                _,
-                                _,
-                            ),
+                            |DeserializedRead {
+                                read,
+                                extra: SequenceDataWithAbundance::<PartialUnitigsColorStructure<CX>, ()> { index, .. },
+                                ..
+                            },
                              _extra_buffer,
                              _checkpoint_data| {
                                 let read_len = read.bases_count();
@@ -388,27 +377,16 @@ pub fn build_maximal_unitigs_links<
                             typenum::consts::U0,
                             NoSecondBucket,
                             NoMultiplicity,
+                            NoMinimizerPosition,
                         >, _>(
                             Vec::new(),
-                            <(
-                                u64,
-                                PartialUnitigsColorStructure<CX>,
-                                (),
-                                SequenceAbundanceType,
-                            )>::new_temp_buffer(),
+                            SequenceDataWithAbundance::<PartialUnitigsColorStructure<CX>, ()>::new_temp_buffer(),
                             AllowedCheckpointStrategy::DecompressOnly,
-                            |(_, _, (index, color, _, _abundance), read, _): (
-                                _,
-                                _,
-                                (
-                                    _,
-                                    PartialUnitigsColorStructure<CX>,
-                                    (),
-                                    SequenceAbundanceType,
-                                ),
-                                _,
-                                _,
-                            ),
+                            |DeserializedRead {
+                                read,
+                                extra: SequenceDataWithAbundance::<_, ()> { index, color, .. },
+                                ..
+                            },
                              extra_buffer,
                              _checkpoint_data| {
                                 temp_sequence_buffer.clear();

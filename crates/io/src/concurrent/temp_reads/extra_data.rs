@@ -1,4 +1,4 @@
-use crate::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use crate::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use byteorder::ReadBytesExt;
 use config::ColorIndexType;
 use core::fmt::Debug;
@@ -136,7 +136,7 @@ impl<T: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> SequenceExtraD
 
     #[inline(always)]
     unsafe fn decode_from_pointer(ptr: *const u8, last_data: Self::LastData) -> Option<Self> {
-        Self::decode_from_pointer_extended(&mut (), ptr, last_data)
+        unsafe { Self::decode_from_pointer_extended(&mut (), ptr, last_data) }
     }
 
     fn decode(reader: &mut impl Read, last_data: Self::LastData) -> Option<Self> {

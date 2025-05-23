@@ -48,7 +48,7 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
         ExtraData = Self::AssociatedExtraData,
     >;
     type GlobalExtraData: KmersTransformGlobalExtraData;
-    type AssociatedExtraData: SequenceExtraDataConsecutiveCompression;
+    type AssociatedExtraData: SequenceExtraDataConsecutiveCompression + Copy;
     type PreprocessorType: RewriteBucketCompute;
     type MapProcessorType: KmersTransformMapProcessor<
         Self,

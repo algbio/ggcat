@@ -1,18 +1,19 @@
 use crate::pipeline::dumper_minimizer_bucketing::DumperKmersReferenceData;
-use colors::colors_manager::color_types::SingleKmerColorDataType;
 use colors::colors_manager::ColorsManager;
-use colors::storage::deserializer::ColorsDeserializer;
+use colors::colors_manager::color_types::SingleKmerColorDataType;
 use colors::storage::ColorsSerializerTrait;
+use colors::storage::deserializer::ColorsDeserializer;
 use config::{ColorIndexType, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketDataSerializer, NoMultiplicity, NoSecondBucket,
+    CompressedReadsBucketDataSerializer, DeserializedRead, NoMinimizerPosition, NoMultiplicity,
+    NoSecondBucket,
 };
 use nightly_quirks::slice_group_by::SliceGroupBy;
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
-use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::SingleBucket;
-use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, FastSortable, SortKey};
+use parallel_processor::buckets::readers::BucketReader;
+use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
+use parallel_processor::fast_smart_bucket_sort::{FastSortable, SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
@@ -65,10 +66,16 @@ pub fn colormap_reading<
             typenum::consts::U0,
             NoSecondBucket,
             NoMultiplicity,
+            NoMinimizerPosition,
         >, _>(
             vec![],
             &mut (),
-            |(_, _, color_extra, read, _), _| {
+            |DeserializedRead {
+                 extra: color_extra,
+                 read,
+                 ..
+             },
+             _| {
                 let new_read = CompressedReadIndipendent::from_read(&read, &mut temp_bases);
                 temp_sequences.push((new_read, color_extra));
             },
