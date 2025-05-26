@@ -1,7 +1,5 @@
 use crate::compressed_read::CompressedRead;
-use crate::varint::{
-    VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, decode_varint, encode_varint, encode_varint_flags,
-};
+use crate::varint::{VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, decode_varint, encode_varint};
 use byteorder::ReadBytesExt;
 use config::{BucketIndexType, MultiplicityCounterType};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
