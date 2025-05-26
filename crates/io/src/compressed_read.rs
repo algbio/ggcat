@@ -131,7 +131,8 @@ impl CompressedReadIndipendent {
         }
     }
 
-    pub fn as_reference<'a>(&self, storage: &'a Vec<u8>) -> CompressedRead<'a> {
+    #[inline]
+    pub fn as_reference<'a>(&self, storage: &'a [u8]) -> CompressedRead<'a> {
         CompressedRead {
             size: self.size,
             start: (self.start % 4) as u8,

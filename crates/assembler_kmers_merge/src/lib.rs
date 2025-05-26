@@ -1,19 +1,19 @@
 use crate::final_executor::ParallelKmersMergeFinalExecutor;
-use crate::map_processor::{ParallelKmersMergeMapProcessor, KMERGE_TEMP_DIR};
+use crate::map_processor::{KMERGE_TEMP_DIR, ParallelKmersMergeMapProcessor};
 use crate::structs::{ResultsBucket, RetType};
-use assembler_minimizer_bucketing::rewrite_bucket::RewriteBucketComputeAssembler;
 use assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
+use assembler_minimizer_bucketing::rewrite_bucket::RewriteBucketComputeAssembler;
 use colors::colors_manager::color_types::{
     GlobalColorsTableWriter, MinimizerBucketingSeqColorDataType,
 };
-use colors::colors_manager::{color_types, ColorsManager};
+use colors::colors_manager::{ColorsManager, color_types};
 use config::{
-    get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
-    MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
+    BucketIndexType, MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE, SwapPriority,
+    get_compression_level_info, get_memory_mode,
 };
 use crossbeam::queue::*;
-use hashes::default::MNHFactory;
 use hashes::HashFunctionFactory;
+use hashes::default::MNHFactory;
 use io::structs::hash_entry::HashEntry;
 use io::structs::hash_entry::{Direction, HashEntrySerializer};
 use kmers_transform::processor::KmersTransformProcessor;
@@ -33,13 +33,15 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use unitigs_extender::GlobalExtenderParams;
 use utils::owned_drop::OwnedDrop;
 
 mod final_executor;
 mod map_processor;
 pub mod structs;
+pub mod unitigs_extender;
 
 pub struct GlobalMergeData<CX: ColorsManager> {
     k: usize,
@@ -80,6 +82,7 @@ pub struct ParallelKmersMergeFactory<
 impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     KmersTransformExecutorFactory for ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS>
 {
+    type KmersTransformPacketInitData = GlobalExtenderParams;
     type SequencesResplitterFactory = AssemblerMinimizerBucketingExecutorFactory<CX>;
     type GlobalExtraData = GlobalMergeData<CX>;
     type AssociatedExtraData = MinimizerBucketingSeqColorDataType<CX>;
@@ -91,6 +94,16 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U2;
     const HAS_COLORS: bool = CX::COLORS_ENABLED;
+
+    fn get_packets_init_data(
+        global_data: &Arc<Self::GlobalExtraData>,
+    ) -> Self::KmersTransformPacketInitData {
+        GlobalExtenderParams {
+            k: global_data.k,
+            m: global_data.m,
+            min_multiplicity: global_data.min_multiplicity,
+        }
+    }
 
     fn new_resplitter(
         global_data: &Arc<Self::GlobalExtraData>,
@@ -122,17 +135,14 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         hash: MH::HashTypeUnextendable,
         bucket: BucketIndexType,
         entry: u64,
-        do_merge: bool,
         direction: Direction,
         buckets_count_bits: usize,
     ) {
-        if do_merge {
-            hashes_tmp.add_element(
-                MH::get_bucket(0, buckets_count_bits, hash),
-                &(),
-                &HashEntry::new(hash, bucket, entry, direction),
-            );
-        }
+        hashes_tmp.add_element(
+            MH::get_bucket(0, buckets_count_bits, hash),
+            &(),
+            &HashEntry::new(hash, bucket, entry, direction),
+        );
     }
 }
 
@@ -268,8 +278,8 @@ mod tests {
     use rayon::ThreadPoolBuilder;
     use std::cmp::max;
     use std::path::Path;
-    use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
     #[ignore]
     #[test]

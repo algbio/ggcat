@@ -1,7 +1,7 @@
 use crate::reads_buffer::ReadsBuffer;
 use crate::{
-    KmersTransformContext, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
-    KmersTransformMapProcessor,
+    GroupProcessStats, KmersTransformContext, KmersTransformExecutorFactory,
+    KmersTransformFinalExecutor, KmersTransformMapProcessor,
 };
 use config::{PRIORITY_SCHEDULING_HIGH, WORKERS_PRIORITY_BASE};
 use ggcat_logging::stats::StatId;
@@ -57,7 +57,9 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
             let mut final_executor = F::new_final_executor(&global_context.global_extra_data);
 
             let mut packet = Packet::new_simple(
-                <F::MapProcessorType as KmersTransformMapProcessor<F>>::MapStruct::allocate_new(&()),
+                <F::MapProcessorType as KmersTransformMapProcessor<F>>::MapStruct::allocate_new(
+                    &F::get_packets_init_data(&global_context.global_extra_data),
+                ),
             );
 
             let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_HIGH);
@@ -71,23 +73,25 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                 map_processor.process_group_start(packet, &global_context.global_extra_data);
 
                 let mut real_size = 0;
-                let mut total_kmers = 0;
-                let mut unique_kmers = 0;
 
                 while let Some(input_packet) = track!(
                     address.receive_packet(&thread_handle).await,
                     PACKET_WAITING_COUNTER
                 ) {
                     real_size += input_packet.reads.len() as usize;
-                    let stats = map_processor.process_group_batch_sequences(
+                    map_processor.process_group_batch_sequences(
                         &global_context.global_extra_data,
                         &input_packet.reads,
                         &input_packet.extra_buffer,
                         &input_packet.reads_buffer,
                     );
-                    total_kmers += stats.total_kmers;
-                    unique_kmers += stats.unique_kmers;
                 }
+
+                let GroupProcessStats {
+                    total_kmers,
+                    unique_kmers,
+                    ..
+                } = map_processor.get_stats();
 
                 if !proc_info.is_resplitted {
                     global_context
@@ -111,7 +115,10 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                     ggcat_logging::info!(
                         "Found bucket with max size {} ==> {:?} // EXPECTED_SIZE: {} REAL_SIZE: {} SUB: {}",
                         current_size,
-                        proc_info.debug_bucket_first_path.as_ref().map(|p| p.display()),
+                        proc_info
+                            .debug_bucket_first_path
+                            .as_ref()
+                            .map(|p| p.display()),
                         proc_info.sequences_count,
                         real_size,
                         proc_info.sub_bucket

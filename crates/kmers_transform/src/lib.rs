@@ -4,9 +4,9 @@ use crate::processor::KmersTransformProcessor;
 use crate::reader::{InputBucketDesc, KmersTransformReader};
 use crate::resplitter::KmersTransformResplitter;
 use config::{
-    BucketIndexType, KEEP_FILES, KMERS_TRANSFORM_READS_CHUNKS_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS,
-    MAXIMUM_SECOND_BUCKETS_COUNT, MAX_KMERS_TRANSFORM_READERS_PER_BUCKET, MINIMUM_LOG_DELTA_TIME,
-    PACKETS_PRIORITY_FILES,
+    BucketIndexType, KEEP_FILES, KMERS_TRANSFORM_READS_CHUNKS_SIZE,
+    MAX_KMERS_TRANSFORM_READERS_PER_BUCKET, MAXIMUM_JIT_PROCESSED_BUCKETS,
+    MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME, PACKETS_PRIORITY_FILES,
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
@@ -28,8 +28,8 @@ use reads_buffer::ReadsVector;
 use std::cmp::{max, min};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 pub mod debug_bucket_stats;
@@ -44,6 +44,7 @@ pub trait KmersTransformGlobalExtraData: Sync + Send {
 }
 
 pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
+    type KmersTransformPacketInitData: Clone + Send + Sync;
     type SequencesResplitterFactory: MinimizerBucketingExecutorFactory<
         ExtraData = Self::AssociatedExtraData,
     >;
@@ -51,15 +52,19 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
     type AssociatedExtraData: SequenceExtraDataConsecutiveCompression + Copy;
     type PreprocessorType: RewriteBucketCompute;
     type MapProcessorType: KmersTransformMapProcessor<
-        Self,
-        MapStruct = <Self::FinalExecutorType as KmersTransformFinalExecutor<Self>>::MapStruct,
-    >;
+            Self,
+            MapStruct = <Self::FinalExecutorType as KmersTransformFinalExecutor<Self>>::MapStruct,
+        >;
     type FinalExecutorType: KmersTransformFinalExecutor<Self>;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT: typenum::uint::Unsigned;
 
     const HAS_COLORS: bool;
+
+    fn get_packets_init_data(
+        global_data: &Arc<Self::GlobalExtraData>,
+    ) -> Self::KmersTransformPacketInitData;
 
     fn new_resplitter(
         global_data: &Arc<Self::GlobalExtraData>,
@@ -75,12 +80,13 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
 pub struct GroupProcessStats {
     pub total_kmers: u64,
     pub unique_kmers: u64,
+    pub saved_read_bytes: u64,
 }
 
 pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
     Sized + 'static + Send
 {
-    type MapStruct: PacketTrait + PoolObjectTrait<InitData = ()>;
+    type MapStruct: PacketTrait + PoolObjectTrait<InitData = F::KmersTransformPacketInitData>;
     const MAP_SIZE: usize;
 
     fn process_group_start(
@@ -94,7 +100,8 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
         batch: &ReadsVector<F::AssociatedExtraData>,
         extra_data_buffer: &<F::AssociatedExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ref_sequences: &Vec<u8>,
-    ) -> GroupProcessStats;
+    );
+    fn get_stats(&self) -> GroupProcessStats;
     fn process_group_finalize(
         &mut self,
         global_data: &F::GlobalExtraData,
@@ -104,7 +111,7 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
 pub trait KmersTransformFinalExecutor<F: KmersTransformExecutorFactory>:
     Sized + 'static + Sync + Send
 {
-    type MapStruct: PacketTrait + PoolObjectTrait<InitData = ()>;
+    type MapStruct: PacketTrait + PoolObjectTrait<InitData = F::KmersTransformPacketInitData>;
 
     fn process_map(
         &mut self,

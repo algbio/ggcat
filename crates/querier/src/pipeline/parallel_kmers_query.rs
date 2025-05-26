@@ -8,14 +8,14 @@ use colors::colors_manager::color_types::{
 };
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use config::{
-    get_memory_mode, BucketIndexType, MultiplicityCounterType, SwapPriority,
-    DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE,
+    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_SUBBUCKET_KMERS_COUNT,
+    MultiplicityCounterType, RESPLITTING_MAX_K_M_DIFFERENCE, SwapPriority, get_memory_mode,
 };
 use hashbrown::HashMap;
-use hashes::default::MNHFactory;
 use hashes::ExtendableHashTraitType;
 use hashes::HashFunction;
 use hashes::HashFunctionFactory;
+use hashes::default::MNHFactory;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
@@ -169,6 +169,7 @@ struct ParallelKmersQueryFactory<MH: HashFunctionFactory, CX: ColorsManager>(Pha
 impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
     for ParallelKmersQueryFactory<MH, CX>
 {
+    type KmersTransformPacketInitData = ();
     type SequencesResplitterFactory = QuerierMinimizerBucketingExecutorFactory<CX>;
     type GlobalExtraData = GlobalQueryMergeData;
     type AssociatedExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
@@ -180,6 +181,12 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U0;
     const HAS_COLORS: bool = CX::COLORS_ENABLED;
+
+    fn get_packets_init_data(
+        _global_data: &Arc<Self::GlobalExtraData>,
+    ) -> Self::KmersTransformPacketInitData {
+        ()
+    }
 
     fn new_resplitter(
         global_data: &Arc<Self::GlobalExtraData>,
@@ -193,6 +200,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
     ) -> Self::MapProcessorType {
         Self::MapProcessorType {
             map_packet: None,
+            kmers_count: 0,
             _phantom: PhantomData,
         }
     }
@@ -272,6 +280,7 @@ impl<MH: HashFunctionFactory, CX: Sync + Send + 'static> PacketTrait
 
 struct ParallelKmersQueryMapProcessor<MH: HashFunctionFactory, CX: ColorsManager> {
     map_packet: Option<Packet<ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>>>,
+    kmers_count: u64,
     _phantom: PhantomData<CX>,
 }
 
@@ -288,6 +297,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
         _global_data: &GlobalQueryMergeData,
     ) {
         self.map_packet = Some(map_struct);
+        self.kmers_count = 0;
     }
 
     fn process_group_batch_sequences(
@@ -296,11 +306,9 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
         batch: &ReadsVector<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>>,
         extra_data_buffer: &<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ref_sequences: &Vec<u8>,
-    ) -> GroupProcessStats {
+    ) {
         let k = global_data.k;
         let map_packet = self.map_packet.as_mut().unwrap();
-
-        let mut kmers_count = 0;
 
         for DeserializedReadIndependent {
             read,
@@ -310,7 +318,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
         {
             let hashes = MH::new(read.as_reference(ref_sequences), k);
 
-            kmers_count += (read.bases_count() - k + 1) as u64;
+            self.kmers_count += (read.bases_count() - k + 1) as u64;
 
             match sequence_type {
                 QueryKmersReferenceData::Graph(col_info) => {
@@ -330,10 +338,13 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
                 }
             }
         }
+    }
 
+    fn get_stats(&self) -> GroupProcessStats {
         GroupProcessStats {
-            total_kmers: kmers_count,
-            unique_kmers: kmers_count,
+            total_kmers: self.kmers_count,
+            unique_kmers: self.kmers_count,
+            saved_read_bytes: 0,
         }
     }
 
