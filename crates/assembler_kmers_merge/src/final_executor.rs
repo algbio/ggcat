@@ -96,55 +96,98 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         let current_bucket = self.current_bucket.as_mut().unwrap();
         let bucket_index = current_bucket.get_bucket_index();
 
-        map_struct.extender.compute_unitigs::<COMPUTE_SIMPLITIGS>(
-            &mut self.colors_data,
-            |colors_data, out_seq, fw_hash, bw_hash| {
-                stats!(
-                    stat_output_kmers_count += 1;
-                );
+        if true || map_struct.is_duplicates_bucket {
+            map_struct.extender.compute_unitigs::<COMPUTE_SIMPLITIGS>(
+                &mut self.colors_data,
+                |colors_data, out_seq, fw_hash, bw_hash| {
+                    stats!(
+                        stat_output_kmers_count += 1;
+                    );
 
-                let colors = color_types::ColorsMergeManagerType::<CX>::encode_part_unitigs_colors(
-                    &mut self.unitigs_temp_colors,
-                    &mut colors_data.temp_color_buffer,
-                );
+                    let colors =
+                        color_types::ColorsMergeManagerType::<CX>::encode_part_unitigs_colors(
+                            &mut self.unitigs_temp_colors,
+                            &mut colors_data.temp_color_buffer,
+                        );
 
-                let extra_data = PartialUnitigExtraData {
-                    colors,
+                    let extra_data = PartialUnitigExtraData {
+                        colors,
 
-                    #[cfg(feature = "support_kmer_counters")]
-                    counters,
+                        #[cfg(feature = "support_kmer_counters")]
+                        counters,
+                    };
+
+                    let read_index = current_bucket.add_read(
+                        extra_data,
+                        out_seq,
+                        &colors_data.temp_color_buffer,
+                    );
+
+                    color_types::PartialUnitigsColorStructure::<CX>::clear_temp_buffer(
+                        &mut colors_data.temp_color_buffer,
+                    );
+
+                    if let Some(fw_hash) = fw_hash {
+                        Self::write_hashes(
+                            &mut self.hashes_tmp,
+                            fw_hash,
+                            bucket_index,
+                            read_index,
+                            Direction::Forward,
+                            buckets_count_bits,
+                        );
+                    }
+
+                    if let Some(bw_hash) = bw_hash {
+                        Self::write_hashes(
+                            &mut self.hashes_tmp,
+                            bw_hash,
+                            bucket_index,
+                            read_index,
+                            Direction::Backward,
+                            buckets_count_bits,
+                        );
+                    }
+                },
+            );
+        } else {
+            if true {
+                let mut collisions: Vec<_> =
+                    map_struct.minimizer_collisions.values().copied().collect();
+                collisions.sort_unstable();
+                let tot_collisions = collisions.iter().filter(|c| **c > 1).count();
+                let average =
+                    collisions.iter().copied().sum::<u64>() as f64 / collisions.len() as f64;
+                let median = collisions[collisions.len() / 2] as f64;
+
+                let total_sum = collisions.iter().copied().sum::<u64>();
+                let tot_collisions_sum = collisions.iter().copied().filter(|c| *c > 1).sum::<u64>();
+
+                let weighted_median = {
+                    let mut weighted_values: Vec<_> = collisions
+                        .iter()
+                        .flat_map(|&value| std::iter::repeat(value).take(value as usize))
+                        .collect();
+                    weighted_values.sort_unstable();
+                    weighted_values[weighted_values.len() / 2]
                 };
 
-                let read_index =
-                    current_bucket.add_read(extra_data, out_seq, &colors_data.temp_color_buffer);
-
-                color_types::PartialUnitigsColorStructure::<CX>::clear_temp_buffer(
-                    &mut colors_data.temp_color_buffer,
+                println!(
+                    "Collisions: {}/{} [{}/{}] {:.2}% with average: {} and median: {} weighted median: {} max: {}",
+                    tot_collisions,
+                    collisions.len(),
+                    tot_collisions_sum,
+                    total_sum,
+                    (tot_collisions as f64 / collisions.len() as f64) * 100.0,
+                    average,
+                    median,
+                    weighted_median,
+                    collisions.last().unwrap()
                 );
+            }
 
-                if let Some(fw_hash) = fw_hash {
-                    Self::write_hashes(
-                        &mut self.hashes_tmp,
-                        fw_hash,
-                        bucket_index,
-                        read_index,
-                        Direction::Forward,
-                        buckets_count_bits,
-                    );
-                }
-
-                if let Some(bw_hash) = bw_hash {
-                    Self::write_hashes(
-                        &mut self.hashes_tmp,
-                        bw_hash,
-                        bucket_index,
-                        read_index,
-                        Direction::Backward,
-                        buckets_count_bits,
-                    );
-                }
-            },
-        );
+            todo!();
+        }
 
         self.bucket_counter += 1;
         if self.bucket_counter >= self.bucket_change_threshold {

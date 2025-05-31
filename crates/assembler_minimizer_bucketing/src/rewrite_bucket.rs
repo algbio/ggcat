@@ -1,9 +1,9 @@
 use config::BucketIndexType;
 use config::MultiplicityCounterType;
 use config::READ_FLAG_INCL_END;
-use hashes::default::MNHFactory;
 use hashes::ExtendableHashTraitType;
 use hashes::HashFunction;
+use hashes::default::MNHFactory;
 use hashes::{HashFunctionFactory, HashableSequence};
 use io::compressed_read::CompressedRead;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
@@ -25,7 +25,7 @@ pub fn get_superkmer_minimizer(
         .min_by_key(|(_, k)| k.to_unextendable())
         .unwrap();
 
-    (minimizer.0, minimizer.1.to_unextendable())
+    (minimizer.0 + 1 - decr_val, minimizer.1.to_unextendable())
 }
 
 pub struct RewriteBucketComputeAssembler;

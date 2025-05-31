@@ -10,6 +10,7 @@ use hashes::HashFunction;
 use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
+use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
@@ -19,7 +20,7 @@ use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
 };
-use parallel_processor::buckets::MultiChunkBucket;
+use parallel_processor::buckets::{DuplicatesBuckets, MultiChunkBucket};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -204,32 +205,8 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
                             == 0)
                     {
                         cold();
-                        (self.duplicates_bucket, false, 0, false)
+                        (self.duplicates_bucket, false, 1, false)
                     } else {
-                        // use std::sync::atomic::AtomicUsize;
-                        // static TOT_COUNT: AtomicUsize = AtomicUsize::new(0);
-                        // let tot_count = TOT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                        // static DUPL_COUNT: AtomicUsize = AtomicUsize::new(0);
-                        //     println!("Found duplicate: {}/{} {}", DUPL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1, tot_count, sequence.get_subslice((last_index - 1)..(index + self.global_data.k - 1)).debug_to_string());
-
-
-                        // let hashes = MNHFactory::new(sequence, self.global_data.m);
-                        // let collected_hashes: Vec<_> = hashes.iter().map(|x| {
-                        //         x.to_unextendable()
-                        // }).collect();
-                        // let path = "/tmp/hashes";
-                        // let mut contents = String::new();
-                        // let mut file = std::fs::File::create(path).expect("Unable to create file");
-                        // for (i, hash) in collected_hashes.iter().enumerate() {
-                        //     if i > 0 {
-                        //         contents.push(',');
-                        //     }
-                        //     contents.push_str(&format!("{}", hash));
-                        // }
-                        // file.write_all(contents.as_bytes()).expect("Unable to write hashes to file");
-                        // println!("Duplicate hashes: {:?}", collected_hashes);
-
-
                         let rc = SEPARATE_DUPLICATES && !min_hash.1.is_forward;
                         (
                             MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
@@ -248,7 +225,6 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
                         )
                     };
 
-                    // TODO: Check for non-min-duplicated k-1 adjacents that have the same minimizer value
                     push_sequence(
                         PushSequenceInfo {
                             bucket,
@@ -326,5 +302,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         false,
         k,
         minimizer_bucketing_compaction_threshold,
+        DuplicatesBuckets::Last,
     )
 }

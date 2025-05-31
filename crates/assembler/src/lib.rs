@@ -2,7 +2,7 @@
 
 use crate::pipeline::build_unitigs::build_unitigs;
 use crate::pipeline::compute_matchtigs::MatchtigHelperTrait;
-use crate::pipeline::compute_matchtigs::{compute_matchtigs_thread, MatchtigsStorageBackend};
+use crate::pipeline::compute_matchtigs::{MatchtigsStorageBackend, compute_matchtigs_thread};
 use crate::pipeline::hashes_sorting::hashes_sorting;
 use crate::pipeline::links_compaction::links_compaction;
 use crate::pipeline::maximal_unitig_links::build_maximal_unitigs_links;
@@ -12,9 +12,10 @@ use assembler_kmers_merge::structs::RetType;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
 use config::{
-    get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
-    INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES,
-    MAXIMUM_SECOND_BUCKETS_LOG, MINIMUM_LOG_DELTA_TIME, PRIORITY_SCHEDULING_BASE,
+    DEFAULT_PER_CPU_BUFFER_SIZE, INTERMEDIATE_COMPRESSION_LEVEL_FAST,
+    INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES, MAXIMUM_SECOND_BUCKETS_LOG,
+    MINIMUM_LOG_DELTA_TIME, PRIORITY_SCHEDULING_BASE, SwapPriority, get_compression_level_info,
+    get_memory_mode,
 };
 use ggcat_logging::stats;
 use hashes::HashFunctionFactory;
@@ -31,7 +32,7 @@ use io::{compute_stats_from_input_blocks, generate_bucket_names};
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
+use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets};
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -40,8 +41,8 @@ use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use pipeline::eulertigs::build_eulertigs;
 use std::fs::remove_file;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 mod pipeline;
@@ -165,7 +166,7 @@ pub fn run_assembler<
         )
     } else {
         (
-            generate_bucket_names(temp_dir.join("bucket"), buckets_count, None)
+            generate_bucket_names(temp_dir.join("bucket"), buckets_count, None, true)
                 .into_iter()
                 .map(|x| x.to_multi_chunk())
                 .collect(),
@@ -232,8 +233,8 @@ pub fn run_assembler<
         )
     } else {
         RetType {
-            sequences: generate_bucket_names(temp_dir.join("result"), buckets_count, None),
-            hashes: generate_bucket_names(temp_dir.join("hashes"), buckets_count, None),
+            sequences: generate_bucket_names(temp_dir.join("result"), buckets_count, None, false),
+            hashes: generate_bucket_names(temp_dir.join("hashes"), buckets_count, None, false),
         }
     };
     if last_step <= AssemblerStartingStep::KmersMerge {
@@ -256,7 +257,7 @@ pub fn run_assembler<
     let mut links = if step <= AssemblerStartingStep::HashesSorting {
         hashes_sorting::<MergingHash, _>(hashes, temp_dir.as_path(), buckets_count)
     } else {
-        generate_bucket_names(temp_dir.join("links"), buckets_count, None)
+        generate_bucket_names(temp_dir.join("links"), buckets_count, None, false)
     };
     if last_step <= AssemblerStartingStep::HashesSorting {
         PHASES_TIMES_MONITOR
@@ -270,8 +271,8 @@ pub fn run_assembler<
 
     let mut loop_iteration = loopit_number.unwrap_or(0);
 
-    let unames = generate_bucket_names(temp_dir.join("unitigs_map"), buckets_count, None);
-    let rnames = generate_bucket_names(temp_dir.join("results_map"), buckets_count, None);
+    let unames = generate_bucket_names(temp_dir.join("unitigs_map"), buckets_count, None, false);
+    let rnames = generate_bucket_names(temp_dir.join("results_map"), buckets_count, None, false);
 
     // let mut links_manager = UnitigLinksManager::new(buckets_count);
 
@@ -293,6 +294,7 @@ pub fn run_assembler<
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
             &(),
+            DuplicatesBuckets::None,
         ));
 
         let final_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
@@ -304,6 +306,7 @@ pub fn run_assembler<
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
             &(),
+            DuplicatesBuckets::None,
         ));
 
         if loop_iteration != 0 {
@@ -311,6 +314,7 @@ pub fn run_assembler<
                 temp_dir.join(format!("linksi{}", loop_iteration - 1)),
                 buckets_count,
                 None,
+                false,
             );
         }
 
@@ -465,8 +469,13 @@ pub fn run_assembler<
         }
     } else {
         (
-            generate_bucket_names(temp_dir.join("reads_bucket"), buckets_count, Some("tmp")),
-            (generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"))
+            generate_bucket_names(
+                temp_dir.join("reads_bucket"),
+                buckets_count,
+                Some("tmp"),
+                false,
+            ),
+            (generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"), false)
                 .into_iter()
                 .next()
                 .unwrap()

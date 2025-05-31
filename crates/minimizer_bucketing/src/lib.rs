@@ -33,7 +33,7 @@ use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::{
-    ChunkingStatus, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
+    ChunkingStatus, DuplicatesBuckets, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
 };
 use parallel_processor::execution_manager::execution_context::{ExecutionContext, PoolAllocMode};
 use parallel_processor::execution_manager::executor::{
@@ -255,7 +255,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
         ops: &ExecutorAddressOperations<'_, Self>,
     ) {
         let counters_log = context.common.max_second_buckets_count.ilog2();
-        let mut counters: Vec<u8> =
+        let mut counters: Vec<u16> =
             vec![0; context.common.max_second_buckets_count * context.common.buckets_count];
 
         let mut tmp_reads_buffer = BucketsThreadDispatcher::<
@@ -326,7 +326,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
                             *counter = counter.wrapping_add(1);
                             if *counter == 0 {
                                 global_counters[bucket as usize][second_bucket as usize]
-                                    .fetch_add(256, Ordering::Relaxed);
+                                    .fetch_add(65536, Ordering::Relaxed);
                             }
 
                             let chunking_status = tmp_reads_buffer.add_element_extended(
@@ -517,6 +517,7 @@ impl GenericMinimizerBucketing {
         partial_read_copyback: Option<usize>,
         copy_ident: bool,
         ignored_length: usize,
+        duplicates_bucket: DuplicatesBuckets,
     ) -> (Vec<SingleBucket>, PathBuf) {
         let (buckets, counters) = Self::do_bucketing::<E, S>(
             input_blocks,
@@ -530,6 +531,7 @@ impl GenericMinimizerBucketing {
             copy_ident,
             ignored_length,
             None,
+            duplicates_bucket,
         );
 
         (
@@ -556,6 +558,7 @@ impl GenericMinimizerBucketing {
         copy_ident: bool,
         ignored_length: usize,
         maximum_disk_usage: Option<u64>,
+        duplicates_buckets: DuplicatesBuckets,
     ) -> (Vec<MultiChunkBucket>, PathBuf) {
         let read_threads_count = max(1, threads_count / 2);
         let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count / 4));
@@ -570,6 +573,7 @@ impl GenericMinimizerBucketing {
                 get_compression_level_info(),
             ),
             &MinimizerBucketMode::Single,
+            duplicates_buckets,
         ));
 
         let second_buckets_count = max(

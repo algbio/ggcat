@@ -68,6 +68,7 @@ pub struct InputBucketDesc {
     pub(crate) resplitted: bool,
     pub(crate) rewritten: bool,
     pub(crate) used_hash_bits: usize,
+    pub(crate) is_duplicates_bucket: bool,
 }
 
 impl PoolObjectTrait for InputBucketDesc {
@@ -82,12 +83,14 @@ impl PoolObjectTrait for InputBucketDesc {
             rewritten: false,
             used_hash_bits: 0,
             out_data_format: MinimizerBucketMode::Compacted,
+            is_duplicates_bucket: false,
         }
     }
 
     fn reset(&mut self) {
         self.resplitted = false;
         self.sub_bucket_counters.clear();
+        self.is_duplicates_bucket = false;
     }
 }
 impl PacketTrait for InputBucketDesc {
@@ -132,6 +135,7 @@ struct BucketsInfo {
     total_file_size: usize,
     _used_hash_bits: usize,
     data_format: MinimizerBucketMode,
+    is_duplicates_bucket: bool,
 }
 
 impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
@@ -215,6 +219,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
             let biggest_sub_bucket = bucket_sizes.pop_back().unwrap();
 
+            // TODO: Find why there is a deadlock if the bucket is always considered an outlier
+            // let is_outlier = !file.resplitted && (total_sequences > 0) && true;
             let is_outlier = !file.resplitted
                 && (total_sequences > 0)
                 && (biggest_sub_bucket.0.count as f64 * unique_estimator_factor
@@ -285,6 +291,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                         _resplit_stat_id: resplit_stat_id,
                         bucket_size: count.0 as usize,
                         data_format: file.out_data_format,
+                        is_duplicates_bucket: file.is_duplicates_bucket,
                     });
                 register_addresses.push(new_address.clone());
                 Some(AddressMode::Send(new_address))
@@ -407,6 +414,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             total_file_size,
             _used_hash_bits: file.used_hash_bits,
             data_format: file.out_data_format,
+            is_duplicates_bucket: file.is_duplicates_bucket,
         }
     }
 
@@ -596,6 +604,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                                     replace_with_async(&mut buffers[bucket], |mut buffer| async {
                                         buffer.reads.minimizer_size = minimizer_size;
                                         buffer.sub_bucket = bucket;
+                                        buffer.reads.is_duplicates_bucket = bucket_info.is_duplicates_bucket;
                                         ops.packet_send(address.clone(), buffer, thread_handle);
                                         track!(packets_pool.alloc_packet().await, PACKET_ALLOC_COUNTER)
                                     })
@@ -628,6 +637,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             if packet.reads.len() > 0 {
                 packet.reads.minimizer_size = minimizer_size;
                 packet.sub_bucket = bucket;
+                packet.reads.is_duplicates_bucket = bucket_info.is_duplicates_bucket;
                 match address {
                     AddressMode::Send(address) => {
                         ops.packet_send(address.clone(), packet, &thread_handle);
@@ -685,6 +695,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
                 );
                 let is_main_bucket = !file.resplitted && !file.rewritten;
                 let is_resplitted = file.resplitted;
+                let is_duplicates_bucket = file.is_duplicates_bucket;
                 let buckets_info = Self::compute_buckets(global_context, file);
 
                 let reader_lock = global_context.reader_init_lock.lock().await;
@@ -799,6 +810,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
                                 used_hash_bits: init_data.used_hash_bits
                                     + init_data.buckets_hash_bits,
                                 out_data_format: init_data.data_format,
+                                is_duplicates_bucket,
                             }),
                         );
                     }

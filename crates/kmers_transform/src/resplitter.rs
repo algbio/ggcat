@@ -22,9 +22,9 @@ use minimizer_bucketing::{
     MinimizerBucketMode, MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory,
     PushSequenceInfo,
 };
-use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets};
 use parallel_processor::execution_manager::executor::{
     AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
 };
@@ -101,6 +101,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                 get_compression_level_info(),
             ),
             &init_data.data_format,
+            if init_data.is_duplicates_bucket {
+                DuplicatesBuckets::All
+            } else {
+                DuplicatesBuckets::None
+            },
         ));
 
         let output_addresses: Vec<_> = (0..(1 << subsplit_buckets_count_log))
@@ -272,6 +277,7 @@ pub struct ResplitterInitData {
     pub _resplit_stat_id: StatId,
     pub bucket_size: usize,
     pub data_format: MinimizerBucketMode,
+    pub is_duplicates_bucket: bool,
 }
 
 impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitter<F> {
@@ -364,6 +370,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
                             rewritten: false,
                             used_hash_bits: 0,
                             out_data_format: resplit_info.data_format,
+                            is_duplicates_bucket: init_data.is_duplicates_bucket,
                         }),
                         &thread_handle,
                     );

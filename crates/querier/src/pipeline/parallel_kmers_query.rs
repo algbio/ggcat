@@ -31,7 +31,7 @@ use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
+use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets, SingleBucket};
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
@@ -433,6 +433,7 @@ pub fn parallel_kmers_counting<
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
         &(),
+        DuplicatesBuckets::None,
     ));
 
     let global_data = Arc::new(GlobalQueryMergeData {

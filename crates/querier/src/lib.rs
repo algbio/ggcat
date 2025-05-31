@@ -4,11 +4,11 @@ use crate::pipeline::counters_sorting::counters_sorting;
 use crate::pipeline::parallel_kmers_query::parallel_kmers_counting;
 use crate::pipeline::querier_minimizer_bucketing::minimizer_bucketing;
 use ::dynamic_dispatch::dynamic_dispatch;
-use colors::colors_manager::{ColorMapReader, ColorsManager, ColorsMergeManager};
 use colors::DefaultColorsSerializer;
+use colors::colors_manager::{ColorMapReader, ColorsManager, ColorsMergeManager};
 use config::{INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW};
-use hashes::default::MNHFactory;
 use hashes::HashFunctionFactory;
+use hashes::default::MNHFactory;
 use io::sequences_reader::SequencesReader;
 use io::sequences_stream::general::GeneralSequenceBlockData;
 use io::{compute_stats_from_input_blocks, generate_bucket_names};
@@ -106,7 +106,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
     } else {
         (
             (
-                generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
+                generate_bucket_names(temp_dir.join("bucket"), buckets_count, None, false),
                 temp_dir.join("buckets-counters.dat"),
             ),
             {
@@ -130,7 +130,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
             threads_count,
         )
     } else {
-        generate_bucket_names(temp_dir.join("counters"), buckets_count, None)
+        generate_bucket_names(temp_dir.join("counters"), buckets_count, None, false)
     };
 
     let colored_buckets_prefix = temp_dir.join("color_counters");
@@ -159,7 +159,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
             &query_kmers_count,
         )
     } else {
-        generate_bucket_names(colored_buckets_prefix, buckets_count, None)
+        generate_bucket_names(colored_buckets_prefix, buckets_count, None, false)
     };
 
     if QuerierColorsManager::COLORS_ENABLED {

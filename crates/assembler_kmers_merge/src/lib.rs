@@ -26,7 +26,7 @@ use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{
-    LockFreeBucket, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
+    DuplicatesBuckets, LockFreeBucket, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
 };
 use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -175,6 +175,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
         &(),
+        DuplicatesBuckets::None,
     ));
 
     let mut sequences = Vec::new();
@@ -189,6 +190,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             get_compression_level_info(),
         ),
         &(),
+        DuplicatesBuckets::None,
     );
 
     let output_results_buckets = ArrayQueue::new(reads_buckets.count());
@@ -204,6 +206,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
         sequences.push(SingleBucket {
             index,
             path: bucket_read.reads_writer.get_path(),
+            is_duplicates_bucket: false,
         });
         let res = output_results_buckets.push(bucket_read).is_ok();
         assert!(res);

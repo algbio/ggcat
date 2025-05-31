@@ -3,30 +3,30 @@ use byteorder::ReadBytesExt;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
+use hashes::HashFunction;
 use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
-use hashes::HashFunction;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
-use io::sequences_stream::fasta::FastaFileSequencesStream;
 use io::sequences_stream::SequenceInfo;
-use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use io::sequences_stream::fasta::FastaFileSequencesStream;
+use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence, PushSequenceInfo,
 };
-use parallel_processor::buckets::SingleBucket;
+use parallel_processor::buckets::{DuplicatesBuckets, SingleBucket};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::parallel_kmers_query::RewriteBucketComputeQuery;
 
@@ -294,6 +294,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
             None,
             CX::COLORS_ENABLED,
             0,
+            DuplicatesBuckets::None,
         ),
         queries_count.load(Ordering::Relaxed) as u64,
     )

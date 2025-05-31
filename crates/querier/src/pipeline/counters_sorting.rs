@@ -1,22 +1,22 @@
 use byteorder::ReadBytesExt;
-use colors::colors_manager::color_types::SingleKmerColorDataType;
 use colors::colors_manager::ColorsManager;
+use colors::colors_manager::color_types::SingleKmerColorDataType;
 use config::{
-    get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, SwapPriority, get_compression_level_info, get_memory_mode,
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataOwned,
 };
-use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
+use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
-use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets, SingleBucket};
+use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
@@ -25,8 +25,8 @@ use rayon::iter::ParallelIterator;
 use std::io::Read;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone)]
 pub struct CounterEntry<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> {
@@ -134,6 +134,7 @@ pub fn counters_sorting<CX: ColorsManager>(
                 get_compression_level_info(),
             ),
             &(),
+            DuplicatesBuckets::None,
         ))
     } else {
         Arc::new(MultiThreadBuckets::EMPTY)

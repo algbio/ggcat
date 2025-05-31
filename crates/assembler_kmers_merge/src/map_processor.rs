@@ -5,7 +5,10 @@ use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, color_types};
 use ggcat_logging::stats;
 use ggcat_logging::stats::KmersMergeBucketReport;
-use hashes::HashFunctionFactory;
+use hashbrown::HashTable;
+use hashbrown::hash_table::Entry;
+use hashes::{HashFunctionFactory, HashableSequence};
+use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use kmers_transform::processor::KmersTransformProcessor;
 use kmers_transform::reads_buffer::ReadsVector;
@@ -18,6 +21,7 @@ use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::mt_debug_counters::counter::{AtomicCounter, AvgMode, MaxMode};
 use parallel_processor::mt_debug_counters::{declare_avg_counter_i64, declare_counter_i64};
 use parking_lot::RwLock;
+use rustc_hash::FxHashMap;
 use std::cmp::max;
 use std::mem::size_of;
 use std::ops::DerefMut;
@@ -32,6 +36,10 @@ pub(crate) static KMERGE_TEMP_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
 pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManager> {
     pub detailed_stats: KmersMergeBucketReport,
     pub extender: HashMapUnitigsExtender<MH, CX>,
+    pub superkmers_hashmap: HashTable<(CompressedReadIndipendent, u64)>,
+    pub superkmers_storage: Box<Vec<u8>>,
+    pub minimizer_collisions: FxHashMap<u64, u64>,
+    pub is_duplicates_bucket: bool,
 }
 
 impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
@@ -43,11 +51,18 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
         Self {
             detailed_stats: Default::default(),
             extender: HashMapUnitigsExtender::new(sizes),
+            superkmers_hashmap: HashTable::default(),
+            superkmers_storage: Box::new(vec![]),
+            minimizer_collisions: FxHashMap::default(),
+            is_duplicates_bucket: false,
         }
     }
 
     fn reset(&mut self) {
         self.extender.reset();
+        self.superkmers_hashmap.clear();
+        self.superkmers_storage.clear();
+        self.minimizer_collisions.clear();
     }
 }
 
@@ -116,26 +131,98 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     #[instrumenter::track]
     fn process_group_batch_sequences(
         &mut self,
-        _global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
+        global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
         batch: &ReadsVector<MinimizerBucketingSeqColorDataType<CX>>,
         extra_data_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ref_sequences: &Vec<u8>,
     ) {
         let map_packet = self.map_packet.as_mut().unwrap().deref_mut();
-
-        // let mut kmers_count = 0;
-        // let mut unique_kmers_count = 0;
-
+        map_packet.is_duplicates_bucket = batch.is_duplicates_bucket;
         stats!(
             let start_batch_time = std::time::Instant::now();
         );
 
-        for sequence in batch.iter() {
-            map_packet
-                .extender
-                .add_sequence(ref_sequences, extra_data_buffer, sequence);
-        }
+        if true || batch.is_duplicates_bucket {
+            for sequence in batch.iter() {
+                map_packet
+                    .extender
+                    .add_sequence(ref_sequences, extra_data_buffer, sequence);
+            }
+        } else {
+            for sequence in batch.iter() {
+                // TODO:
+                // Save the start offset of the minimizer in the bucket
 
+                // first pass: collapse unique super-kmers
+                // index k-mers based on (loe 32-bit) 2-fold minimizer values + distance between minimizers
+                // Betore adding a new super-kmer, check if there are k-mers already present in the current dataset
+                // In case, define a plan to increase that k-mer counter in the end, and mask out the current k-mer.
+                // Iterate each super-kmer, cnecking for duplicate/branching k-mers by using the minimizer pair hashtable
+
+                // TODO:
+                // 0) Track unicity of minimizers & improve first hash computation (x4 speed improvement)
+                // 1) Add a flag to each read to determine if the minimizer is unique or not
+                // 2) Find the one (or multiple) minimizers in each super-kmer and compute the left and/or right extended minimizer of size m+(k-m+1?)/2
+                // 3) Dedup and group the super-kmers by their extended minimizers (common storage + specialized vec based hashmap)
+                // 4) For each super-kmer extended minimizer group build the maximal unitigs and join them using an hashmap
+                // 5) Improve the kmers hashmap storage, reducing accesses from 1 to 4
+                // 5) Optionally increase the threshold for resplitting
+                {
+                    let read_slice = sequence.read.get_packed_slice_aligned(&ref_sequences);
+                    match map_packet.superkmers_hashmap.entry(
+                        sequence.read.compute_hash_aligned(&ref_sequences),
+                        |a| {
+                            a.0.bases_count() == sequence.read.bases_count()
+                                && a.0.get_packed_slice_aligned(&map_packet.superkmers_storage)
+                                    == read_slice
+                        },
+                        |v| v.0.compute_hash_aligned(&map_packet.superkmers_storage),
+                    ) {
+                        Entry::Occupied(mut occupied_entry) => {
+                            occupied_entry.get_mut().1 += sequence.multiplicity as u64;
+                        }
+                        Entry::Vacant(vacant_entry) => {
+                            let read = sequence.read.as_reference(&ref_sequences);
+                            let new_read = CompressedReadIndipendent::from_read(
+                                &read,
+                                &mut map_packet.superkmers_storage,
+                            );
+                            // assert!(!map_packet.superkmers_hashmap.contains_key(read.get_borrowable()));
+                            // assert!(!map_packet.superkmers_hashmap.contains_key(&SuperKmerEntry::new(&kmers_storage, new_read)));
+                            vacant_entry.insert((new_read, sequence.multiplicity as u64));
+
+                            let minimizer_pos = sequence.minimizer_pos as usize;
+
+                            if !sequence.is_window_duplicate && !batch.is_duplicates_bucket {
+                                let first_hash = read
+                                    .sub_slice(minimizer_pos..minimizer_pos + batch.minimizer_size)
+                                    .get_hash();
+                            }
+                            if read.bases_count() >= minimizer_pos + global_data.k / 2 {
+                                let extra_hash = read
+                                    .sub_slice(minimizer_pos..minimizer_pos + global_data.k / 2)
+                                    .get_hash();
+
+                                *map_packet
+                                    .minimizer_collisions
+                                    .entry(extra_hash)
+                                    .or_insert(0) += 1;
+                            }
+
+                            let end = minimizer_pos + batch.minimizer_size;
+                            if end >= global_data.k / 2 {
+                                let extra_hash =
+                                    read.sub_slice((end - global_data.k / 2)..end).get_hash();
+                                *map_packet
+                                    .minimizer_collisions
+                                    .entry(extra_hash)
+                                    .or_insert(0) += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         self.mem_tracker
             .update_memory_usage(&[map_packet.get_size(), 0]);
 

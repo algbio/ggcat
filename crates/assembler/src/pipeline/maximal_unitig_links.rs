@@ -31,12 +31,12 @@ use io::concurrent::temp_reads::creads_utils::{
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use nightly_quirks::slice_group_by::SliceGroupBy;
-use parallel_processor::buckets::MultiThreadBuckets;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::readers::async_binary_reader::AllowedCheckpointStrategy;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets};
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -91,6 +91,7 @@ pub fn build_maximal_unitigs_links<
                     get_compression_level_info(),
                 ),
                 &(),
+                DuplicatesBuckets::None,
             ));
 
         rayon::scope(|_s| {
@@ -255,6 +256,7 @@ pub fn build_maximal_unitigs_links<
                 get_compression_level_info(),
             ),
             &(),
+            DuplicatesBuckets::None,
         ));
 
         let buckets_thread_buffers = ScopedThreadLocal::new(move || {

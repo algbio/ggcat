@@ -27,7 +27,7 @@ use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
+use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -179,6 +179,7 @@ pub fn reorganize_reads<
             get_compression_level_info(),
         ),
         &(),
+        DuplicatesBuckets::None,
     ));
 
     reads.sort_by_key(|b| b.index);

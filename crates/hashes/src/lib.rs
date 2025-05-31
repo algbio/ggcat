@@ -241,7 +241,7 @@ pub mod tests {
         const IS_COMPRESSED: bool = true;
         #[inline(always)]
         unsafe fn get_unchecked_cbase(&self, index: usize) -> u8 {
-            self.get_base_unchecked(index)
+            unsafe { self.get_base_unchecked(index) }
         }
 
         #[inline(always)]

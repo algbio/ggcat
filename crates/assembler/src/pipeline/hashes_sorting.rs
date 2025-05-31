@@ -1,19 +1,19 @@
 use std::path::Path;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use config::{
-    get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, SwapPriority, get_memory_mode,
 };
 use hashes::HashFunctionFactory;
 use io::structs::hash_entry::{Direction, HashCompare, HashEntrySerializer};
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink, UnitigLinkSerializer};
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
+use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
+use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -41,6 +41,7 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
         &(),
+        DuplicatesBuckets::None,
     ));
 
     let buckets_thread_buffers = ScopedThreadLocal::new(move || {

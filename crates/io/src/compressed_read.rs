@@ -3,7 +3,8 @@ use crate::varint::{decode_varint_flags, encode_varint_flags};
 use byteorder::ReadBytesExt;
 use core::fmt::{Debug, Formatter};
 use hashes::HashableSequence;
-use std::hash::Hash;
+use rustc_hash::FxBuildHasher;
+use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
@@ -30,7 +31,7 @@ impl<'a> Debug for CompressedRead<'a> {
 
 impl<'a> Hash for CompressedRead<'a> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.get_packed_slice().hash(state);
+        self.get_hash_repr().hash(state);
     }
 }
 
@@ -118,6 +119,17 @@ impl CompressedReadIndipendent {
             start,
             size: read.size,
         }
+    }
+
+    #[inline(always)]
+    pub fn compute_hash_aligned(&self, storage: &[u8]) -> u64 {
+        use std::hash::BuildHasher;
+
+        let slice = self.get_packed_slice_aligned(storage);
+
+        let mut hasher = FxBuildHasher.build_hasher();
+        Hash::hash_slice(slice, &mut hasher);
+        hasher.finish()
     }
 
     #[inline(always)]
@@ -271,7 +283,7 @@ impl<'a> CompressedRead<'a> {
             }
 
             let size = encoded_size >> min_size_log;
-            let minimizer_pos = size & ((1 << min_size_log) - 1);
+            let minimizer_pos = encoded_size & ((1 << min_size_log) - 1);
             (
                 size as usize + min_size,
                 minimizer_pos as u16,
@@ -357,6 +369,52 @@ impl<'a> CompressedRead<'a> {
     #[inline(always)]
     pub fn get_packed_slice(&self) -> &'a [u8] {
         unsafe { from_raw_parts(self.data, (self.size + self.start as usize + 3) / 4) }
+    }
+
+    fn get_hash_repr(&self) -> u64 {
+        let mut buffer = [0; 16];
+
+        let final_offset = (self.size ^ (self.size << 1)) % 4;
+        let mask = u8::MAX >> (final_offset * 2);
+        let mut index = 0;
+
+        if self.start == 0 || self.size == 0 {
+            let slice = self.get_packed_slice();
+            for chunk in slice.chunks(16) {
+                let value = u128::from_ne_bytes(unsafe { *(chunk.as_ptr() as *const [u8; 16]) });
+                buffer = (u128::from_ne_bytes(buffer) ^ value).to_ne_bytes();
+            }
+            let reminder = slice.len() % 16;
+            let remaining = &slice[slice.len() - reminder..];
+            buffer[..reminder]
+                .iter_mut()
+                .zip(remaining)
+                .for_each(|(b, v)| *b ^= v);
+            index = (slice.len() + 15) % 16;
+        } else {
+            let bytes_count = (self.size + 3) / 4;
+            unsafe {
+                let right_offset = self.start * 2;
+                let left_offset = 8 - right_offset;
+
+                for b in 1..self.get_packed_slice().len() {
+                    let current = *self.data.add(b - 1);
+                    let next = *self.data.add(b);
+
+                    let value = (current >> right_offset) | (next << left_offset);
+                    buffer[index] ^= value;
+                    index = (index + 1) % 16;
+                }
+                // Handle the last one separately
+                buffer[index] = *self.data.add(bytes_count - 1) >> right_offset;
+            }
+        }
+        // Mask the last byte to ensure byte equality between partial compressions
+        buffer[index] &= mask;
+
+        let low = u64::from_ne_bytes(unsafe { *(buffer.as_ptr() as *const [u8; 8]) });
+        let high = u64::from_ne_bytes(unsafe { *(buffer.as_ptr().add(8) as *const [u8; 8]) });
+        low | high
     }
 
     pub fn copy_to_buffer(&self, buffer: &mut Vec<u8>) {
@@ -461,6 +519,14 @@ impl<'a> CompressedRead<'a> {
             data: unsafe { self.data.add(sbyte) },
             _phantom: Default::default(),
         }
+    }
+
+    pub fn get_hash(&self) -> u64 {
+        use std::hash::{BuildHasher, Hasher};
+        let mut hasher = FxBuildHasher::default().build_hasher();
+        self.hash(&mut hasher);
+        let hash = hasher.finish();
+        hash
     }
 
     #[inline(always)]

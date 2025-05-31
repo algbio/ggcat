@@ -193,6 +193,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         file_batches_with_sizes.sort_by_key(|x| x.1);
         file_batches_with_sizes.reverse();
 
+        // Reorder the buckets so that large buckets are alternated with each large bucket followed some small ones that match it in size
+        // Don't do that with the first batch of processing (up to unique_estimator_buckets_count)
+
         let normal_buckets_list = {
             let mut buckets_list = Vec::with_capacity(file_batches_with_sizes.len());
             let mut start_idx = 0;
@@ -222,6 +225,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     } else {
                         MinimizerBucketMode::Single
                     },
+                    is_duplicates_bucket: bucket_entries.is_duplicates_bucket,
                 });
             }
 
@@ -255,6 +259,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     } else {
                         MinimizerBucketMode::Single
                     },
+                    is_duplicates_bucket: bucket_entry.is_duplicates_bucket,
                 })
             }
             buckets_list

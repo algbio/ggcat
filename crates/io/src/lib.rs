@@ -1,5 +1,5 @@
 use crate::sequences_stream::general::GeneralSequenceBlockData;
-use config::{MAX_BUCKETS_COUNT_LOG, MAX_BUCKET_SIZE, MIN_BUCKETS_COUNT_LOG};
+use config::{MAX_BUCKET_SIZE, MAX_BUCKETS_COUNT_LOG, MIN_BUCKETS_COUNT_LOG};
 use parallel_processor::buckets::SingleBucket;
 use std::cmp::{max, min};
 use std::path::Path;
@@ -18,6 +18,7 @@ pub fn generate_bucket_names(
     root: impl AsRef<Path>,
     count: usize,
     suffix: Option<&str>,
+    last_is_duplicates_bucket: bool,
 ) -> Vec<SingleBucket> {
     (0..count)
         .map(|i| SingleBucket {
@@ -30,6 +31,7 @@ pub fn generate_bucket_names(
                     Some(s) => format!(".{}", s),
                 }
             )),
+            is_duplicates_bucket: last_is_duplicates_bucket && (i == count - 1),
         })
         .collect()
 }

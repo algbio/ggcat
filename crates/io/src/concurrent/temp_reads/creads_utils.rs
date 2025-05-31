@@ -354,6 +354,11 @@ impl<
             + extra.max_size()
             + VARINT_FLAGS_MAX_SIZE
             + if BucketMode::ENABLED { 1 } else { 0 }
+            + if MinimizerMode::ENABLED {
+                VARINT_FLAGS_MAX_SIZE
+            } else {
+                0
+            }
             + if MultiplicityMode::ENABLED {
                 VARINT_MAX_SIZE
             } else {

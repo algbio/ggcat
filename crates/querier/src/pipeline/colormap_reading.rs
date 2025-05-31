@@ -2,28 +2,28 @@ use crate::pipeline::counters_sorting::{CounterEntry, CounterEntrySerializer};
 use crate::structs::query_colored_counters::{
     ColorsRange, QueryColorDesc, QueryColoredCounters, QueryColoredCountersSerializer,
 };
-use colors::storage::deserializer::ColorsDeserializer;
 use colors::storage::ColorsSerializerTrait;
+use colors::storage::deserializer::ColorsDeserializer;
 use config::{
-    get_compression_level_info, get_memory_mode, BucketIndexType, ColorIndexType, SwapPriority,
-    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, QUERIES_COUNT_MIN_BATCH,
+    BucketIndexType, ColorIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
+    KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, QUERIES_COUNT_MIN_BATCH, SwapPriority,
+    get_compression_level_info, get_memory_mode,
 };
 use nightly_quirks::prelude::*;
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::BucketReader;
+use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
-use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets, SingleBucket};
+use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::prelude::*;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 pub fn colormap_reading<CD: ColorsSerializerTrait>(
     colormap_file: PathBuf,
@@ -48,6 +48,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             get_compression_level_info(),
         ),
         &(),
+        DuplicatesBuckets::None,
     ));
 
     let thread_buffers = ScopedThreadLocal::new(move || {

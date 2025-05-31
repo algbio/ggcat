@@ -23,6 +23,7 @@ pub struct ReadsVector<E> {
     window_duplicates_indices: Vec<usize>,
     pub minimizer_size: usize,
     pub total_multiplicity: u64,
+    pub is_duplicates_bucket: bool,
 }
 
 impl<E> ReadsVector<E> {
@@ -102,6 +103,7 @@ impl<E> ReadsVector<E> {
         self.minimizer_pos.clear();
         self.window_duplicates_indices.clear();
         self.total_multiplicity = 0;
+        self.is_duplicates_bucket = false;
     }
 
     pub fn iter(&self) -> ReadsVectorIterator<E> {
@@ -142,8 +144,8 @@ impl<'a, E: Copy> Iterator for ReadsVectorIterator<'a, E> {
                     },
                     flags: *self.reads.flags.get_unchecked(index),
                     minimizer_pos: *self.reads.minimizer_pos.get_unchecked(index),
-                    is_window_duplicate: if self.reads.window_duplicates_indices.len()
-                        < self.minimizer_index
+                    is_window_duplicate: if self.minimizer_index
+                        < self.reads.window_duplicates_indices.len()
                         && *self
                             .reads
                             .window_duplicates_indices
@@ -190,6 +192,7 @@ impl<E: SequenceExtraDataTempBufferManagement + 'static> PoolObjectTrait for Rea
                 window_duplicates_indices: vec![],
                 minimizer_size: 0,
                 total_multiplicity: 0,
+                is_duplicates_bucket: false,
             },
             sub_bucket: 0,
             extra_buffer: E::new_temp_buffer(),

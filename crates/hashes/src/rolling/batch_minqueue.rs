@@ -21,18 +21,14 @@ impl<X: Clone + Copy + Default + Debug> BatchMinQueue<X> {
         Self {
             size,
             backward: vec![Default::default(); size - 1],
-            splits: vec![Default::default(); size + 1],
-            duplicates: vec![false; size + 1],
+            splits: vec![Default::default(); size + 2],
+            duplicates: vec![false; size + 2],
         }
     }
 
     #[inline(always)]
     pub const fn unique_flag<const ENABLE_DUPLICATE_CHECKING: bool>() -> u64 {
-        if ENABLE_DUPLICATE_CHECKING {
-            1
-        } else {
-            0
-        }
+        if ENABLE_DUPLICATE_CHECKING { 1 } else { 0 }
     }
 
     #[inline(always)]
@@ -238,6 +234,9 @@ impl<X: Clone + Copy + Default + Debug> BatchMinQueue<X> {
                     cursor = cursor.add(1);
                     diff_cursor = diff_cursor.add(1);
                 }
+                let last_is_dupl = *diff_cursor;
+                *diff_cursor = false;
+                *duplicates_ptr = last_is_dupl;
 
                 splits_ptr.set(splits_start);
             },

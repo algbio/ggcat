@@ -1232,6 +1232,7 @@ dependencies = [
  "parallel-processor",
  "parking_lot",
  "rand",
+ "rustc-hash",
  "serde",
  "streaming-libdeflate-rs",
  "typenum",
@@ -1870,8 +1871,6 @@ dependencies = [
 [[package]]
 name = "parallel-processor"
 version = "0.1.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ce453c6a9347ed2670878c9bd3e36939b12f16f46ba17cf8e267d4174fd26cb"
 dependencies = [
  "arc-swap",
  "backtrace",

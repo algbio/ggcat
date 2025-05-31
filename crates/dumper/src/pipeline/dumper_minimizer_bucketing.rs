@@ -9,14 +9,14 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataTempBufferManagement,
 };
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
-use io::sequences_stream::fasta::FastaFileSequencesStream;
 use io::sequences_stream::SequenceInfo;
+use io::sequences_stream::fasta::FastaFileSequencesStream;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence, PushSequenceInfo,
 };
-use parallel_processor::buckets::SingleBucket;
+use parallel_processor::buckets::{DuplicatesBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::io::{Read, Write};
@@ -309,5 +309,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         None,
         CX::COLORS_ENABLED,
         k,
+        DuplicatesBuckets::None,
     )
 }

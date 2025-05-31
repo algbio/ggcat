@@ -205,12 +205,12 @@ mod tests {
     use std::num::Wrapping;
 
     use crate::{
+        ExtendableHashTraitType, HashFunction, HashFunctionFactory,
         default::MNHFactory,
         rolling::{
             batch_minqueue::BatchMinQueue,
             minqueue_testing::{RollingMinQueue, RollingMinQueueOld},
         },
-        ExtendableHashTraitType, HashFunction, HashFunctionFactory,
     };
     use rand::{RngCore, SeedableRng};
 
@@ -235,13 +235,10 @@ mod tests {
         // target = vec![1, 3, 1, 0, 5, 7, 7, 1, 2, 2, 2, 4, 1];
 
         let m = 11;
-        target = MNHFactory::new(
-            &b"CTCAGCAGTAATCATCAACGGTACGGCATGGTGCCGTACCGTTAATCAATTCTCTTCGG"[..],
-            m,
-        )
-        .iter()
-        .map(|h| h.to_unextendable())
-        .collect();
+        target = MNHFactory::new(&b"ACTTTGATGCCGAAACGCTCGGCATCAAACAGCGGCGAAAGCGTC"[..], m)
+            .iter()
+            .map(|h| h.to_unextendable())
+            .collect();
 
         target.iter_mut().for_each(|x| *x |= 1);
         println!("TARGET: {:?}", target);

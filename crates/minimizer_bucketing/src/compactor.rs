@@ -3,7 +3,6 @@ pub mod extra_data;
 use std::{
     cmp::Reverse,
     future::Future,
-    hash::{Hash, Hasher},
     marker::PhantomData,
     path::Path,
     sync::atomic::{AtomicUsize, Ordering},
@@ -60,7 +59,6 @@ use parallel_processor::{
     memory_fs::MemoryFs,
     scheduler::PriorityScheduler,
 };
-use rustc_hash::FxBuildHasher;
 use utils::track;
 
 pub struct MinimizerBucketingCompactor<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static>
@@ -74,17 +72,6 @@ static ADDR_WAITING_COUNTER: AtomicCounter<SumMode> =
 #[derive(Clone, Debug)]
 pub struct CompactorInitData {
     pub bucket_index: u16,
-}
-
-#[inline(always)]
-fn compute_hash(buffer: &[u8], read: &CompressedReadIndipendent) -> u64 {
-    use std::hash::BuildHasher;
-
-    let slice = read.get_packed_slice_aligned(buffer);
-
-    let mut hasher = FxBuildHasher.build_hasher();
-    Hash::hash_slice(slice, &mut hasher);
-    hasher.finish()
 }
 
 impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
@@ -182,7 +169,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     is_window_duplicate,
                 } in super_kmers_buffer.drain(..)
                 {
-                    let read_hash = compute_hash(super_kmers_storage, &read);
+                    let read_hash = read.compute_hash_aligned(super_kmers_storage);
                     let read_slice = read.get_packed_slice_aligned(super_kmers_storage);
 
                     match super_kmers_hashmap.entry(
@@ -191,12 +178,11 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             a.read.bases_count() == read.bases_count()
                                 && a.read.get_packed_slice_aligned(super_kmers_storage)
                                     == read_slice
+                                && a.flags == flags
                         },
-                        |v| compute_hash(super_kmers_storage, &v.read),
+                        |v| v.read.compute_hash_aligned(super_kmers_storage),
                     ) {
                         Entry::Occupied(mut entry) => {
-                            // Combine the flags from the two super-kmers
-                            entry.get_mut().flags |= flags;
                             entry.get_mut().multiplicity += multiplicity;
                         }
                         Entry::Vacant(position) => {
