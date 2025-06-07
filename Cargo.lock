@@ -1146,6 +1146,7 @@ dependencies = [
  "ggcat_hashes",
  "ggcat_io",
  "ggcat_structs",
+ "ggcat_utils",
  "hashbrown 0.14.5",
  "itertools 0.13.0",
  "lz4",

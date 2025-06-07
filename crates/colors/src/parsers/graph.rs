@@ -2,12 +2,13 @@ use crate::colors_manager::{ColorsParser, MinimizerBucketingSeqColorData};
 use crate::managers::multiple::{
     KmerSerializedColor, UnitigColorData, UnitigsSerializerTempBuffer,
 };
+use crate::non_colored::NonColoredMultipleColors;
 use crate::parsers::{SequenceIdent, SingleSequenceInfo};
 use byteorder::ReadBytesExt;
 use config::{ColorCounterType, ColorIndexType};
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+    SequenceExtraData, SequenceExtraDataCombiner, SequenceExtraDataTempBufferManagement,
 };
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use std::cmp::min;
@@ -243,7 +244,7 @@ impl SequenceExtraData for MinBkMultipleColors {
 // }
 
 impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
-    type KmerColor = ColorIndexType;
+    type KmerColor<'a> = ColorIndexType;
     type KmerColorIterator<'a> = MinBkColorsIterator<'a>;
 
     fn create(sequence_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self {
@@ -298,11 +299,35 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
     }
 }
 
+impl SequenceExtraDataCombiner for MinBkMultipleColors {
+    type SingleDataType = Self;
+
+    fn combine_entries(
+        &mut self,
+        out_buffer: &mut Self::TempBuffer,
+        color: Self,
+        in_buffer: &Self::TempBuffer,
+    ) {
+        unimplemented!()
+    }
+
+    #[inline(always)]
+    fn from_single_entry<'a>(
+        out_buffer: &'a mut Self::TempBuffer,
+        single: Self::SingleDataType,
+        _in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> (Self, &'a mut Self::TempBuffer) {
+        (single, out_buffer)
+    }
+}
+
 pub struct GraphColorsParser;
 
 impl ColorsParser for GraphColorsParser {
     type SingleKmerColorDataType = ColorIndexType;
     type MinimizerBucketingSeqColorDataType = MinBkMultipleColors;
+    // This kind of structure is not supported on graph based data as compaction does not support it
+    type MinimizerBucketingMultipleSeqColorDataType = NonColoredMultipleColors<MinBkMultipleColors>;
 }
 
 #[cfg(test)]

@@ -355,7 +355,7 @@ impl<
             + VARINT_FLAGS_MAX_SIZE
             + if BucketMode::ENABLED { 1 } else { 0 }
             + if MinimizerMode::ENABLED {
-                VARINT_FLAGS_MAX_SIZE
+                VARINT_FLAGS_MAX_SIZE * 2
             } else {
                 0
             }
@@ -370,90 +370,143 @@ pub mod helpers {
 
     // use crate::concurrent::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
 
-    #[macro_export]
-    macro_rules! creads_helper {
-        (
-            helper_read_bucket_with_opt_multiplicity::<$E:ty, $FlagsCount:ty, $BucketMode:ty, $MinimizerMode:ty>(
-                $reader:expr,
-                $read_thread:expr,
-                $with_multiplicity:expr,
-                $allowed_passtrough:expr,
-                |$passtrough_info:ident| $p:expr,
-                |$checkpoint_data:ident| $c:expr,
-                |$data: ident, $extra_buffer: ident| $f:expr,
-                $thread_handle:ident,
-                $k:expr
-            );
+    use std::sync::Arc;
 
-        ) => {
-            use $crate::concurrent::temp_reads::creads_utils::{
-                BucketModeOption, CompressedReadsBucketDataSerializer, NoMultiplicity,
+    use parallel_processor::{
+        buckets::readers::async_binary_reader::{
+            AllowedCheckpointStrategy, AsyncBinaryReader, AsyncBinaryReaderIteratorData,
+            AsyncReaderThread,
+        },
+        memory_fs::file::reader::FileRangeReference,
+        scheduler::ThreadPriorityHandle,
+    };
+
+    use crate::concurrent::temp_reads::{
+        creads_utils::NoSecondBucket,
+        extra_data::{SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression},
+    };
+
+    use super::{
+        BucketModeOption, CompressedReadsBucketDataSerializer, DeserializedRead,
+        MinimizerModeOption, NoMultiplicity, ReadsCheckpointData, WithMultiplicity,
+    };
+
+    pub fn helper_read_bucket_with_opt_multiplicity<
+        E: SequenceExtraDataConsecutiveCompression,
+        EM: SequenceExtraDataConsecutiveCompression + SequenceExtraDataCombiner<SingleDataType = E>,
+        FlagsCount: typenum::Unsigned,
+        BucketMode: BucketModeOption,
+        MinimizerMode: MinimizerModeOption,
+    >(
+        reader: &AsyncBinaryReader,
+        read_thread: Arc<AsyncReaderThread>,
+        with_multiplicity: bool,
+        allowed_passtrough: AllowedCheckpointStrategy<ReadsCheckpointData>,
+        mut passtrough_callback: impl FnMut(FileRangeReference),
+        mut checkpoint_callback: impl FnMut(Option<ReadsCheckpointData>),
+        mut data_callback: impl FnMut(DeserializedRead<EM>, &mut EM::TempBuffer),
+        thread_handle: &ThreadPriorityHandle,
+        k: usize,
+    ) {
+        if with_multiplicity {
+            let mut items = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
+                E,
+                FlagsCount,
+                NoSecondBucket,
                 WithMultiplicity,
-            };
-            use parallel_processor::buckets::readers::async_binary_reader::AsyncBinaryReaderIteratorData;
+                MinimizerMode,
+            >>(
+                read_thread,
+                Vec::new(),
+                <E>::new_temp_buffer(),
+                allowed_passtrough,
+                thread_handle,
+                k,
+            );
+            let mut tmp_mult_buffer = EM::new_temp_buffer();
 
-            let reader = $reader;
-            let read_thread = $read_thread;
-            let with_multiplicity = $with_multiplicity;
-
-            if $with_multiplicity {
-                let mut items =
-                    reader.get_items_stream::<CompressedReadsBucketDataSerializer<
-                        $E,
-                        $FlagsCount,
-                        NoSecondBucket,
-                        WithMultiplicity,
-                        $MinimizerMode,
-                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle, $k);
-                while let Some(checkpoint) = items.get_next_checkpoint_extended() {
-                    match checkpoint {
-                        AsyncBinaryReaderIteratorData::Stream(items, $checkpoint_data) => {
-                            $c
-                            while let Some(($data, $extra_buffer)) = items.next() {
-                                $f
-                            }
-                        },
-                        AsyncBinaryReaderIteratorData::Passtrough {
-                            file_range: $passtrough_info,
-                            checkpoint_data: $checkpoint_data,
-                        } => {
-                            #[allow(unused_assignments)]
-                            $c
-                            $p
+            while let Some(checkpoint) = items.get_next_checkpoint_extended() {
+                match checkpoint {
+                    AsyncBinaryReaderIteratorData::Stream(items, checkpoint_data) => {
+                        checkpoint_callback(checkpoint_data);
+                        while let Some((data, extra_buffer)) = items.next() {
+                            let (extra, extra_buffer) = EM::from_single_entry(
+                                &mut tmp_mult_buffer,
+                                data.extra,
+                                extra_buffer,
+                            );
+                            let data = DeserializedRead {
+                                read: data.read,
+                                extra,
+                                multiplicity: data.multiplicity,
+                                flags: data.flags,
+                                second_bucket: data.second_bucket,
+                                minimizer_pos: data.minimizer_pos,
+                                is_window_duplicate: data.is_window_duplicate,
+                            };
+                            data_callback(data, extra_buffer);
+                            EM::clear_temp_buffer(extra_buffer);
                         }
                     }
-
-                }
-            } else {
-                let mut items =
-                    reader.get_items_stream::<CompressedReadsBucketDataSerializer<
-                        $E,
-                        $FlagsCount,
-                        $BucketMode,
-                        NoMultiplicity,
-                        $MinimizerMode,
-                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle, $k);
-                while let Some(checkpoint) = items.get_next_checkpoint_extended() {
-                    match checkpoint {
-                        AsyncBinaryReaderIteratorData::Stream(items, $checkpoint_data) => {
-                            $c
-                            while let Some(($data, $extra_buffer)) = items.next() {
-                                $f
-                            }
-                        },
-                        AsyncBinaryReaderIteratorData::Passtrough {
-                            file_range: $passtrough_info,
-                            checkpoint_data: $checkpoint_data,
-                        } => {
-                            #[allow(unused_assignments)]
-                            $c
-                            $p
-                        }
+                    AsyncBinaryReaderIteratorData::Passtrough {
+                        file_range: passtrough_info,
+                        checkpoint_data,
+                    } => {
+                        checkpoint_callback(checkpoint_data);
+                        passtrough_callback(passtrough_info)
                     }
-
                 }
             }
-        };
+        } else {
+            let mut items = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
+                E,
+                FlagsCount,
+                BucketMode,
+                NoMultiplicity,
+                MinimizerMode,
+            >>(
+                read_thread,
+                Vec::new(),
+                <E>::new_temp_buffer(),
+                allowed_passtrough,
+                &thread_handle,
+                k,
+            );
+            let mut tmp_mult_buffer = EM::new_temp_buffer();
+
+            while let Some(checkpoint) = items.get_next_checkpoint_extended() {
+                match checkpoint {
+                    AsyncBinaryReaderIteratorData::Stream(items, checkpoint_data) => {
+                        checkpoint_callback(checkpoint_data);
+                        while let Some((data, extra_buffer)) = items.next() {
+                            let (extra, extra_buffer) = EM::from_single_entry(
+                                &mut tmp_mult_buffer,
+                                data.extra,
+                                extra_buffer,
+                            );
+                            let data = DeserializedRead {
+                                read: data.read,
+                                extra,
+                                multiplicity: data.multiplicity,
+                                flags: data.flags,
+                                second_bucket: data.second_bucket,
+                                minimizer_pos: data.minimizer_pos,
+                                is_window_duplicate: data.is_window_duplicate,
+                            };
+                            data_callback(data, extra_buffer);
+                            EM::clear_temp_buffer(extra_buffer);
+                        }
+                    }
+                    AsyncBinaryReaderIteratorData::Passtrough {
+                        file_range: passtrough_info,
+                        checkpoint_data,
+                    } => {
+                        checkpoint_callback(checkpoint_data);
+                        passtrough_callback(passtrough_info)
+                    }
+                }
+            }
+        }
     }
 
     // TODO: Restore this function when async closures are stable!

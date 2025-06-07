@@ -6,7 +6,7 @@ use std::{
 
 use colors::colors_manager::{
     ColorsManager, ColorsMergeManager, MinimizerBucketingSeqColorData,
-    color_types::{self, MinimizerBucketingSeqColorDataType},
+    color_types::{self, MinimizerBucketingMultipleSeqColorDataType},
 };
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
@@ -344,8 +344,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
     fn add_sequence(
         &mut self,
         sequences_data: &[u8],
-        extra_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        sequence: DeserializedReadIndependent<MinimizerBucketingSeqColorDataType<CX>>,
+        extra_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        sequence: DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>,
     ) {
         let read = sequence.read.as_reference(sequences_data);
 
@@ -384,7 +384,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
 
             CX::ColorsMergeManagerType::add_temp_buffer_structure_el::<MH>(
                 &mut self.temp_colors,
-                &kmer_color,
+                kmer_color,
                 (idx, hash.to_unextendable()),
                 entry,
             );

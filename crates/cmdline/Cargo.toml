@@ -63,6 +63,7 @@ ggcat-logging = { version = "2.0.0", path = "../logging" }
 
 
 [features]
+memory-guards = ["parallel-processor/memory-guards"]
 mem-analysis = ["parallel-processor/track-usage"]
 no-stats = ["parallel-processor/no-stats"]
 detailed-stats = ["ggcat-api/detailed-stats"]

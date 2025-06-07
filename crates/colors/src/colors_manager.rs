@@ -6,7 +6,8 @@ use hashes::HashFunctionFactory;
 use io::compressed_read::CompressedRead;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
+    SequenceExtraDataTempBufferManagement,
 };
 use nightly_quirks::prelude::*;
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
@@ -44,6 +45,7 @@ pub mod color_types {
 
     color_parser_type_alias!(SingleKmerColorDataType);
     color_parser_type_alias!(MinimizerBucketingSeqColorDataType);
+    color_parser_type_alias!(MinimizerBucketingMultipleSeqColorDataType);
 
     pub type ColorsParserType<C> = <C as ColorsManager>::ColorsParserType;
     pub type ColorsMergeManagerType<C> = <C as ColorsManager>::ColorsMergeManagerType;
@@ -53,8 +55,8 @@ pub mod color_types {
 pub trait MinimizerBucketingSeqColorData:
     Default + Clone + Copy + SequenceExtraDataConsecutiveCompression + Send + Sync + 'static
 {
-    type KmerColor;
-    type KmerColorIterator<'a>: Iterator<Item = Self::KmerColor>
+    type KmerColor<'a>;
+    type KmerColorIterator<'a>: Iterator<Item = Self::KmerColor<'a>>
     where
         Self: 'a;
 
@@ -66,7 +68,6 @@ pub trait MinimizerBucketingSeqColorData:
         0
     }
 }
-
 pub trait ColorMapReader {
     fn get_color_name(&self, index: ColorIndexType, json_escaped: bool) -> &str;
     fn colors_count(&self) -> usize;
@@ -101,9 +102,11 @@ pub trait ColorsParser: Sized {
         + Sync
         + Send
         + 'static;
-    type MinimizerBucketingSeqColorDataType: MinimizerBucketingSeqColorData<
-        KmerColor = Self::SingleKmerColorDataType,
+    type MinimizerBucketingSeqColorDataType: for<'a> MinimizerBucketingSeqColorData<
+        KmerColor<'a> = Self::SingleKmerColorDataType,
     >;
+    type MinimizerBucketingMultipleSeqColorDataType: SequenceExtraDataCombiner<SingleDataType = Self::MinimizerBucketingSeqColorDataType>
+        + for<'a> MinimizerBucketingSeqColorData<KmerColor<'a> = &'a [Self::SingleKmerColorDataType]>;
 }
 
 /// Helper trait to manage colors labeling on KmersMerge step
@@ -141,7 +144,7 @@ pub trait ColorsMergeManager: Sized {
     fn reinit_temp_buffer_structure(data: &mut Self::ColorsBufferTempStructure);
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         data: &mut Self::ColorsBufferTempStructure,
-        kmer_color: &Self::SingleKmerColorDataType,
+        kmer_colors: &[Self::SingleKmerColorDataType],
         el: (usize, MH::HashTypeUnextendable),
         entry: &mut MapEntry<Self::HashMapTempColorIndex>,
     );

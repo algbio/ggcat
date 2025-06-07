@@ -36,7 +36,7 @@ pub struct KmersProcessorInitData {
 }
 
 impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor<F> {
-    type InputPacket = ReadsBuffer<F::AssociatedExtraData>;
+    type InputPacket = ReadsBuffer<F::AssociatedExtraDataWithMultiplicity>;
     type OutputPacket = ();
     type GlobalParams = KmersTransformContext<F>;
     type InitData = KmersProcessorInitData;

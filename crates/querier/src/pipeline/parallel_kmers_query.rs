@@ -18,7 +18,8 @@ use hashes::HashFunctionFactory;
 use hashes::default::MNHFactory;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
+    SequenceExtraDataTempBufferManagement,
 };
 use io::varint::{decode_varint, encode_varint};
 use kmers_transform::processor::KmersTransformProcessor;
@@ -141,6 +142,27 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataConsecutiveCompression
     }
 }
 
+impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataCombiner for QueryKmersReferenceData<CX> {
+    type SingleDataType = Self;
+
+    fn combine_entries(
+        &mut self,
+        out_buffer: &mut Self::TempBuffer,
+        color: Self,
+        in_buffer: &Self::TempBuffer,
+    ) {
+        unimplemented!()
+    }
+
+    fn from_single_entry<'a>(
+        _out_buffer: &'a mut Self::TempBuffer,
+        single: Self::SingleDataType,
+        in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> (Self, &'a mut Self::TempBuffer) {
+        (single, in_buffer)
+    }
+}
+
 struct GlobalQueryMergeData {
     k: usize,
     m: usize,
@@ -173,6 +195,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
     type SequencesResplitterFactory = QuerierMinimizerBucketingExecutorFactory<CX>;
     type GlobalExtraData = GlobalQueryMergeData;
     type AssociatedExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
+    type AssociatedExtraDataWithMultiplicity =
+        QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
 
     type PreprocessorType = RewriteBucketComputeQuery;
     type MapProcessorType = ParallelKmersQueryMapProcessor<MH, CX>;

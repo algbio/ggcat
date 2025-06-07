@@ -17,13 +17,13 @@ use ggcat_logging::stats::StatId;
 use ggcat_logging::{generate_stat_id, stats};
 use instrumenter::local_setup_instrumenter;
 use io::compressed_read::CompressedReadIndipendent;
+use io::concurrent::temp_reads::creads_utils::helpers::helper_read_bucket_with_opt_multiplicity;
 use io::concurrent::temp_reads::creads_utils::{
     AssemblerMinimizerPosition, BucketModeFromBoolean, BucketModeOption, CompressedReadsBucketData,
     CompressedReadsBucketDataSerializer, DeserializedRead, MultiplicityModeFromBoolean,
-    MultiplicityModeOption, NoSecondBucket,
+    MultiplicityModeOption, ReadsCheckpointData,
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
-use io::creads_helper;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
 use minimizer_bucketing::{MinimizerBucketMode, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::LockFreeBucket;
@@ -43,7 +43,8 @@ use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::mt_debug_counters::counter::{AtomicCounter, SumMode};
 use parallel_processor::mt_debug_counters::declare_counter_i64;
 use parallel_processor::scheduler::{PriorityScheduler, ThreadPriorityHandle};
-use parallel_processor::utils::replace_with_async::replace_with_async;
+use replace_with::replace_with_or_abort;
+use std::cell::Cell;
 use std::cmp::{Reverse, max, min};
 use std::collections::{BinaryHeap, VecDeque};
 use std::future::Future;
@@ -422,7 +423,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         BucketMode: BucketModeOption,
         MultiplicityMode: MultiplicityModeOption,
     >(
-        input_buffer: &mut Packet<ReadsBuffer<F::AssociatedExtraData>>,
+        input_buffer: &mut Packet<ReadsBuffer<F::AssociatedExtraDataWithMultiplicity>>,
         writer: &CompressedBinaryWriter,
         seq_count: &AtomicU64,
         rewrite_buffer: &mut Vec<u8>,
@@ -489,7 +490,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         ops: &ExecutorAddressOperations<'_, Self>,
         bucket_info: &BucketsInfo,
         async_reader_thread: Arc<AsyncReaderThread>,
-        packets_pool: Arc<PoolObject<PacketsPool<ReadsBuffer<F::AssociatedExtraData>>>>,
+        packets_pool: Arc<
+            PoolObject<PacketsPool<ReadsBuffer<F::AssociatedExtraDataWithMultiplicity>>>,
+        >,
         thread_handle: &ThreadPriorityHandle,
         minimizer_size: usize,
     ) {
@@ -518,115 +521,137 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             }
 
             let data_format: MinimizerBucketMode = reader.get_data_format_info().unwrap();
-            let mut checkpoint_rewrite_info;
+            let checkpoint_rewrite_info = Cell::new(None);
 
             let addresses_passtrough_check = bucket_info.addresses.clone();
             let buckets_remapping_passtrough_check = bucket_info.buckets_remapping.clone();
 
-            creads_helper! {
-                helper_read_bucket_with_opt_multiplicity::<
-                    F::AssociatedExtraData,
-                    F::FLAGS_COUNT,
-                    BucketModeFromBoolean<USE_SECOND_BUCKET>,
-                    AssemblerMinimizerPosition
-                >(
-                    reader,
-                    async_reader_thread.clone(),
-                    matches!(data_format, MinimizerBucketMode::Compacted),
-                    AllowedCheckpointStrategy::AllowPasstrough(Arc::new(move |data| {
-                        if let Some(data) = data {
-                            matches!(&addresses_passtrough_check[buckets_remapping_passtrough_check[data.target_subbucket as usize]], AddressMode::Rewrite(_, _, _))
-                        } else {
-                            false
-                        }
-                    })),
-                    |passtrough| {
-                        let bucket = checkpoint_rewrite_info.unwrap().target_subbucket as usize;
-                        let sequences_count = checkpoint_rewrite_info.unwrap().sequences_count;
-                        if let AddressMode::Rewrite(writer, out_sequences_count, _) = &bucket_info.addresses[bucket_info.buckets_remapping[bucket]] {
-                            out_sequences_count.fetch_add(sequences_count as u64, Ordering::Relaxed);
-                            writer.set_checkpoint_data::<()>(None, Some(passtrough));
-                        } else {
-                            unreachable!();
-                        }
-                    },
-                    |checkpoint_data| { checkpoint_rewrite_info = checkpoint_data; } ,
-                    |read_info, extra_buffer| {
+            helper_read_bucket_with_opt_multiplicity::<
+                F::AssociatedExtraData,
+                F::AssociatedExtraDataWithMultiplicity,
+                F::FLAGS_COUNT,
+                BucketModeFromBoolean<USE_SECOND_BUCKET>,
+                AssemblerMinimizerPosition,
+            >(
+                reader,
+                async_reader_thread.clone(),
+                matches!(data_format, MinimizerBucketMode::Compacted),
+                AllowedCheckpointStrategy::AllowPasstrough(Arc::new(move |data| {
+                    if let Some(data) = data {
+                        matches!(
+                            &addresses_passtrough_check[buckets_remapping_passtrough_check
+                                [data.target_subbucket as usize]],
+                            AddressMode::Rewrite(_, _, _)
+                        )
+                    } else {
+                        false
+                    }
+                })),
+                |passtrough| {
+                    let checkpoint_rewrite_info: ReadsCheckpointData =
+                        checkpoint_rewrite_info.get().unwrap();
+                    let bucket = checkpoint_rewrite_info.target_subbucket as usize;
+                    let sequences_count = checkpoint_rewrite_info.sequences_count;
+                    if let AddressMode::Rewrite(writer, out_sequences_count, _) =
+                        &bucket_info.addresses[bucket_info.buckets_remapping[bucket]]
+                    {
+                        out_sequences_count.fetch_add(sequences_count as u64, Ordering::Relaxed);
+                        writer.set_checkpoint_data::<()>(None, Some(passtrough));
+                    } else {
+                        unreachable!();
+                    }
+                },
+                |checkpoint_data| {
+                    checkpoint_rewrite_info.set(checkpoint_data);
+                },
+                |read_info, extra_buffer| {
+                    let DeserializedRead {
+                        read,
+                        mut extra,
+                        multiplicity,
+                        flags,
+                        second_bucket,
+                        minimizer_pos,
+                        is_window_duplicate,
+                    } = read_info;
 
-                        let DeserializedRead { read, mut extra, multiplicity, flags, second_bucket, minimizer_pos, is_window_duplicate } = read_info;
+                    let bucket = if has_single_addr {
+                        0
+                    } else {
+                        let orig_bucket = checkpoint_rewrite_info
+                            .get()
+                            .map(|i| i.target_subbucket)
+                            .unwrap_or(if USE_SECOND_BUCKET {
+                                second_bucket as u16
+                            } else {
+                                // F::PreprocessorType::get_rewrite_bucket(
+                                //         global_extra_data.get_k(),
+                                //         global_extra_data.get_m(),
+                                //         &read_info,
+                                //         bucket_info.used_hash_bits,
+                                //         bucket_info.second_buckets_log_max,
+                                // )
+                                unimplemented!("Restore the above if needed!");
+                            }) as usize;
+                        bucket_info.buckets_remapping[orig_bucket]
+                    };
 
-                        let bucket = if has_single_addr {
-                            0
-                        } else {
-                            let orig_bucket = checkpoint_rewrite_info.map(|i| i.target_subbucket)
-                               .unwrap_or(
-                                if USE_SECOND_BUCKET {
-                                    second_bucket as u16
-                                } else {
-                                    // F::PreprocessorType::get_rewrite_bucket(
-                                    //         global_extra_data.get_k(),
-                                    //         global_extra_data.get_m(),
-                                    //         &read_info,
-                                    //         bucket_info.used_hash_bits,
-                                    //         bucket_info.second_buckets_log_max,
-                                    // )
-                                    unimplemented!("Restore the above if needed!");
-                                }) as usize;
-                            bucket_info.buckets_remapping[orig_bucket]
-                        };
+                    let ind_read = CompressedReadIndipendent::from_read(
+                        &read,
+                        &mut buffers[bucket].reads_buffer,
+                    );
+                    extra = F::AssociatedExtraDataWithMultiplicity::copy_extra_from(
+                        extra,
+                        extra_buffer,
+                        &mut buffers[bucket].extra_buffer,
+                    );
 
-
-                        let ind_read = CompressedReadIndipendent::from_read(
-                            &read,
-                            &mut buffers[bucket].reads_buffer,
-                        );
-                        extra = F::AssociatedExtraData::copy_extra_from(
+                    buffers[bucket]
+                        .reads
+                        .push::<WITH_MULTIPLICITY>(DeserializedReadIndependent {
+                            read: ind_read,
                             extra,
-                            extra_buffer,
-                            &mut buffers[bucket].extra_buffer,
-                        );
+                            flags,
+                            multiplicity,
+                            minimizer_pos,
+                            is_window_duplicate,
+                        });
 
-                        buffers[bucket]
-                            .reads
-                            .push::<WITH_MULTIPLICITY>(DeserializedReadIndependent {
-                                read: ind_read,
-                                extra,
-                                flags,
-                                multiplicity,
-                                minimizer_pos,
-                                is_window_duplicate
-                            });
-
-                        let packets_pool = &packets_pool;
-                        if buffers[bucket].reads.len() == buffers[bucket].reads.capacity() {
-                            match &bucket_info.addresses[bucket] {
-                                AddressMode::Send(address) => {
-                                    replace_with_async(&mut buffers[bucket], |mut buffer| async {
-                                        buffer.reads.minimizer_size = minimizer_size;
-                                        buffer.sub_bucket = bucket;
-                                        buffer.reads.is_duplicates_bucket = bucket_info.is_duplicates_bucket;
-                                        ops.packet_send(address.clone(), buffer, thread_handle);
-                                        track!(packets_pool.alloc_packet().await, PACKET_ALLOC_COUNTER)
-                                    })
-                                    .await;
-                                }
-                                AddressMode::Rewrite(writer, seq_count, _) => {
-                                    Self::flush_rewrite_bucket::<BucketModeFromBoolean<WITH_SECOND_BUCKET>, MultiplicityModeFromBoolean<WITH_MULTIPLICITY>>(
-                                        &mut buffers[bucket],
-                                        writer,
-                                        seq_count,
-                                        &mut rewrite_buffer,
-                                        global_context.k,
-                                    );
-                                }
+                    let packets_pool = &packets_pool;
+                    if buffers[bucket].reads.len() == buffers[bucket].reads.capacity() {
+                        match &bucket_info.addresses[bucket] {
+                            AddressMode::Send(address) => {
+                                replace_with_or_abort(&mut buffers[bucket], |mut buffer| {
+                                    buffer.reads.minimizer_size = minimizer_size;
+                                    buffer.sub_bucket = bucket;
+                                    buffer.reads.is_duplicates_bucket =
+                                        bucket_info.is_duplicates_bucket;
+                                    ops.packet_send(address.clone(), buffer, thread_handle);
+                                    track!(
+                                        packets_pool.alloc_packet_blocking(),
+                                        PACKET_ALLOC_COUNTER
+                                    )
+                                });
+                            }
+                            AddressMode::Rewrite(writer, seq_count, _) => {
+                                Self::flush_rewrite_bucket::<
+                                    BucketModeFromBoolean<WITH_SECOND_BUCKET>,
+                                    MultiplicityModeFromBoolean<WITH_MULTIPLICITY>,
+                                >(
+                                    &mut buffers[bucket],
+                                    writer,
+                                    seq_count,
+                                    &mut rewrite_buffer,
+                                    global_context.k,
+                                );
                             }
                         }
-                        F::AssociatedExtraData::clear_temp_buffer(extra_buffer);
-                    },
-                    thread_handle,
-                    global_context.k
-                );
-            }
+                    }
+                    F::AssociatedExtraDataWithMultiplicity::clear_temp_buffer(extra_buffer);
+                },
+                thread_handle,
+                global_context.k,
+            );
         }
 
         for (bucket, (mut packet, address)) in buffers
@@ -662,7 +687,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
 impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F> {
     type InputPacket = InputBucketDesc;
-    type OutputPacket = ReadsBuffer<F::AssociatedExtraData>;
+    type OutputPacket = ReadsBuffer<F::AssociatedExtraDataWithMultiplicity>;
     type GlobalParams = KmersTransformContext<F>;
     type InitData = ();
 

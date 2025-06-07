@@ -1,16 +1,17 @@
+use crate::DefaultColorsSerializer;
 use crate::colors_manager::ColorsMergeManager;
 use crate::colors_memmap_writer::ColorsMemMapWriter;
-use crate::DefaultColorsSerializer;
 use atoi::{FromRadix10, FromRadix16};
 use bstr::ByteSlice;
 use byteorder::ReadBytesExt;
 use config::{
-    get_compression_level_info, get_memory_mode, ColorCounterType, ColorIndexType, MinimizerType,
-    SwapPriority, PARTIAL_VECS_CHECKPOINT_SIZE, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END,
+    ColorCounterType, ColorIndexType, MinimizerType, PARTIAL_VECS_CHECKPOINT_SIZE,
+    READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END, SwapPriority, get_compression_level_info,
+    get_memory_mode,
 };
 use hashbrown::HashMap;
-use hashes::default::MNHFactory;
 use hashes::ExtendableHashTraitType;
+use hashes::default::MNHFactory;
 use hashes::{HashFunction, HashFunctionFactory, HashableSequence};
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use io::concurrent::structured_sequences::IdentSequenceWriter;
@@ -18,13 +19,13 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use io::varint::{
-    decode_varint, decode_varint_flags, encode_varint, encode_varint_flags, VARINT_MAX_SIZE,
+    VARINT_MAX_SIZE, decode_varint, decode_varint_flags, encode_varint, encode_varint_flags,
 };
 use itertools::Itertools;
 use nightly_quirks::slice_partition_dedup::SlicePartitionDedup;
+use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::memory_fs::RemoveFileMode;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
@@ -33,7 +34,7 @@ use std::mem::size_of;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use structs::map_entry::{MapEntry, COUNTER_BITS};
+use structs::map_entry::{COUNTER_BITS, MapEntry};
 
 const COLOR_SEQUENCES_SUBBUKETS: usize = 32;
 
@@ -109,7 +110,7 @@ impl SequencesStorage {
 }
 
 pub struct MultipleColorsManager {
-    last_color: ColorIndexType,
+    last_colors: Vec<ColorIndexType>,
     sequences: Vec<SequencesStorage>,
     kmers_count: usize,
     sequences_count: usize,
@@ -121,20 +122,11 @@ const VISITED_BIT: usize = 1 << (COUNTER_BITS - 1);
 const TEMP_BUFFER_START_SIZE: usize = 1024 * 64;
 const READS_BUFFERS_MAX_CAPACITY: usize = 1024 * 32;
 
-#[cfg(feature = "support_kmer_counters")]
 type HashMapTempColorIndex = usize;
-
-#[cfg(not(feature = "support_kmer_counters"))]
-type HashMapTempColorIndex = ();
 
 #[inline]
 fn get_entry_color(entry: &MapEntry<HashMapTempColorIndex>) -> ColorIndexType {
-    (match () {
-        #[cfg(not(feature = "support_kmer_counters"))]
-        () => entry.get_counter() & !VISITED_BIT,
-        #[cfg(feature = "support_kmer_counters")]
-        () => entry.color_index & !VISITED_BIT,
-    }) as ColorIndexType
+    (entry.color_index & !VISITED_BIT) as ColorIndexType
 }
 
 impl ColorsMergeManager for MultipleColorsManager {
@@ -161,7 +153,7 @@ impl ColorsMergeManager for MultipleColorsManager {
 
     fn allocate_temp_buffer_structure(temp_dir: &Path) -> Self::ColorsBufferTempStructure {
         Self {
-            last_color: 0,
+            last_colors: vec![],
             sequences: (0..COLOR_SEQUENCES_SUBBUKETS)
                 .map(|_| SequencesStorage::new())
                 .collect(),
@@ -182,11 +174,16 @@ impl ColorsMergeManager for MultipleColorsManager {
 
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         data: &mut Self::ColorsBufferTempStructure,
-        kmer_color: &ColorIndexType,
+        kmer_color: &[ColorIndexType],
         _el: (usize, MH::HashTypeUnextendable),
-        _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
+        entry: &mut MapEntry<Self::HashMapTempColorIndex>,
     ) {
-        data.last_color = *kmer_color;
+        data.last_colors.clear();
+        data.last_colors.extend_from_slice(&kmer_color);
+        data.last_colors.sort_unstable();
+        data.last_colors.dedup();
+        entry.color_index += data.last_colors.len();
+        assert_eq!(entry.color_index & VISITED_BIT, 0)
     }
 
     #[inline(always)]
@@ -207,9 +204,26 @@ impl ColorsMergeManager for MultipleColorsManager {
             size_of::<MinimizerType>() * 8 - (2 * COLOR_SEQUENCES_SUBBUKETS.ilog2() as usize);
         let bucket = (minimizer >> MINIMIZER_SHIFT) as usize % COLOR_SEQUENCES_SUBBUKETS;
 
-        data.sequences[bucket]
-            .buffer
-            .extend_from_slice(&data.last_color.to_ne_bytes());
+        encode_varint(
+            |b| data.sequences[bucket].buffer.extend_from_slice(b),
+            data.last_colors.len() as u64,
+        );
+
+        // Encode the colors using diffs encoding
+        if data.last_colors.len() > 0 {
+            encode_varint(
+                |b| data.sequences[bucket].buffer.extend_from_slice(b),
+                data.last_colors[0] as u64,
+            );
+            let mut last_color = data.last_colors[0];
+            for color in &data.last_colors[1..] {
+                encode_varint(
+                    |b| data.sequences[bucket].buffer.extend_from_slice(b),
+                    (last_color - *color) as u64,
+                );
+                last_color = *color;
+            }
+        }
 
         let kmer_length_dist_flag = if sequence.bases_count() > k {
             0
@@ -226,11 +240,7 @@ impl ColorsMergeManager for MultipleColorsManager {
         data.sequences[bucket].flush(&data.temp_dir)
     }
 
-    #[cfg(feature = "support_kmer_counters")]
     type HashMapTempColorIndex = usize;
-
-    #[cfg(not(feature = "support_kmer_counters"))]
-    type HashMapTempColorIndex = ();
 
     fn new_color_index() -> Self::HashMapTempColorIndex {
         Default::default()
@@ -243,24 +253,38 @@ impl ColorsMergeManager for MultipleColorsManager {
         k: usize,
         min_multiplicity: usize,
     ) {
+        map.iter()
+            .for_each(|v| assert_eq!(v.1.color_index & VISITED_BIT, 0));
+
         for buffer in data.sequences.iter_mut() {
             data.temp_colors_buffer.clear();
 
             let mut stream = buffer.get_stream();
 
-            let mut color_buf = [0; size_of::<ColorIndexType>()];
             let mut read_buf = vec![];
+            let mut colors = vec![];
 
             let mut last_partition = 0..0;
             let mut last_color = 0;
 
             loop {
-                // TODO: Distinguish between error and no more data
-                if stream.read_exact(&mut color_buf).is_err() {
-                    break;
+                {
+                    // TODO: Distinguish between error and no more data
+                    let Some(colors_count) = decode_varint(|| stream.read_u8().ok()) else {
+                        break;
+                    };
+                    colors.clear();
+                    if colors_count > 0 {
+                        let first_color = decode_varint(|| stream.read_u8().ok()).unwrap();
+                        colors.push(first_color as ColorIndexType);
+                        let mut last_color = first_color;
+                        for _ in 1..colors_count {
+                            let next_color_diff = decode_varint(|| stream.read_u8().ok()).unwrap();
+                            last_color += next_color_diff;
+                            colors.push(last_color as ColorIndexType);
+                        }
+                    }
                 }
-
-                let color = ColorIndexType::from_ne_bytes(color_buf);
 
                 let (read_length, only_extra_ending) =
                     decode_varint_flags::<_, typenum::U1>(|| stream.read_u8().ok()).unwrap();
@@ -295,59 +319,42 @@ impl ColorsMergeManager for MultipleColorsManager {
                         continue;
                     }
 
-                    let mut entry_count = entry.get_counter();
-
-                    let missing_temp_color = match () {
-                        #[cfg(not(feature = "support_kmer_counters"))]
-                        () => entry_count & VISITED_BIT == 0,
-                        #[cfg(feature = "support_kmer_counters")]
-                        () => (entry.color_index & VISITED_BIT) == 0,
-                    };
-
                     const BIDIRECTIONAL_FLAGS: u8 = READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END;
 
-                    if entry.get_flags() & BIDIRECTIONAL_FLAGS == BIDIRECTIONAL_FLAGS {
-                        if kmer_hash.is_forward() ^ is_first {
-                            continue;
-                        } else if missing_temp_color {
-                            entry_count /= 2;
-                        }
+                    // Skip the entries that are duplicated within the current bucket, this could happen because of resplitting or adjacent super-kmers that share the same minimizer
+                    if entry.get_flags() & BIDIRECTIONAL_FLAGS == BIDIRECTIONAL_FLAGS
+                        && kmer_hash.is_forward() ^ is_first
+                    {
+                        continue;
                     }
 
+                    let missing_temp_color = (entry.color_index & VISITED_BIT) == 0;
                     if missing_temp_color {
-                        let colors_count = entry_count;
+                        let colors_count = entry.color_index;
+
                         let start_temp_color_index = data.temp_colors_buffer.len();
 
-                        match () {
-                            #[cfg(not(feature = "support_kmer_counters"))]
-                            () => {
-                                entry_count = VISITED_BIT | start_temp_color_index;
-                                entry.set_counter_after_check(entry_count);
-                            }
-                            #[cfg(feature = "support_kmer_counters")]
-                            () => {
-                                entry.color_index = VISITED_BIT | start_temp_color_index;
-                            }
-                        };
+                        entry.color_index = VISITED_BIT | start_temp_color_index;
 
                         data.temp_colors_buffer
                             .resize(data.temp_colors_buffer.len() + colors_count + 1, 0);
 
+                        // Add a flag to check if all colors were added
                         data.temp_colors_buffer[start_temp_color_index] = 1;
                     }
 
-                    let position = match () {
-                        #[cfg(not(feature = "support_kmer_counters"))]
-                        () => entry_count & !VISITED_BIT,
-                        #[cfg(feature = "support_kmer_counters")]
-                        () => entry.color_index & !VISITED_BIT,
-                    };
+                    let position = entry.color_index & !VISITED_BIT;
 
                     let col_count = data.temp_colors_buffer[position] as usize;
                     data.temp_colors_buffer[position] += 1;
 
-                    assert_eq!(data.temp_colors_buffer[position + col_count], 0);
-                    data.temp_colors_buffer[position + col_count] = color;
+                    assert_eq!(
+                        data.temp_colors_buffer[position + col_count + colors.len() - 1],
+                        0
+                    );
+                    data.temp_colors_buffer
+                        [position + col_count..position + col_count + colors.len()]
+                        .copy_from_slice(&colors);
 
                     let has_all_colors = (position + col_count + 1)
                         == data.temp_colors_buffer.len()
@@ -372,16 +379,7 @@ impl ColorsMergeManager for MultipleColorsManager {
                             last_partition = new_partition;
                         }
 
-                        match () {
-                            #[cfg(not(feature = "support_kmer_counters"))]
-                            () => {
-                                entry.set_counter_after_check(VISITED_BIT | (last_color as usize));
-                            }
-                            #[cfg(feature = "support_kmer_counters")]
-                            () => {
-                                entry.color_index = VISITED_BIT | (last_color as usize);
-                            }
-                        };
+                        entry.color_index = VISITED_BIT | (last_color as usize);
                     }
                 }
             }

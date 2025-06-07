@@ -98,6 +98,22 @@ pub trait SequenceExtraDataConsecutiveCompression: SequenceExtraDataTempBufferMa
     fn max_size(&self) -> usize;
 }
 
+pub trait SequenceExtraDataCombiner: SequenceExtraDataConsecutiveCompression {
+    type SingleDataType: SequenceExtraDataConsecutiveCompression;
+    fn combine_entries(
+        &mut self,
+        out_buffer: &mut Self::TempBuffer,
+        color: Self,
+        in_buffer: &Self::TempBuffer,
+    );
+
+    fn from_single_entry<'a>(
+        out_buffer: &'a mut Self::TempBuffer,
+        single: Self::SingleDataType,
+        in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> (Self, &'a mut Self::TempBuffer);
+}
+
 pub trait SequenceExtraData: SequenceExtraDataTempBufferManagement {
     #[inline(always)]
     fn decode_from_slice_extended(buffer: &mut Self::TempBuffer, slice: &[u8]) -> Option<Self> {

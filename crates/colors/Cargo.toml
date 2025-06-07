@@ -19,6 +19,7 @@ nightly-quirks = "0.1.4"
 hashes = { package = "ggcat_hashes", path = "../hashes" }
 io = { package = "ggcat_io", path = "../io" }
 structs = { package = "ggcat_structs", path = "../structs" }
+utils = { package = "ggcat_utils", path = "../utils" }
 
 # Other libraries
 typenum = "1.17.0"

@@ -26,7 +26,8 @@ use io::concurrent::temp_reads::creads_utils::{
     CompressedReadsBucketDataSerializer, NoMultiplicity,
 };
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
+    SequenceExtraDataTempBufferManagement,
 };
 use io::sequences_reader::DnaSequence;
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
@@ -102,8 +103,9 @@ pub struct PushSequenceInfo<'a, S, F: MinimizerBucketingExecutorFactory> {
     pub bucket: BucketIndexType,
     pub second_bucket: BucketIndexType,
     pub sequence: S,
-    pub extra_data: F::ExtraData,
-    pub temp_buffer: &'a <F::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    pub extra_data: F::ExtraDataWitnMultiplicity,
+    pub temp_buffer:
+        &'a <F::ExtraDataWitnMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
     pub minimizer_pos: u16,
     pub flags: u8,
     pub rc: bool,
@@ -113,6 +115,7 @@ pub struct PushSequenceInfo<'a, S, F: MinimizerBucketingExecutorFactory> {
 pub trait MinimizerBucketingExecutorFactory: Sized {
     type GlobalData: Sync + Send + 'static;
     type ExtraData: SequenceExtraDataConsecutiveCompression;
+    type ExtraDataWitnMultiplicity: SequenceExtraDataCombiner<SingleDataType = Self::ExtraData>;
     type PreprocessInfo: Default;
     type StreamInfo: Clone + Sync + Send + Default + 'static;
 
@@ -143,8 +146,8 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
     fn reprocess_sequence(
         &mut self,
         flags: u8,
-        intermediate_data: &Factory::ExtraData,
-        intermediate_data_buffer: &<Factory::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        intermediate_data: &Factory::ExtraDataWitnMultiplicity,
+        intermediate_data_buffer: &<Factory::ExtraDataWitnMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
         preprocess_info: &mut Factory::PreprocessInfo,
     );
 
@@ -261,7 +264,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> MinimizerBuck
         let mut tmp_reads_buffer = BucketsThreadDispatcher::<
             _,
             CompressedReadsBucketDataSerializer<
-                E::ExtraData,
+                E::ExtraDataWitnMultiplicity,
                 E::FLAGS_COUNT,
                 BucketModeFromBoolean<USE_SECOND_BUCKET>,
                 NoMultiplicity,

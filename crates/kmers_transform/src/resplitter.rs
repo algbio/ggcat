@@ -281,7 +281,7 @@ pub struct ResplitterInitData {
 }
 
 impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitter<F> {
-    type InputPacket = ReadsBuffer<F::AssociatedExtraData>;
+    type InputPacket = ReadsBuffer<F::AssociatedExtraDataWithMultiplicity>;
     type OutputPacket = InputBucketDesc;
     type GlobalParams = KmersTransformContext<F>;
     type InitData = ResplitterInitData;

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use colors::colors_manager::{
     ColorsManager,
     color_types::{
-        GlobalColorsTableWriter, MinimizerBucketingSeqColorDataType, PartialUnitigsColorStructure,
-        TempUnitigColorStructure,
+        GlobalColorsTableWriter, MinimizerBucketingMultipleSeqColorDataType,
+        PartialUnitigsColorStructure, TempUnitigColorStructure,
     },
 };
 use hashes::HashFunctionFactory;
@@ -34,8 +34,8 @@ pub trait UnitigsExtenderTrait<MH: HashFunctionFactory, CX: ColorsManager> {
     fn add_sequence(
         &mut self,
         sequences_data: &[u8],
-        extra_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        sequence: DeserializedReadIndependent<MinimizerBucketingSeqColorDataType<CX>>,
+        extra_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        sequence: DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>,
     );
     fn get_stats(&self) -> GroupProcessStats;
     fn compute_unitigs<const COMPUTE_SIMPLITIGS: bool>(

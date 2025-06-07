@@ -1,6 +1,6 @@
+use crate::DefaultColorsSerializer;
 use crate::colors_manager::ColorsMergeManager;
 use crate::storage::deserializer::ColorsDeserializer;
-use crate::DefaultColorsSerializer;
 use byteorder::ReadBytesExt;
 use config::{ColorCounterType, ColorIndexType};
 use hashbrown::HashMap;
@@ -10,7 +10,7 @@ use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
-use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -48,15 +48,16 @@ impl ColorsMergeManager for SingleColorManager {
 
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         _data: &mut Self::ColorsBufferTempStructure,
-        kmer_color: &ColorIndexType,
+        _kmer_color: &[ColorIndexType],
         _el: (usize, MH::HashTypeUnextendable),
-        entry: &mut MapEntry<Self::HashMapTempColorIndex>,
+        _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
     ) {
-        assert!(
-            entry.color_index.color_index == ColorIndexType::MAX
-                || entry.color_index.color_index == *kmer_color
-        );
-        entry.color_index.color_index = *kmer_color;
+        unimplemented!()
+        // assert!(
+        //     entry.color_index.color_index == ColorIndexType::MAX
+        //         || entry.color_index.color_index == *kmer_color
+        // );
+        // entry.color_index.color_index = *kmer_color;
     }
 
     #[inline(always)]

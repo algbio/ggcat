@@ -9,7 +9,8 @@ use config::{
     MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME, PACKETS_PRIORITY_FILES,
 };
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
+    SequenceExtraDataTempBufferManagement,
 };
 use minimizer_bucketing::counters_analyzer::CountersAnalyzer;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
@@ -46,10 +47,14 @@ pub trait KmersTransformGlobalExtraData: Sync + Send {
 pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
     type KmersTransformPacketInitData: Clone + Send + Sync;
     type SequencesResplitterFactory: MinimizerBucketingExecutorFactory<
-        ExtraData = Self::AssociatedExtraData,
-    >;
+            ExtraData = Self::AssociatedExtraData,
+            ExtraDataWitnMultiplicity = Self::AssociatedExtraDataWithMultiplicity,
+        >;
     type GlobalExtraData: KmersTransformGlobalExtraData;
     type AssociatedExtraData: SequenceExtraDataConsecutiveCompression + Copy;
+    type AssociatedExtraDataWithMultiplicity: SequenceExtraDataConsecutiveCompression
+        + SequenceExtraDataCombiner<SingleDataType = Self::AssociatedExtraData>
+        + Copy;
     type PreprocessorType: RewriteBucketCompute;
     type MapProcessorType: KmersTransformMapProcessor<
             Self,
@@ -97,8 +102,8 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
     fn process_group_batch_sequences(
         &mut self,
         global_data: &F::GlobalExtraData,
-        batch: &ReadsVector<F::AssociatedExtraData>,
-        extra_data_buffer: &<F::AssociatedExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        batch: &ReadsVector<F::AssociatedExtraDataWithMultiplicity>,
+        extra_data_buffer: &<F::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ref_sequences: &Vec<u8>,
     );
     fn get_stats(&self) -> GroupProcessStats;

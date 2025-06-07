@@ -5,7 +5,7 @@ use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
 use io::concurrent::temp_reads::extra_data::{
-    HasEmptyExtraBuffer, SequenceExtraDataConsecutiveCompression,
+    HasEmptyExtraBuffer, SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement,
 };
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
@@ -73,6 +73,29 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
     }
 }
 
+impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + FastSortable>
+    SequenceExtraDataCombiner for DumperKmersReferenceData<CX>
+{
+    type SingleDataType = Self;
+
+    fn combine_entries(
+        &mut self,
+        _out_buffer: &mut Self::TempBuffer,
+        _color: Self,
+        _in_buffer: &Self::TempBuffer,
+    ) {
+        unimplemented!()
+    }
+
+    fn from_single_entry<'a>(
+        _out_buffer: &'a mut Self::TempBuffer,
+        single: Self::SingleDataType,
+        in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> (Self, &'a mut Self::TempBuffer) {
+        (single, in_buffer)
+    }
+}
+
 pub struct ReadTypeBuffered<CX: ColorsManager> {
     colors_buffer: (<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,),
     read_data: Option<ReadData<CX>>,
@@ -129,6 +152,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
 {
     type GlobalData = DumperMinimizerBucketingGlobalData;
     type ExtraData = DumperKmersReferenceData<SingleKmerColorDataType<CX>>;
+    type ExtraDataWitnMultiplicity = DumperKmersReferenceData<SingleKmerColorDataType<CX>>;
     type PreprocessInfo = ReadTypeBuffered<CX>;
     type StreamInfo = ();
 

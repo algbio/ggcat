@@ -9,17 +9,23 @@ use hashes::HashFunctionFactory;
 use io::compressed_read::CompressedRead;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
-    HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
+    HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataCombiner,
+    SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
 };
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use rustc_hash::FxHashMap;
+use std::fmt::Debug;
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::MapEntry;
 
 #[derive(Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Copy, Clone, Default)]
 pub struct NonColoredManager;
+
+#[derive(Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Copy, Clone, Default)]
+pub struct NonColoredMultipleColors<T>(PhantomData<T>);
 
 /// Dummy colors manager
 #[dynamic_dispatch]
@@ -40,10 +46,27 @@ impl ColorsManager for NonColoredManager {
 }
 
 impl HasEmptyExtraBuffer for NonColoredManager {}
+impl<T: Sync + Send + Debug + Clone> HasEmptyExtraBuffer for NonColoredMultipleColors<T> {}
+
 impl SequenceExtraData for NonColoredManager {
     #[inline(always)]
     fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl Read) -> Option<Self> {
         Some(NonColoredManager)
+    }
+
+    #[inline(always)]
+    fn encode_extended(&self, _buffer: &Self::TempBuffer, _writer: &mut impl Write) {}
+
+    #[inline(always)]
+    fn max_size(&self) -> usize {
+        0
+    }
+}
+
+impl<T: Sync + Send + Debug + Clone> SequenceExtraData for NonColoredMultipleColors<T> {
+    #[inline(always)]
+    fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl Read) -> Option<Self> {
+        Some(Self(PhantomData))
     }
 
     #[inline(always)]
@@ -65,7 +88,7 @@ impl Iterator for NonColoredManager {
 }
 
 impl MinimizerBucketingSeqColorData for NonColoredManager {
-    type KmerColor = NonColoredManager;
+    type KmerColor<'a> = NonColoredManager;
     type KmerColorIterator<'a> = std::iter::Repeat<NonColoredManager>;
 
     #[inline(always)]
@@ -83,6 +106,49 @@ impl MinimizerBucketingSeqColorData for NonColoredManager {
     }
 }
 
+impl<T: Sync + Send + Debug + Copy + Default + MinimizerBucketingSeqColorData + 'static>
+    MinimizerBucketingSeqColorData for NonColoredMultipleColors<T>
+{
+    type KmerColor<'a> = &'a [T::KmerColor<'a>];
+
+    type KmerColorIterator<'a> = std::iter::Repeat<&'a [T::KmerColor<'a>]>;
+
+    fn create(_stream_info: SingleSequenceInfo, _buffer: &mut Self::TempBuffer) -> Self {
+        Self(PhantomData)
+    }
+
+    fn get_iterator<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator<'a> {
+        std::iter::repeat(&[])
+    }
+
+    fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<T: Sync + Send + Debug + Clone + SequenceExtraDataConsecutiveCompression>
+    SequenceExtraDataCombiner for NonColoredMultipleColors<T>
+{
+    type SingleDataType = T;
+
+    fn combine_entries(
+        &mut self,
+        _out_buffer: &mut Self::TempBuffer,
+        _color: Self,
+        _in_buffer: &Self::TempBuffer,
+    ) {
+    }
+
+    #[inline(always)]
+    fn from_single_entry<'a>(
+        out_buffer: &'a mut Self::TempBuffer,
+        _color: Self::SingleDataType,
+        _in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> (Self, &'a mut Self::TempBuffer) {
+        (Self(PhantomData), out_buffer)
+    }
+}
+
 impl FastSortable for NonColoredManager {
     fn get_shifted(&self, _rhs: u8) -> u8 {
         0
@@ -92,6 +158,7 @@ impl FastSortable for NonColoredManager {
 impl ColorsParser for NonColoredManager {
     type SingleKmerColorDataType = NonColoredManager;
     type MinimizerBucketingSeqColorDataType = NonColoredManager;
+    type MinimizerBucketingMultipleSeqColorDataType = NonColoredMultipleColors<NonColoredManager>;
 }
 
 impl IdentSequenceWriter for NonColoredManager {
@@ -149,7 +216,7 @@ impl ColorsMergeManager for NonColoredManager {
     #[inline(always)]
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         _data: &mut Self::ColorsBufferTempStructure,
-        _kmer_color: &Self::SingleKmerColorDataType,
+        _kmer_colors: &[Self::SingleKmerColorDataType],
         _el: (usize, <MH as HashFunctionFactory>::HashTypeUnextendable),
         _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
     ) {

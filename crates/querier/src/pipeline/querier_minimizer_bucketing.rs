@@ -103,6 +103,8 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
 {
     type GlobalData = QuerierMinimizerBucketingGlobalData;
     type ExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
+    type ExtraDataWitnMultiplicity =
+        QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
     type PreprocessInfo = ReadTypeBuffered<CX>;
     type StreamInfo = FileType;
 

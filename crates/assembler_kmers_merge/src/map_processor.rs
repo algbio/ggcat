@@ -1,7 +1,7 @@
 use crate::ParallelKmersMergeFactory;
 use crate::unitigs_extender::hashmap::HashMapUnitigsExtender;
 use crate::unitigs_extender::{GlobalExtenderParams, UnitigsExtenderTrait};
-use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
+use colors::colors_manager::color_types::MinimizerBucketingMultipleSeqColorDataType;
 use colors::colors_manager::{ColorsManager, color_types};
 use ggcat_logging::stats;
 use ggcat_logging::stats::KmersMergeBucketReport;
@@ -132,8 +132,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     fn process_group_batch_sequences(
         &mut self,
         global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
-        batch: &ReadsVector<MinimizerBucketingSeqColorDataType<CX>>,
-        extra_data_buffer: &<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        batch: &ReadsVector<MinimizerBucketingMultipleSeqColorDataType<CX>>,
+        extra_data_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
         ref_sequences: &Vec<u8>,
     ) {
         let map_packet = self.map_packet.as_mut().unwrap().deref_mut();

@@ -8,11 +8,11 @@ use colors::{
 use config::{MAX_BUCKETS_CHUNKING_THRESHOLD, MIN_BUCKETS_CHUNKING_THRESHOLD};
 pub use ggcat_logging::MessageLevel;
 use ggcat_logging::UnrecoverableErrorLogging;
+use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
 use io::concurrent::structured_sequences::gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2};
-use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
-use io::sequences_stream::fasta::FastaFileSequencesStream;
 use io::sequences_stream::GenericSequencesStream;
+use io::sequences_stream::fasta::FastaFileSequencesStream;
 use parallel_processor::enable_counters_logging;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::MemoryFs;
@@ -30,8 +30,8 @@ pub use crate::utils::HashType;
 pub use config::ColorIndexType;
 pub use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 pub use io::sequences_stream::{
-    general::{DynamicSequencesStream, GeneralSequenceBlockData},
     SequenceInfo,
+    general::{DynamicSequencesStream, GeneralSequenceBlockData},
 };
 pub use querier::ColoredQueryOutputFormat;
 
@@ -271,16 +271,12 @@ impl GGCATInstance {
                 .map(|file| file.estimated_bases_count().unwrap())
                 .sum();
 
-            if colors {
-                None
-            } else {
-                // Heuristic for chunks used for maximum disk usage
-                Some(
-                    (estimated_bases_count as u64 / 5)
-                        .min(MAX_BUCKETS_CHUNKING_THRESHOLD)
-                        .max(MIN_BUCKETS_CHUNKING_THRESHOLD),
-                )
-            }
+            // Heuristic for chunks used for maximum disk usage
+            Some(
+                (estimated_bases_count as u64 / 5)
+                    .min(MAX_BUCKETS_CHUNKING_THRESHOLD)
+                    .max(MIN_BUCKETS_CHUNKING_THRESHOLD),
+            )
         } else {
             None
         };
@@ -392,9 +388,9 @@ impl GGCATInstance {
         // The input colormap
         input_colormap: impl AsRef<Path>,
     ) -> anyhow::Result<impl Iterator<Item = String>> {
+        use colors::DefaultColorsSerializer;
         use colors::colors_manager::ColorMapReader;
         use colors::storage::deserializer::ColorsDeserializer;
-        use colors::DefaultColorsSerializer;
 
         let colors_deserializer =
             ColorsDeserializer::<DefaultColorsSerializer>::new(input_colormap, true)?;

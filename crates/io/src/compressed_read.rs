@@ -5,7 +5,7 @@ use core::fmt::{Debug, Formatter};
 use hashes::HashableSequence;
 use rustc_hash::FxBuildHasher;
 use std::hash::{Hash, Hasher};
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::ops::Range;

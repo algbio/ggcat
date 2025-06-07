@@ -4,7 +4,8 @@ use crate::structs::{ResultsBucket, RetType};
 use assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
 use assembler_minimizer_bucketing::rewrite_bucket::RewriteBucketComputeAssembler;
 use colors::colors_manager::color_types::{
-    GlobalColorsTableWriter, MinimizerBucketingSeqColorDataType,
+    GlobalColorsTableWriter, MinimizerBucketingMultipleSeqColorDataType,
+    MinimizerBucketingSeqColorDataType,
 };
 use colors::colors_manager::{ColorsManager, color_types};
 use config::{
@@ -86,6 +87,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     type SequencesResplitterFactory = AssemblerMinimizerBucketingExecutorFactory<CX>;
     type GlobalExtraData = GlobalMergeData<CX>;
     type AssociatedExtraData = MinimizerBucketingSeqColorDataType<CX>;
+    type AssociatedExtraDataWithMultiplicity = MinimizerBucketingMultipleSeqColorDataType<CX>;
 
     type PreprocessorType = RewriteBucketComputeAssembler;
     type MapProcessorType = ParallelKmersMergeMapProcessor<MH, CX, COMPUTE_SIMPLITIGS>;
@@ -291,11 +293,15 @@ mod tests {
 
         let buckets_count = 1024;
 
-        let buckets =
-            generate_bucket_names(Path::new(TEMP_DIR).join("bucket"), buckets_count, None)
-                .into_iter()
-                .map(SingleBucket::to_multi_chunk)
-                .collect();
+        let buckets = generate_bucket_names(
+            Path::new(TEMP_DIR).join("bucket"),
+            buckets_count,
+            None,
+            false,
+        )
+        .into_iter()
+        .map(SingleBucket::to_multi_chunk)
+        .collect();
 
         // let mut buckets = vec![buckets[322]];
 
