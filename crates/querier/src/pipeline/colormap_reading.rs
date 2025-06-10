@@ -15,7 +15,7 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets, SingleBucket};
+use parallel_processor::buckets::{BucketsCount, ExtraBuckets, MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -35,7 +35,8 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
         .write()
         .start_phase("phase: colormap reading".to_string());
 
-    let buckets_count = colored_query_buckets.len();
+    let buckets_count =
+        BucketsCount::from_power_of_two(colored_query_buckets.len(), ExtraBuckets::None);
     let buckets_prefix_path = temp_dir.join("query_colors");
 
     let correct_color_buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
@@ -48,11 +49,10 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             get_compression_level_info(),
         ),
         &(),
-        DuplicatesBuckets::None,
     ));
 
     let thread_buffers = ScopedThreadLocal::new(move || {
-        BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
+        BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
     });
 
     // Try to build a color deserializer to check colormap correctness
@@ -157,8 +157,8 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
                 (queries_count + 1).nq_div_ceil(QUERIES_COUNT_MIN_BATCH) * QUERIES_COUNT_MIN_BATCH;
 
             let get_query_bucket = |query_index: u64| {
-                ((query_index - 1) * (buckets_count as u64) / rounded_queries_count)
-                    as BucketIndexType
+                ((query_index - 1) * (buckets_count.total_buckets_count as u64)
+                    / rounded_queries_count) as BucketIndexType
             };
 
             for entries in temp_queries_buffer.nq_group_by(|a, b| {

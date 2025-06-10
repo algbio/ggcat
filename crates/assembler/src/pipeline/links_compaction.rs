@@ -12,7 +12,7 @@ use parallel_processor::buckets::readers::generic_binary_reader::ChunkReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::single::SingleBucketThreadDispatcher;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets, SingleBucket};
+use parallel_processor::buckets::{BucketsCount, MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
@@ -27,7 +27,7 @@ use utils::vec_slice::VecSlice;
 pub fn links_compaction(
     links_inputs: Vec<SingleBucket>,
     output_dir: impl AsRef<Path>,
-    buckets_count: usize,
+    buckets_count: BucketsCount,
     elab_index: usize,
     result_map_buckets: &Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
     final_buckets: &Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
@@ -49,7 +49,6 @@ pub fn links_compaction(
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
         &(),
-        DuplicatesBuckets::None,
     ));
 
     links_inputs.par_iter().for_each(|input| {

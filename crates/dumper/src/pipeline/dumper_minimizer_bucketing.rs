@@ -14,9 +14,10 @@ use io::sequences_stream::fasta::FastaFileSequencesStream;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
-    MinimizerBucketingExecutorFactory, MinimizerInputSequence, PushSequenceInfo,
+    MinimizerBucketingExecutorFactory, MinimizerInputSequence,
+    MinimzerBucketingFilesReaderInputPacket, PushSequenceInfo,
 };
-use parallel_processor::buckets::{DuplicatesBuckets, SingleBucket};
+use parallel_processor::buckets::{BucketsCount, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::io::{Read, Write};
@@ -117,7 +118,7 @@ impl<CX: ColorsManager> Default for ReadTypeBuffered<CX> {
 
 pub struct DumperMinimizerBucketingGlobalData {
     colors_count: u64,
-    buckets_count_log: u32,
+    buckets_count_log: usize,
 }
 
 pub struct DumperMinimizerBucketingExecutor<CX: ColorsManager> {
@@ -303,7 +304,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
 
 pub fn minimizer_bucketing<CX: ColorsManager>(
     graph_file: PathBuf,
-    buckets_count: usize,
+    buckets_count: BucketsCount,
     threads_count: usize,
     temp_dir: &Path,
     k: usize,
@@ -314,7 +315,10 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         .write()
         .start_phase("phase: unitigs reorganization".to_string());
 
-    let input_files = vec![((graph_file, None), ())];
+    let input_files = vec![MinimzerBucketingFilesReaderInputPacket {
+        sequences: (graph_file, None),
+        stream_info: (),
+    }];
 
     GenericMinimizerBucketing::do_bucketing_no_max_usage::<
         DumperMinimizerBucketingExecutorFactory<CX>,
@@ -328,11 +332,10 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         m,
         DumperMinimizerBucketingGlobalData {
             colors_count,
-            buckets_count_log: buckets_count.ilog2(),
+            buckets_count_log: buckets_count.normal_buckets_count_log,
         },
         None,
         CX::COLORS_ENABLED,
         k,
-        DuplicatesBuckets::None,
     )
 }

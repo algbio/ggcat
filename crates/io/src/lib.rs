@@ -1,6 +1,6 @@
 use crate::sequences_stream::general::GeneralSequenceBlockData;
 use config::{MAX_BUCKET_SIZE, MAX_BUCKETS_COUNT_LOG, MIN_BUCKETS_COUNT_LOG};
-use parallel_processor::buckets::SingleBucket;
+use parallel_processor::buckets::{BucketsCount, ExtraBucketData, ExtraBuckets, SingleBucket};
 use std::cmp::{max, min};
 use std::path::Path;
 
@@ -14,13 +14,14 @@ pub mod sequences_stream;
 pub mod structs;
 pub mod varint;
 
+pub const DUPLICATES_BUCKET_EXTRA: ExtraBucketData = ExtraBucketData(0xdddd);
+
 pub fn generate_bucket_names(
     root: impl AsRef<Path>,
-    count: usize,
+    count: BucketsCount,
     suffix: Option<&str>,
-    last_is_duplicates_bucket: bool,
 ) -> Vec<SingleBucket> {
-    (0..count)
+    (0..count.total_buckets_count)
         .map(|i| SingleBucket {
             index: i,
             path: root.as_ref().with_extension(format!(
@@ -31,7 +32,14 @@ pub fn generate_bucket_names(
                     Some(s) => format!(".{}", s),
                 }
             )),
-            is_duplicates_bucket: last_is_duplicates_bucket && (i == count - 1),
+            extra_bucket_data: if i >= count.normal_buckets_count {
+                match count.extra_buckets_count {
+                    ExtraBuckets::None => None,
+                    ExtraBuckets::Extra { data, .. } => Some(data),
+                }
+            } else {
+                None
+            },
         })
         .collect()
 }

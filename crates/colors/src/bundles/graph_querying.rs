@@ -1,7 +1,7 @@
 use crate::colors_manager::ColorsManager;
 use crate::managers::single::SingleColorManager;
 use crate::parsers::graph::GraphColorsParser;
-use config::{BucketIndexType, ColorIndexType, COLORS_SINGLE_BATCH_SIZE};
+use config::{BucketIndexType, COLORS_SINGLE_BATCH_SIZE, ColorIndexType};
 use dynamic_dispatch::dynamic_dispatch;
 
 #[derive(Copy, Clone, Debug)]
@@ -16,7 +16,7 @@ impl ColorsManager for ColorBundleGraphQuerying {
     fn get_bucket_from_color(
         color: &Self::SingleKmerColorDataType,
         colors_count: u64,
-        buckets_count_log: u32,
+        buckets_count_log: usize,
     ) -> BucketIndexType {
         Self::get_bucket_from_u64_color(
             *color as u64,

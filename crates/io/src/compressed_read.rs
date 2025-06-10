@@ -5,7 +5,7 @@ use core::fmt::{Debug, Formatter};
 use hashes::HashableSequence;
 use rustc_hash::FxBuildHasher;
 use std::hash::{Hash, Hasher};
-use std::io::{Read, Seek};
+use std::io::Read;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -292,6 +292,18 @@ impl<'a> CompressedRead<'a> {
         } else {
             (encoded_size as usize + min_size, 0, false)
         };
+
+        if size > 100000000 {
+            println!(
+                "Error while decoding size: sz [{}] es {} fl {} mmen: {} => wdupl: {}",
+                size,
+                encoded_size,
+                flags,
+                MinimizerMode::ENABLED,
+                is_window_duplicate,
+            );
+            return None;
+        }
 
         let bytes = (size + 3) / 4;
         temp_buffer.reserve(bytes);
@@ -622,162 +634,230 @@ impl<'a> HashableSequence for CompressedRead<'a> {
     }
 }
 
-#[test]
-fn test_compression() {
-    let mut buffer = vec![];
-    let bases = b"ACGTACGCGGTAGCTAAGCATCGATGCCGATCGTGTTTAACCATG";
-    CompressedRead::compress_from_plain(bases, |b| buffer.extend_from_slice(b));
-    let read = CompressedRead::from_compressed_reads(&buffer, 0, bases.len());
-    assert_eq!(read.to_string().as_bytes(), bases);
-}
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
 
-#[test]
-fn test_rc_compression() {
-    let mut buffer = vec![];
-    let bases = b"ACGTACGCGGTAGCTAAGCATCGATGCCGATCGTGTTTAACCATG";
-    let expected_rc = b"CATGGTTAAACACGATCGGCATCGATGCTTAGCTACCGCGTACGT";
+    use crate::{
+        compressed_read::{CompressedRead, CompressedReadIndipendent},
+        concurrent::temp_reads::creads_utils::{
+            AssemblerMinimizerPosition, CompressedReadsBucketData, ReadData,
+        },
+    };
 
-    // Compress the reverse complement
-    CompressedRead::compress_from_plain_rc(bases, |b| buffer.extend_from_slice(b));
-    let read = CompressedRead::from_compressed_reads(&buffer, 0, bases.len());
-
-    // Verify the reverse complement
-    assert_eq!(read.to_string(), std::str::from_utf8(expected_rc).unwrap());
-}
-
-#[test]
-fn test_rc_compression_and_unpacking() {
-    let mut buffer = vec![];
-    let bases = b"ACGTACGCGGTAGCTAAGCATCGATGCCGATCGTGTTTAACCATG";
-    let expected_rc = b"CATGGTTAAACACGATCGGCATCGATGCTTAGCTACCGCGTACGT";
-
-    // Compress the reverse complement
-    CompressedRead::compress_from_plain_rc(bases, |b| buffer.extend_from_slice(b));
-    let read = CompressedRead::from_compressed_reads(&buffer, 0, bases.len());
-
-    // Unpack the reverse complement and verify
-    let mut unpacked = vec![];
-    read.write_unpacked_to_vec(&mut unpacked, false);
-    assert_eq!(
-        std::str::from_utf8(&unpacked).unwrap(),
-        std::str::from_utf8(expected_rc).unwrap()
-    );
-}
-
-#[test]
-fn test_read_copy_to_buffer() {
-    fn rc_string(input: &str) -> String {
-        input
-            .chars()
-            .rev()
-            .map(|c| match c {
-                'A' => 'T',
-                'T' => 'A',
-                'C' => 'G',
-                'G' => 'C',
-                _ => c,
-            })
-            .collect()
+    #[test]
+    fn test_compression() {
+        let mut buffer = vec![];
+        let bases = b"ACGTACGCGGTAGCTAAGCATCGATGCCGATCGTGTTTAACCATG";
+        CompressedRead::compress_from_plain(bases, |b| buffer.extend_from_slice(b));
+        let read = CompressedRead::from_compressed_reads(&buffer, 0, bases.len());
+        assert_eq!(read.to_string().as_bytes(), bases);
     }
 
-    for rc in [false, true] {
-        for s in 0..17 {
-            let mut bases1 = b"GCGTACGCGGTAGCTAAGCATCGATGCCGATCGTGTTTAACCATG".to_vec();
-            let mut bases2 = b"GCGTACGCGGTAGCTAAGCATCGATGCCGATCGTGTTTAACCATC".to_vec();
+    #[test]
+    fn test_rc_compression() {
+        let mut buffer = vec![];
+        let bases = b"ACGTACGCGGTAGCTAAGCATCGATGCCGATCGTGTTTAACCATG";
+        let expected_rc = b"CATGGTTAAACACGATCGGCATCGATGCTTAGCTACCGCGTACGT";
 
-            for i in 0..17 {
-                println!("Iteration {} with start offset: {} rc: {}", i, s, rc);
-                let mut buffer = vec![];
-                let mut buffer2 = vec![];
-                CompressedRead::compress_from_plain(&bases1, |b| buffer.extend_from_slice(b));
-                CompressedRead::compress_from_plain(&bases2, |b| buffer2.extend_from_slice(b));
-                let read = CompressedRead::from_compressed_reads(&buffer, 0, bases1.len());
-                let read2 = CompressedRead::from_compressed_reads(&buffer2, 0, bases2.len());
+        // Compress the reverse complement
+        CompressedRead::compress_from_plain_rc(bases, |b| buffer.extend_from_slice(b));
+        let read = CompressedRead::from_compressed_reads(&buffer, 0, bases.len());
 
-                println!(
-                    "Bases: {} Bases2: {}",
-                    std::str::from_utf8(&bases1).unwrap(),
-                    std::str::from_utf8(&bases2).unwrap()
-                );
+        // Verify the reverse complement
+        assert_eq!(read.to_string(), std::str::from_utf8(expected_rc).unwrap());
+    }
 
-                if rc {
+    #[test]
+    fn test_rc_compression_and_unpacking() {
+        let mut buffer = vec![];
+        let bases = b"ACGTACGCGGTAGCTAAGCATCGATGCCGATCGTGTTTAACCATG";
+        let expected_rc = b"CATGGTTAAACACGATCGGCATCGATGCTTAGCTACCGCGTACGT";
+
+        // Compress the reverse complement
+        CompressedRead::compress_from_plain_rc(bases, |b| buffer.extend_from_slice(b));
+        let read = CompressedRead::from_compressed_reads(&buffer, 0, bases.len());
+
+        // Unpack the reverse complement and verify
+        let mut unpacked = vec![];
+        read.write_unpacked_to_vec(&mut unpacked, false);
+        assert_eq!(
+            std::str::from_utf8(&unpacked).unwrap(),
+            std::str::from_utf8(expected_rc).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_read_copy_to_buffer() {
+        fn rc_string(input: &str) -> String {
+            input
+                .chars()
+                .rev()
+                .map(|c| match c {
+                    'A' => 'T',
+                    'T' => 'A',
+                    'C' => 'G',
+                    'G' => 'C',
+                    _ => c,
+                })
+                .collect()
+        }
+
+        for rc in [false, true] {
+            for s in 0..17 {
+                let mut bases1 = b"GCGTACGCGGTAGCTAAGCATCGATGCCGATCGTGTTTAACCATG".to_vec();
+                let mut bases2 = b"GCGTACGCGGTAGCTAAGCATCGATGCCGATCGTGTTTAACCATC".to_vec();
+
+                for i in 0..17 {
+                    println!("Iteration {} with start offset: {} rc: {}", i, s, rc);
+                    let mut buffer = vec![];
+                    let mut buffer2 = vec![];
+                    CompressedRead::compress_from_plain(&bases1, |b| buffer.extend_from_slice(b));
+                    CompressedRead::compress_from_plain(&bases2, |b| buffer2.extend_from_slice(b));
+                    let read = CompressedRead::from_compressed_reads(&buffer, 0, bases1.len());
+                    let read2 = CompressedRead::from_compressed_reads(&buffer2, 0, bases2.len());
+
                     println!(
-                        "BaseR: {} BaseR2: {}",
-                        rc_string(std::str::from_utf8(&bases1).unwrap()),
-                        rc_string(std::str::from_utf8(&bases2).unwrap())
+                        "Bases: {} Bases2: {}",
+                        std::str::from_utf8(&bases1).unwrap(),
+                        std::str::from_utf8(&bases2).unwrap()
                     );
-                }
 
-                let mut test_buf1 = vec![];
-                if rc {
-                    read.sub_slice(s..(bases1.len() - 1))
-                        .copy_to_buffer_rc(&mut test_buf1);
-                } else {
-                    read.sub_slice(s..(bases1.len() - 1))
-                        .copy_to_buffer(&mut test_buf1);
-                }
+                    if rc {
+                        println!(
+                            "BaseR: {} BaseR2: {}",
+                            rc_string(std::str::from_utf8(&bases1).unwrap()),
+                            rc_string(std::str::from_utf8(&bases2).unwrap())
+                        );
+                    }
 
-                let mut test_buf2 = vec![];
-                if rc {
-                    read2
-                        .sub_slice(s..(bases1.len() - 1))
-                        .copy_to_buffer_rc(&mut test_buf2);
-                } else {
-                    read2
-                        .sub_slice(s..(bases1.len() - 1))
-                        .copy_to_buffer(&mut test_buf2);
-                }
+                    let mut test_buf1 = vec![];
+                    if rc {
+                        read.sub_slice(s..(bases1.len() - 1))
+                            .copy_to_buffer_rc(&mut test_buf1);
+                    } else {
+                        read.sub_slice(s..(bases1.len() - 1))
+                            .copy_to_buffer(&mut test_buf1);
+                    }
 
-                assert_eq!(
-                    read.sub_slice(s..(bases1.len() - 1)).to_string(),
-                    read2.sub_slice(s..(bases2.len() - 1)).to_string()
-                );
+                    let mut test_buf2 = vec![];
+                    if rc {
+                        read2
+                            .sub_slice(s..(bases1.len() - 1))
+                            .copy_to_buffer_rc(&mut test_buf2);
+                    } else {
+                        read2
+                            .sub_slice(s..(bases1.len() - 1))
+                            .copy_to_buffer(&mut test_buf2);
+                    }
 
-                let read_c =
-                    CompressedRead::from_compressed_reads(&test_buf1, 0, bases1.len() - 1 - s);
-                let read_c2 =
-                    CompressedRead::from_compressed_reads(&test_buf2, 0, bases2.len() - 1 - s);
-
-                if rc {
                     assert_eq!(
-                        read_c.to_string(),
-                        rc_string(&read.sub_slice(s..(bases1.len() - 1)).to_string()),
-                        "First byte: {:08b}",
-                        read.get_packed_slice()[0]
+                        read.sub_slice(s..(bases1.len() - 1)).to_string(),
+                        read2.sub_slice(s..(bases2.len() - 1)).to_string()
                     );
-                } else {
+
+                    let read_c =
+                        CompressedRead::from_compressed_reads(&test_buf1, 0, bases1.len() - 1 - s);
+                    let read_c2 =
+                        CompressedRead::from_compressed_reads(&test_buf2, 0, bases2.len() - 1 - s);
+
+                    if rc {
+                        assert_eq!(
+                            read_c.to_string(),
+                            rc_string(&read.sub_slice(s..(bases1.len() - 1)).to_string()),
+                            "First byte: {:08b}",
+                            read.get_packed_slice()[0]
+                        );
+                    } else {
+                        assert_eq!(
+                            read_c.to_string(),
+                            read.sub_slice(s..(bases1.len() - 1)).to_string()
+                        );
+                    }
+                    if rc {
+                        assert_eq!(
+                            read_c.to_string(),
+                            rc_string(&read2.sub_slice(s..(bases1.len() - 1)).to_string())
+                        );
+                    } else {
+                        assert_eq!(
+                            read_c.to_string(),
+                            read2.sub_slice(s..(bases1.len() - 1)).to_string()
+                        );
+                    }
+                    assert_eq!(read_c.to_string(), read_c2.to_string());
+
+                    println!(" Left: {}", read_c.to_string());
+                    println!("Right: {}", read_c2.to_string());
+
                     assert_eq!(
-                        read_c.to_string(),
-                        read.sub_slice(s..(bases1.len() - 1)).to_string()
+                        test_buf1,
+                        test_buf2,
+                        "Last binary repr: {:08b} vs {:08b}",
+                        test_buf1.last().unwrap(),
+                        test_buf2.last().unwrap()
                     );
+
+                    bases1.insert(bases1.len() - 1, b'T');
+                    bases2.insert(bases2.len() - 1, b'T');
                 }
-                if rc {
-                    assert_eq!(
-                        read_c.to_string(),
-                        rc_string(&read2.sub_slice(s..(bases1.len() - 1)).to_string())
-                    );
-                } else {
-                    assert_eq!(
-                        read_c.to_string(),
-                        read2.sub_slice(s..(bases1.len() - 1)).to_string()
-                    );
-                }
-                assert_eq!(read_c.to_string(), read_c2.to_string());
-
-                println!(" Left: {}", read_c.to_string());
-                println!("Right: {}", read_c2.to_string());
-
-                assert_eq!(
-                    test_buf1,
-                    test_buf2,
-                    "Last binary repr: {:08b} vs {:08b}",
-                    test_buf1.last().unwrap(),
-                    test_buf2.last().unwrap()
-                );
-
-                bases1.insert(bases1.len() - 1, b'T');
-                bases2.insert(bases2.len() - 1, b'T');
             }
         }
+    }
+
+    #[test]
+    #[ignore]
+    fn check_read_deserialization() {
+        // Error while encoding 100066 27/5! MM: ggcat_io::concurrent::temp_reads::creads_utils::AssemblerMinimizerPosition
+        // FC: typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UTerm, typenum::bit::B1>, typenum::bit::B0>
+        // read_size: 99 read:  flags: 3 minimi_pos: 80 iwd: false mult: 1
+
+        let plain = b"CAGACAAACAGACAAACAGACAAACAGACAAACAGACAAACAGACAAACAGACAAACAGACAAACAGACAAACAGACAAACAGACAAACAGACAAACAG";
+        let mut tmp_buf = vec![];
+        CompressedRead::compress_from_plain(plain, |b| tmp_buf.extend_from_slice(b));
+        let read = unsafe { CompressedReadIndipendent::from_start_buffer_position(0, plain.len()) };
+        let read = read.as_reference(&tmp_buf);
+
+        assert_eq!(read.to_string().as_bytes(), plain);
+
+        let element = CompressedReadsBucketData {
+            read: ReadData::Packed(read),
+            multiplicity: 1,
+            minimizer_pos: 80,
+            extra_bucket: 0,
+            flags: 3,
+            is_window_duplicate: false,
+        };
+        let mut tbuffer = vec![];
+
+        {
+            let is_rc = matches!(element.read, ReadData::PackedRc(_));
+            CompressedRead::encode_length::<AssemblerMinimizerPosition, typenum::U2>(
+                &mut tbuffer,
+                read.size,
+                27,
+                element.minimizer_pos,
+                5,
+                element.flags,
+                element.is_window_duplicate,
+            );
+
+            if is_rc {
+                read.copy_to_buffer_rc(&mut tbuffer);
+            } else {
+                read.copy_to_buffer(&mut tbuffer);
+            }
+        }
+
+        let input = std::fs::read("/tmp/error100066.dat").unwrap();
+        assert_eq!(tbuffer, input);
+        let mut tmp_buffer = vec![];
+        println!("Input len: {}", input.len());
+        let decompressed = CompressedRead::read_from_stream::<
+            _,
+            crate::concurrent::temp_reads::creads_utils::AssemblerMinimizerPosition,
+            typenum::U2,
+        >(&mut tmp_buffer, &mut Cursor::new(&input), 27, 5);
+        assert!(decompressed.is_some());
     }
 }

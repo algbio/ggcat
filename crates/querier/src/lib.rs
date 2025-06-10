@@ -12,6 +12,7 @@ use hashes::default::MNHFactory;
 use io::sequences_reader::SequencesReader;
 use io::sequences_stream::general::GeneralSequenceBlockData;
 use io::{compute_stats_from_input_blocks, generate_bucket_names};
+use parallel_processor::buckets::{BucketsCount, ExtraBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -91,7 +92,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
         INTERMEDIATE_COMPRESSION_LEVEL_FAST.store(default_compression_level, Ordering::Relaxed);
     }
 
-    let buckets_count = 1 << buckets_count_log;
+    let buckets_count = BucketsCount::new(buckets_count_log, ExtraBuckets::None);
 
     let ((buckets, counters), queries_count) = if step <= QuerierStartingStep::MinimizerBucketing {
         minimizer_bucketing::<QuerierColorsManager>(
@@ -106,7 +107,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
     } else {
         (
             (
-                generate_bucket_names(temp_dir.join("bucket"), buckets_count, None, false),
+                generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
                 temp_dir.join("buckets-counters.dat"),
             ),
             {
@@ -130,7 +131,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
             threads_count,
         )
     } else {
-        generate_bucket_names(temp_dir.join("counters"), buckets_count, None, false)
+        generate_bucket_names(temp_dir.join("counters"), buckets_count, None)
     };
 
     let colored_buckets_prefix = temp_dir.join("color_counters");
@@ -159,7 +160,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
             &query_kmers_count,
         )
     } else {
-        generate_bucket_names(colored_buckets_prefix, buckets_count, None, false)
+        generate_bucket_names(colored_buckets_prefix, buckets_count, None)
     };
 
     if QuerierColorsManager::COLORS_ENABLED {

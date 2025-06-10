@@ -1,3 +1,4 @@
+use bincode::{Decode, Encode};
 use dynamic_dispatch::dynamic_dispatch;
 
 pub mod cn_nthash;
@@ -12,9 +13,6 @@ pub mod rolling;
 
 use std::fmt::{Debug, Display};
 use std::hash::{BuildHasher, Hash};
-
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 use config::BucketIndexType;
 
@@ -35,8 +33,8 @@ pub trait UnextendableHashTraitType:
     + Hash
     + Send
     + Sync
-    + Serialize
-    + DeserializeOwned
+    + Encode
+    + Decode<()>
     + 'static
 {
 }
@@ -52,8 +50,8 @@ impl<
         + Hash
         + Send
         + Sync
-        + Serialize
-        + DeserializeOwned
+        + Encode
+        + Decode<()>
         + 'static,
 > UnextendableHashTraitType for T
 {

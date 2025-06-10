@@ -1,6 +1,7 @@
 use config::MultiplicityCounterType;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use parallel_processor::buckets::ExtraBucketData;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::PacketTrait;
 use std::mem::size_of;
@@ -23,7 +24,7 @@ pub struct ReadsVector<E> {
     window_duplicates_indices: Vec<usize>,
     pub minimizer_size: usize,
     pub total_multiplicity: u64,
-    pub is_duplicates_bucket: bool,
+    pub extra_bucket_data: Option<ExtraBucketData>,
 }
 
 impl<E> ReadsVector<E> {
@@ -103,7 +104,7 @@ impl<E> ReadsVector<E> {
         self.minimizer_pos.clear();
         self.window_duplicates_indices.clear();
         self.total_multiplicity = 0;
-        self.is_duplicates_bucket = false;
+        self.extra_bucket_data = None;
     }
 
     pub fn iter(&self) -> ReadsVectorIterator<E> {
@@ -192,7 +193,7 @@ impl<E: SequenceExtraDataTempBufferManagement + 'static> PoolObjectTrait for Rea
                 window_duplicates_indices: vec![],
                 minimizer_size: 0,
                 total_multiplicity: 0,
-                is_duplicates_bucket: false,
+                extra_bucket_data: None,
             },
             sub_bucket: 0,
             extra_buffer: E::new_temp_buffer(),

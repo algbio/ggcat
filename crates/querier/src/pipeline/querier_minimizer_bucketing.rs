@@ -16,9 +16,10 @@ use io::sequences_stream::fasta::FastaFileSequencesStream;
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
-    MinimizerBucketingExecutorFactory, MinimizerInputSequence, PushSequenceInfo,
+    MinimizerBucketingExecutorFactory, MinimizerInputSequence,
+    MinimzerBucketingFilesReaderInputPacket, PushSequenceInfo,
 };
-use parallel_processor::buckets::{DuplicatesBuckets, SingleBucket};
+use parallel_processor::buckets::{BucketsCount, SingleBucket};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
@@ -263,7 +264,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     graph_file: PathBuf,
     query_file: PathBuf,
     output_path: &Path,
-    buckets_count: usize,
+    buckets_count: BucketsCount,
     threads_count: usize,
     k: usize,
     m: usize,
@@ -273,8 +274,14 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         .start_phase("phase: graph + query bucketing".to_string());
 
     let input_files = vec![
-        ((graph_file, None), FileType::Graph),
-        ((query_file, None), FileType::Query),
+        MinimzerBucketingFilesReaderInputPacket {
+            sequences: (graph_file, None),
+            stream_info: FileType::Graph,
+        },
+        MinimzerBucketingFilesReaderInputPacket {
+            sequences: (query_file, None),
+            stream_info: FileType::Query,
+        },
     ];
 
     let queries_count = Arc::new(AtomicUsize::new(0));
@@ -296,7 +303,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
             None,
             CX::COLORS_ENABLED,
             0,
-            DuplicatesBuckets::None,
         ),
         queries_count.load(Ordering::Relaxed) as u64,
     )

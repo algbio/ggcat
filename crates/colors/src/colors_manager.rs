@@ -256,7 +256,7 @@ pub trait ColorsManager: 'static + Clone + Debug + Sync + Send + Sized {
     fn get_bucket_from_u64_color(
         color: u64,
         colors_count: u64,
-        buckets_count_log: u32,
+        buckets_count_log: usize,
         stride: u64,
     ) -> BucketIndexType {
         let colors_count = colors_count.nq_div_ceil(stride) * stride;
@@ -270,7 +270,7 @@ pub trait ColorsManager: 'static + Clone + Debug + Sync + Send + Sized {
     fn get_bucket_from_color(
         color: &Self::SingleKmerColorDataType,
         colors_count: u64,
-        buckets_count_log: u32,
+        buckets_count_log: usize,
     ) -> BucketIndexType;
 
     type ColorsParserType: ColorsParser<SingleKmerColorDataType = Self::SingleKmerColorDataType>;

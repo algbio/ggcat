@@ -15,7 +15,7 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets, SingleBucket};
+use parallel_processor::buckets::{BucketsCount, ExtraBuckets, MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -113,7 +113,8 @@ pub fn counters_sorting<CX: ColorsManager>(
         .write()
         .start_phase("phase: counters sorting".to_string());
 
-    let buckets_count = file_counters_inputs.len();
+    let buckets_count =
+        BucketsCount::from_power_of_two(file_counters_inputs.len(), ExtraBuckets::None);
 
     let final_counters = if CX::COLORS_ENABLED {
         vec![]
@@ -134,7 +135,6 @@ pub fn counters_sorting<CX: ColorsManager>(
                 get_compression_level_info(),
             ),
             &(),
-            DuplicatesBuckets::None,
         ))
     } else {
         Arc::new(MultiThreadBuckets::EMPTY)
@@ -142,13 +142,11 @@ pub fn counters_sorting<CX: ColorsManager>(
 
     let thread_buffers = ScopedThreadLocal::new(move || {
         if CX::COLORS_ENABLED {
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
         } else {
             BucketsThreadBuffer::EMPTY
         }
     });
-
-    let buckets_count_log = buckets_count.ilog2();
 
     file_counters_inputs.par_iter().for_each(|input| {
         let mut thread_buffer = thread_buffers.get();
@@ -207,7 +205,11 @@ pub fn counters_sorting<CX: ColorsManager>(
                 for entry in query_results.nq_group_by(|a, b| a.1 == b.1) {
                     let color = entry[0].1.clone();
                     colored_buckets_writer.add_element(
-                        CX::get_bucket_from_color(&color, colors_count, buckets_count_log),
+                        CX::get_bucket_from_color(
+                            &color,
+                            colors_count,
+                            buckets_count.normal_buckets_count_log,
+                        ),
                         &color,
                         &CounterEntry {
                             query_index,

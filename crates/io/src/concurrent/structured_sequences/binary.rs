@@ -8,6 +8,7 @@ use crate::concurrent::temp_reads::extra_data::{
     SequenceExtraDataTempBufferManagement,
 };
 use crate::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
+use bincode::Encode;
 use byteorder::ReadBytesExt;
 use config::DEFAULT_PER_CPU_BUFFER_SIZE;
 use parallel_processor::buckets::LockFreeBucket;
@@ -16,7 +17,6 @@ use parallel_processor::buckets::writers::compressed_binary_writer::{
     CompressedBinaryWriter, CompressedCheckpointSize, CompressionLevelInfo,
 };
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use serde::Serialize;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -50,7 +50,7 @@ impl<
     LinksInfo: IdentSequenceWriter + SequenceExtraData,
 > StructSeqBinaryWriter<ColorInfo, LinksInfo>
 {
-    pub fn new<T: Serialize>(
+    pub fn new<T: Encode>(
         path: impl AsRef<Path>,
         file_mode: &(
             MemoryFileMode,

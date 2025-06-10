@@ -18,11 +18,6 @@ pub const PACKETS_PRIORITY_REWRITTEN: usize = 0;
 pub const PACKETS_PRIORITY_COMPACT: usize = 1;
 pub const PACKETS_PRIORITY_DONE_RESPLIT: usize = 0;
 pub const PACKETS_PRIORITY_FILES: usize = 1;
-// pub const PACKETS_PRIORITY_PENDING_RESPLIT: usize = 3;
-
-pub const WORKERS_PRIORITY_LOW: usize = 0;
-pub const WORKERS_PRIORITY_BASE: usize = 0;
-pub const WORKERS_PRIORITY_HIGH: usize = 0;
 
 // pub type DefaultColorsSerializer = RunLengthColorsSerializer;
 

@@ -17,7 +17,6 @@ use hashes::HashFunctionFactory;
 use hashes::default::MNHFactory;
 use io::structs::hash_entry::HashEntry;
 use io::structs::hash_entry::{Direction, HashEntrySerializer};
-use kmers_transform::processor::KmersTransformProcessor;
 use kmers_transform::{
     KmersTransform, KmersTransformExecutorFactory, KmersTransformGlobalExtraData,
 };
@@ -27,9 +26,8 @@ use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{
-    DuplicatesBuckets, LockFreeBucket, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
+    BucketsCount, LockFreeBucket, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
 };
-use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
@@ -47,7 +45,7 @@ pub mod unitigs_extender;
 pub struct GlobalMergeData<CX: ColorsManager> {
     k: usize,
     m: usize,
-    buckets_count: usize,
+    buckets_count: BucketsCount,
     min_multiplicity: usize,
     colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
     output_results_buckets:
@@ -109,15 +107,16 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
     fn new_resplitter(
         global_data: &Arc<Self::GlobalExtraData>,
+        duplicates_bucket: u16,
     ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType {
-        AssemblerMinimizerBucketingExecutorFactory::new(&global_data.global_resplit_data)
+        AssemblerMinimizerBucketingExecutorFactory::new_with_duplicates(
+            &global_data.global_resplit_data,
+            duplicates_bucket,
+        )
     }
 
-    fn new_map_processor(
-        _global_data: &Arc<Self::GlobalExtraData>,
-        mem_tracker: MemoryTracker<KmersTransformProcessor<Self>>,
-    ) -> Self::MapProcessorType {
-        ParallelKmersMergeMapProcessor::new(mem_tracker)
+    fn new_map_processor(_global_data: &Arc<Self::GlobalExtraData>) -> Self::MapProcessorType {
+        ParallelKmersMergeMapProcessor::new()
     }
 
     fn new_final_executor(global_data: &Arc<Self::GlobalExtraData>) -> Self::FinalExecutorType {
@@ -152,7 +151,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
     file_inputs: Vec<MultiChunkBucket>,
     buckets_counters_path: PathBuf,
     colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
-    buckets_count: usize,
+    buckets_count: BucketsCount,
     min_multiplicity: usize,
     out_directory: P,
     k: usize,
@@ -177,7 +176,6 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
         &(),
-        DuplicatesBuckets::None,
     ));
 
     let mut sequences = Vec::new();
@@ -192,10 +190,10 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             get_compression_level_info(),
         ),
         &(),
-        DuplicatesBuckets::None,
     );
 
-    let output_results_buckets = ArrayQueue::new(reads_buckets.count());
+    let output_results_buckets =
+        ArrayQueue::new(reads_buckets.get_buckets_count().total_buckets_count);
     for (index, bucket) in reads_buckets.into_buckets().enumerate() {
         let bucket_read = ResultsBucket::<color_types::PartialUnitigsColorStructure<CX>> {
             read_index: 0,
@@ -208,7 +206,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
         sequences.push(SingleBucket {
             index,
             path: bucket_read.reads_writer.get_path(),
-            is_duplicates_bucket: false,
+            extra_bucket_data: None,
         });
         let res = output_results_buckets.push(bucket_read).is_ok();
         assert!(res);
@@ -231,7 +229,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             }, // m
             buckets_count,
             k,
-            1,
+            BucketsCount::ONE,
             (),
         )),
         sequences_size_total: AtomicU64::new(0),
@@ -277,7 +275,7 @@ mod tests {
     use colors::non_colored::NonColoredManager;
     use config::{FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
     use io::generate_bucket_names;
-    use parallel_processor::buckets::SingleBucket;
+    use parallel_processor::buckets::{BucketsCount, ExtraBuckets, SingleBucket};
     use parallel_processor::memory_data_size::MemoryDataSize;
     use parallel_processor::memory_fs::MemoryFs;
     use rayon::ThreadPoolBuilder;
@@ -291,17 +289,13 @@ mod tests {
     fn test_single_bucket_processing() {
         const TEMP_DIR: &str = "../../../../temp-gut-test-new";
 
-        let buckets_count = 1024;
+        let buckets_count = BucketsCount::new(10, ExtraBuckets::None);
 
-        let buckets = generate_bucket_names(
-            Path::new(TEMP_DIR).join("bucket"),
-            buckets_count,
-            None,
-            false,
-        )
-        .into_iter()
-        .map(SingleBucket::to_multi_chunk)
-        .collect();
+        let buckets =
+            generate_bucket_names(Path::new(TEMP_DIR).join("bucket"), buckets_count, None)
+                .into_iter()
+                .map(SingleBucket::to_multi_chunk)
+                .collect();
 
         // let mut buckets = vec![buckets[322]];
 

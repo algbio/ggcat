@@ -36,7 +36,7 @@ use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::readers::async_binary_reader::AllowedCheckpointStrategy;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets};
+use parallel_processor::buckets::{BucketsCount, ExtraBuckets, MultiThreadBuckets};
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -65,7 +65,7 @@ pub fn build_maximal_unitigs_links<
     // TODO: Parametrize depending on the reads count!
     const DEFAULT_BUCKET_HASHES_SIZE_LOG: usize = 8;
 
-    let buckets_count = 1 << DEFAULT_BUCKET_HASHES_SIZE_LOG;
+    let buckets_count = BucketsCount::new(DEFAULT_BUCKET_HASHES_SIZE_LOG, ExtraBuckets::None);
 
     let self_complemental_unitigs = DashSet::new();
 
@@ -91,7 +91,6 @@ pub fn build_maximal_unitigs_links<
                     get_compression_level_info(),
                 ),
                 &(),
-                DuplicatesBuckets::None,
             ));
 
         rayon::scope(|_s| {
@@ -105,7 +104,7 @@ pub fn build_maximal_unitigs_links<
                         MaximalHashEntrySerializer<MH::HashTypeUnextendable>,
                     >::new(
                         &maximal_unitigs_extremities_hashes_buckets,
-                        BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count),
+                        BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count),
                         (),
                     );
 
@@ -236,8 +235,10 @@ pub fn build_maximal_unitigs_links<
         )
     };
 
-    let entries_per_bucket =
-        max(1, unitigs_count.next_power_of_two() / buckets_count as u64) as usize;
+    let entries_per_bucket = max(
+        1,
+        unitigs_count.next_power_of_two() / buckets_count.total_buckets_count as u64,
+    ) as usize;
     let entries_per_bucket_log = entries_per_bucket.ilog2() as usize;
 
     // Sort the hashes
@@ -256,11 +257,10 @@ pub fn build_maximal_unitigs_links<
                 get_compression_level_info(),
             ),
             &(),
-            DuplicatesBuckets::None,
         ));
 
         let buckets_thread_buffers = ScopedThreadLocal::new(move || {
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
         });
 
         step_1_hash_files.par_iter().for_each(|input| {

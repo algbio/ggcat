@@ -1,12 +1,13 @@
 use crate::pipeline::dumper_minimizer_bucketing::minimizer_bucketing;
+use colors::DefaultColorsSerializer;
 use colors::bundles::graph_querying::ColorBundleGraphQuerying;
 use colors::colors_manager::{ColorMapReader, ColorsManager, ColorsMergeManager};
-use colors::DefaultColorsSerializer;
 use config::{
     ColorIndexType, INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW,
 };
 use io::compute_stats_from_input_blocks;
 use io::sequences_stream::general::GeneralSequenceBlockData;
+use parallel_processor::buckets::{BucketsCount, ExtraBuckets};
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use pipeline::dumper_colormap_querying::colormap_query;
@@ -64,11 +65,9 @@ pub fn dump_unitigs(
         INTERMEDIATE_COMPRESSION_LEVEL_FAST.store(default_compression_level, Ordering::Relaxed);
     }
 
-    let buckets_count = 1 << buckets_count_log;
-
     let (reorganized_unitigs, buckets_stats) = minimizer_bucketing::<ColorBundleGraphQuerying>(
         graph_input.as_ref().to_path_buf(),
-        buckets_count,
+        BucketsCount::new(buckets_count_log, ExtraBuckets::None),
         threads_count,
         temp_dir.as_path(),
         k,

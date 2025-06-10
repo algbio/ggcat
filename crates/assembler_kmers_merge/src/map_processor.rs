@@ -8,14 +8,14 @@ use ggcat_logging::stats::KmersMergeBucketReport;
 use hashbrown::HashTable;
 use hashbrown::hash_table::Entry;
 use hashes::{HashFunctionFactory, HashableSequence};
+use io::DUPLICATES_BUCKET_EXTRA;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
-use kmers_transform::processor::KmersTransformProcessor;
 use kmers_transform::reads_buffer::ReadsVector;
 use kmers_transform::{
     GroupProcessStats, KmersTransformExecutorFactory, KmersTransformMapProcessor,
 };
-use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
+use parallel_processor::buckets::ExtraBucketData;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::mt_debug_counters::counter::{AtomicCounter, AvgMode, MaxMode};
@@ -39,7 +39,7 @@ pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManage
     pub superkmers_hashmap: HashTable<(CompressedReadIndipendent, u64)>,
     pub superkmers_storage: Box<Vec<u8>>,
     pub minimizer_collisions: FxHashMap<u64, u64>,
-    pub is_duplicates_bucket: bool,
+    pub extra_bucket_data: Option<ExtraBucketData>,
 }
 
 impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
@@ -54,7 +54,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
             superkmers_hashmap: HashTable::default(),
             superkmers_storage: Box::new(vec![]),
             minimizer_collisions: FxHashMap::default(),
-            is_duplicates_bucket: false,
+            extra_bucket_data: None,
         }
     }
 
@@ -86,23 +86,13 @@ pub struct ParallelKmersMergeMapProcessor<
             >>::MapStruct,
         >,
     >,
-    mem_tracker: MemoryTracker<
-        KmersTransformProcessor<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS>>,
-    >,
 }
 
 impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     ParallelKmersMergeMapProcessor<MH, CX, COMPUTE_SIMPLITIGS>
 {
-    pub fn new(
-        mem_tracker: MemoryTracker<
-            KmersTransformProcessor<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS>>,
-        >,
-    ) -> Self {
-        Self {
-            map_packet: None,
-            mem_tracker,
-        }
+    pub fn new() -> Self {
+        Self { map_packet: None }
     }
 }
 
@@ -137,12 +127,12 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         ref_sequences: &Vec<u8>,
     ) {
         let map_packet = self.map_packet.as_mut().unwrap().deref_mut();
-        map_packet.is_duplicates_bucket = batch.is_duplicates_bucket;
+        map_packet.extra_bucket_data = batch.extra_bucket_data;
         stats!(
             let start_batch_time = std::time::Instant::now();
         );
 
-        if true || batch.is_duplicates_bucket {
+        if true || batch.extra_bucket_data == Some(DUPLICATES_BUCKET_EXTRA) {
             for sequence in batch.iter() {
                 map_packet
                     .extender
@@ -193,7 +183,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
                             let minimizer_pos = sequence.minimizer_pos as usize;
 
-                            if !sequence.is_window_duplicate && !batch.is_duplicates_bucket {
+                            if !sequence.is_window_duplicate && batch.extra_bucket_data.is_none() {
                                 let first_hash = read
                                     .sub_slice(minimizer_pos..minimizer_pos + batch.minimizer_size)
                                     .get_hash();
@@ -223,8 +213,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                 }
             }
         }
-        self.mem_tracker
-            .update_memory_usage(&[map_packet.get_size(), 0]);
 
         stats!(
             map_packet.detailed_stats.elapsed_processor_time += start_batch_time.elapsed();
@@ -277,7 +265,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
         COUNTER_KMERS_MAX.max(all_kmers as i64);
         COUNTER_READS_AVG.add_value(all_kmers as i64);
-        self.mem_tracker.update_memory_usage(&[0, 0]);
 
         stats!(
             map_packet.detailed_stats.end_processor_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();

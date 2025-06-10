@@ -9,6 +9,7 @@ use config::DEFAULT_PER_CPU_BUFFER_SIZE;
 use ggcat_logging::stats;
 use hashes::HashFunctionFactory;
 use instrumenter::local_setup_instrumenter;
+use io::DUPLICATES_BUCKET_EXTRA;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::structs::hash_entry::{Direction, HashEntrySerializer};
 use kmers_transform::{KmersTransformExecutorFactory, KmersTransformFinalExecutor};
@@ -44,7 +45,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 {
     pub fn new(global_data: &GlobalMergeData<CX>) -> Self {
         let hashes_buffer =
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, global_data.buckets_count);
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &global_data.buckets_count);
 
         Self {
             hashes_tmp: BucketsThreadDispatcher::new(
@@ -91,12 +92,11 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         let map_struct = map_struct_packet.deref_mut();
 
         let buckets_count = global_data.buckets_count;
-        let buckets_count_bits = buckets_count.ilog2() as usize;
 
         let current_bucket = self.current_bucket.as_mut().unwrap();
         let bucket_index = current_bucket.get_bucket_index();
 
-        if true || map_struct.is_duplicates_bucket {
+        if true || map_struct.extra_bucket_data == Some(DUPLICATES_BUCKET_EXTRA) {
             map_struct.extender.compute_unitigs::<COMPUTE_SIMPLITIGS>(
                 &mut self.colors_data,
                 |colors_data, out_seq, fw_hash, bw_hash| {
@@ -134,7 +134,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                             bucket_index,
                             read_index,
                             Direction::Forward,
-                            buckets_count_bits,
+                            buckets_count.normal_buckets_count_log,
                         );
                     }
 
@@ -145,7 +145,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                             bucket_index,
                             read_index,
                             Direction::Backward,
-                            buckets_count_bits,
+                            buckets_count.normal_buckets_count_log,
                         );
                     }
                 },

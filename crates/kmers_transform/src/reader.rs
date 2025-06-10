@@ -1,17 +1,13 @@
 use crate::processor::{KmersProcessorInitData, KmersTransformProcessor};
 use crate::reads_buffer::{DeserializedReadIndependent, ReadsBuffer};
 use crate::resplitter::{KmersTransformResplitter, ResplitterInitData};
-use crate::{
-    KmersTransformContext, KmersTransformExecutorFactory, KmersTransformGlobalExtraData,
-    KmersTransformMapProcessor,
-};
+use crate::{KmersTransformContext, KmersTransformExecutorFactory, KmersTransformGlobalExtraData};
 use config::{
     DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    MAX_INTERMEDIATE_MAP_SIZE, MAX_KMERS_TRANSFORM_READERS_PER_BUCKET,
-    MAXIMUM_JIT_PROCESSED_BUCKETS, MIN_BUCKET_CHUNKS_FOR_READING_THREAD, PACKETS_PRIORITY_DEFAULT,
-    PACKETS_PRIORITY_REWRITTEN, PARTIAL_VECS_CHECKPOINT_SIZE, PRIORITY_SCHEDULING_BASE,
-    PRIORITY_SCHEDULING_LOW, SwapPriority, USE_SECOND_BUCKET, WORKERS_PRIORITY_BASE,
-    get_compression_level_info, get_memory_mode,
+    KMERS_TRANSFORM_READS_CHUNKS_SIZE, MAX_KMERS_TRANSFORM_READERS_PER_BUCKET,
+    MAXIMUM_JIT_PROCESSED_BUCKETS, MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
+    PARTIAL_VECS_CHECKPOINT_SIZE, SwapPriority, USE_SECOND_BUCKET, get_compression_level_info,
+    get_memory_mode,
 };
 use ggcat_logging::stats::StatId;
 use ggcat_logging::{generate_stat_id, stats};
@@ -26,28 +22,25 @@ use io::concurrent::temp_reads::creads_utils::{
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use minimizer_bucketing::counters_analyzer::BucketCounter;
 use minimizer_bucketing::{MinimizerBucketMode, MinimizerBucketingExecutorFactory};
-use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::readers::async_binary_reader::{
     AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
 };
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::{ExtraBucketData, LockFreeBucket};
 use parallel_processor::execution_manager::executor::{
-    AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
+    AddressProducer, AsyncExecutor, ExecutorReceiver,
 };
-use parallel_processor::execution_manager::executor_address::ExecutorAddress;
-use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
-use parallel_processor::execution_manager::objects_pool::{PoolObject, PoolObjectTrait};
+use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait, PacketsPool};
+use parallel_processor::execution_manager::thread_pool::ExecutorsHandle;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::mt_debug_counters::counter::{AtomicCounter, SumMode};
 use parallel_processor::mt_debug_counters::declare_counter_i64;
-use parallel_processor::scheduler::{PriorityScheduler, ThreadPriorityHandle};
 use replace_with::replace_with_or_abort;
 use std::cell::Cell;
 use std::cmp::{Reverse, max, min};
 use std::collections::{BinaryHeap, VecDeque};
-use std::future::Future;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -69,7 +62,7 @@ pub struct InputBucketDesc {
     pub(crate) resplitted: bool,
     pub(crate) rewritten: bool,
     pub(crate) used_hash_bits: usize,
-    pub(crate) is_duplicates_bucket: bool,
+    pub(crate) extra_bucket_data: Option<ExtraBucketData>,
 }
 
 impl PoolObjectTrait for InputBucketDesc {
@@ -84,14 +77,14 @@ impl PoolObjectTrait for InputBucketDesc {
             rewritten: false,
             used_hash_bits: 0,
             out_data_format: MinimizerBucketMode::Compacted,
-            is_duplicates_bucket: false,
+            extra_bucket_data: None,
         }
     }
 
     fn reset(&mut self) {
         self.resplitted = false;
         self.sub_bucket_counters.clear();
-        self.is_duplicates_bucket = false;
+        self.extra_bucket_data = None;
     }
 }
 impl PacketTrait for InputBucketDesc {
@@ -120,30 +113,37 @@ struct RewriterInitData {
     pub data_format: MinimizerBucketMode,
 }
 
-enum AddressMode {
-    Send(ExecutorAddress),
+enum AddressModeDeclaration<F: KmersTransformExecutorFactory> {
+    Resplit(ResplitterInitData<F>),
+    Process(KmersProcessorInitData),
     Rewrite(CompressedBinaryWriter, AtomicU64, RewriterInitData),
 }
 
-struct BucketsInfo {
+enum AllocatedAddressMode<F: KmersTransformExecutorFactory> {
+    Send(AddressProducer<ReadsBuffer<F::AssociatedExtraDataWithMultiplicity>>),
+    Rewrite(CompressedBinaryWriter, AtomicU64, RewriterInitData),
+}
+
+struct BucketsInfo<F: KmersTransformExecutorFactory> {
     _stats_id: StatId,
     readers: Vec<AsyncBinaryReader>,
     concurrency: usize,
-    addresses: Arc<Vec<AddressMode>>,
-    register_addresses: Vec<ExecutorAddress>,
+    addresses: Vec<AddressModeDeclaration<F>>,
     buckets_remapping: Arc<Vec<usize>>,
     _second_buckets_log_max: usize,
     total_file_size: usize,
     _used_hash_bits: usize,
     data_format: MinimizerBucketMode,
-    is_duplicates_bucket: bool,
+    extra_bucket_data: Option<ExtraBucketData>,
+    allow_online_processing: bool,
 }
 
 impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
     fn compute_buckets(
         global_context: &KmersTransformContext<F>,
+        read_handle: &ExecutorsHandle<KmersTransformReader<F>>,
         file: Packet<InputBucketDesc>,
-    ) -> BucketsInfo {
+    ) -> BucketsInfo<F> {
         let second_buckets_log_max = min(
             file.sub_bucket_counters.len().ilog2() as usize,
             global_context.max_second_buckets_count_log2,
@@ -222,10 +222,12 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
             // TODO: Find why there is a deadlock if the bucket is always considered an outlier
             // let is_outlier = !file.resplitted && (total_sequences > 0) && true;
-            let is_outlier = !file.resplitted
-                && (total_sequences > 0)
-                && (biggest_sub_bucket.0.count as f64 * unique_estimator_factor
-                    >= (MAX_INTERMEDIATE_MAP_SIZE / F::MapProcessorType::MAP_SIZE as u64) as f64);
+            let is_outlier = false;
+
+            //  !file.resplitted
+            //     && (total_sequences > 0)
+            //     && (biggest_sub_bucket.0.count as f64 * unique_estimator_factor
+            //         >= (MAX_INTERMEDIATE_MAP_SIZE / F::MapProcessorType::MAP_SIZE as u64) as f64);
 
             // if is_outlier {
             //     ggcat_logging::info!(
@@ -263,10 +265,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
         }
 
         let mut addresses: Vec<_> = (0..queue.len()).map(|_| None).collect();
-        let mut register_addresses = Vec::new();
         let mut dbg_counters: Vec<_> = vec![0; queue.len()];
 
-        let allow_online_processing = !has_outliers && queue.len() <= MAXIMUM_JIT_PROCESSED_BUCKETS;
+        let allow_online_processing = !has_outliers
+            && queue.len()
+                <= MAXIMUM_JIT_PROCESSED_BUCKETS.min(global_context.compute_threads_count);
 
         stats!(
             bucket_stat.allow_online_processing = allow_online_processing;
@@ -287,15 +290,12 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                     });
                 );
 
-                let new_address =
-                    KmersTransformResplitter::<F>::generate_new_address(ResplitterInitData {
-                        _resplit_stat_id: resplit_stat_id,
-                        bucket_size: count.0 as usize,
-                        data_format: file.out_data_format,
-                        is_duplicates_bucket: file.is_duplicates_bucket,
-                    });
-                register_addresses.push(new_address.clone());
-                Some(AddressMode::Send(new_address))
+                Some(AddressModeDeclaration::Resplit(ResplitterInitData {
+                    _resplit_stat_id: resplit_stat_id,
+                    bucket_size: count.0 as usize,
+                    data_format: file.out_data_format,
+                    read_handle: Arc::new(read_handle.clone()),
+                }))
             } else {
                 if allow_online_processing {
                     let process_stat_id = generate_stat_id!();
@@ -306,25 +306,20 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                             bucket_index: index,
                         });
                     );
-
-                    let new_address = KmersTransformProcessor::<F>::generate_new_address(
-                        KmersProcessorInitData {
-                            process_stat_id,
-                            sequences_count: count.0 as usize,
-                            sub_bucket: index,
-                            is_resplitted: file.resplitted,
-                            debug_bucket_first_path: file.paths.first().cloned(),
-                        },
-                    );
-                    register_addresses.push(new_address.clone());
-                    Some(AddressMode::Send(new_address))
+                    Some(AddressModeDeclaration::Process(KmersProcessorInitData {
+                        process_stat_id,
+                        sequences_count: count.0 as usize,
+                        sub_bucket: index,
+                        is_resplitted: file.resplitted,
+                        debug_bucket_first_path: file.paths.first().cloned(),
+                    }))
                 } else {
                     static SUBSPLIT_INDEX: AtomicUsize = AtomicUsize::new(0);
 
                     let rewrite_stat_id = generate_stat_id!();
 
                     let writer = CompressedBinaryWriter::new(
-                        &global_context.temp_dir.join(&format!("bucket-rewrite-",)),
+                        &global_context.temp_dir.join("bucket-rewrite"),
                         &(
                             get_memory_mode(SwapPriority::ResultBuckets),
                             PARTIAL_VECS_CHECKPOINT_SIZE,
@@ -342,7 +337,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                         });
                     );
 
-                    Some(AddressMode::Rewrite(
+                    Some(AddressModeDeclaration::Rewrite(
                         writer,
                         AtomicU64::new(0),
                         RewriterInitData {
@@ -408,14 +403,14 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             _stats_id: stats_id,
             readers,
             concurrency,
-            addresses: Arc::new(addresses),
-            register_addresses,
+            addresses,
             buckets_remapping: Arc::new(buckets_remapping),
             _second_buckets_log_max: second_buckets_log_max,
             total_file_size,
             _used_hash_bits: file.used_hash_bits,
             data_format: file.out_data_format,
-            is_duplicates_bucket: file.is_duplicates_bucket,
+            extra_bucket_data: file.extra_bucket_data,
+            allow_online_processing,
         }
     }
 
@@ -485,35 +480,32 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
     }
 
     #[instrumenter::track]
-    async fn read_bucket<const WITH_SECOND_BUCKET: bool, const WITH_MULTIPLICITY: bool>(
+    fn read_bucket<const WITH_SECOND_BUCKET: bool, const WITH_MULTIPLICITY: bool>(
         global_context: &KmersTransformContext<F>,
-        ops: &ExecutorAddressOperations<'_, Self>,
-        bucket_info: &BucketsInfo,
+        bucket_info: &BucketsInfo<F>,
+        addresses: &[AllocatedAddressMode<F>],
         async_reader_thread: Arc<AsyncReaderThread>,
-        packets_pool: Arc<
-            PoolObject<PacketsPool<ReadsBuffer<F::AssociatedExtraDataWithMultiplicity>>>,
-        >,
-        thread_handle: &ThreadPriorityHandle,
+        packets_pool: Arc<PacketsPool<ReadsBuffer<F::AssociatedExtraDataWithMultiplicity>>>,
         minimizer_size: usize,
     ) {
         if bucket_info.readers.iter().all(|r| r.is_finished()) {
             return;
         }
 
-        let mut buffers = Vec::with_capacity(bucket_info.addresses.len());
+        let mut buffers = Vec::with_capacity(addresses.len());
 
         let mut rewrite_buffer = Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes());
 
         track!(
             {
-                for _ in 0..bucket_info.addresses.len() {
-                    buffers.push(packets_pool.alloc_packet().await);
+                for _ in 0..addresses.len() {
+                    buffers.push(packets_pool.alloc_packet());
                 }
             },
             START_PACKET_ALLOC_COUNTER
         );
 
-        let has_single_addr = bucket_info.addresses.len() == 1;
+        let has_single_addr = addresses.len() == 1;
 
         for reader in &bucket_info.readers {
             if reader.is_finished() {
@@ -523,7 +515,10 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
             let data_format: MinimizerBucketMode = reader.get_data_format_info().unwrap();
             let checkpoint_rewrite_info = Cell::new(None);
 
-            let addresses_passtrough_check = bucket_info.addresses.clone();
+            let address_is_rewrite: Vec<_> = addresses
+                .iter()
+                .map(|a| matches!(a, AllocatedAddressMode::Rewrite(_, _, _)))
+                .collect();
             let buckets_remapping_passtrough_check = bucket_info.buckets_remapping.clone();
 
             helper_read_bucket_with_opt_multiplicity::<
@@ -538,11 +533,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                 matches!(data_format, MinimizerBucketMode::Compacted),
                 AllowedCheckpointStrategy::AllowPasstrough(Arc::new(move |data| {
                     if let Some(data) = data {
-                        matches!(
-                            &addresses_passtrough_check[buckets_remapping_passtrough_check
-                                [data.target_subbucket as usize]],
-                            AddressMode::Rewrite(_, _, _)
-                        )
+                        address_is_rewrite
+                            [buckets_remapping_passtrough_check[data.target_subbucket as usize]]
                     } else {
                         false
                     }
@@ -552,8 +544,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                         checkpoint_rewrite_info.get().unwrap();
                     let bucket = checkpoint_rewrite_info.target_subbucket as usize;
                     let sequences_count = checkpoint_rewrite_info.sequences_count;
-                    if let AddressMode::Rewrite(writer, out_sequences_count, _) =
-                        &bucket_info.addresses[bucket_info.buckets_remapping[bucket]]
+                    if let AllocatedAddressMode::Rewrite(writer, out_sequences_count, _) =
+                        &addresses[bucket_info.buckets_remapping[bucket]]
                     {
                         out_sequences_count.fetch_add(sequences_count as u64, Ordering::Relaxed);
                         writer.set_checkpoint_data::<()>(None, Some(passtrough));
@@ -619,21 +611,17 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
                     let packets_pool = &packets_pool;
                     if buffers[bucket].reads.len() == buffers[bucket].reads.capacity() {
-                        match &bucket_info.addresses[bucket] {
-                            AddressMode::Send(address) => {
+                        match &addresses[bucket] {
+                            AllocatedAddressMode::Send(address) => {
                                 replace_with_or_abort(&mut buffers[bucket], |mut buffer| {
                                     buffer.reads.minimizer_size = minimizer_size;
                                     buffer.sub_bucket = bucket;
-                                    buffer.reads.is_duplicates_bucket =
-                                        bucket_info.is_duplicates_bucket;
-                                    ops.packet_send(address.clone(), buffer, thread_handle);
-                                    track!(
-                                        packets_pool.alloc_packet_blocking(),
-                                        PACKET_ALLOC_COUNTER
-                                    )
+                                    buffer.reads.extra_bucket_data = bucket_info.extra_bucket_data;
+                                    address.send_packet(buffer);
+                                    track!(packets_pool.alloc_packet(), PACKET_ALLOC_COUNTER)
                                 });
                             }
-                            AddressMode::Rewrite(writer, seq_count, _) => {
+                            AllocatedAddressMode::Rewrite(writer, seq_count, _) => {
                                 Self::flush_rewrite_bucket::<
                                     BucketModeFromBoolean<WITH_SECOND_BUCKET>,
                                     MultiplicityModeFromBoolean<WITH_MULTIPLICITY>,
@@ -649,25 +637,20 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
                     }
                     F::AssociatedExtraDataWithMultiplicity::clear_temp_buffer(extra_buffer);
                 },
-                thread_handle,
                 global_context.k,
             );
         }
 
-        for (bucket, (mut packet, address)) in buffers
-            .drain(..)
-            .zip(bucket_info.addresses.iter())
-            .enumerate()
-        {
+        for (bucket, (mut packet, address)) in buffers.drain(..).zip(addresses.iter()).enumerate() {
             if packet.reads.len() > 0 {
                 packet.reads.minimizer_size = minimizer_size;
                 packet.sub_bucket = bucket;
-                packet.reads.is_duplicates_bucket = bucket_info.is_duplicates_bucket;
+                packet.reads.extra_bucket_data = bucket_info.extra_bucket_data;
                 match address {
-                    AddressMode::Send(address) => {
-                        ops.packet_send(address.clone(), packet, &thread_handle);
+                    AllocatedAddressMode::Send(address) => {
+                        address.send_packet(packet);
                     }
-                    AddressMode::Rewrite(writer, seq_count, _) => {
+                    AllocatedAddressMode::Rewrite(writer, seq_count, _) => {
                         Self::flush_rewrite_bucket::<
                             BucketModeFromBoolean<WITH_SECOND_BUCKET>,
                             MultiplicityModeFromBoolean<WITH_MULTIPLICITY>,
@@ -685,11 +668,18 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
     }
 }
 
+pub(crate) struct TransformReaderContext<F: KmersTransformExecutorFactory> {
+    pub resplit_handle: ExecutorsHandle<KmersTransformResplitter<F>>,
+    pub process_handle: ExecutorsHandle<KmersTransformProcessor<F>>,
+    pub global: Arc<KmersTransformContext<F>>,
+}
+
 impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F> {
     type InputPacket = InputBucketDesc;
     type OutputPacket = ReadsBuffer<F::AssociatedExtraDataWithMultiplicity>;
-    type GlobalParams = KmersTransformContext<F>;
-    type InitData = ();
+    type GlobalParams = TransformReaderContext<F>;
+    type InitData = ExecutorsHandle<Self>;
+    const ALLOW_PARALLEL_ADDRESS_EXECUTION: bool = false;
 
     fn new() -> Self {
         Self {
@@ -697,200 +687,173 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformReader<F>
         }
     }
 
-    fn async_executor_main<'a>(
+    fn executor_main<'a>(
         &'a mut self,
-        global_context: &'a KmersTransformContext<F>,
+        context: &'a TransformReaderContext<F>,
         mut receiver: ExecutorReceiver<Self>,
-        _memory_tracker: MemoryTracker<Self>,
-    ) -> impl Future<Output = ()> + 'a {
-        async move {
-            let mut async_threads = Vec::new();
+    ) {
+        let mut async_threads = Vec::new();
 
-            let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_BASE);
+        let packets_pool = Arc::new(PacketsPool::new(
+            context.global.max_buckets * 2 * MAX_KMERS_TRANSFORM_READERS_PER_BUCKET,
+            KMERS_TRANSFORM_READS_CHUNKS_SIZE,
+        ));
 
-            while let Ok((address, _)) = track!(
-                receiver
-                    .obtain_address_with_priority(WORKERS_PRIORITY_BASE, &thread_handle)
-                    .await,
-                ADDR_WAITING_COUNTER
-            ) {
-                let file = track!(
-                    address.receive_packet(&thread_handle).await.unwrap(),
-                    PACKET_WAITING_COUNTER
-                );
-                let is_main_bucket = !file.resplitted && !file.rewritten;
-                let is_resplitted = file.resplitted;
-                let is_duplicates_bucket = file.is_duplicates_bucket;
-                let buckets_info = Self::compute_buckets(global_context, file);
+        while let Ok(address) = track!(receiver.obtain_address(), ADDR_WAITING_COUNTER) {
+            let file = track!(address.receive_packet().unwrap(), PACKET_WAITING_COUNTER);
+            let is_main_bucket = !file.resplitted && !file.rewritten;
+            let is_resplitted = file.resplitted;
+            let extra_bucket_data = file.extra_bucket_data;
+            let debug_paths = file.paths.clone();
+            let mut buckets_info =
+                Self::compute_buckets(&context.global, address.get_init_data(), file);
 
-                let reader_lock = global_context.reader_init_lock.lock().await;
-
-                address.declare_addresses(
-                    buckets_info.register_addresses.clone(),
-                    PACKETS_PRIORITY_DEFAULT,
-                );
-
-                // FIXME: Better threads management
-                while async_threads.len() < buckets_info.concurrency {
-                    async_threads.push(AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE / 2, 4));
-                }
-
-                let mut spawner = address.make_spawner();
-
-                // ggcat_logging::info!(
-                //     "Reading with concurrency: {} and max buckets: {} with addrs: {}",
-                //     buckets_info.concurrency,
-                //     global_context.max_buckets,
-                //     buckets_info.addresses.len()
-                // );
-
-                let minimizer_size = if is_resplitted {
-                    global_context.global_extra_data.get_m_resplit()
+            let addresses: Vec<_> = {
+                let mut out_addresses = vec![];
+                if buckets_info.allow_online_processing {
+                    context.process_handle.create_new_addresses(
+                        buckets_info.addresses.iter().filter_map(|a| match a {
+                            AddressModeDeclaration::Process(p) => Some(Arc::new(p.clone())),
+                            AddressModeDeclaration::Rewrite(..) => None,
+                            AddressModeDeclaration::Resplit(_) => unreachable!(),
+                        }),
+                        &mut out_addresses,
+                        Some(context.global.compute_threads_count),
+                        false,
+                    );
                 } else {
-                    global_context.global_extra_data.get_m()
-                };
-
-                for ex_idx in 0..buckets_info.concurrency {
-                    let async_thread = async_threads[ex_idx].clone();
-
-                    let address = &address;
-                    let buckets_info = &buckets_info;
-                    let packets_pool = address
-                        .pool_alloc_await(
-                            max(
-                                global_context.max_buckets / 2,
-                                2 * buckets_info.addresses.len(),
-                            ),
-                            &thread_handle,
-                            true,
-                        )
-                        .await;
-
-                    spawner.spawn_executor(async move {
-                        let thread_handle =
-                            PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_LOW);
-                        match buckets_info.data_format {
-                            MinimizerBucketMode::Single => {
-                                Self::read_bucket::<USE_SECOND_BUCKET, false>(
-                                    global_context,
-                                    address,
-                                    buckets_info,
-                                    async_thread,
-                                    packets_pool,
-                                    &thread_handle,
-                                    minimizer_size,
-                                )
-                                .await;
-                            }
-                            MinimizerBucketMode::Compacted => {
-                                Self::read_bucket::<false, true>(
-                                    global_context,
-                                    address,
-                                    buckets_info,
-                                    async_thread,
-                                    packets_pool,
-                                    &thread_handle,
-                                    minimizer_size,
-                                )
-                                .await;
-                            }
-                        }
-                    });
+                    context.resplit_handle.create_new_addresses(
+                        buckets_info.addresses.iter().filter_map(|a| match a {
+                            AddressModeDeclaration::Process(_) => unreachable!(),
+                            AddressModeDeclaration::Rewrite(..) => None,
+                            AddressModeDeclaration::Resplit(r) => Some(Arc::new(r.clone())),
+                        }),
+                        &mut out_addresses,
+                        Some(context.global.compute_threads_count),
+                        false,
+                    );
                 }
+                let mut out_addresses = out_addresses.into_iter();
 
-                drop(reader_lock);
-                spawner.executors_await().await;
-                drop(spawner);
+                buckets_info
+                    .addresses
+                    .drain(..)
+                    .map(|addr| match addr {
+                        AddressModeDeclaration::Rewrite(x, y, z) => {
+                            AllocatedAddressMode::Rewrite(x, y, z)
+                        }
+                        AddressModeDeclaration::Process(_) | AddressModeDeclaration::Resplit(_) => {
+                            AllocatedAddressMode::Send(out_addresses.next().unwrap())
+                        }
+                    })
+                    .collect()
+            };
 
-                for addr in Arc::try_unwrap(buckets_info.addresses)
-                    .map_err(|_| ())
-                    .unwrap()
-                {
-                    if let AddressMode::Rewrite(writer, seq_count, init_data) = addr {
-                        let new_bucket_address =
-                            KmersTransformReader::<F>::generate_new_address(());
+            // FIXME: Better threads management
+            while async_threads.len() < buckets_info.concurrency {
+                async_threads.push(AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE / 2, 4));
+            }
 
-                        global_context
-                            .rewritten_buckets_count
-                            .fetch_add(1, Ordering::Relaxed);
+            // ggcat_logging::info!(
+            //     "Reading with concurrency: {} and max buckets: {} with addrs: {}",
+            //     buckets_info.concurrency,
+            //     global_context.max_buckets,
+            //     buckets_info.addresses.len()
+            // );
 
-                        address.declare_addresses(
-                            vec![new_bucket_address.clone()],
-                            PACKETS_PRIORITY_REWRITTEN,
+            let minimizer_size = if is_resplitted {
+                context.global.global_extra_data.get_m_resplit()
+            } else {
+                context.global.global_extra_data.get_m()
+            };
+
+            let address = &address;
+            let buckets_info = &buckets_info;
+
+            address.spawn_executors(buckets_info.concurrency, |ex_idx| {
+                let async_thread = async_threads[ex_idx].clone();
+
+                match buckets_info.data_format {
+                    MinimizerBucketMode::Single => {
+                        Self::read_bucket::<USE_SECOND_BUCKET, false>(
+                            &context.global,
+                            buckets_info,
+                            &addresses,
+                            async_thread,
+                            packets_pool.clone(),
+                            minimizer_size,
                         );
-                        address.get_context().send_packet(
-                            new_bucket_address,
-                            Packet::new_simple(InputBucketDesc {
-                                paths: {
-                                    let path = writer.get_path();
-                                    writer.finalize();
-                                    vec![path]
-                                },
-                                sub_bucket_counters: vec![BucketCounter {
-                                    count: seq_count.into_inner(),
-                                }],
-                                compaction_delta: 0,
-                                resplitted: false,
-                                rewritten: true,
-                                used_hash_bits: init_data.used_hash_bits
-                                    + init_data.buckets_hash_bits,
-                                out_data_format: init_data.data_format,
-                                is_duplicates_bucket,
-                            }),
+                    }
+                    MinimizerBucketMode::Compacted => {
+                        Self::read_bucket::<false, true>(
+                            &context.global,
+                            buckets_info,
+                            &addresses,
+                            async_thread,
+                            packets_pool.clone(),
+                            minimizer_size,
                         );
                     }
                 }
+            });
 
-                if is_main_bucket {
-                    global_context
-                        .processed_buckets_count
+            for addr in addresses {
+                if let AllocatedAddressMode::Rewrite(writer, seq_count, init_data) = addr {
+                    let new_bucket_address = address
+                        .get_init_data()
+                        .create_new_address(Arc::new(address.get_init_data().clone()), true);
+
+                    context
+                        .global
+                        .rewritten_buckets_count
                         .fetch_add(1, Ordering::Relaxed);
-                    global_context
-                        .processed_buckets_size
-                        .fetch_add(buckets_info.total_file_size, Ordering::Relaxed);
-                } else if is_resplitted {
-                    global_context
-                        .processed_extra_buckets_count
-                        .fetch_add(1, Ordering::Relaxed);
-                    global_context
-                        .processed_extra_buckets_size
-                        .fetch_add(buckets_info.total_file_size, Ordering::Relaxed);
+
+                    new_bucket_address.send_packet(Packet::new_simple(InputBucketDesc {
+                        paths: {
+                            let path = writer.get_path();
+                            writer.finalize();
+                            vec![path]
+                        },
+                        sub_bucket_counters: vec![BucketCounter {
+                            count: seq_count.into_inner(),
+                        }],
+                        compaction_delta: 0,
+                        resplitted: false,
+                        rewritten: true,
+                        used_hash_bits: init_data.used_hash_bits + init_data.buckets_hash_bits,
+                        out_data_format: init_data.data_format,
+                        extra_bucket_data,
+                    }));
                 }
-
-                assert!(track!(
-                    address.receive_packet(&thread_handle).await.is_none(),
-                    PACKET_WAITING_COUNTER
-                ));
             }
+
+            if is_main_bucket {
+                context
+                    .global
+                    .processed_buckets_count
+                    .fetch_add(1, Ordering::Relaxed);
+                context
+                    .global
+                    .processed_buckets_size
+                    .fetch_add(buckets_info.total_file_size, Ordering::Relaxed);
+            } else if is_resplitted {
+                context
+                    .global
+                    .processed_extra_buckets_count
+                    .fetch_add(1, Ordering::Relaxed);
+                context
+                    .global
+                    .processed_extra_buckets_size
+                    .fetch_add(buckets_info.total_file_size, Ordering::Relaxed);
+            }
+
+            assert!(track!(
+                address
+                    .receive_packet()
+                    .map(|r| { println!("R: {:?} vs first: {:?}", r.paths, debug_paths) })
+                    .is_none(),
+                PACKET_WAITING_COUNTER
+            ));
         }
     }
 }
-
-//
-//     const MEMORY_FIELDS_COUNT: usize = 0;
-//     const MEMORY_FIELDS: &'static [&'static str] = &[];
-//
-//     type BuildParams = (AsyncBinaryReader, usize, Vec<usize>, Vec<ExecutorAddress>);
-
-//     fn allocate_new_group<E: ExecutorOperations<Self>>(
-//         global_params: Arc<KmersTransformContext<F>>,
-//         _memory_params: Option<Self::MemoryParams>,
-//         packet: Option<Packet<InputBucketDesc>>,
-//         mut ops: E,
-//     ) -> (Self::BuildParams, usize) {
-//     }
-//
-//     fn required_pool_items(&self) -> u64 {
-//         1
-//     }
-//
-//     fn pre_execute<E: ExecutorOperations<Self>>(
-//         &mut self,
-//         (reader, second_buckets_log_max, remappings, addresses): Self::BuildParams,
-//         mut ops: E,
-//     ) {
-//     }
-//
-//     fn finalize<E: ExecutorOperations<Self>>(&mut self, _ops: E) {
-//         assert_eq!(buffers.len(), 0);
-//     }

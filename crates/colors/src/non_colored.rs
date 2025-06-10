@@ -36,7 +36,7 @@ impl ColorsManager for NonColoredManager {
     fn get_bucket_from_color(
         _color: &Self::SingleKmerColorDataType,
         _colors_count: u64,
-        _buckets_count_log: u32,
+        _buckets_count_log: usize,
     ) -> BucketIndexType {
         panic!("Cannot get color bucket for non colored manager!");
     }

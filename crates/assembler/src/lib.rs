@@ -14,8 +14,7 @@ use colors::colors_manager::ColorsMergeManager;
 use config::{
     DEFAULT_PER_CPU_BUFFER_SIZE, INTERMEDIATE_COMPRESSION_LEVEL_FAST,
     INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES, MAXIMUM_SECOND_BUCKETS_LOG,
-    MINIMUM_LOG_DELTA_TIME, PRIORITY_SCHEDULING_BASE, SwapPriority, get_compression_level_info,
-    get_memory_mode,
+    MINIMUM_LOG_DELTA_TIME, SwapPriority, get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats;
 use hashes::HashFunctionFactory;
@@ -28,15 +27,14 @@ use io::concurrent::structured_sequences::{
     StructuredSequenceBackendWrapper, StructuredSequenceWriter,
 };
 use io::sequences_stream::general::GeneralSequenceBlockData;
-use io::{compute_stats_from_input_blocks, generate_bucket_names};
+use io::{DUPLICATES_BUCKET_EXTRA, compute_stats_from_input_blocks, generate_bucket_names};
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets};
+use parallel_processor::buckets::{BucketsCount, ExtraBuckets, MultiThreadBuckets};
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parallel_processor::scheduler::PriorityScheduler;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use pipeline::eulertigs::build_eulertigs;
 use std::fs::remove_file;
@@ -139,8 +137,6 @@ pub fn run_assembler<
         INTERMEDIATE_COMPRESSION_LEVEL_FAST.store(default_compression_level, Ordering::Relaxed);
     }
 
-    let buckets_count = 1 << buckets_count_log;
-
     let global_colors_table = Arc::new(
         AssemblerColorsManager::ColorsMergeManagerType::create_colors_table(
             output_file.with_extension("colors.dat"),
@@ -154,11 +150,19 @@ pub fn run_assembler<
             .into()
     );
 
+    let first_phase_buckets_count = BucketsCount::new(
+        buckets_count_log,
+        ExtraBuckets::Extra {
+            count: 1, /* for the k-mers having multiple minimizers */
+            data: DUPLICATES_BUCKET_EXTRA,
+        },
+    );
+
     let (buckets, counters) = if step <= AssemblerStartingStep::MinimizerBucketing {
         assembler_minimizer_bucketing::static_dispatch::minimizer_bucketing::<AssemblerColorsManager>(
             input_blocks,
             temp_dir.as_path(),
-            buckets_count,
+            first_phase_buckets_count,
             threads_count,
             k,
             m,
@@ -166,7 +170,7 @@ pub fn run_assembler<
         )
     } else {
         (
-            generate_bucket_names(temp_dir.join("bucket"), buckets_count, None, true)
+            generate_bucket_names(temp_dir.join("bucket"), first_phase_buckets_count, None)
                 .into_iter()
                 .map(|x| x.to_multi_chunk())
                 .collect(),
@@ -203,7 +207,6 @@ pub fn run_assembler<
         buckets.par_iter().enumerate().for_each(|(index, bucket)| {
             ggcat_logging::info!("Stats for bucket index: {}", index);
             for chunk in &bucket.chunks {
-                let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_BASE);
                 kmers_transform::debug_bucket_stats::compute_stats_for_bucket::<MergingHash>(
                     chunk.clone(),
                     index,
@@ -211,12 +214,13 @@ pub fn run_assembler<
                     MAXIMUM_SECOND_BUCKETS_LOG,
                     k,
                     m,
-                    &thread_handle,
                 );
             }
         });
         return Ok(PathBuf::new());
     }
+
+    let buckets_count = BucketsCount::new(buckets_count_log, ExtraBuckets::None);
 
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
         assembler_kmers_merge::kmers_merge::<MergingHash, AssemblerColorsManager, _>(
@@ -233,8 +237,8 @@ pub fn run_assembler<
         )
     } else {
         RetType {
-            sequences: generate_bucket_names(temp_dir.join("result"), buckets_count, None, false),
-            hashes: generate_bucket_names(temp_dir.join("hashes"), buckets_count, None, false),
+            sequences: generate_bucket_names(temp_dir.join("result"), buckets_count, None),
+            hashes: generate_bucket_names(temp_dir.join("hashes"), buckets_count, None),
         }
     };
     if last_step <= AssemblerStartingStep::KmersMerge {
@@ -257,7 +261,7 @@ pub fn run_assembler<
     let mut links = if step <= AssemblerStartingStep::HashesSorting {
         hashes_sorting::<MergingHash, _>(hashes, temp_dir.as_path(), buckets_count)
     } else {
-        generate_bucket_names(temp_dir.join("links"), buckets_count, None, false)
+        generate_bucket_names(temp_dir.join("links"), buckets_count, None)
     };
     if last_step <= AssemblerStartingStep::HashesSorting {
         PHASES_TIMES_MONITOR
@@ -271,8 +275,8 @@ pub fn run_assembler<
 
     let mut loop_iteration = loopit_number.unwrap_or(0);
 
-    let unames = generate_bucket_names(temp_dir.join("unitigs_map"), buckets_count, None, false);
-    let rnames = generate_bucket_names(temp_dir.join("results_map"), buckets_count, None, false);
+    let unames = generate_bucket_names(temp_dir.join("unitigs_map"), buckets_count, None);
+    let rnames = generate_bucket_names(temp_dir.join("results_map"), buckets_count, None);
 
     // let mut links_manager = UnitigLinksManager::new(buckets_count);
 
@@ -294,7 +298,6 @@ pub fn run_assembler<
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
             &(),
-            DuplicatesBuckets::None,
         ));
 
         let final_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
@@ -306,7 +309,6 @@ pub fn run_assembler<
                 LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
             ),
             &(),
-            DuplicatesBuckets::None,
         ));
 
         if loop_iteration != 0 {
@@ -314,7 +316,6 @@ pub fn run_assembler<
                 temp_dir.join(format!("linksi{}", loop_iteration - 1)),
                 buckets_count,
                 None,
-                false,
             );
         }
 
@@ -325,10 +326,10 @@ pub fn run_assembler<
         let mut log_timer = Instant::now();
 
         let links_scoped_buffer = ScopedThreadLocal::new(move || {
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
         });
         let results_map_scoped_buffer = ScopedThreadLocal::new(move || {
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
         });
 
         let result = loop {
@@ -469,17 +470,16 @@ pub fn run_assembler<
         }
     } else {
         (
-            generate_bucket_names(
-                temp_dir.join("reads_bucket"),
-                buckets_count,
+            generate_bucket_names(temp_dir.join("reads_bucket"), buckets_count, Some("tmp")),
+            (generate_bucket_names(
+                temp_dir.join("reads_bucket_lonely"),
+                BucketsCount::ONE,
                 Some("tmp"),
-                false,
-            ),
-            (generate_bucket_names(temp_dir.join("reads_bucket_lonely"), 1, Some("tmp"), false)
-                .into_iter()
-                .next()
-                .unwrap()
-                .path),
+            )
+            .into_iter()
+            .next()
+            .unwrap()
+            .path),
         )
     };
 

@@ -27,7 +27,7 @@ use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets, SingleBucket};
+use parallel_processor::buckets::{BucketsCount, MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -163,7 +163,7 @@ pub fn reorganize_reads<
     temp_path: &Path,
     out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<CX>, (), BK>,
     circular_out_file: Option<&StructuredSequenceWriter<PartialUnitigsColorStructure<CX>, (), BK>>,
-    buckets_count: usize,
+    buckets_count: BucketsCount,
 ) -> (Vec<SingleBucket>, PathBuf) {
     PHASES_TIMES_MONITOR
         .write()
@@ -179,7 +179,6 @@ pub fn reorganize_reads<
             get_compression_level_info(),
         ),
         &(),
-        DuplicatesBuckets::None,
     ));
 
     reads.sort_by_key(|b| b.index);
@@ -188,7 +187,7 @@ pub fn reorganize_reads<
     let inputs: Vec<_> = reads.iter().zip(mapping_files.iter()).collect();
 
     let reads_thread_buffers = ScopedThreadLocal::new(move || {
-        BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
+        BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
     });
 
     inputs.par_iter().for_each(|(read_file, mapping_file)| {

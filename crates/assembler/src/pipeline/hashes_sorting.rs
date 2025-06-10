@@ -13,7 +13,7 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::{DuplicatesBuckets, MultiThreadBuckets, SingleBucket};
+use parallel_processor::buckets::{BucketsCount, MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -26,7 +26,7 @@ use utils::vec_slice::VecSlice;
 pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
     file_hashes_inputs: Vec<SingleBucket>,
     output_dir: P,
-    buckets_count: usize,
+    buckets_count: BucketsCount,
 ) -> Vec<SingleBucket> {
     PHASES_TIMES_MONITOR
         .write()
@@ -41,11 +41,10 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
         ),
         &(),
-        DuplicatesBuckets::None,
     ));
 
     let buckets_thread_buffers = ScopedThreadLocal::new(move || {
-        BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
+        BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
     });
 
     file_hashes_inputs

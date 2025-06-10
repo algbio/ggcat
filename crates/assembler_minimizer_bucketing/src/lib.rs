@@ -16,12 +16,12 @@ use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagemen
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
-use minimizer_bucketing::PushSequenceInfo;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
 };
-use parallel_processor::buckets::{DuplicatesBuckets, MultiChunkBucket};
+use minimizer_bucketing::{MinimzerBucketingFilesReaderInputPacket, PushSequenceInfo};
+use parallel_processor::buckets::{BucketsCount, MultiChunkBucket};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -90,7 +90,21 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
         Self::ExecutorType {
             minimizer_queue: BatchMinQueue::new(global_data.k - global_data.m),
             global_data: global_data.clone(),
-            duplicates_bucket: (global_data.buckets_count - 1) as u16,
+            duplicates_bucket: global_data.buckets_count.normal_buckets_count as u16,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<CX: ColorsManager> AssemblerMinimizerBucketingExecutorFactory<CX> {
+    pub fn new_with_duplicates(
+        global_data: &Arc<MinimizerBucketingCommonData<()>>,
+        duplicates_bucket: u16,
+    ) -> AssemblerMinimizerBucketingExecutor<CX> {
+        AssemblerMinimizerBucketingExecutor {
+            minimizer_queue: BatchMinQueue::new(global_data.k - global_data.m),
+            global_data: global_data.clone(),
+            duplicates_bucket,
             _phantom: PhantomData,
         }
     }
@@ -259,7 +273,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
 pub fn minimizer_bucketing<CX: ColorsManager>(
     input_blocks: Vec<GeneralSequenceBlockData>,
     output_path: &Path,
-    buckets_count: usize,
+    buckets_count: BucketsCount,
     threads_count: usize,
     k: usize,
     m: usize,
@@ -274,20 +288,23 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     let mut input_files: Vec<_> = input_blocks
         .into_iter()
         .enumerate()
-        .map(|(i, f)| {
-            (
-                f,
-                InputFileInfo {
-                    file_color: i as ColorIndexType,
-                },
-            )
+        .map(|(i, f)| MinimzerBucketingFilesReaderInputPacket {
+            sequences: f,
+            stream_info: InputFileInfo {
+                file_color: i as ColorIndexType,
+            },
         })
         .collect();
 
-    input_files.sort_by_cached_key(|(file, _)| {
-        let bases_count = file.estimated_bases_count().unwrap();
-        bases_count
-    });
+    input_files.sort_by_cached_key(
+        |f: &MinimzerBucketingFilesReaderInputPacket<
+            AssemblerMinimizerBucketingExecutorFactory<CX>,
+            GeneralSequencesStream,
+        >| {
+            let bases_count = f.sequences.estimated_bases_count().unwrap();
+            bases_count
+        },
+    );
     input_files.reverse();
 
     GenericMinimizerBucketing::do_bucketing::<
@@ -296,7 +313,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     >(
         input_files.into_iter(),
         output_path,
-        buckets_count + 1, /* for the k-mers having multiple minimizers */
+        buckets_count,
         threads_count,
         k,
         m,
@@ -305,6 +322,5 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         false,
         k,
         minimizer_bucketing_compaction_threshold,
-        DuplicatesBuckets::Last,
     )
 }

@@ -1,16 +1,17 @@
+use bincode::{Decode, Encode};
 use config::BucketIndexType;
-use serde::{Deserialize, Serialize};
+use parallel_processor::DEFAULT_BINCODE_CONFIG;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU64};
 
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Encode, Decode)]
 pub struct BucketCounter {
     pub count: u64,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 pub struct CountersAnalyzer {
     counters: Vec<Vec<BucketCounter>>,
     compaction_offsets: Vec<i64>,
@@ -88,7 +89,8 @@ impl CountersAnalyzer {
 
     pub fn load_from_file(path: impl AsRef<Path>, remove: bool) -> Self {
         let file = BufReader::new(File::open(&path).unwrap());
-        let rval: CountersAnalyzer = bincode::deserialize_from(file).unwrap();
+        let rval: CountersAnalyzer =
+            bincode::decode_from_reader(file, DEFAULT_BINCODE_CONFIG).unwrap();
 
         // rval.counters.iter_mut().enumerate().for_each(|(bn, x)| {
         //     x.iter_mut().enumerate().for_each(|(sbn, y)| {
@@ -108,10 +110,9 @@ impl CountersAnalyzer {
     }
 
     pub fn serialize_to_file(&self, path: impl AsRef<Path>) {
-        let file = BufWriter::new(
-            File::create(path.as_ref())
-                .expect(&format!("Cannot open file {}", path.as_ref().display())),
-        );
-        bincode::serialize_into(file, self).unwrap();
+        let mut file = File::create(path.as_ref())
+            .expect(&format!("Cannot open file {}", path.as_ref().display()));
+        let serialized = bincode::encode_to_vec(self, DEFAULT_BINCODE_CONFIG).unwrap();
+        file.write_all(&serialized).unwrap();
     }
 }

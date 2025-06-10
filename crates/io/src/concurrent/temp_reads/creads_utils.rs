@@ -1,15 +1,15 @@
 use crate::compressed_read::CompressedRead;
 use crate::varint::{VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, decode_varint, encode_varint};
+use bincode::{Decode, Encode};
 use byteorder::ReadBytesExt;
 use config::{BucketIndexType, MultiplicityCounterType};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
-use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::marker::PhantomData;
 
 use super::extra_data::SequenceExtraDataConsecutiveCompression;
 
-enum ReadData<'a> {
+pub enum ReadData<'a> {
     Plain(&'a [u8]),
     Packed(CompressedRead<'a>),
     PlainRc(&'a [u8]),
@@ -18,12 +18,12 @@ enum ReadData<'a> {
 }
 
 pub struct CompressedReadsBucketData<'a> {
-    read: ReadData<'a>,
-    multiplicity: MultiplicityCounterType,
-    minimizer_pos: u16,
-    extra_bucket: u8,
-    flags: u8,
-    is_window_duplicate: bool,
+    pub read: ReadData<'a>,
+    pub multiplicity: MultiplicityCounterType,
+    pub minimizer_pos: u16,
+    pub extra_bucket: u8,
+    pub flags: u8,
+    pub is_window_duplicate: bool,
 }
 
 impl<'a> CompressedReadsBucketData<'a> {
@@ -187,7 +187,7 @@ pub struct CompressedReadsBucketDataSerializer<
     _phantom: PhantomData<(FlagsCount, BucketMode, MultiplicityMode, MinimizerMode)>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Encode, Decode, Clone, Copy)]
 pub struct ReadsCheckpointData {
     pub target_subbucket: BucketIndexType,
     pub sequences_count: usize,
@@ -378,7 +378,6 @@ pub mod helpers {
             AsyncReaderThread,
         },
         memory_fs::file::reader::FileRangeReference,
-        scheduler::ThreadPriorityHandle,
     };
 
     use crate::concurrent::temp_reads::{
@@ -405,7 +404,6 @@ pub mod helpers {
         mut passtrough_callback: impl FnMut(FileRangeReference),
         mut checkpoint_callback: impl FnMut(Option<ReadsCheckpointData>),
         mut data_callback: impl FnMut(DeserializedRead<EM>, &mut EM::TempBuffer),
-        thread_handle: &ThreadPriorityHandle,
         k: usize,
     ) {
         if with_multiplicity {
@@ -420,7 +418,6 @@ pub mod helpers {
                 Vec::new(),
                 <E>::new_temp_buffer(),
                 allowed_passtrough,
-                thread_handle,
                 k,
             );
             let mut tmp_mult_buffer = EM::new_temp_buffer();
@@ -469,7 +466,6 @@ pub mod helpers {
                 Vec::new(),
                 <E>::new_temp_buffer(),
                 allowed_passtrough,
-                &thread_handle,
                 k,
             );
             let mut tmp_mult_buffer = EM::new_temp_buffer();
@@ -508,28 +504,4 @@ pub mod helpers {
             }
         }
     }
-
-    // TODO: Restore this function when async closures are stable!
-    // pub async fn helper_read_bucket_with_opt_multiplicity<
-    //     E: SequenceExtraDataConsecutiveCompression,
-    //     FlagsCount: typenum::Unsigned,
-    //     BucketMode: BucketModeOption,
-    //     F: Future<Output = ()>,
-    // >(
-    //     reader: &AsyncBinaryReader,
-    //     read_thread: Arc<AsyncReaderThread>,
-    //     with_multiplicity: bool,
-    //     mut f: impl FnMut(
-    //         (
-    //             u8,
-    //             u8,
-    //             E,
-    //             crate::compressed_read::CompressedRead,
-    //             MultiplicityCounterType,
-    //         ),
-    //         &mut E::TempBuffer,
-    //     ) -> F,
-    // ) {
-
-    // }
 }
