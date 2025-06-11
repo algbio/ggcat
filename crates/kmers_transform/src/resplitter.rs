@@ -47,7 +47,7 @@ static BUCKET_RESPLIT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 struct BucketsResplitInfo {
     buckets: Arc<MultiThreadBuckets<CompressedBinaryWriter>>,
-    subsplit_buckets_count_log: usize,
+    subsplit_buckets_count: BucketsCount,
     output_addresses_count: usize,
     executors_count: usize,
     global_counters: Vec<AtomicU64>,
@@ -85,7 +85,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
             .ilog2() as usize,
         );
 
-        let buckets_count = BucketsCount::new(
+        let subsplit_buckets_count = BucketsCount::new(
             subsplit_buckets_count_log,
             ExtraBuckets::Extra {
                 count: 1,
@@ -94,7 +94,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
         );
 
         let buckets = Arc::new(MultiThreadBuckets::new(
-            buckets_count,
+            subsplit_buckets_count,
             global_context.temp_dir.join(format!(
                 "resplit-bucket{}",
                 BUCKET_RESPLIT_COUNTER.fetch_add(1, Ordering::Relaxed)
@@ -114,9 +114,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
             // (
             //     (
             buckets,
-            subsplit_buckets_count_log,
-            output_addresses_count: buckets_count.total_buckets_count,
-            global_counters: (0..buckets_count.total_buckets_count)
+            subsplit_buckets_count,
+            output_addresses_count: subsplit_buckets_count.total_buckets_count,
+            global_counters: (0..subsplit_buckets_count.total_buckets_count)
                 .map(|_| AtomicU64::new(0))
                 .collect(),
             executors_count,
@@ -151,10 +151,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
         resplit_info: &BucketsResplitInfo,
         ops: &ExecutorAddressOperations<Self>,
     ) {
-        let buckets_count = (1 << resplit_info.subsplit_buckets_count_log) + 1;
         let mut resplitter = F::new_resplitter(
             &global_context.global_extra_data,
-            (buckets_count - 1) as u16,
+            resplit_info.subsplit_buckets_count.normal_buckets_count as BucketIndexType,
         );
         let mut thread_local_buffers = BucketsThreadDispatcher::<
             _,
@@ -174,7 +173,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
             global_context.k,
         );
 
-        let mut local_counters = vec![0u8; buckets_count];
+        let mut local_counters = vec![0u8; resplit_info.subsplit_buckets_count.total_buckets_count];
 
         // mem_tracker.update_memory_usage(&[
         //     DEFAULT_PER_CPU_BUFFER_SIZE.octets as usize * mt_buckets.count()
@@ -207,7 +206,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                     sequence,
                     0..sequence.bases_count(),
                     0,
-                    resplit_info.subsplit_buckets_count_log,
+                    resplit_info.subsplit_buckets_count.normal_buckets_count_log,
                     0,
                     #[inline(always)]
                     |info| {
@@ -223,8 +222,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                             is_window_duplicate,
                         } = info;
 
-                        // rc should always be false for resplitting, as all the k-mers already have a fixed orientation
-                        debug_assert!(!rc);
                         let bucket = bucket as usize;
 
                         let counter = &mut local_counters[bucket];
@@ -239,10 +236,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                             bucket as BucketIndexType,
                             &extra_data,
                             temp_buffer,
-                            &CompressedReadsBucketData::new_packed_with_multiplicity(
+                            &CompressedReadsBucketData::new_packed_with_multiplicity_opt_rc(
                                 sequence,
                                 flags,
                                 0,
+                                rc,
                                 multiplicity,
                                 minimizer_pos,
                                 is_window_duplicate,
@@ -308,7 +306,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
             });
 
             global_context.extra_buckets_count.fetch_add(
-                (1 << resplit_info.subsplit_buckets_count_log) + 1,
+                resplit_info.subsplit_buckets_count.total_buckets_count,
                 Ordering::Relaxed,
             );
 

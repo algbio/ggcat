@@ -69,6 +69,30 @@ impl<'a> CompressedReadsBucketData<'a> {
     }
 
     #[inline(always)]
+    pub fn new_packed_with_multiplicity_opt_rc(
+        read: CompressedRead<'a>,
+        flags: u8,
+        extra_bucket: u8,
+        rc: bool,
+        multiplicity: MultiplicityCounterType,
+        minimizer_pos: u16,
+        is_window_duplicate: bool,
+    ) -> Self {
+        Self {
+            read: if rc {
+                ReadData::PackedRc(read)
+            } else {
+                ReadData::Packed(read)
+            },
+            extra_bucket,
+            flags,
+            multiplicity,
+            minimizer_pos,
+            is_window_duplicate,
+        }
+    }
+
+    #[inline(always)]
     pub fn new_with_multiplicity(
         read: &'a [u8],
         flags: u8,

@@ -1,13 +1,16 @@
 use crate::processor::{KmersProcessorInitData, KmersTransformProcessor};
 use crate::reads_buffer::{DeserializedReadIndependent, ReadsBuffer};
 use crate::resplitter::{KmersTransformResplitter, ResplitterInitData};
-use crate::{KmersTransformContext, KmersTransformExecutorFactory, KmersTransformGlobalExtraData};
+use crate::{
+    KmersTransformContext, KmersTransformExecutorFactory, KmersTransformGlobalExtraData,
+    KmersTransformMapProcessor,
+};
 use config::{
     DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    KMERS_TRANSFORM_READS_CHUNKS_SIZE, MAX_KMERS_TRANSFORM_READERS_PER_BUCKET,
-    MAXIMUM_JIT_PROCESSED_BUCKETS, MIN_BUCKET_CHUNKS_FOR_READING_THREAD,
-    PARTIAL_VECS_CHECKPOINT_SIZE, SwapPriority, USE_SECOND_BUCKET, get_compression_level_info,
-    get_memory_mode,
+    KMERS_TRANSFORM_READS_CHUNKS_SIZE, MAX_INTERMEDIATE_MAP_SIZE,
+    MAX_KMERS_TRANSFORM_READERS_PER_BUCKET, MAXIMUM_JIT_PROCESSED_BUCKETS,
+    MIN_BUCKET_CHUNKS_FOR_READING_THREAD, PARTIAL_VECS_CHECKPOINT_SIZE, SwapPriority,
+    USE_SECOND_BUCKET, get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats::StatId;
 use ggcat_logging::{generate_stat_id, stats};
@@ -220,14 +223,10 @@ impl<F: KmersTransformExecutorFactory> KmersTransformReader<F> {
 
             let biggest_sub_bucket = bucket_sizes.pop_back().unwrap();
 
-            // TODO: Find why there is a deadlock if the bucket is always considered an outlier
-            // let is_outlier = !file.resplitted && (total_sequences > 0) && true;
-            let is_outlier = false;
-
-            //  !file.resplitted
-            //     && (total_sequences > 0)
-            //     && (biggest_sub_bucket.0.count as f64 * unique_estimator_factor
-            //         >= (MAX_INTERMEDIATE_MAP_SIZE / F::MapProcessorType::MAP_SIZE as u64) as f64);
+            let is_outlier = !file.resplitted
+                && (total_sequences > 0)
+                && (biggest_sub_bucket.0.count as f64 * unique_estimator_factor
+                    >= (MAX_INTERMEDIATE_MAP_SIZE / F::MapProcessorType::MAP_SIZE as u64) as f64);
 
             // if is_outlier {
             //     ggcat_logging::info!(
