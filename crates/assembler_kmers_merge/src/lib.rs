@@ -82,7 +82,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     KmersTransformExecutorFactory for ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS>
 {
     type KmersTransformPacketInitData = GlobalExtenderParams;
-    type SequencesResplitterFactory = AssemblerMinimizerBucketingExecutorFactory<CX>;
+    type SequencesResplitterFactory =
+        AssemblerMinimizerBucketingExecutorFactory<Self::AssociatedExtraDataWithMultiplicity>;
     type GlobalExtraData = GlobalMergeData<CX>;
     type AssociatedExtraData = MinimizerBucketingSeqColorDataType<CX>;
     type AssociatedExtraDataWithMultiplicity = MinimizerBucketingMultipleSeqColorDataType<CX>;

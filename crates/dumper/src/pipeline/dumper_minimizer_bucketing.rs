@@ -88,6 +88,8 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
         unimplemented!()
     }
 
+    fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
+
     fn from_single_entry<'a>(
         _out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
@@ -152,12 +154,10 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
     for DumperMinimizerBucketingExecutorFactory<CX>
 {
     type GlobalData = DumperMinimizerBucketingGlobalData;
-    type ExtraData = DumperKmersReferenceData<SingleKmerColorDataType<CX>>;
-    type ExtraDataWitnMultiplicity = DumperKmersReferenceData<SingleKmerColorDataType<CX>>;
+    type ReadExtraData = DumperKmersReferenceData<SingleKmerColorDataType<CX>>;
     type PreprocessInfo = ReadTypeBuffered<CX>;
     type StreamInfo = ();
 
-    type ColorsManager = CX;
     type RewriteBucketCompute = RewriteBucketComputeDumper;
 
     #[allow(non_camel_case_types)]
@@ -231,8 +231,8 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
     fn reprocess_sequence(
         &mut self,
         _flags: u8,
-        _extra_data: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-        _extra_data_buffer: &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _extra_data: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ReadExtraData,
+        _extra_data_buffer: &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ReadExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
         _preprocess_info: &mut <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         unimplemented!()
@@ -321,6 +321,8 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     }];
 
     GenericMinimizerBucketing::do_bucketing_no_max_usage::<
+        DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
+        DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
         DumperMinimizerBucketingExecutorFactory<CX>,
         FastaFileSequencesStream,
     >(

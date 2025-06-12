@@ -56,6 +56,10 @@ impl<T: Copy, const LOCAL_FITTING: usize> InlineVec<T, LOCAL_FITTING> {
     pub fn len(&self) -> usize {
         self.size
     }
+
+    pub unsafe fn set_len(&mut self, size: usize) {
+        self.size = size;
+    }
 }
 
 impl<T: Copy, const LOCAL_FITTING: usize> Default for InlineVec<T, LOCAL_FITTING> {
@@ -87,6 +91,7 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
         self.freelist.iter_mut().for_each(|v| v.clear());
     }
 
+    #[inline]
     pub fn new_vec(&mut self, size: usize) -> InlineVec<T, LOCAL_FITTING> {
         if size <= LOCAL_FITTING {
             InlineVec {
@@ -99,6 +104,40 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
                 size,
             }
         }
+    }
+
+    #[inline]
+    pub fn extend_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>, values: &[T]) {
+        let mut ptr = if vec.size + values.len() > LOCAL_FITTING {
+            let npt = vec.size.next_power_of_two();
+            if vec.size + values.len() > npt {
+                let mut old_data = vec.data.clone();
+
+                let new_size = (vec.size + values.len()).next_power_of_two();
+                vec.data = self.alloc(new_size);
+                unsafe {
+                    std::hint::assert_unchecked(npt >= LOCAL_FITTING);
+                    std::ptr::copy_nonoverlapping(
+                        self.get_mut_ptr(&mut old_data),
+                        self.get_mut_ptr(&mut vec.data),
+                        vec.size,
+                    );
+                }
+
+                self.free(old_data, npt);
+            }
+            self.get_mut(&mut vec.data, vec.size) as *mut _
+        } else {
+            unsafe { vec.data.data.as_mut_ptr().add(vec.size) }
+        };
+
+        unsafe {
+            for value in values {
+                std::ptr::write(ptr, *value);
+                ptr = ptr.add(1);
+            }
+        }
+        vec.size += values.len();
     }
 
     #[inline]
@@ -276,8 +315,11 @@ mod tests {
             let vec_target = &mut vecs[filled.min(target) as usize];
             if true {
                 allocator.push_vec(vec_target, T::from(i as u32));
+                allocator.extend_vec(vec_target, &[T::from(i as u32 + 1), T::from(i as u32)]);
             }
             if true {
+                reference[filled.min(target) as usize].push(T::from(i as u32));
+                reference[filled.min(target) as usize].push(T::from(i as u32 + 1));
                 reference[filled.min(target) as usize].push(T::from(i as u32));
             }
             filled += (filled < target) as u64;

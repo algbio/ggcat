@@ -336,10 +336,12 @@ impl ColorsMergeManager for MultipleColorsManager {
 
                         entry.color_index = VISITED_BIT | start_temp_color_index;
 
+                        println!("Adding color count: {}", colors_count);
+
                         data.temp_colors_buffer
                             .resize(data.temp_colors_buffer.len() + colors_count + 1, 0);
 
-                        // Add a flag to check if all colors were added
+                        // // Add a flag to check if all colors were added
                         data.temp_colors_buffer[start_temp_color_index] = 1;
                     }
 
@@ -347,6 +349,12 @@ impl ColorsMergeManager for MultipleColorsManager {
 
                     let col_count = data.temp_colors_buffer[position] as usize;
                     data.temp_colors_buffer[position] += 1;
+
+                    println!(
+                        "Adding {} colors with start count: {}!",
+                        colors.len(),
+                        col_count
+                    );
 
                     assert_eq!(
                         data.temp_colors_buffer[position + col_count + colors.len() - 1],

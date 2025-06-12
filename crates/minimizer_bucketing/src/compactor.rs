@@ -57,9 +57,12 @@ use parallel_processor::{
 };
 use utils::track;
 
-pub struct MinimizerBucketingCompactor<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static>
-{
-    _phantom: PhantomData<E>, // mem_tracker: MemoryTracker<Self>,
+pub struct MinimizerBucketingCompactor<
+    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
+    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
+    Executor: MinimizerBucketingExecutorFactory<ReadExtraData = SingleData> + Sync + Send + 'static,
+> {
+    _phantom: PhantomData<(Executor, SingleData, MultipleData)>, // mem_tracker: MemoryTracker<Self>,
 }
 
 static ADDR_WAITING_COUNTER: AtomicCounter<SumMode> =
@@ -70,12 +73,15 @@ pub struct CompactorInitData {
     pub bucket_index: u16,
 }
 
-impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
-    for MinimizerBucketingCompactor<E>
+impl<
+    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
+    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
+    Executor: MinimizerBucketingExecutorFactory<ReadExtraData = SingleData> + Sync + Send + 'static,
+> AsyncExecutor for MinimizerBucketingCompactor<SingleData, MultipleData, Executor>
 {
     type InputPacket = ();
     type OutputPacket = ();
-    type GlobalParams = MinimizerBucketingExecutionContext<E>;
+    type GlobalParams = MinimizerBucketingExecutionContext<Executor>;
     type InitData = CompactorInitData;
     const ALLOW_PARALLEL_ADDRESS_EXECUTION: bool = false;
 
@@ -129,23 +135,23 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
 
         const COMPACT_THRESHOLD_RATIO: f64 = 0.2;
         const COMPACT_THRESHOLD_BYTES: usize = 1024 * 1024 * 64;
-        const MAX_COMPACTED_IO_RATIO: f64 = 1.5;
+        const MAX_COMPACTED_IO_RATIO: f64 = 1.7;
 
-        let mut super_kmers_hashmap: Vec<HashTable<SuperKmerEntry<E::ExtraDataWitnMultiplicity>>> =
-            (0..MAXIMUM_SECOND_BUCKETS_COUNT)
-                .map(|_| HashTable::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
-                .collect();
+        let mut super_kmers_hashmap: Vec<HashTable<SuperKmerEntry<MultipleData>>> = (0
+            ..MAXIMUM_SECOND_BUCKETS_COUNT)
+            .map(|_| HashTable::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
+            .collect();
 
-        let mut super_kmers_buffer: Vec<Vec<SuperKmerEntry<E::ExtraDataWitnMultiplicity>>> = (0
+        let mut super_kmers_buffer: Vec<Vec<SuperKmerEntry<MultipleData>>> = (0
             ..MAXIMUM_SECOND_BUCKETS_COUNT)
             .map(|_| Vec::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
             .collect();
 
-        let mut super_kmers_extra_buffer:
-                Vec<<E::ExtraDataWitnMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer>
-             = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
-                .map(|_| <E::ExtraDataWitnMultiplicity as SequenceExtraDataTempBufferManagement>::new_temp_buffer())
-                .collect();
+        let mut super_kmers_extra_buffer: Vec<
+            <MultipleData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        > = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+            .map(|_| <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer())
+            .collect();
 
         let mut super_kmers_storage: Vec<Vec<u8>> = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
             .map(|_| Vec::with_capacity(DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE))
@@ -292,7 +298,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
             let mut taken_compacted_size = 0;
 
             // Choose buckets until one of two conditions is met:
-            // 1. The next bucket would add up to a size of compacted buckets / uncompacted buckets > 1/1.5
+            // 1. The next bucket would add up to a size of compacted buckets / uncompacted buckets > 1/1.7
             // 2. Four buckets were already selected and the number of sequences is greater than the maximum amount
             // The second condition is checked below, after the processing of each bucket
             while let Some(bucket) = buckets[bucket_index].chunks.pop() {
@@ -353,7 +359,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
             let mut processed_buckets = 0;
 
             let mut out_extra_buffer =
-                    <E::ExtraDataWitnMultiplicity as SequenceExtraDataTempBufferManagement>::new_temp_buffer();
+                <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer();
 
             while let Some(bucket_path) = chosen_buckets.pop() {
                 stats!(
@@ -375,9 +381,9 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                 let checkpoint_rewrite_bucket = Cell::new(None);
 
                 helper_read_bucket_with_opt_multiplicity::<
-                    E::ExtraData,
-                    E::ExtraDataWitnMultiplicity,
-                    E::FLAGS_COUNT,
+                    SingleData,
+                    MultipleData,
+                    Executor::FLAGS_COUNT,
                     BucketModeFromBoolean<USE_SECOND_BUCKET>,
                     AssemblerMinimizerPosition,
                 >(
@@ -428,7 +434,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                             minimizer_pos,
                             flags,
                             is_window_duplicate,
-                            extra: E::ExtraDataWitnMultiplicity::copy_extra_from(
+                            extra: MultipleData::copy_extra_from(
                                 extra,
                                 in_extra_buffer,
                                 super_kmers_extra_buffer,
@@ -438,7 +444,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                         if super_kmers_buffer.len() == super_kmers_buffer.capacity() {
                             let super_kmers_hashmap =
                                 &mut super_kmers_hashmap[rewrite_bucket as usize];
-                            process_superkmers::<E::ExtraDataWitnMultiplicity>(
+                            process_superkmers::<MultipleData>(
                                 super_kmers_hashmap,
                                 super_kmers_buffer,
                                 super_kmers_storage,
@@ -446,9 +452,7 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                                 super_kmers_extra_buffer,
                                 &mut out_extra_buffer,
                             );
-                            E::ExtraDataWitnMultiplicity::clear_temp_buffer(
-                                super_kmers_extra_buffer,
-                            );
+                            MultipleData::clear_temp_buffer(super_kmers_extra_buffer);
                         }
                     },
                     global_params.common.k,
@@ -501,8 +505,8 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
             );
 
             let mut serializer = CompressedReadsBucketDataSerializer::<
-                E::ExtraDataWitnMultiplicity,
-                E::FLAGS_COUNT,
+                MultipleData,
+                Executor::FLAGS_COUNT,
                 NoSecondBucket,
                 WithMultiplicity,
                 AssemblerMinimizerPosition,
@@ -543,13 +547,15 @@ impl<E: MinimizerBucketingExecutorFactory + Sync + Send + 'static> AsyncExecutor
                     read,
                     multiplicity,
                     minimizer_pos,
-                    extra,
+                    mut extra,
                     flags,
                     is_window_duplicate,
                 } in super_kmers_hashmap.drain()
                 {
                     let read = read.as_reference(super_kmers_storage);
                     sequences_deltas[rewrite_bucket as usize] -= 1;
+
+                    extra.prepare_for_serialization(&mut out_extra_buffer);
 
                     serializer.write_to(
                         &CompressedReadsBucketData::new_packed_with_multiplicity(

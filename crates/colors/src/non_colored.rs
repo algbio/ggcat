@@ -139,6 +139,8 @@ impl<T: Sync + Send + Debug + Clone + SequenceExtraDataConsecutiveCompression>
     ) {
     }
 
+    fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
+
     #[inline(always)]
     fn from_single_entry<'a>(
         out_buffer: &'a mut Self::TempBuffer,

@@ -41,9 +41,8 @@ pub trait KmersTransformGlobalExtraData: Sync + Send {
 pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
     type KmersTransformPacketInitData: Clone + Send + Sync;
     type SequencesResplitterFactory: MinimizerBucketingExecutorFactory<
-            ExtraData = Self::AssociatedExtraData,
-            ExtraDataWitnMultiplicity = Self::AssociatedExtraDataWithMultiplicity,
-        >;
+        ReadExtraData = Self::AssociatedExtraDataWithMultiplicity,
+    >;
     type GlobalExtraData: KmersTransformGlobalExtraData;
     type AssociatedExtraData: SequenceExtraDataConsecutiveCompression + Copy;
     type AssociatedExtraDataWithMultiplicity: SequenceExtraDataConsecutiveCompression

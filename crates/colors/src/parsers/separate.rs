@@ -156,26 +156,53 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
     fn decode_extended(
         buffer: &mut Self::TempBuffer,
         reader: &mut impl Read,
-        last_data: Self::LastData,
+        _last_data: Self::LastData,
     ) -> Option<Self> {
-        todo!()
+        let mut vector = buffer.new_vec(1);
+        buffer.push_vec(&mut vector, 123);
+        Some(Self(vector))
+
+        // let len = decode_varint(|| reader.read_u8().ok())? as usize + 1;
+        // let mut vec = buffer.new_vec(len);
+        // let slice = buffer.slice_vec_mut(&mut vec);
+
+        // slice[0] = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
+        // for i in 1..len {
+        //     let delta = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
+        //     slice[i] = slice[i - 1] + delta;
+        // }
+
+        // Some(Self(vec))
     }
 
     fn encode_extended(
         &self,
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
-        last_data: Self::LastData,
+        _last_data: Self::LastData,
     ) {
-        todo!()
+        // let slice = buffer.slice_vec(&self.0);
+        // debug_assert!(slice.is_sorted());
+        // debug_assert_ne!(slice.len(), 0);
+
+        // encode_varint(|b| writer.write_all(b), (slice.len() - 1) as u64).unwrap();
+        // encode_varint(|b| writer.write_all(b), slice[0] as u64).unwrap();
+
+        // let mut last = slice[0];
+
+        // for i in 1..slice.len() {
+        //     let delta = slice[i] - last;
+        //     encode_varint(|b| writer.write_all(b), delta as u64).unwrap();
+        //     last = slice[i];
+        // }
     }
 
     fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
-        todo!()
+        last_data
     }
 
     fn max_size(&self) -> usize {
-        todo!()
+        self.0.len() * VARINT_MAX_SIZE
     }
 }
 
@@ -183,8 +210,10 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
     type KmerColor<'a> = &'a [ColorIndexType];
     type KmerColorIterator<'a> = std::iter::Repeat<&'a [ColorIndexType]>;
 
-    fn create(_sequence_info: SingleSequenceInfo, _extra_buffer: &mut AllocatorU32) -> Self {
-        Self(InlineVec::default())
+    fn create(sequence_info: SingleSequenceInfo, extra_buffer: &mut AllocatorU32) -> Self {
+        let mut vector = extra_buffer.new_vec(1);
+        extra_buffer.push_vec(&mut vector, sequence_info.static_color);
+        Self(vector)
     }
 
     fn get_iterator<'a>(&'a self, extra_buffer: &'a AllocatorU32) -> Self::KmerColorIterator<'a> {
@@ -205,8 +234,27 @@ impl SequenceExtraDataCombiner for MinBkMultipleColors {
         color: Self,
         in_buffer: &Self::TempBuffer,
     ) {
-        todo!();
-        // out_buffer.push_vec_slice(vec, value);
+        out_buffer.extend_vec(&mut self.0, in_buffer.slice_vec(&color.0));
+    }
+
+    fn prepare_for_serialization(&mut self, buffer: &mut Self::TempBuffer) {
+        let slice = buffer.slice_vec_mut(&mut self.0);
+        slice.sort_unstable();
+        let mut size = 1;
+        while size < slice.len() && slice[size - 1] != slice[size] {
+            size += 1;
+        }
+
+        for i in size..slice.len() {
+            if slice[size - 1] != slice[i] {
+                slice[size] = slice[i];
+                size += 1;
+            }
+        }
+
+        unsafe {
+            self.0.set_len(size);
+        }
     }
 
     #[inline(always)]

@@ -103,13 +103,10 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
     for QuerierMinimizerBucketingExecutorFactory<CX>
 {
     type GlobalData = QuerierMinimizerBucketingGlobalData;
-    type ExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
-    type ExtraDataWitnMultiplicity =
-        QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
+    type ReadExtraData = QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>;
     type PreprocessInfo = ReadTypeBuffered<CX>;
     type StreamInfo = FileType;
 
-    type ColorsManager = CX;
     type RewriteBucketCompute = RewriteBucketComputeQuery;
 
     #[allow(non_camel_case_types)]
@@ -192,8 +189,8 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
     fn reprocess_sequence(
         &mut self,
         _flags: u8,
-        extra_data: &<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-        extra_data_buffer: &<<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        extra_data: &<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ReadExtraData,
+        extra_data_buffer: &<<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ReadExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
         preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::copy_temp_buffer(
@@ -288,6 +285,8 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
 
     (
         GenericMinimizerBucketing::do_bucketing_no_max_usage::<
+            QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>,
+            QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>,
             QuerierMinimizerBucketingExecutorFactory<CX>,
             FastaFileSequencesStream,
         >(

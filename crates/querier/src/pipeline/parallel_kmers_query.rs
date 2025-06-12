@@ -152,6 +152,8 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataCombiner for QueryKmer
         unimplemented!()
     }
 
+    fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
+
     fn from_single_entry<'a>(
         _out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,

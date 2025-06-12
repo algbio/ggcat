@@ -304,12 +304,14 @@ impl SequenceExtraDataCombiner for MinBkMultipleColors {
 
     fn combine_entries(
         &mut self,
-        out_buffer: &mut Self::TempBuffer,
-        color: Self,
-        in_buffer: &Self::TempBuffer,
+        _out_buffer: &mut Self::TempBuffer,
+        _color: Self,
+        _in_buffer: &Self::TempBuffer,
     ) {
         unimplemented!()
     }
+
+    fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
 
     #[inline(always)]
     fn from_single_entry<'a>(

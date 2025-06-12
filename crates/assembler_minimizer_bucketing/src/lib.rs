@@ -34,26 +34,25 @@ struct MinimizerExtraData {
     is_forward: bool,
 }
 
-pub struct AssemblerMinimizerBucketingExecutor<CX: ColorsManager> {
+pub struct AssemblerMinimizerBucketingExecutor<CD: MinimizerBucketingSeqColorData> {
     minimizer_queue: BatchMinQueue<MinimizerExtraData>,
     global_data: Arc<MinimizerBucketingCommonData<()>>,
     pub duplicates_bucket: BucketIndexType,
-    _phantom: PhantomData<CX>,
+    _phantom: PhantomData<CD>,
 }
 
-pub struct AssemblerPreprocessInfo<CX: ColorsManager> {
-    color_info: MinimizerBucketingMultipleSeqColorDataType<CX>,
-    color_info_buffer: <MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+pub struct AssemblerPreprocessInfo<CD: MinimizerBucketingSeqColorData> {
+    color_info: CD,
+    color_info_buffer: <CD as SequenceExtraDataTempBufferManagement>::TempBuffer,
     include_first: bool,
     include_last: bool,
 }
 
-impl<CX: ColorsManager> Default for AssemblerPreprocessInfo<CX> {
+impl<CD: MinimizerBucketingSeqColorData> Default for AssemblerPreprocessInfo<CD> {
     fn default() -> Self {
         Self {
-            color_info: MinimizerBucketingMultipleSeqColorDataType::<CX>::default(),
-            color_info_buffer:
-                    <MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::new_temp_buffer(),
+            color_info: CD::default(),
+            color_info_buffer: <CD as SequenceExtraDataTempBufferManagement>::new_temp_buffer(),
             include_first: false,
             include_last: false,
         }
@@ -65,24 +64,24 @@ pub struct InputFileInfo {
     file_color: ColorIndexType,
 }
 
-pub struct AssemblerMinimizerBucketingExecutorFactory<CX: ColorsManager>(PhantomData<CX>);
+pub struct AssemblerMinimizerBucketingExecutorFactory<CD: MinimizerBucketingSeqColorData>(
+    PhantomData<CD>,
+);
 
-impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
-    for AssemblerMinimizerBucketingExecutorFactory<CX>
+impl<CD: MinimizerBucketingSeqColorData> MinimizerBucketingExecutorFactory
+    for AssemblerMinimizerBucketingExecutorFactory<CD>
 {
     type GlobalData = ();
-    type ExtraData = MinimizerBucketingSeqColorDataType<CX>;
-    type ExtraDataWitnMultiplicity = MinimizerBucketingMultipleSeqColorDataType<CX>;
-    type PreprocessInfo = AssemblerPreprocessInfo<CX>;
+    type ReadExtraData = CD;
+    type PreprocessInfo = AssemblerPreprocessInfo<CD>;
     type StreamInfo = InputFileInfo;
 
-    type ColorsManager = CX;
     type RewriteBucketCompute = rewrite_bucket::RewriteBucketComputeAssembler;
 
     #[allow(non_camel_case_types)]
     type FLAGS_COUNT = typenum::U2;
 
-    type ExecutorType = AssemblerMinimizerBucketingExecutor<CX>;
+    type ExecutorType = AssemblerMinimizerBucketingExecutor<CD>;
 
     fn new(
         global_data: &Arc<MinimizerBucketingCommonData<Self::GlobalData>>,
@@ -96,11 +95,11 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
     }
 }
 
-impl<CX: ColorsManager> AssemblerMinimizerBucketingExecutorFactory<CX> {
+impl<CD: MinimizerBucketingSeqColorData> AssemblerMinimizerBucketingExecutorFactory<CD> {
     pub fn new_with_duplicates(
         global_data: &Arc<MinimizerBucketingCommonData<()>>,
         duplicates_bucket: u16,
-    ) -> AssemblerMinimizerBucketingExecutor<CX> {
+    ) -> AssemblerMinimizerBucketingExecutor<CD> {
         AssemblerMinimizerBucketingExecutor {
             minimizer_queue: BatchMinQueue::new(global_data.k - global_data.m),
             global_data: global_data.clone(),
@@ -110,22 +109,21 @@ impl<CX: ColorsManager> AssemblerMinimizerBucketingExecutorFactory<CX> {
     }
 }
 
-impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingExecutorFactory<CX>>
-    for AssemblerMinimizerBucketingExecutor<CX>
+impl<CD: MinimizerBucketingSeqColorData>
+    MinimizerBucketingExecutor<AssemblerMinimizerBucketingExecutorFactory<CD>>
+    for AssemblerMinimizerBucketingExecutor<CD>
 {
     fn preprocess_dna_sequence(
         &mut self,
-        stream_info: &<AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
+        stream_info: &<AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::StreamInfo,
         sequence_info: SequenceInfo,
         _read_index: u64,
         sequence: &DnaSequence,
-        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
-        MinimizerBucketingMultipleSeqColorDataType::<CX>::clear_temp_buffer(
-            &mut preprocess_info.color_info_buffer,
-        );
+        CD::clear_temp_buffer(&mut preprocess_info.color_info_buffer);
 
-        preprocess_info.color_info = MinimizerBucketingMultipleSeqColorDataType::<CX>::create(
+        preprocess_info.color_info = CD::create(
             SingleSequenceInfo {
                 static_color: sequence_info.color.unwrap_or(stream_info.file_color),
                 sequence_ident: match sequence.format {
@@ -150,30 +148,27 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<AssemblerMinimizerBucketingEx
     fn reprocess_sequence(
         &mut self,
         flags: u8,
-        extra_data: &<AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraDataWitnMultiplicity,
-        extra_data_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        extra_data: &CD,
+        extra_data_buffer: &<CD as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
-        MinimizerBucketingMultipleSeqColorDataType::<CX>::clear_temp_buffer(
+        CD::clear_temp_buffer(&mut preprocess_info.color_info_buffer);
+        preprocess_info.color_info = CD::copy_extra_from(
+            extra_data.clone(),
+            extra_data_buffer,
             &mut preprocess_info.color_info_buffer,
         );
-        preprocess_info.color_info =
-            MinimizerBucketingMultipleSeqColorDataType::<CX>::copy_extra_from(
-                extra_data.clone(),
-                extra_data_buffer,
-                &mut preprocess_info.color_info_buffer,
-            );
         preprocess_info.include_first = (flags & READ_FLAG_INCL_BEGIN) != 0;
         preprocess_info.include_last = (flags & READ_FLAG_INCL_END) != 0;
     }
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(PushSequenceInfo<S, AssemblerMinimizerBucketingExecutorFactory<CX>>),
+        F: FnMut(PushSequenceInfo<S, AssemblerMinimizerBucketingExecutorFactory<CD>>),
         const SEPARATE_DUPLICATES: bool,
     >(
         &mut self,
-        preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
+        preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
         sequence: S,
         _range: Range<usize>,
         used_bits: usize,
@@ -298,7 +293,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
 
     input_files.sort_by_cached_key(
         |f: &MinimzerBucketingFilesReaderInputPacket<
-            AssemblerMinimizerBucketingExecutorFactory<CX>,
+            AssemblerMinimizerBucketingExecutorFactory<MinimizerBucketingSeqColorDataType<CX>>,
             GeneralSequencesStream,
         >| {
             let bases_count = f.sequences.estimated_bases_count().unwrap();
@@ -308,7 +303,9 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     input_files.reverse();
 
     GenericMinimizerBucketing::do_bucketing::<
-        AssemblerMinimizerBucketingExecutorFactory<CX>,
+        MinimizerBucketingSeqColorDataType<CX>,
+        MinimizerBucketingMultipleSeqColorDataType<CX>,
+        AssemblerMinimizerBucketingExecutorFactory<MinimizerBucketingSeqColorDataType<CX>>,
         GeneralSequencesStream,
     >(
         input_files.into_iter(),
