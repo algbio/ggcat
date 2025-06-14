@@ -1,6 +1,6 @@
 use std::slice::from_raw_parts;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{mem::transmute, path::PathBuf};
 
 use ggcat_api::{
@@ -49,7 +49,6 @@ fn ggcat_create(config: ffi::GGCATConfigFFI) -> *const GGCATInstanceFFI {
                 }
             })
         },
-        enable_disk_optimization: config.enable_disk_optimization,
     })
     .ok();
     unsafe { std::mem::transmute(instance) }
@@ -86,9 +85,6 @@ fn ggcat_build(
 
     // Output the result in GFA format
     gfa_output_version: u32,
-
-    // Enables the disk optimization
-    enable_disk_optimization: bool,
 ) -> String {
     const EXTRA_ELABORATION_STEP_NONE: usize = 0;
     const EXTRA_ELABORATION_STEP_UNITIG_LINKS: usize = 1;
@@ -130,7 +126,6 @@ fn ggcat_build(
                 2 => Some(GfaVersion::V2),
                 _ => panic!("Invalid gfa_output_version value: {}", gfa_output_version),
             },
-            enable_disk_optimization,
         )
         .unwrap_or_default()
         .to_str()
@@ -169,9 +164,6 @@ fn ggcat_build_from_files(
 
     // Output the result in GFA format
     gfa_output_version: u32,
-
-    // Enables the disk optimization
-    enable_disk_optimization: bool,
 ) -> String {
     ggcat_build(
         instance,
@@ -196,7 +188,6 @@ fn ggcat_build_from_files(
         min_multiplicity,
         extra_elab,
         gfa_output_version,
-        enable_disk_optimization,
     )
 }
 
@@ -231,9 +222,6 @@ fn ggcat_build_from_streams(
 
     // Output the result in GFA format
     gfa_output_version: u32,
-
-    // Enables the disk optimization
-    enable_disk_optimization: bool,
 ) -> String {
     struct SequencesStreamFFI {
         // extern "C" void (*read_block)(uintptr_t block, bool copy_ident_data, size_t partial_read_copyback, uintptr_t callback, uintptr_t callback_context);
@@ -329,7 +317,6 @@ fn ggcat_build_from_streams(
         min_multiplicity,
         extra_elab,
         gfa_output_version,
-        enable_disk_optimization,
     )
 }
 
@@ -559,9 +546,6 @@ mod ffi {
         /// Output the result in the specified version of GFA format, 0 outputs in FASTA (default)
         /// Supported V1 and V2
         pub gfa_output_version: u32,
-
-        /// Enables the disk optimization
-        pub enable_disk_optimization: bool,
     }
 
     pub struct InputStreamFFI {
@@ -611,9 +595,6 @@ mod ffi {
 
             // Output the result in GFA format
             gfa_output_version: u32,
-
-            // Enables the disk optimization
-            enable_disk_optimization: bool,
         ) -> String;
 
         /// Builds a new graph from the given input streams, with the specified parameters
@@ -648,9 +629,6 @@ mod ffi {
 
             // Output the result in GFA format
             gfa_output_version: u32,
-
-            // Enables the disk optimization
-            enable_disk_optimization: bool,
         ) -> String;
 
         /// Queries a (optionally) colored graph with a specific set of sequences as queries

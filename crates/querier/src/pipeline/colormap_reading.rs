@@ -6,7 +6,7 @@ use colors::storage::ColorsSerializerTrait;
 use colors::storage::deserializer::ColorsDeserializer;
 use config::{
     BucketIndexType, ColorIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
-    KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, QUERIES_COUNT_MIN_BATCH, SwapPriority,
+    KEEP_FILES, MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, QUERIES_COUNT_MIN_BATCH, SwapPriority,
     get_compression_level_info, get_memory_mode,
 };
 use nightly_quirks::prelude::*;
@@ -45,7 +45,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
         None,
         &(
             get_memory_mode(SwapPriority::MinimizerBuckets),
-            MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+            MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
             get_compression_level_info(),
         ),
         &(),

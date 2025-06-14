@@ -1,29 +1,28 @@
 pub mod compactor;
-pub mod counters_analyzer;
 mod queue_data;
 mod reader;
 pub mod resplit_bucket;
 mod sequences_splitter;
 
-use crate::compactor::MinimizerBucketingCompactor;
-use crate::counters_analyzer::CountersAnalyzer;
+use crate::compactor::BucketsCompactor;
 use crate::queue_data::MinimizerBucketingQueueData;
 use crate::reader::MinimizerBucketingFilesReader;
 use crate::sequences_splitter::SequencesSplitter;
 use bincode::{Decode, Encode};
-use compactor::CompactorInitData;
-use config::USE_SECOND_BUCKET;
 use config::{
-    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, MAXIMUM_SECOND_BUCKETS_LOG,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, READ_INTERMEDIATE_CHUNKS_SIZE, SwapPriority,
+    BucketIndexType, DEFAULT_BUCKETS_CHUNK_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE,
+    MAXIMUM_SECOND_BUCKETS_LOG, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, READ_INTERMEDIATE_CHUNKS_SIZE, SwapPriority,
     get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats;
 use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
+use io::concurrent::temp_reads::creads_utils::helpers::helper_read_bucket_with_opt_multiplicity;
 use io::concurrent::temp_reads::creads_utils::{
-    AssemblerMinimizerPosition, BucketModeFromBoolean, CompressedReadsBucketData,
-    CompressedReadsBucketDataSerializer, NoMultiplicity,
+    AssemblerMinimizerPosition, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+    DeserializedRead, MinimizerModeOption, NoMultiplicity, NoSecondBucket, ReadsCheckpointData,
+    WithSecondBucket,
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
@@ -32,7 +31,13 @@ use io::concurrent::temp_reads::extra_data::{
 use io::sequences_reader::DnaSequence;
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::readers::async_binary_reader::{
+    AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
+};
+use parallel_processor::buckets::writers::compressed_binary_writer::{
+    CompressedBinaryWriter, CompressionLevelInfo,
+};
+use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{
     BucketsCount, ChunkingStatus, ExtraBuckets, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
 };
@@ -41,7 +46,10 @@ use parallel_processor::execution_manager::executor::{
 };
 use parallel_processor::execution_manager::packet::PacketsPool;
 use parallel_processor::execution_manager::scheduler::Scheduler;
-use parallel_processor::execution_manager::thread_pool::{ExecThreadPool, ExecutorsHandle};
+use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
+use parallel_processor::memory_fs::file::internal::MemoryFileMode;
+use parallel_processor::memory_fs::file::reader::FileRangeReference;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::{Mutex, RwLock};
 use resplit_bucket::RewriteBucketCompute;
@@ -56,7 +64,63 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering}
 #[derive(Encode, Decode, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MinimizerBucketMode {
     Single,
+    SingleGrouped,
     Compacted,
+}
+
+pub fn helper_read_bucket_with_type<
+    E: SequenceExtraDataConsecutiveCompression,
+    EM: SequenceExtraDataConsecutiveCompression + SequenceExtraDataCombiner<SingleDataType = E>,
+    MinimizerMode: MinimizerModeOption,
+    FlagsCount: typenum::Unsigned,
+>(
+    reader: &AsyncBinaryReader,
+    read_thread: Arc<AsyncReaderThread>,
+    data_type: MinimizerBucketMode,
+    allowed_passtrough: AllowedCheckpointStrategy<ReadsCheckpointData>,
+    passtrough_callback: impl FnMut(FileRangeReference),
+    checkpoint_callback: impl FnMut(Option<ReadsCheckpointData>),
+    data_callback: impl FnMut(DeserializedRead<EM>, &mut EM::TempBuffer),
+    k: usize,
+) {
+    match data_type {
+        MinimizerBucketMode::Single => {
+            helper_read_bucket_with_opt_multiplicity::<
+                E,
+                EM,
+                WithSecondBucket,
+                MinimizerMode,
+                FlagsCount,
+            >(
+                reader,
+                read_thread,
+                false,
+                allowed_passtrough,
+                passtrough_callback,
+                checkpoint_callback,
+                data_callback,
+                k,
+            );
+        }
+        MinimizerBucketMode::SingleGrouped | MinimizerBucketMode::Compacted => {
+            helper_read_bucket_with_opt_multiplicity::<
+                E,
+                EM,
+                NoSecondBucket,
+                MinimizerMode,
+                FlagsCount,
+            >(
+                reader,
+                read_thread,
+                data_type == MinimizerBucketMode::Compacted,
+                allowed_passtrough,
+                passtrough_callback,
+                checkpoint_callback,
+                data_callback,
+                k,
+            );
+        }
+    }
 }
 
 pub struct MinimzerBucketingFilesReaderInputPacket<
@@ -122,8 +186,7 @@ pub trait MinimizerBucketingExecutorFactory: Sync + Send + Sized + 'static {
 
     type RewriteBucketCompute: RewriteBucketCompute;
 
-    #[allow(non_camel_case_types)]
-    type FLAGS_COUNT: typenum::uint::Unsigned;
+    type FlagsCount: typenum::Unsigned;
 
     type ExecutorType: MinimizerBucketingExecutor<Self>;
 
@@ -173,10 +236,8 @@ pub struct MinimizerBucketingCommonData<GlobalData> {
     pub ignored_length: usize,
     pub buckets_count: BucketsCount,
     pub second_buckets_count: BucketsCount,
-    pub global_counters: Vec<Vec<AtomicU64>>,
     pub compaction_offsets: Vec<AtomicI64>,
     pub global_data: GlobalData,
-    pub is_active: AtomicBool,
 }
 
 impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
@@ -194,35 +255,20 @@ impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
             ignored_length,
             buckets_count,
             second_buckets_count,
-            global_counters: (0..buckets_count.total_buckets_count)
-                .into_iter()
-                .map(|_| {
-                    (0..second_buckets_count.total_buckets_count)
-                        .into_iter()
-                        .map(|_| AtomicU64::new(0))
-                        .collect()
-                })
-                .collect(),
             compaction_offsets: (0..buckets_count.total_buckets_count)
                 .map(|_| AtomicI64::new(0))
                 .collect(),
             global_data,
-            is_active: AtomicBool::new(true),
         }
     }
-}
-
-pub struct CompationRatioInfo {
-    pub avg_ratio: f64,
-    pub compactions: usize,
-    pub skip_step: usize,
-    pub skipped: usize,
 }
 
 pub struct MinimizerBucketingExecutionContext<
     E: MinimizerBucketingExecutorFactory + Sync + Send + 'static,
 > {
-    pub buckets: Arc<MultiThreadBuckets<CompressedBinaryWriter>>,
+    pub uncompacted_buckets: Mutex<Option<Arc<MultiThreadBuckets<CompressedBinaryWriter>>>>,
+    pub uncompacted_buckets_finalized: Mutex<Vec<Mutex<MultiChunkBucket>>>,
+    pub compacted_buckets: Vec<Mutex<MultiChunkBucket>>,
     pub common: Arc<MinimizerBucketingCommonData<E::GlobalData>>,
     pub current_file: AtomicUsize,
     pub executor_group_address:
@@ -238,7 +284,7 @@ pub struct MinimizerBucketingExecutionContext<
     pub tot_bases_count: AtomicU64,
     pub valid_bases_count: AtomicU64,
 
-    pub compaction_ratios: Vec<Mutex<CompationRatioInfo>>,
+    pub target_chunk_size: u64,
 
     pub packets_pool: PacketsPool<MinimizerBucketingQueueData<E::StreamInfo>>,
 
@@ -256,13 +302,7 @@ struct MinimizerBucketingExecWriter<
     _phantom: PhantomData<(SingleData, MultipleData, Executor)>, // mem_tracker: MemoryTracker<Self>,
 }
 
-struct WriterContext<
-    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
-    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
-    Executor: MinimizerBucketingExecutorFactory<ReadExtraData = SingleData> + Sync + Send + 'static,
-> {
-    compaction_handle:
-        ExecutorsHandle<MinimizerBucketingCompactor<SingleData, MultipleData, Executor>>,
+struct WriterContext<Executor: MinimizerBucketingExecutorFactory + Sync + Send + 'static> {
     global: Arc<MinimizerBucketingExecutionContext<Executor>>,
 }
 
@@ -274,40 +314,40 @@ impl<
 {
     fn execute(
         &self,
-        context: &WriterContext<SingleData, MultipleData, Executor>,
+        context: &WriterContext<Executor>,
         ops: &ExecutorAddressOperations<Self>,
+        receiver: &ExecutorReceiver<Self>,
     ) {
-        let compaction_handle = &context.compaction_handle;
         let context = context.global.deref();
 
-        let mut counters: Vec<u16> = vec![
-            0;
-            context.common.second_buckets_count.total_buckets_count
-                * context.common.buckets_count.total_buckets_count
-        ];
+        let mut compactor: Option<
+            BucketsCompactor<SingleData, MultipleData, Executor::FlagsCount>,
+        > = None;
+
+        let uncompacted_buckets_lock = context.uncompacted_buckets.lock();
+        let uncompacted_buckets = uncompacted_buckets_lock.as_ref().unwrap().clone();
+        let buckets_count = uncompacted_buckets.get_buckets_count();
 
         let mut tmp_reads_buffer = BucketsThreadDispatcher::<
             _,
             CompressedReadsBucketDataSerializer<
                 Executor::ReadExtraData,
-                Executor::FLAGS_COUNT,
-                BucketModeFromBoolean<USE_SECOND_BUCKET>,
+                WithSecondBucket,
                 NoMultiplicity,
                 AssemblerMinimizerPosition,
+                Executor::FlagsCount,
             >,
         >::new(
-            &context.buckets,
-            BucketsThreadBuffer::new(
-                DEFAULT_PER_CPU_BUFFER_SIZE,
-                context.buckets.get_buckets_count(),
-            ),
+            &uncompacted_buckets,
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count),
             context.common.k,
         );
+
+        drop(uncompacted_buckets_lock);
 
         // self.mem_tracker.update_memory_usage(&[
         //     DEFAULT_PER_CPU_BUFFER_SIZE.octets as usize * context.buckets.count()
         // ]);
-        let global_counters = &context.common.global_counters;
 
         stats!(
             let thread_id = ggcat_logging::generate_stat_id!();
@@ -346,43 +386,48 @@ impl<
                         context.common.buckets_count.normal_buckets_count_log,
                         context.common.second_buckets_count.normal_buckets_count_log,
                         |info| {
-
-                            let PushSequenceInfo { bucket, second_bucket, sequence, minimizer_pos, flags, extra_data, temp_buffer, rc, is_window_duplicate } = info;
-
-                            let counter = &mut counters
-                                [((bucket as usize) * context.common.second_buckets_count.total_buckets_count) + (second_bucket as usize)];
-
-                            *counter = counter.wrapping_add(1);
-                            if *counter == 0 {
-                                global_counters[bucket as usize][second_bucket as usize]
-                                    .fetch_add(65536, Ordering::Relaxed);
-                            }
+                            let PushSequenceInfo {
+                                bucket,
+                                second_bucket,
+                                sequence,
+                                minimizer_pos,
+                                flags,
+                                extra_data,
+                                temp_buffer,
+                                rc,
+                                is_window_duplicate,
+                            } = info;
 
                             let chunking_status = tmp_reads_buffer.add_element_extended(
                                 bucket,
                                 &extra_data,
                                 temp_buffer,
-                                &CompressedReadsBucketData::new_plain_opt_rc(sequence, flags, second_bucket as u8, rc, minimizer_pos, is_window_duplicate),
+                                &CompressedReadsBucketData::new_plain_opt_rc(
+                                    sequence,
+                                    flags,
+                                    second_bucket as u8,
+                                    rc,
+                                    minimizer_pos,
+                                    is_window_duplicate,
+                                ),
                             );
 
-                            // New chunks were produced, spawn new compactors
-                            if let ChunkingStatus::NewChunks { bucket_indexes } = chunking_status {
-                                stats!(let trigger_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed(););
-                                stats!(stats.assembler.compact_checkpoints.push(ggcat_logging::stats::CompactCheckpointStats {
-                                    trigger_time: trigger_time.into(),
-                                    buckets: bucket_indexes.clone(),
-                                    trigger_input_chunk: input_packet.stats_block_id,
-                                    thread_id,
-                                }));
-
-                                for bucket_index in bucket_indexes {
-                                    compaction_handle.create_new_address_with_limit(
-                                        Arc::new(CompactorInitData { bucket_index }),
-                                        true,
-                                        // Avoid having too many compactions waiting
-                                        (context.threads_count * 2).max(context.common.buckets_count.total_buckets_count / 32)
-                                    );
+                            // A new chunk was produced, compact it
+                            if let ChunkingStatus::NewChunk = chunking_status {
+                                if compactor.is_none() {
+                                    compactor = Some(BucketsCompactor::new(
+                                        context.common.k,
+                                        context.target_chunk_size,
+                                    ));
                                 }
+                                let compactor = unsafe { compactor.as_mut().unwrap_unchecked() };
+
+                                compactor.compact_buckets(
+                                    &uncompacted_buckets.get_stored_buckets()[bucket as usize],
+                                    &context.compacted_buckets[bucket as usize],
+                                    bucket as usize,
+                                    &context.output_path,
+                                );
                             }
                         },
                     );
@@ -450,17 +495,48 @@ impl<
             }
         }
 
-        for bucket in 0..global_counters.len() {
-            for next_bucket in 0..global_counters[0].len() {
-                let counter = counters[((bucket as usize)
-                    * context.common.second_buckets_count.total_buckets_count)
-                    + (next_bucket as usize)];
-                global_counters[bucket as usize][next_bucket as usize]
-                    .fetch_add(counter as u64, Ordering::Relaxed);
+        tmp_reads_buffer.finalize();
+        drop(uncompacted_buckets);
+
+        // Handle the final compaction step
+        {
+            let status = receiver.wait_for_executors();
+            if status.is_leader() {
+                let uncompacted = context.uncompacted_buckets.lock().take().unwrap();
+                *context.uncompacted_buckets_finalized.lock() = uncompacted
+                    .finalize()
+                    .into_iter()
+                    .map(|b| Mutex::new(b))
+                    .collect();
+            }
+
+            receiver.wait_for_executors();
+
+            let mut uncompacted_lock = context.uncompacted_buckets_finalized.lock();
+            while let Some(bucket) = uncompacted_lock.pop() {
+                let bucket_index = uncompacted_lock.len();
+                drop(uncompacted_lock);
+
+                if compactor.is_none() {
+                    compactor = Some(BucketsCompactor::new(
+                        context.common.k,
+                        context.target_chunk_size,
+                    ));
+                }
+                let compactor = compactor.as_mut().unwrap();
+
+                compactor.compact_buckets(
+                    &bucket,
+                    &context.compacted_buckets[bucket_index],
+                    bucket_index,
+                    &context.output_path,
+                );
+
+                // if bucket.
+
+                uncompacted_lock = context.uncompacted_buckets_finalized.lock();
             }
         }
-
-        tmp_reads_buffer.finalize();
     }
 }
 
@@ -472,7 +548,7 @@ impl<
 {
     type InputPacket = MinimizerBucketingQueueData<Executor::StreamInfo>;
     type OutputPacket = ();
-    type GlobalParams = WriterContext<SingleData, MultipleData, Executor>;
+    type GlobalParams = WriterContext<Executor>;
     type InitData = ();
     const ALLOW_PARALLEL_ADDRESS_EXECUTION: bool = true;
 
@@ -487,8 +563,13 @@ impl<
         params: &'a Self::GlobalParams,
         mut receiver: ExecutorReceiver<Self>,
     ) {
+        if let Ok(address) = receiver.obtain_address() {
+            self.execute(params, &address, &receiver);
+        }
+
+        // No more packets should arrive
         while let Ok(address) = receiver.obtain_address() {
-            self.execute(params, &address);
+            assert!(address.receive_packet().is_none());
         }
     }
 }
@@ -535,29 +616,26 @@ impl GenericMinimizerBucketing {
         partial_read_copyback: Option<usize>,
         copy_ident: bool,
         ignored_length: usize,
-    ) -> (Vec<SingleBucket>, PathBuf) {
-        let (buckets, counters) =
-            Self::do_bucketing::<SingleData, MultipleData, Executor, SequenceType>(
-                input_blocks,
-                output_path,
-                buckets_count,
-                threads_count,
-                k,
-                m,
-                global_data,
-                partial_read_copyback,
-                copy_ident,
-                ignored_length,
-                None,
-            );
+    ) -> Vec<SingleBucket> {
+        let buckets = Self::do_bucketing::<SingleData, MultipleData, Executor, SequenceType>(
+            input_blocks,
+            output_path,
+            buckets_count,
+            threads_count,
+            k,
+            m,
+            global_data,
+            partial_read_copyback,
+            copy_ident,
+            ignored_length,
+            None,
+            DEFAULT_BUCKETS_CHUNK_SIZE,
+        );
 
-        (
-            buckets
-                .into_iter()
-                .map(MultiChunkBucket::into_single)
-                .collect(),
-            counters,
-        )
+        buckets
+            .into_iter()
+            .map(MultiChunkBucket::into_single)
+            .collect()
     }
 
     pub fn do_bucketing<
@@ -578,19 +656,27 @@ impl GenericMinimizerBucketing {
         partial_read_copyback: Option<usize>,
         copy_ident: bool,
         ignored_length: usize,
-        maximum_disk_usage: Option<u64>,
-    ) -> (Vec<MultiChunkBucket>, PathBuf) {
+        chunking_size_threshold: Option<u64>,
+        target_chunk_size: u64,
+    ) -> Vec<MultiChunkBucket> {
         let read_threads_count = max(1, threads_count / 2);
         let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count / 4));
 
-        let buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
+        let uncompacted_buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
             output_path.join("bucket"),
-            maximum_disk_usage,
+            chunking_size_threshold,
             &(
-                get_memory_mode(SwapPriority::MinimizerBuckets),
-                MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-                get_compression_level_info(),
+                // Always prefer memory for the uncompacted temp files
+                MemoryFileMode::PreferMemory {
+                    swap_priority: SwapPriority::MinimizerUncompressedTempBuckets,
+                },
+                MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
+                // Avoid compressing too much the temporary reads
+                CompressionLevelInfo {
+                    fast_disk: 0,
+                    slow_disk: 0,
+                },
             ),
             &MinimizerBucketMode::Single,
         ));
@@ -600,8 +686,12 @@ impl GenericMinimizerBucketing {
             ExtraBuckets::None,
         );
 
+        let compacted_buckets = uncompacted_buckets.create_matching_multichunks();
+
         let global_context = Arc::new(MinimizerBucketingExecutionContext::<Executor> {
-            buckets,
+            uncompacted_buckets: Mutex::new(Some(uncompacted_buckets)),
+            uncompacted_buckets_finalized: Mutex::new(vec![]),
+            compacted_buckets: compacted_buckets,
             current_file: AtomicUsize::new(0),
             executor_group_address: RwLock::new(None),
             processed_files: AtomicUsize::new(0),
@@ -622,16 +712,7 @@ impl GenericMinimizerBucketing {
             tot_bases_count: AtomicU64::new(0),
             valid_bases_count: AtomicU64::new(0),
 
-            compaction_ratios: (0..buckets_count.total_buckets_count)
-                .map(|_| {
-                    Mutex::new(CompationRatioInfo {
-                        avg_ratio: 0.0,
-                        compactions: 0,
-                        skip_step: 0,
-                        skipped: 0,
-                    })
-                })
-                .collect(),
+            target_chunk_size,
 
             packets_pool: PacketsPool::new(
                 compute_threads_count * 4,
@@ -655,18 +736,10 @@ impl GenericMinimizerBucketing {
             >::new(
                 compute_threads_count, "mm_compute", false
             );
-            let mut compaction_thread_pool =
-                ExecThreadPool::<
-                    compactor::MinimizerBucketingCompactor<SingleData, MultipleData, Executor>,
-                >::new(compute_threads_count, "mm_compact", false);
-
-            let compaction_thread_pool_handle =
-                compaction_thread_pool.start(scheduler.clone(), &global_context);
 
             let compute_thread_pool_handle = compute_thread_pool.start(
                 scheduler.clone(),
                 &Arc::new(WriterContext {
-                    compaction_handle: compaction_thread_pool_handle.clone(),
                     global: global_context.clone(),
                 }),
             );
@@ -680,40 +753,21 @@ impl GenericMinimizerBucketing {
             disk_thread_pool_handle.add_input_data((), input_blocks.into_iter());
 
             drop(disk_thread_pool_handle);
-            drop(compaction_thread_pool_handle);
             drop(compute_thread_pool_handle);
 
             disk_thread_pool.join();
 
-            // Let compactors know that the phase is finishing,
-            // so they can shortcut and avoid processing other buckets
-            global_context
-                .common
-                .is_active
-                .store(false, Ordering::Relaxed);
-
             Option::take(&mut global_context.executor_group_address.write());
             compute_thread_pool.join();
-
-            compaction_thread_pool.join();
         }
 
         let global_context = Arc::try_unwrap(global_context)
             .unwrap_or_else(|_| panic!("Cannot get execution context!"));
 
-        let common_context = Arc::try_unwrap(global_context.common)
-            .unwrap_or_else(|_| panic!("Cannot get common execution context!"));
-
-        let counters_analyzer = CountersAnalyzer::new(
-            common_context.global_counters,
-            common_context.compaction_offsets,
-        );
-        // counters_analyzer.print_debug();
-
-        let counters_file = output_path.join("buckets-counters.dat");
-
-        counters_analyzer.serialize_to_file(&counters_file);
-
-        (global_context.buckets.finalize(), counters_file)
+        global_context
+            .compacted_buckets
+            .into_iter()
+            .map(|b| b.into_inner())
+            .collect()
     }
 }

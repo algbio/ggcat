@@ -41,7 +41,7 @@ use std::marker::PhantomData;
 use std::mem::size_of;
 use std::num::NonZeroU64;
 use std::ops::Deref;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use super::counters_sorting::CounterEntrySerializer;
@@ -152,6 +152,14 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataCombiner for QueryKmer
         unimplemented!()
     }
 
+    fn to_single(
+        &self,
+        _in_buffer: &Self::TempBuffer,
+        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> Self::SingleDataType {
+        unimplemented!()
+    }
+
     fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
 
     fn from_single_entry<'a>(
@@ -202,8 +210,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
     type MapProcessorType = ParallelKmersQueryMapProcessor<MH, CX>;
     type FinalExecutorType = ParallelKmersQueryFinalExecutor<MH, CX>;
 
-    #[allow(non_camel_case_types)]
-    type FLAGS_COUNT = typenum::U0;
+    type FlagsCount = typenum::U0;
     const HAS_COLORS: bool = CX::COLORS_ENABLED;
 
     fn get_packets_init_data(
@@ -435,7 +442,6 @@ pub fn parallel_kmers_counting<
     P: AsRef<Path> + Sync,
 >(
     file_inputs: Vec<SingleBucket>,
-    buckets_counters_path: PathBuf,
     buckets_count: BucketsCount,
     out_directory: P,
     k: usize,
@@ -483,12 +489,12 @@ pub fn parallel_kmers_counting<
             .map(|x| x.to_multi_chunk())
             .collect(),
         out_directory.as_ref(),
-        buckets_counters_path,
         buckets_count,
         global_data.clone(),
         threads_count,
         k,
         MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
+        false,
     )
     .parallel_kmers_transform();
 

@@ -27,7 +27,6 @@ fn main() {
                 panic!("Unrecoverable error: {}", msg);
             }
         }),
-        enable_disk_optimization: true,
     })
     .unwrap();
 

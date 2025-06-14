@@ -4,19 +4,24 @@ use std::{
     cell::Cell,
     cmp::Reverse,
     marker::PhantomData,
-    path::Path,
-    sync::atomic::{AtomicUsize, Ordering},
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use crate::{
     MinimizerBucketMode, MinimizerBucketingExecutionContext, MinimizerBucketingExecutorFactory,
+    helper_read_bucket_with_type,
 };
 use config::{
     BucketIndexType, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
     DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE, DEFAULT_OUTPUT_BUFFER_SIZE,
     DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
-    MAXIMUM_SECOND_BUCKETS_COUNT, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, MultiplicityCounterType,
-    SwapPriority, USE_SECOND_BUCKET, get_compression_level_info, get_memory_mode,
+    MAXIMUM_SECOND_BUCKETS_COUNT, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, MultiplicityCounterType, SwapPriority,
+    get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats;
 use hashbrown::{HashTable, hash_table::Entry};
@@ -24,10 +29,9 @@ use io::{
     compressed_read::CompressedReadIndipendent,
     concurrent::temp_reads::{
         creads_utils::{
-            AssemblerMinimizerPosition, BucketModeFromBoolean, CompressedReadsBucketData,
-            CompressedReadsBucketDataSerializer, DeserializedRead, NoSecondBucket,
+            AssemblerMinimizerPosition, CompressedReadsBucketData,
+            CompressedReadsBucketDataSerializer, DeserializedRead, NoMultiplicity, NoSecondBucket,
             ReadsCheckpointData, WithMultiplicity,
-            helpers::helper_read_bucket_with_opt_multiplicity,
         },
         extra_data::{
             SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
@@ -37,7 +41,7 @@ use io::{
 };
 use parallel_processor::{
     buckets::{
-        LockFreeBucket,
+        LockFreeBucket, MultiChunkBucket,
         readers::async_binary_reader::{AsyncBinaryReader, AsyncReaderThread},
         writers::compressed_binary_writer::CompressedBinaryWriter,
     },
@@ -55,6 +59,7 @@ use parallel_processor::{
     },
     memory_fs::MemoryFs,
 };
+use parking_lot::Mutex;
 use utils::track;
 
 pub struct MinimizerBucketingCompactor<
@@ -68,43 +73,144 @@ pub struct MinimizerBucketingCompactor<
 static ADDR_WAITING_COUNTER: AtomicCounter<SumMode> =
     declare_counter_i64!("mb_addr_wait_compactor", SumMode, false);
 
-#[derive(Clone, Debug)]
-pub struct CompactorInitData {
-    pub bucket_index: u16,
+struct SuperKmerEntry<E> {
+    read: CompressedReadIndipendent,
+    multiplicity: MultiplicityCounterType,
+    extra: E,
+    minimizer_pos: u16,
+    flags: u8,
+    is_window_duplicate: bool,
+}
+
+pub struct BucketsCompactor<
+    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
+    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
+    FlagsCount: typenum::Unsigned,
+> {
+    read_thread: Arc<AsyncReaderThread>,
+    super_kmers_hashmap: Vec<HashTable<SuperKmerEntry<MultipleData>>>,
+    super_kmers_buffer: Vec<Vec<SuperKmerEntry<MultipleData>>>,
+    super_kmers_extra_buffer:
+        Vec<<MultipleData as SequenceExtraDataTempBufferManagement>::TempBuffer>,
+    super_kmers_storage: Vec<Vec<u8>>,
+    k: usize,
+    target_chunk_size: u64,
+    _phantom: PhantomData<FlagsCount>,
 }
 
 impl<
     SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
     MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
-    Executor: MinimizerBucketingExecutorFactory<ReadExtraData = SingleData> + Sync + Send + 'static,
-> AsyncExecutor for MinimizerBucketingCompactor<SingleData, MultipleData, Executor>
+    FlagsCount: typenum::Unsigned,
+> BucketsCompactor<SingleData, MultipleData, FlagsCount>
 {
-    type InputPacket = ();
-    type OutputPacket = ();
-    type GlobalParams = MinimizerBucketingExecutionContext<Executor>;
-    type InitData = CompactorInitData;
-    const ALLOW_PARALLEL_ADDRESS_EXECUTION: bool = false;
-
-    fn new() -> Self {
+    pub fn new(k: usize, target_chunk_size: u64) -> Self {
         Self {
+            read_thread: AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE, 4),
+            super_kmers_hashmap: (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+                .map(|_| HashTable::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
+                .collect(),
+            super_kmers_buffer: (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+                .map(|_| Vec::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
+                .collect(),
+            super_kmers_extra_buffer: (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+                .map(|_| <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer())
+                .collect(),
+            super_kmers_storage: (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+                .map(|_| Vec::with_capacity(DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE))
+                .collect(),
+            k,
+            target_chunk_size,
             _phantom: PhantomData,
         }
     }
 
-    fn executor_main<'a>(
-        &'a mut self,
-        global_params: &'a Self::GlobalParams,
-        mut receiver: ExecutorReceiver<Self>,
+    fn process_superkmers<
+        E: SequenceExtraDataCombiner + SequenceExtraDataConsecutiveCompression,
+    >(
+        super_kmers_hashmap: &mut HashTable<SuperKmerEntry<E>>,
+        super_kmers_buffer: &mut Vec<SuperKmerEntry<E>>,
+        super_kmers_storage: &mut Vec<u8>,
+        total_sequences: &mut usize,
+        in_extra_buffer: &E::TempBuffer,
+        out_extra_buffer: &mut E::TempBuffer,
     ) {
-        // Needed to correctly perform the splitting without recomputing the minimizers
-        assert!(USE_SECOND_BUCKET);
+        debug_assert!(super_kmers_storage.len() > 0);
+        let mut copy_pos = super_kmers_buffer[0].read.buffer_start_index();
 
-        let read_thread = AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE, 4);
+        for SuperKmerEntry {
+            read,
+            multiplicity,
+            minimizer_pos,
+            extra,
+            flags,
+            is_window_duplicate,
+        } in super_kmers_buffer.drain(..)
+        {
+            let read_hash = read.compute_hash_aligned(super_kmers_storage);
+            let read_slice = read.get_packed_slice_aligned(super_kmers_storage);
 
+            match super_kmers_hashmap.entry(
+                read_hash,
+                |a| {
+                    a.read.bases_count() == read.bases_count()
+                        && a.read.get_packed_slice_aligned(super_kmers_storage) == read_slice
+                        && a.flags == flags
+                },
+                |v| v.read.compute_hash_aligned(super_kmers_storage),
+            ) {
+                Entry::Occupied(mut entry) => {
+                    let entry = entry.get_mut();
+                    entry.multiplicity += multiplicity;
+                    entry
+                        .extra
+                        .combine_entries(out_extra_buffer, extra, in_extra_buffer);
+                }
+                Entry::Vacant(position) => {
+                    let bytes_count = read_slice.len();
+                    let new_read = unsafe {
+                        std::ptr::copy(
+                            super_kmers_storage.as_ptr().add(read.buffer_start_index()),
+                            super_kmers_storage.as_mut_ptr().add(copy_pos),
+                            bytes_count,
+                        );
+
+                        CompressedReadIndipendent::from_start_buffer_position(
+                            copy_pos,
+                            read.bases_count(),
+                        )
+                    };
+                    copy_pos += bytes_count;
+
+                    let extra = E::copy_extra_from(extra, in_extra_buffer, out_extra_buffer);
+
+                    position.insert(SuperKmerEntry {
+                        read: new_read,
+                        multiplicity,
+                        minimizer_pos,
+                        flags,
+                        is_window_duplicate,
+                        extra,
+                    });
+                    *total_sequences += 1;
+                }
+            }
+        }
+
+        super_kmers_storage.truncate(copy_pos);
+    }
+
+    #[inline(never)]
+    pub fn compact_buckets(
+        &mut self,
+        uncompacted_bucket: &Mutex<MultiChunkBucket>,
+        compacted_bucket: &Mutex<MultiChunkBucket>,
+        _bucket_index: usize,
+        output_path: &Path,
+    ) {
         static COMPACTED_INDEX: AtomicUsize = AtomicUsize::new(0);
 
-        const MAXIMUM_SEQUENCES: usize =
-            MAXIMUM_SECOND_BUCKETS_COUNT * MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS;
+        const COMPACTED_VS_UNCOMPACTED_RATIO: f64 = 0.5;
 
         // Outline of the compaction algorithm:
         // OBJECTIVE: Compact the new buckets avoiding too much overhead in compaction
@@ -121,555 +227,522 @@ impl<
         // To choose which buckets to compact, first take the uncompacted from the smallest to the largest,
         // then all the compacted from the smallest to the largest so that their size does not exceed 1/1.5 of the size of the non-compacted buckets
 
-        struct SuperKmerEntry<E> {
-            read: CompressedReadIndipendent,
-            multiplicity: MultiplicityCounterType,
-            extra: E,
-            minimizer_pos: u16,
-            flags: u8,
-            is_window_duplicate: bool,
+        let mut chosen_chunks = vec![];
+
+        let mut taken_uncompacted_size = 0;
+        let mut taken_compacted_size = 0;
+
+        struct ChosenChunk {
+            _compacted: bool,
+            path: PathBuf,
         }
 
-        // Min 1MB size for compaction
-        const MINIMUM_INPUT_SIZE: usize = 1024 * 1024 * 1;
+        // Uncompacted
+        {
+            let mut bucket = uncompacted_bucket.lock();
 
-        const COMPACT_THRESHOLD_RATIO: f64 = 0.2;
-        const COMPACT_THRESHOLD_BYTES: usize = 1024 * 1024 * 64;
-        const MAX_COMPACTED_IO_RATIO: f64 = 1.7;
+            while let Some(chunk) = bucket.chunks.pop() {
+                let chunk_size = MemoryFs::get_file_size(&chunk).unwrap();
+                taken_uncompacted_size += chunk_size;
+                chosen_chunks.push(ChosenChunk {
+                    _compacted: false,
+                    path: chunk,
+                });
+            }
+        }
 
-        let mut super_kmers_hashmap: Vec<HashTable<SuperKmerEntry<MultipleData>>> = (0
-            ..MAXIMUM_SECOND_BUCKETS_COUNT)
-            .map(|_| HashTable::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
-            .collect();
+        // Abort if no uncompacted chunks are found
+        if chosen_chunks.len() == 0 {
+            return;
+        }
 
-        let mut super_kmers_buffer: Vec<Vec<SuperKmerEntry<MultipleData>>> = (0
-            ..MAXIMUM_SECOND_BUCKETS_COUNT)
-            .map(|_| Vec::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
-            .collect();
+        let force_advanced_compaction;
 
-        let mut super_kmers_extra_buffer: Vec<
-            <MultipleData as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        > = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
-            .map(|_| <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer())
-            .collect();
+        // Compacted
+        {
+            let mut bucket = compacted_bucket.lock();
 
-        let mut super_kmers_storage: Vec<Vec<u8>> = (0..MAXIMUM_SECOND_BUCKETS_COUNT)
-            .map(|_| Vec::with_capacity(DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE))
-            .collect();
+            let max_compacted =
+                (taken_uncompacted_size as f64 * COMPACTED_VS_UNCOMPACTED_RATIO) as u64;
 
-        fn process_superkmers<
-            E: SequenceExtraDataCombiner + SequenceExtraDataConsecutiveCompression,
-        >(
-            super_kmers_hashmap: &mut HashTable<SuperKmerEntry<E>>,
-            super_kmers_buffer: &mut Vec<SuperKmerEntry<E>>,
-            super_kmers_storage: &mut Vec<u8>,
-            total_sequences: &mut usize,
-            in_extra_buffer: &E::TempBuffer,
-            out_extra_buffer: &mut E::TempBuffer,
-        ) {
-            debug_assert!(super_kmers_storage.len() > 0);
-            let mut copy_pos = super_kmers_buffer[0].read.buffer_start_index();
+            let mut compactable_chunks_size = 0;
 
+            let compactable_buckets_threshold = 2 * taken_uncompacted_size as u64;
+
+            bucket.chunks.sort_by_cached_key(|f| {
+                let is_single = f.file_name().unwrap().to_str().unwrap().contains("single");
+
+                let real_file_size = MemoryFs::get_file_size(f).unwrap() as u64;
+
+                let file_size = if is_single {
+                    // Penalize single chunks in compaction
+                    real_file_size * 2
+                } else {
+                    real_file_size
+                };
+
+                if file_size < compactable_buckets_threshold {
+                    compactable_chunks_size += file_size;
+                }
+                // Do not compact single chunks
+                Reverse(file_size)
+            });
+
+            // Force an advanced compaction step if there is enough data
+            force_advanced_compaction = compactable_chunks_size > self.target_chunk_size;
+
+            while let Some(chunk) = bucket.chunks.last() {
+                let chunk_size = MemoryFs::get_file_size(&chunk).unwrap() as u64;
+
+                let force_compactable =
+                    force_advanced_compaction && chunk_size < compactable_buckets_threshold;
+
+                if !force_compactable && taken_compacted_size + chunk_size > max_compacted {
+                    break;
+                }
+
+                taken_compacted_size += chunk_size;
+                chosen_chunks.push(ChosenChunk {
+                    _compacted: true,
+                    path: bucket.chunks.pop().unwrap(),
+                });
+            }
+        }
+
+        stats!(
+            let stat_start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+            let mut pop_stats = vec![];
+        );
+
+        let mut input_files_size = 0;
+
+        let compact_index = COMPACTED_INDEX.fetch_add(1, Ordering::Relaxed);
+
+        let new_path = output_path.join(format!("comp-mult-{}.dat", compact_index));
+        let new_path_single = output_path.join(format!("comp-single-{}.dat", compact_index));
+
+        let mut total_sequences = 0;
+
+        let mut out_extra_buffer =
+            <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer();
+
+        while let Some(bucket_path) = chosen_chunks.pop() {
+            stats!(
+                let pop_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+            );
+            // Reading the buckets
+            let reader = AsyncBinaryReader::new(
+                &bucket_path.path,
+                true, // bucket_path.compacted,
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+                DEFAULT_PREFETCH_AMOUNT,
+                None,
+            );
+
+            let format_data: MinimizerBucketMode = reader.get_data_format_info().unwrap();
+            let checkpoint_rewrite_bucket = Cell::new(None);
+
+            helper_read_bucket_with_type::<
+                SingleData,
+                MultipleData,
+                AssemblerMinimizerPosition,
+                FlagsCount,
+            >(
+                &reader,
+                self.read_thread.clone(),
+                format_data,
+                AllowedCheckpointStrategy::DecompressOnly,
+                |_passtrough| unreachable!(),
+                #[inline(always)]
+                |checkpoint_data| {
+                    checkpoint_rewrite_bucket.set(checkpoint_data.map(|d| d.target_subbucket));
+                },
+                #[inline(always)]
+                |data, in_extra_buffer| {
+                    let DeserializedRead {
+                        read,
+                        extra,
+                        multiplicity,
+                        flags,
+                        second_bucket,
+                        minimizer_pos,
+                        is_window_duplicate,
+                    } = data;
+
+                    let rewrite_bucket = checkpoint_rewrite_bucket
+                        .get()
+                        .unwrap_or(second_bucket as u16);
+
+                    let super_kmers_buffer = &mut self.super_kmers_buffer[rewrite_bucket as usize];
+                    let super_kmers_storage =
+                        &mut self.super_kmers_storage[rewrite_bucket as usize];
+                    let super_kmers_extra_buffer =
+                        &mut self.super_kmers_extra_buffer[rewrite_bucket as usize];
+
+                    let new_read = CompressedReadIndipendent::from_read(&read, super_kmers_storage);
+                    super_kmers_buffer.push(SuperKmerEntry {
+                        read: new_read,
+                        multiplicity,
+                        minimizer_pos,
+                        flags,
+                        is_window_duplicate,
+                        extra: MultipleData::copy_extra_from(
+                            extra,
+                            in_extra_buffer,
+                            super_kmers_extra_buffer,
+                        ),
+                    });
+
+                    if super_kmers_buffer.len() == super_kmers_buffer.capacity() {
+                        let super_kmers_hashmap =
+                            &mut self.super_kmers_hashmap[rewrite_bucket as usize];
+                        Self::process_superkmers::<MultipleData>(
+                            super_kmers_hashmap,
+                            super_kmers_buffer,
+                            super_kmers_storage,
+                            &mut total_sequences,
+                            super_kmers_extra_buffer,
+                            &mut out_extra_buffer,
+                        );
+                        MultipleData::clear_temp_buffer(super_kmers_extra_buffer);
+                    }
+                },
+                self.k,
+            );
+
+            input_files_size += MemoryFs::get_file_size(&bucket_path.path).unwrap();
+            stats!(
+                let end_process_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+                pop_stats.push(
+                    ggcat_logging::stats::InputFileStats {
+                        file_name: bucket_path.path.clone(),
+                        file_size: MemoryFs::get_file_size(&bucket_path.path).unwrap(),
+                        start_time: pop_time.into(),
+                        end_time: end_process_time.into(),
+                    }
+                );
+            );
+        }
+
+        // Flush all the buffers
+        for i in 0..self.super_kmers_buffer.len() {
+            if self.super_kmers_buffer[i].len() > 0 {
+                Self::process_superkmers(
+                    &mut self.super_kmers_hashmap[i],
+                    &mut self.super_kmers_buffer[i],
+                    &mut self.super_kmers_storage[i],
+                    &mut total_sequences,
+                    &mut self.super_kmers_extra_buffer[i],
+                    &mut out_extra_buffer,
+                );
+            }
+        }
+
+        let new_bucket = CompressedBinaryWriter::new(
+            &new_path,
+            &(
+                get_memory_mode(SwapPriority::MinimizerBuckets),
+                MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
+                get_compression_level_info(),
+            ),
+            0,
+            &MinimizerBucketMode::Compacted,
+        );
+
+        let new_bucket_single = CompressedBinaryWriter::new(
+            &new_path_single,
+            &(
+                get_memory_mode(SwapPriority::MinimizerBuckets),
+                MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
+                get_compression_level_info(),
+            ),
+            0,
+            &MinimizerBucketMode::SingleGrouped,
+        );
+
+        let mut serializer = CompressedReadsBucketDataSerializer::<
+            MultipleData,
+            NoSecondBucket,
+            WithMultiplicity,
+            AssemblerMinimizerPosition,
+            FlagsCount,
+        >::new(self.k);
+
+        let mut serializer_single = CompressedReadsBucketDataSerializer::<
+            SingleData,
+            NoSecondBucket,
+            NoMultiplicity,
+            AssemblerMinimizerPosition,
+            FlagsCount,
+        >::new(self.k);
+
+        stats!(
+            let stat_subbucket_compactions = vec![];
+        );
+
+        let mut buffer = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
+        let mut single_buffer = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
+
+        let mut single_extra_buffer =
+            <SingleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer();
+
+        let mut super_kmers_temp = [vec![], vec![]];
+
+        for (rewrite_bucket, super_kmers_hashmap) in self.super_kmers_hashmap.iter_mut().enumerate()
+        {
+            if super_kmers_hashmap.is_empty() {
+                continue;
+            }
+
+            super_kmers_temp[0].reserve(super_kmers_hashmap.len());
+            super_kmers_temp[1].reserve(super_kmers_hashmap.len());
+
+            for sk in super_kmers_hashmap.drain() {
+                let mult_type = (sk.multiplicity > 1) as usize;
+                super_kmers_temp[mult_type].push(sk);
+            }
+
+            new_bucket.set_checkpoint_data(
+                Some(&ReadsCheckpointData {
+                    target_subbucket: rewrite_bucket as BucketIndexType,
+                    sequences_count: super_kmers_temp[1].len(),
+                }),
+                None,
+            );
+
+            new_bucket_single.set_checkpoint_data(
+                Some(&ReadsCheckpointData {
+                    target_subbucket: rewrite_bucket as BucketIndexType,
+                    sequences_count: super_kmers_temp[0].len(),
+                }),
+                None,
+            );
+
+            // stats!(
+            //     let start_subbucket = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+            //     let super_kmers_count = super_kmers_hashmap.len();
+            // );
+            let super_kmers_storage = &mut self.super_kmers_storage[rewrite_bucket];
+
+            // Handle superkmers with multiplicity == 1
+            for SuperKmerEntry {
+                read,
+                multiplicity: _,
+                minimizer_pos,
+                mut extra,
+                flags,
+                is_window_duplicate,
+            } in super_kmers_temp[0].drain(..)
+            {
+                let read = read.as_reference(super_kmers_storage);
+                extra.prepare_for_serialization(&mut out_extra_buffer);
+
+                SingleData::clear_temp_buffer(&mut single_extra_buffer);
+                let extra = extra.to_single(&out_extra_buffer, &mut single_extra_buffer);
+
+                serializer_single.write_to(
+                    &CompressedReadsBucketData::new_packed(
+                        read,
+                        flags,
+                        0,
+                        minimizer_pos,
+                        is_window_duplicate,
+                    ),
+                    &mut single_buffer,
+                    &extra,
+                    &single_extra_buffer,
+                );
+                if single_buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
+                    new_bucket_single.write_data(&single_buffer);
+                    single_buffer.clear();
+                }
+            }
+
+            // Handle superkmers with multiplicity > 1
             for SuperKmerEntry {
                 read,
                 multiplicity,
                 minimizer_pos,
-                extra,
+                mut extra,
                 flags,
                 is_window_duplicate,
-            } in super_kmers_buffer.drain(..)
+            } in super_kmers_temp[1].drain(..)
             {
-                let read_hash = read.compute_hash_aligned(super_kmers_storage);
-                let read_slice = read.get_packed_slice_aligned(super_kmers_storage);
+                let read = read.as_reference(super_kmers_storage);
+                extra.prepare_for_serialization(&mut out_extra_buffer);
 
-                match super_kmers_hashmap.entry(
-                    read_hash,
-                    |a| {
-                        a.read.bases_count() == read.bases_count()
-                            && a.read.get_packed_slice_aligned(super_kmers_storage) == read_slice
-                            && a.flags == flags
-                    },
-                    |v| v.read.compute_hash_aligned(super_kmers_storage),
-                ) {
-                    Entry::Occupied(mut entry) => {
-                        let entry = entry.get_mut();
-                        entry.multiplicity += multiplicity;
-                        entry
-                            .extra
-                            .combine_entries(out_extra_buffer, extra, in_extra_buffer);
-                    }
-                    Entry::Vacant(position) => {
-                        let bytes_count = read_slice.len();
-                        let new_read = unsafe {
-                            std::ptr::copy(
-                                super_kmers_storage.as_ptr().add(read.buffer_start_index()),
-                                super_kmers_storage.as_mut_ptr().add(copy_pos),
-                                bytes_count,
-                            );
-
-                            CompressedReadIndipendent::from_start_buffer_position(
-                                copy_pos,
-                                read.bases_count(),
-                            )
-                        };
-                        copy_pos += bytes_count;
-
-                        let extra = E::copy_extra_from(extra, in_extra_buffer, out_extra_buffer);
-
-                        position.insert(SuperKmerEntry {
-                            read: new_read,
-                            multiplicity,
-                            minimizer_pos,
-                            flags,
-                            is_window_duplicate,
-                            extra,
-                        });
-                        *total_sequences += 1;
-                    }
-                }
-            }
-
-            super_kmers_storage.truncate(copy_pos);
-        }
-
-        while let Ok(address) = track!(receiver.obtain_address(), ADDR_WAITING_COUNTER) {
-            let init_data = address.get_init_data();
-
-            // Wait for the address to be deallocated
-            let _ = address.receive_packet();
-
-            if !global_params.common.is_active.load(Ordering::Relaxed) {
-                continue;
-            }
-
-            let mut chosen_buckets = vec![];
-
-            let bucket_index = init_data.bucket_index as usize;
-
-            let should_skip = {
-                let mut ratios = global_params.compaction_ratios[bucket_index].lock();
-                ratios.skipped += 1;
-                ratios.skipped < ratios.skip_step
-            };
-            if should_skip {
-                continue;
-            }
-
-            let mut buckets = global_params.buckets.get_stored_buckets().lock();
-
-            let mut total_uncompacted_size = 0;
-            let mut total_compacted_size = 0;
-
-            // Avoid crashing in case there are no chunks and this is called
-            if buckets[bucket_index].chunks.is_empty() {
-                continue;
-            }
-
-            fn is_compacted(path: &Path) -> bool {
-                path.file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .contains("compacted")
-            }
-
-            buckets[bucket_index].chunks.sort_by_cached_key(|c| {
-                let file_size = MemoryFs::get_file_size(c).unwrap();
-                let is_compacted = is_compacted(c);
-
-                if is_compacted {
-                    total_compacted_size += file_size;
-                } else {
-                    total_uncompacted_size += file_size;
-                }
-                // The first taken is the smallest non-compacted bucket
-                Reverse((is_compacted, file_size))
-            });
-
-            if total_uncompacted_size < COMPACT_THRESHOLD_BYTES
-                && (total_uncompacted_size as f64)
-                    < COMPACT_THRESHOLD_RATIO * (total_compacted_size as f64)
-            {
-                // Skip compaction if thresholds are not met
-                continue;
-            }
-
-            let mut chosen_size = 0;
-            let mut taken_compacted_size = 0;
-
-            // Choose buckets until one of two conditions is met:
-            // 1. The next bucket would add up to a size of compacted buckets / uncompacted buckets > 1/1.7
-            // 2. Four buckets were already selected and the number of sequences is greater than the maximum amount
-            // The second condition is checked below, after the processing of each bucket
-            while let Some(bucket) = buckets[bucket_index].chunks.pop() {
-                let bucket_size = MemoryFs::get_file_size(&bucket).unwrap();
-
-                if is_compacted(&bucket) {
-                    if (taken_compacted_size + bucket_size) as f64 * MAX_COMPACTED_IO_RATIO
-                        > total_uncompacted_size as f64
-                    {
-                        // Add back the last unused chunk
-                        buckets[bucket_index].chunks.push(bucket);
-                        break;
-                    }
-                    taken_compacted_size += bucket_size;
-                }
-
-                chosen_size += bucket_size;
-                chosen_buckets.push(bucket);
-            }
-
-            // Do not compact if we have only one bucket
-            if chosen_buckets.len() == 1 || chosen_size < MINIMUM_INPUT_SIZE {
-                buckets[bucket_index]
-                    .chunks
-                    .extend(chosen_buckets.drain(..));
-            }
-
-            if chosen_buckets.is_empty() {
-                continue;
-            }
-
-            drop(buckets);
-
-            chosen_buckets.reverse();
-
-            stats!(
-                let stat_start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
-                let mut pop_stats = vec![];
-            );
-
-            let mut input_files_size = 0;
-            let new_path = global_params.output_path.join(format!(
-                "compacted-{}.dat",
-                COMPACTED_INDEX.fetch_add(1, Ordering::Relaxed)
-            ));
-
-            let mut sequences_deltas = vec![0i64; MAXIMUM_SECOND_BUCKETS_COUNT];
-
-            // let used_hash_bits = global_params.buckets.count().ilog2() as usize;
-            // let second_buckets_log_max = std::cmp::min(
-            //     global_params.common.global_counters[bucket_index]
-            //         .len()
-            //         .ilog2() as usize,
-            //     MAXIMUM_SECOND_BUCKETS_COUNT.ilog2() as usize,
-            // );
-
-            let mut total_sequences = 0;
-            let mut processed_buckets = 0;
-
-            let mut out_extra_buffer =
-                <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer();
-
-            while let Some(bucket_path) = chosen_buckets.pop() {
-                stats!(
-                    let pop_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+                serializer.write_to(
+                    &CompressedReadsBucketData::new_packed_with_multiplicity(
+                        read,
+                        flags,
+                        0,
+                        multiplicity,
+                        minimizer_pos,
+                        is_window_duplicate,
+                    ),
+                    &mut buffer,
+                    &extra,
+                    &out_extra_buffer,
                 );
-                // Reading the buckets
-                let reader = AsyncBinaryReader::new(
-                    &bucket_path,
-                    true,
-                    RemoveFileMode::Remove {
-                        remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-                    },
-                    DEFAULT_PREFETCH_AMOUNT,
-                );
-
-                processed_buckets += 1;
-
-                let format_data: MinimizerBucketMode = reader.get_data_format_info().unwrap();
-                let checkpoint_rewrite_bucket = Cell::new(None);
-
-                helper_read_bucket_with_opt_multiplicity::<
-                    SingleData,
-                    MultipleData,
-                    Executor::FLAGS_COUNT,
-                    BucketModeFromBoolean<USE_SECOND_BUCKET>,
-                    AssemblerMinimizerPosition,
-                >(
-                    &reader,
-                    read_thread.clone(),
-                    matches!(format_data, MinimizerBucketMode::Compacted),
-                    AllowedCheckpointStrategy::DecompressOnly,
-                    |_passtrough| unreachable!(),
-                    #[inline(always)]
-                    |checkpoint_data| {
-                        checkpoint_rewrite_bucket.set(checkpoint_data.map(|d| d.target_subbucket));
-                    },
-                    #[inline(always)]
-                    |data, in_extra_buffer| {
-                        let DeserializedRead {
-                            read,
-                            extra,
-                            multiplicity,
-                            flags,
-                            second_bucket,
-                            minimizer_pos,
-                            is_window_duplicate,
-                        } = data;
-
-                        let rewrite_bucket = checkpoint_rewrite_bucket
-                            .get()
-                            .unwrap_or(second_bucket as u16);
-
-                        // Restore if needed!
-                        // .unwrap_or_else(|| E::RewriteBucketCompute::get_rewrite_bucket(global_params.common.k,
-                        //     global_params.common.m,
-                        //     &data,
-                        //     used_hash_bits,
-                        //     second_buckets_log_max,
-                        // ));
-                        sequences_deltas[rewrite_bucket as usize] += 1;
-
-                        let super_kmers_buffer = &mut super_kmers_buffer[rewrite_bucket as usize];
-                        let super_kmers_storage = &mut super_kmers_storage[rewrite_bucket as usize];
-                        let super_kmers_extra_buffer =
-                            &mut super_kmers_extra_buffer[rewrite_bucket as usize];
-
-                        let new_read =
-                            CompressedReadIndipendent::from_read(&read, super_kmers_storage);
-                        super_kmers_buffer.push(SuperKmerEntry {
-                            read: new_read,
-                            multiplicity,
-                            minimizer_pos,
-                            flags,
-                            is_window_duplicate,
-                            extra: MultipleData::copy_extra_from(
-                                extra,
-                                in_extra_buffer,
-                                super_kmers_extra_buffer,
-                            ),
-                        });
-
-                        if super_kmers_buffer.len() == super_kmers_buffer.capacity() {
-                            let super_kmers_hashmap =
-                                &mut super_kmers_hashmap[rewrite_bucket as usize];
-                            process_superkmers::<MultipleData>(
-                                super_kmers_hashmap,
-                                super_kmers_buffer,
-                                super_kmers_storage,
-                                &mut total_sequences,
-                                super_kmers_extra_buffer,
-                                &mut out_extra_buffer,
-                            );
-                            MultipleData::clear_temp_buffer(super_kmers_extra_buffer);
-                        }
-                    },
-                    global_params.common.k,
-                );
-
-                input_files_size += MemoryFs::get_file_size(&bucket_path).unwrap();
-                stats!(
-                    let end_process_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
-                    pop_stats.push(
-                        ggcat_logging::stats::InputFileStats {
-                            file_name: bucket_path.clone(),
-                            file_size: MemoryFs::get_file_size(&bucket_path).unwrap(),
-                            start_time: pop_time.into(),
-                            end_time: end_process_time.into(),
-                        }
-                    );
-                );
-
-                // Do not process more buckets if it will increase the maximum number of allowed sequences
-                if !global_params.common.is_active.load(Ordering::Relaxed)
-                    || processed_buckets >= 4 && total_sequences > MAXIMUM_SEQUENCES
-                {
-                    break;
-                }
-            }
-
-            // Flush all the buffers
-            for i in 0..super_kmers_buffer.len() {
-                if super_kmers_buffer[i].len() > 0 {
-                    process_superkmers(
-                        &mut super_kmers_hashmap[i],
-                        &mut super_kmers_buffer[i],
-                        &mut super_kmers_storage[i],
-                        &mut total_sequences,
-                        &mut super_kmers_extra_buffer[i],
-                        &mut out_extra_buffer,
-                    );
-                }
-            }
-
-            let new_bucket = CompressedBinaryWriter::new(
-                &new_path,
-                &(
-                    get_memory_mode(SwapPriority::MinimizerBuckets),
-                    MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-                    get_compression_level_info(),
-                ),
-                0,
-                &MinimizerBucketMode::Compacted,
-            );
-
-            let mut serializer = CompressedReadsBucketDataSerializer::<
-                MultipleData,
-                Executor::FLAGS_COUNT,
-                NoSecondBucket,
-                WithMultiplicity,
-                AssemblerMinimizerPosition,
-            >::new(global_params.common.k);
-
-            stats!(
-                let stat_subbucket_compactions = vec![];
-            );
-
-            let mut buffer = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
-
-            for (rewrite_bucket, super_kmers_hashmap) in super_kmers_hashmap.iter_mut().enumerate()
-            {
-                if buffer.len() > 0 {
+                if buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
                     new_bucket.write_data(&buffer);
                     buffer.clear();
                 }
-
-                if super_kmers_hashmap.is_empty() {
-                    continue;
-                }
-
-                new_bucket.set_checkpoint_data(
-                    Some(&ReadsCheckpointData {
-                        target_subbucket: rewrite_bucket as BucketIndexType,
-                        sequences_count: super_kmers_hashmap.len(),
-                    }),
-                    None,
-                );
-
-                // stats!(
-                //     let start_subbucket = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
-                //     let super_kmers_count = super_kmers_hashmap.len();
-                // );
-                let super_kmers_storage = &mut super_kmers_storage[rewrite_bucket];
-
-                for SuperKmerEntry {
-                    read,
-                    multiplicity,
-                    minimizer_pos,
-                    mut extra,
-                    flags,
-                    is_window_duplicate,
-                } in super_kmers_hashmap.drain()
-                {
-                    let read = read.as_reference(super_kmers_storage);
-                    sequences_deltas[rewrite_bucket as usize] -= 1;
-
-                    extra.prepare_for_serialization(&mut out_extra_buffer);
-
-                    serializer.write_to(
-                        &CompressedReadsBucketData::new_packed_with_multiplicity(
-                            read,
-                            flags,
-                            0,
-                            multiplicity,
-                            minimizer_pos,
-                            is_window_duplicate,
-                        ),
-                        &mut buffer,
-                        &extra,
-                        &out_extra_buffer,
-                    );
-                    if buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
-                        new_bucket.write_data(&buffer);
-                        buffer.clear();
-                    }
-                }
-
-                super_kmers_storage.clear();
-
-                // stats!(let reset_capacity_start = ggcat_logging::get_stat_opt!(stats.start_time).elapsed(););
-
-                // Reset the hashmap capacity
-                if super_kmers_hashmap.capacity() > MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS {
-                    *super_kmers_hashmap =
-                        HashTable::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS);
-                }
-
-                // stats!(
-                //     let reset_capacity_end = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
-                //     stat_subbucket_compactions.push(
-                //         ggcat_logging::stats::SubbucketReport {
-                //             subbucket_index: rewrite_bucket,
-                //             super_kmers_count,
-                //             start_time: start_subbucket.into(),
-                //             reset_capacity_time: reset_capacity_end.into(),
-                //             end_reset_capacity_time: reset_capacity_start.into(),
-                //         }
-                //     )
-                // );
             }
 
+            super_kmers_temp[0].clear();
+            super_kmers_temp[1].clear();
+            super_kmers_storage.clear();
+
+            // stats!(let reset_capacity_start = ggcat_logging::get_stat_opt!(stats.start_time).elapsed(););
+
+            // Reset the hashmap capacity
+            if super_kmers_hashmap.capacity() > MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS {
+                *super_kmers_hashmap =
+                    HashTable::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS);
+            }
+
+            // stats!(
+            //     let reset_capacity_end = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+            //     stat_subbucket_compactions.push(
+            //         ggcat_logging::stats::SubbucketReport {
+            //             subbucket_index: rewrite_bucket,
+            //             super_kmers_count,
+            //             start_time: start_subbucket.into(),
+            //             reset_capacity_time: reset_capacity_end.into(),
+            //             end_reset_capacity_time: reset_capacity_start.into(),
+            //         }
+            //     )
+            // );
             if buffer.len() > 0 {
                 new_bucket.write_data(&buffer);
+                buffer.clear();
             }
-
-            let new_path = new_bucket.get_path();
-            new_bucket.finalize();
-
-            // Update the final buckets with new info
-            let mut buckets = global_params.buckets.get_stored_buckets().lock();
-            buckets[bucket_index].was_compacted = true;
-            buckets[bucket_index].chunks.push(new_path.clone());
-
-            for unused_bucket in chosen_buckets {
-                buckets[bucket_index].chunks.push(unused_bucket);
+            if single_buffer.len() > 0 {
+                new_bucket_single.write_data(&single_buffer);
+                single_buffer.clear();
             }
-
-            for (counter, global_counter) in sequences_deltas
-                .iter()
-                .zip(global_params.common.global_counters[bucket_index].iter())
-            {
-                assert!(*counter >= 0);
-                global_counter.fetch_sub(*counter as u64, Ordering::Relaxed);
-            }
-
-            global_params.common.compaction_offsets[bucket_index]
-                .fetch_add(sequences_deltas.iter().sum::<i64>(), Ordering::Relaxed);
-
-            let output_files_size = MemoryFs::get_file_size(&new_path).unwrap();
-            let compression_ratio = input_files_size as f64 / output_files_size as f64;
-
-            // Update the average compression ratio
-            {
-                // Emprirically chosen to avoid too many compactions on non compactable datasets
-                const TARGET_COMPACTION_RATIO: f64 = 1.5;
-
-                let mut ratios = global_params.compaction_ratios[bucket_index].lock();
-                ratios.avg_ratio = (ratios.avg_ratio * (ratios.compactions as f64)
-                    + compression_ratio)
-                    / (ratios.compactions as f64 + 1.0);
-                ratios.compactions += 1;
-                ratios.skipped = 0;
-
-                if ratios.avg_ratio * 0.5 + compression_ratio * 0.5 < TARGET_COMPACTION_RATIO {
-                    ratios.skip_step = 10.min(ratios.skip_step + 2);
-                } else {
-                    ratios.skip_step = ratios.skip_step.saturating_sub(4);
-                }
-            }
-
-            stats!(
-                let end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
-            );
-
-            stats!(
-                stats
-                    .assembler
-                    .compact_reports
-                    .push(ggcat_logging::stats::CompactReport {
-                        report_id: generate_stat_id!(),
-                        bucket_index: init_data.bucket_index as usize,
-                        input_files: pop_stats,
-                        output_file: new_path,
-                        start_time: stat_start_time.into(),
-                        end_time: end_time.into(),
-                        subbucket_reports: stat_subbucket_compactions,
-                        input_total_size: input_files_size,
-                        output_total_size: output_files_size,
-                        compression_ratio,
-                    })
-            );
         }
+
+        // println!(
+        //     "Tot multiple: {} Multiple: {} Single: {} total ratio: real: {:.2} compr: {:.2} bucket: {}",
+        //     tot_multiple,
+        //     multiple,
+        //     single,
+        //     (tot_multiple as f64 / single as f64),
+        //     (multiple as f64 / single as f64),
+        //     _bucket_index
+        // );
+
+        let new_path = new_bucket.get_path();
+        new_bucket.finalize();
+
+        let new_path_single = new_bucket_single.get_path();
+        new_bucket_single.finalize();
+
+        // {
+        //     let new_compacted_size = MemoryFs::get_file_size(&new_path).unwrap();
+        //     let new_compacted_single_size = MemoryFs::get_file_size(&new_path_single).unwrap();
+
+        //     println!(
+        //         "Input size: C: {} U: {} output size: C: {} S: {} compr ratio: {} force: {}",
+        //         taken_compacted_size,
+        //         taken_uncompacted_size,
+        //         new_compacted_size,
+        //         new_compacted_single_size,
+        //         input_files_size as f64 / (new_compacted_size + new_compacted_single_size) as f64,
+        //         force_advanced_compaction
+        //     )
+        // }
+
+        // Update the final buckets with new info
+        let mut bucket = compacted_bucket.lock();
+        bucket.chunks.push(new_path.clone());
+        bucket.chunks.push(new_path_single.clone());
+
+        let output_files_size = MemoryFs::get_file_size(&new_path).unwrap()
+            + MemoryFs::get_file_size(&new_path_single).unwrap();
+        let _compression_ratio = input_files_size as f64 / output_files_size as f64;
+
+        stats!(
+            let end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+        );
+
+        stats!(
+            stats
+                .assembler
+                .compact_reports
+                .push(ggcat_logging::stats::CompactReport {
+                    report_id: generate_stat_id!(),
+                    bucket_index: _bucket_index,
+                    input_files: pop_stats,
+                    output_file: new_path,
+                    start_time: stat_start_time.into(),
+                    end_time: end_time.into(),
+                    subbucket_reports: stat_subbucket_compactions,
+                    input_total_size: input_files_size,
+                    output_total_size: output_files_size,
+                    compression_ratio: _compression_ratio,
+                })
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use colors::non_colored::{NonColoredManager, NonColoredMultipleColors};
+    use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
+    use io::concurrent::temp_reads::creads_utils::AssemblerMinimizerPosition;
+    use parallel_processor::{
+        buckets::readers::async_binary_reader::{
+            AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
+        },
+        memory_fs::RemoveFileMode,
+    };
+
+    use crate::{MinimizerBucketMode, helper_read_bucket_with_type};
+
+    #[test]
+    #[ignore]
+    fn test_bucket_decoding() {
+        let read_thread = AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE, 4);
+        let bucket_path = PathBuf::from(
+            // "../../.temp_files/build_graph_4f1a5aac-a6df-4559-a0b3-5d8b8c9357e0/compacted-8586.dat.0",
+            "../../.temp_files/build_graph_4f1a5aac-a6df-4559-a0b3-5d8b8c9357e0/compacted-9800.dat.0",
+        );
+
+        // Reading the buckets
+        let reader = AsyncBinaryReader::new(
+            &bucket_path,
+            true,
+            RemoveFileMode::Keep,
+            DEFAULT_PREFETCH_AMOUNT,
+        );
+
+        let format_data: MinimizerBucketMode = reader.get_data_format_info().unwrap();
+
+        println!("Format: {:?}", format_data);
+
+        helper_read_bucket_with_type::<
+            NonColoredManager,
+            NonColoredMultipleColors<NonColoredManager>,
+            AssemblerMinimizerPosition,
+            typenum::U2,
+        >(
+            &reader,
+            read_thread.clone(),
+            format_data,
+            AllowedCheckpointStrategy::DecompressOnly,
+            |_passtrough| unreachable!(),
+            #[inline(always)]
+            |_checkpoint_data| {},
+            #[inline(always)]
+            |_data, _in_extra_buffer| {},
+            27,
+        );
     }
 }

@@ -94,7 +94,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
 
     let buckets_count = BucketsCount::new(buckets_count_log, ExtraBuckets::None);
 
-    let ((buckets, counters), queries_count) = if step <= QuerierStartingStep::MinimizerBucketing {
+    let (buckets, queries_count) = if step <= QuerierStartingStep::MinimizerBucketing {
         minimizer_bucketing::<QuerierColorsManager>(
             graph_input.clone(),
             query_input.clone(),
@@ -106,10 +106,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
         )
     } else {
         (
-            (
-                generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
-                temp_dir.join("buckets-counters.dat"),
-            ),
+            generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
             {
                 let queries_count = BufReader::new(File::open(&query_input).unwrap())
                     .lines()
@@ -123,7 +120,6 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
     let counters_buckets = if step <= QuerierStartingStep::KmersCounting {
         parallel_kmers_counting::<MergingHash, QuerierColorsManager, _>(
             buckets,
-            counters,
             buckets_count,
             temp_dir.as_path(),
             k,

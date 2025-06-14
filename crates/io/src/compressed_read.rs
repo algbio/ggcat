@@ -293,18 +293,6 @@ impl<'a> CompressedRead<'a> {
             (encoded_size as usize + min_size, 0, false)
         };
 
-        if size > 100000000 {
-            println!(
-                "Error while decoding size: sz [{}] es {} fl {} mmen: {} => wdupl: {}",
-                size,
-                encoded_size,
-                flags,
-                MinimizerMode::ENABLED,
-                is_window_duplicate,
-            );
-            return None;
-        }
-
         let bytes = (size + 3) / 4;
         temp_buffer.reserve(bytes);
         let buffer_start = temp_buffer.len();

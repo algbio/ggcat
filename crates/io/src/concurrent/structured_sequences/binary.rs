@@ -182,10 +182,10 @@ impl<
         Vec<u8>,
         CompressedReadsBucketDataSerializer<
             SequenceDataWithAbundance<ColorInfo, LinksInfo>,
-            typenum::consts::U0,
             NoSecondBucket,
             NoMultiplicity,
             NoMinimizerPosition,
+            typenum::U0,
         >,
     );
 

@@ -51,14 +51,14 @@ arg_enum! {
 }
 
 use ::utils::compute_best_m;
+use colors::DefaultColorsSerializer;
 use colors::colors_manager::ColorMapReader;
 use colors::storage::deserializer::ColorsDeserializer;
-use colors::DefaultColorsSerializer;
 use config::ColorIndexType;
 use io::sequences_stream::general::GeneralSequenceBlockData;
 use parallel_processor::memory_fs::MemoryFs;
 use std::io::BufRead;
-use structopt::clap::{arg_enum, ArgGroup};
+use structopt::clap::{ArgGroup, arg_enum};
 
 #[derive(StructOpt, Debug)]
 enum CliArgs {
@@ -205,10 +205,6 @@ struct AssemblerArgs {
     /// Output the graph in GFA format v2
     #[structopt(long = "gfa-v2")]
     pub gfa_output_v2: bool,
-
-    /// Disables the disk compaction optimization
-    #[structopt(long = "disable-disk-optimization")]
-    pub disable_disk_optimization: bool,
 }
 
 #[derive(StructOpt, Debug)]
@@ -258,11 +254,7 @@ struct QueryArgs {
 // #[cfg(feature = "mem-analysis")]
 // static DEBUG_ALLOCATOR: DebugAllocator = DebugAllocator::new();
 
-fn initialize(
-    args: &CommonArgs,
-    out_file: &PathBuf,
-    enable_disk_optimization: bool,
-) -> &'static GGCATInstance {
+fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
     let instance = GGCATInstance::create(GGCATConfig {
         temp_dir: Some(args.temp_dir.clone()),
         memory: args.memory,
@@ -271,7 +263,6 @@ fn initialize(
         intermediate_compression_level: args.intermediate_compression_level,
         stats_file: Some(out_file.with_extension("stats.log")),
         messages_callback: None,
-        enable_disk_optimization,
     });
 
     ggcat_api::debug::DEBUG_KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
@@ -467,7 +458,6 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
             } else {
                 None
             },
-            !args.disable_disk_optimization,
         )
         .unwrap();
 
@@ -537,11 +527,7 @@ fn main() {
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
 
-            let instance = initialize(
-                &args.common_args,
-                &args.output_file,
-                !args.disable_disk_optimization,
-            );
+            let instance = initialize(&args.common_args, &args.output_file);
 
             run_assembler_from_args(&instance, args);
         }
@@ -567,7 +553,9 @@ fn main() {
         }
         CliArgs::Query(args) => {
             if !args.colors && args.colored_query_output_format.is_some() {
-                println!("Warning: colored query output format is specified, but the graph is not colored");
+                println!(
+                    "Warning: colored query output format is specified, but the graph is not colored"
+                );
             }
 
             let _guard = instrumenter::initialize_tracing(
@@ -575,7 +563,7 @@ fn main() {
                 &["ix86arch::INSTRUCTION_RETIRED", "ix86arch::LLC_MISSES"],
             );
 
-            let instance = initialize(&args.common_args, &args.output_file_prefix, false);
+            let instance = initialize(&args.common_args, &args.output_file_prefix);
 
             let output_file_name = run_querier_from_args(&instance, args);
             println!("Final output saved to: {}", output_file_name.display());

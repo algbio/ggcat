@@ -202,8 +202,6 @@ pub struct AssemblerStats {
     /// The processing stats of the input chunks
     pub input_process_stats: Vec<InputChunkProcessStats>,
 
-    /// The checkpoints that determine the compaction start
-    pub compact_checkpoints: Vec<CompactCheckpointStats>,
     /// The compaction reports (every step)
     pub compact_reports: Vec<CompactReport>,
     /// Info about preliminary buckets analysis in the kmers merge phase
@@ -220,7 +218,6 @@ impl AssemblerStats {
             preprocess_time: PrintableDuration(Duration::from_secs(0)),
             input_chunks: Vec::new(),
             input_process_stats: Vec::new(),
-            compact_checkpoints: Vec::new(),
             compact_reports: Vec::new(),
             bucket_input_merge_stats: Vec::new(),
             kmers_merge_stats: Vec::new(),

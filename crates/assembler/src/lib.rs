@@ -120,7 +120,6 @@ pub fn run_assembler<
     generate_maximal_unitigs_links: bool,
     compute_tigs_mode: Option<MatchtigMode>,
     only_bstats: bool,
-    minimizer_bucketing_compaction_threshold: Option<u64>,
 ) -> anyhow::Result<PathBuf> {
     let temp_dir = temp_dir.unwrap_or(PathBuf::new());
 
@@ -131,6 +130,15 @@ pub fn run_assembler<
     let file_stats = compute_stats_from_input_blocks(&input_blocks)?;
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
+
+    // Avoid spawning too many threads
+    let threads_count = threads_count.min(1 << buckets_count_log);
+
+    ggcat_logging::info!(
+        "Buckets count: {} with uncompacted chunk size: {}",
+        1 << buckets_count_log,
+        MemoryDataSize::from_bytes(file_stats.bucket_size_compaction_threshold as usize)
+    );
 
     if let Some(default_compression_level) = default_compression_level {
         INTERMEDIATE_COMPRESSION_LEVEL_SLOW.store(default_compression_level, Ordering::Relaxed);
@@ -158,7 +166,7 @@ pub fn run_assembler<
         },
     );
 
-    let (buckets, counters) = if step <= AssemblerStartingStep::MinimizerBucketing {
+    let buckets = if step <= AssemblerStartingStep::MinimizerBucketing {
         assembler_minimizer_bucketing::static_dispatch::minimizer_bucketing::<AssemblerColorsManager>(
             input_blocks,
             temp_dir.as_path(),
@@ -166,16 +174,14 @@ pub fn run_assembler<
             threads_count,
             k,
             m,
-            minimizer_bucketing_compaction_threshold,
+            Some(file_stats.bucket_size_compaction_threshold),
+            file_stats.target_chunk_size,
         )
     } else {
-        (
-            generate_bucket_names(temp_dir.join("bucket"), first_phase_buckets_count, None)
-                .into_iter()
-                .map(|x| x.to_multi_chunk())
-                .collect(),
-            temp_dir.join("buckets-counters.dat"),
-        )
+        generate_bucket_names(temp_dir.join("bucket"), first_phase_buckets_count, None)
+            .into_iter()
+            .map(|x| x.to_multi_chunk())
+            .collect()
     };
 
     let fs_stats = MemoryFs::get_stats();
@@ -225,7 +231,6 @@ pub fn run_assembler<
     let RetType { sequences, hashes } = if step <= AssemblerStartingStep::KmersMerge {
         assembler_kmers_merge::kmers_merge::<MergingHash, AssemblerColorsManager, _>(
             buckets,
-            counters,
             global_colors_table.clone(),
             buckets_count,
             min_multiplicity,

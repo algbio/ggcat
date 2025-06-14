@@ -197,10 +197,10 @@ pub fn reorganize_reads<
             _,
             CompressedReadsBucketDataSerializer<
                 ReorganizedReadsExtraData<color_types::PartialUnitigsColorStructure<CX>>,
-                typenum::U0,
                 NoSecondBucket,
                 NoMultiplicity,
                 NoMinimizerPosition,
+                typenum::U0,
             >,
         >::new(&buckets, buffers.take(), k);
         let mut tmp_lonely_unitigs_buffer =
@@ -251,10 +251,10 @@ pub fn reorganize_reads<
         )
         .decode_all_bucket_items::<CompressedReadsBucketDataSerializer<
             PartialUnitigExtraData<color_types::PartialUnitigsColorStructure<CX>>,
-            typenum::U0,
             NoSecondBucket,
             NoMultiplicity,
             NoMinimizerPosition,
+            typenum::U0,
         >, _>(
             Vec::new(),
             &mut colors_buffer,

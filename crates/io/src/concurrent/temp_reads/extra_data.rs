@@ -107,6 +107,12 @@ pub trait SequenceExtraDataCombiner: SequenceExtraDataConsecutiveCompression {
         in_buffer: &Self::TempBuffer,
     );
 
+    fn to_single(
+        &self,
+        in_buffer: &Self::TempBuffer,
+        out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> Self::SingleDataType;
+
     fn prepare_for_serialization(&mut self, buffer: &mut Self::TempBuffer);
 
     fn from_single_entry<'a>(

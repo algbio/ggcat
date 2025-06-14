@@ -18,7 +18,6 @@ io = { package = "ggcat_io", path = "../io" }
 
 # Other libraries
 replace_with = "0.1.7"
-typenum = "1.17.0"
 parking_lot = "0.12.3"
 ggcat-logging = { version = "2.0.0", path = "../logging" }
 tokio = "1.38.0"
@@ -30,3 +29,4 @@ byteorder = "1.5.0"
 rustc-hash = "2.1.0"
 hashbrown = "0.15.3"
 bincode = "2.0.1"
+typenum = "1.18.0"

@@ -3,21 +3,20 @@ use crate::reads_buffer::{DeserializedReadIndependent, ReadsBuffer};
 use crate::{KmersTransformContext, KmersTransformExecutorFactory};
 use config::{
     BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, MAX_RESPLIT_BUCKETS_COUNT_LOG,
-    MAXIMUM_JIT_PROCESSED_BUCKETS, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, SwapPriority,
-    USE_SECOND_BUCKET, get_compression_level_info, get_memory_mode,
+    MIN_SUBSPLIT_COUNT, MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, SwapPriority,
+    get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats;
 use ggcat_logging::stats::StatId;
 use hashes::HashableSequence;
 use instrumenter::local_setup_instrumenter;
 use io::DUPLICATES_BUCKET_EXTRA;
+use io::concurrent::temp_reads::creads_utils::BucketModeOption;
 use io::concurrent::temp_reads::creads_utils::{
     AssemblerMinimizerPosition, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
-    NoMultiplicity, WithMultiplicity,
+    NoMultiplicity, WithMultiplicity, WithSecondBucket,
 };
-use io::concurrent::temp_reads::creads_utils::{BucketModeFromBoolean, BucketModeOption};
 use io::concurrent::temp_reads::creads_utils::{MultiplicityModeOption, NoSecondBucket};
-use minimizer_bucketing::counters_analyzer::BucketCounter;
 use minimizer_bucketing::{
     MinimizerBucketMode, MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory,
     PushSequenceInfo,
@@ -77,7 +76,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
         let subsplit_buckets_count_log = min(
             MAX_RESPLIT_BUCKETS_COUNT_LOG,
             max(
-                MAXIMUM_JIT_PROCESSED_BUCKETS,
+                MIN_SUBSPLIT_COUNT,
                 init_data.bucket_size / (global_context.min_bucket_size as usize)
                     * unique_estimator_factor as usize,
             )
@@ -102,7 +101,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
             None,
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
-                MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+                MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
                 get_compression_level_info(),
             ),
             &init_data.data_format,
@@ -133,7 +132,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
     ) {
         match resplit_info.data_format {
             MinimizerBucketMode::Single => Self::do_resplit_internal::<
-                BucketModeFromBoolean<USE_SECOND_BUCKET>,
+                WithSecondBucket,
+                NoMultiplicity,
+            >(global_context, resplit_info, ops),
+            MinimizerBucketMode::SingleGrouped => Self::do_resplit_internal::<
+                NoSecondBucket,
                 NoMultiplicity,
             >(global_context, resplit_info, ops),
             MinimizerBucketMode::Compacted => Self::do_resplit_internal::<
@@ -159,10 +162,10 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
             _,
             CompressedReadsBucketDataSerializer<
                 _,
-                <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,
                 BucketMode, // This is always zero but it is needed to preserve consistency
                 MultiplicityMode,
                 AssemblerMinimizerPosition,
+                <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FlagsCount,
             >,
         >::new(
             &resplit_info.buckets,
@@ -336,23 +339,19 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitte
                 });
             );
 
-            for ((i, bucket), sub_bucket_count) in
-                buckets
-                    .into_iter()
-                    .enumerate()
-                    .zip(
-                        resplit_info
-                            .global_counters
-                            .into_iter()
-                            .map(|x| BucketCounter {
-                                count: x.into_inner(),
-                            }),
-                    )
+            for (i, bucket) in buckets.into_iter().enumerate()
+            // .zip(
+            //     resplit_info
+            //         .global_counters
+            //         .into_iter()
+            //         .map(|x| BucketCounter {
+            //             count: x.into_inner(),
+            //         }),
+            // )
             {
                 output_addresses[i].send_packet(Packet::new_simple(InputBucketDesc {
                     paths: vec![bucket.path],
-                    sub_bucket_counters: vec![sub_bucket_count],
-                    compaction_delta: 0,
+                    // sub_bucket_counters: vec![sub_bucket_count],
                     resplitted: true,
                     rewritten: false,
                     used_hash_bits: 0,

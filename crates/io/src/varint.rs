@@ -22,9 +22,8 @@ pub fn encode_varint<T>(write_bytes: impl FnOnce(&[u8]) -> T, mut value: u64) ->
 }
 
 #[inline(always)]
-#[allow(non_camel_case_types)]
 #[allow(clippy::uninit_assumed_init)]
-pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, FLAGS_COUNT: typenum::Unsigned>(
+pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, FlagsCount: typenum::Unsigned>(
     write_bytes: F,
     mut value: u64,
     flags: u8,
@@ -32,7 +31,7 @@ pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, FLAGS_COUNT: typenum::Unsig
     #[allow(invalid_value)]
     let mut bytes: [u8; VARINT_FLAGS_MAX_SIZE] = unsafe { MaybeUninit::uninit().assume_init() };
 
-    let useful_first_bits: usize = 8 - FLAGS_COUNT::to_usize();
+    let useful_first_bits: usize = 8 - FlagsCount::to_usize();
     let first_byte_max_value: u8 = ((1u16 << (useful_first_bits - 1)) - 1) as u8;
 
     let fr_rem = ((value > first_byte_max_value as u64) as u8) << (useful_first_bits - 1);
@@ -57,13 +56,12 @@ pub fn encode_varint_flags<T, F: FnOnce(&[u8]) -> T, FLAGS_COUNT: typenum::Unsig
 }
 
 #[inline(always)]
-#[allow(non_camel_case_types)]
-pub fn decode_varint_flags<F: FnMut() -> Option<u8>, FLAGS_COUNT: typenum::Unsigned>(
+pub fn decode_varint_flags<F: FnMut() -> Option<u8>, FlagsCount: typenum::Unsigned>(
     mut read_byte: F,
 ) -> Option<(u64, u8)> {
     let first_byte = read_byte()?;
 
-    let useful_first_bits: usize = 8 - FLAGS_COUNT::to_usize();
+    let useful_first_bits: usize = 8 - FlagsCount::to_usize();
     let first_byte_max_value: u8 = ((1u16 << (useful_first_bits - 1)) - 1) as u8;
 
     let flags = ((first_byte as u16) >> useful_first_bits) as u8;

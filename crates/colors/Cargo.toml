@@ -22,7 +22,6 @@ structs = { package = "ggcat_structs", path = "../structs" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Other libraries
-typenum = "1.17.0"
 hashbrown = "0.14.5"
 dashmap = "6.0.1"
 byteorder = "1.5.0"
@@ -43,6 +42,7 @@ itertools = "0.13.0"
 ggcat-logging = { version = "2.0.0", path = "../logging" }
 anyhow = "1.0.89"
 rustc-hash = "2.1.0"
+typenum = "1.18.0"
 
 [features]
 support_kmer_counters = []

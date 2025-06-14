@@ -3,12 +3,11 @@ mod reader;
 use crate::processor::KmersTransformProcessor;
 use crate::reader::{InputBucketDesc, KmersTransformReader, TransformReaderContext};
 use crate::resplitter::KmersTransformResplitter;
-use config::{BucketIndexType, KEEP_FILES, MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME};
+use config::{MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME};
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement,
 };
-use minimizer_bucketing::counters_analyzer::CountersAnalyzer;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{MinimizerBucketMode, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::{BucketsCount, MultiChunkBucket};
@@ -55,8 +54,7 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
         >;
     type FinalExecutorType: KmersTransformFinalExecutor<Self>;
 
-    #[allow(non_camel_case_types)]
-    type FLAGS_COUNT: typenum::uint::Unsigned;
+    type FlagsCount: typenum::uint::Unsigned;
 
     const HAS_COLORS: bool;
 
@@ -152,24 +150,21 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     total_sequences: AtomicU64,
     total_kmers: AtomicU64,
     unique_kmers: AtomicU64,
+
+    executors_register_lock: Mutex<()>,
 }
 
 impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
     pub fn new(
         file_inputs: Vec<MultiChunkBucket>,
         temp_dir: &Path,
-        buckets_counters_path: PathBuf,
         buckets_count: BucketsCount,
         global_extra_data: Arc<F::GlobalExtraData>,
         threads_count: usize,
         k: usize,
         min_bucket_size: u64,
+        compacted_buckets: bool,
     ) -> Self {
-        let counters = CountersAnalyzer::load_from_file(
-            buckets_counters_path,
-            !KEEP_FILES.load(Ordering::Relaxed),
-        );
-
         let mut total_buckets_size = 0;
 
         let mut file_batches_with_sizes: Vec<_> = file_inputs
@@ -208,15 +203,10 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
                 buckets_list.push(InputBucketDesc {
                     paths: bucket_entries.chunks,
-                    sub_bucket_counters: counters
-                        .get_counters_for_bucket(bucket_entries.index as BucketIndexType)
-                        .clone(),
-                    compaction_delta: counters
-                        .get_compaction_offset(bucket_entries.index as BucketIndexType),
                     resplitted: false,
                     rewritten: false,
                     used_hash_bits: buckets_count.normal_buckets_count_log,
-                    out_data_format: if bucket_entries.was_compacted {
+                    out_data_format: if compacted_buckets {
                         MinimizerBucketMode::Compacted
                     } else {
                         MinimizerBucketMode::Single
@@ -242,15 +232,10 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
                 buckets_list.push(InputBucketDesc {
                     paths: bucket_entry.chunks,
-                    sub_bucket_counters: counters
-                        .get_counters_for_bucket(bucket_entry.index as BucketIndexType)
-                        .clone(),
-                    compaction_delta: counters
-                        .get_compaction_offset(bucket_entry.index as BucketIndexType),
                     resplitted: false,
                     rewritten: false,
                     used_hash_bits: buckets_count.normal_buckets_count_log as usize,
-                    out_data_format: if bucket_entry.was_compacted {
+                    out_data_format: if compacted_buckets {
                         MinimizerBucketMode::Compacted
                     } else {
                         MinimizerBucketMode::Single
@@ -287,6 +272,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             total_sequences: AtomicU64::new(0),
             total_kmers: AtomicU64::new(0),
             unique_kmers: AtomicU64::new(0),
+            executors_register_lock: Mutex::new(()),
         });
 
         Self {

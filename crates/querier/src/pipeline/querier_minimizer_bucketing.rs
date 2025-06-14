@@ -109,8 +109,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
 
     type RewriteBucketCompute = RewriteBucketComputeQuery;
 
-    #[allow(non_camel_case_types)]
-    type FLAGS_COUNT = typenum::U0;
+    type FlagsCount = typenum::U0;
 
     type ExecutorType = QuerierMinimizerBucketingExecutor<CX>;
 
@@ -265,7 +264,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     threads_count: usize,
     k: usize,
     m: usize,
-) -> ((Vec<SingleBucket>, PathBuf), u64) {
+) -> (Vec<SingleBucket>, u64) {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: graph + query bucketing".to_string());

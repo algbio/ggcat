@@ -21,10 +21,10 @@ pub struct ResultsBucket<X: SequenceExtraDataConsecutiveCompression> {
     pub bucket_index: BucketIndexType,
     pub serializer: CompressedReadsBucketDataSerializer<
         PartialUnitigExtraData<X>,
-        typenum::U0,
         NoSecondBucket,
         NoMultiplicity,
         NoMinimizerPosition,
+        typenum::U0,
     >,
     pub _phantom: PhantomData<X>,
 }

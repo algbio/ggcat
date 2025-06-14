@@ -126,7 +126,7 @@ impl<T: Sync + Send + Debug + Copy + Default + MinimizerBucketingSeqColorData + 
     }
 }
 
-impl<T: Sync + Send + Debug + Clone + SequenceExtraDataConsecutiveCompression>
+impl<T: Sync + Send + Debug + Clone + SequenceExtraDataConsecutiveCompression + Default>
     SequenceExtraDataCombiner for NonColoredMultipleColors<T>
 {
     type SingleDataType = T;
@@ -137,6 +137,14 @@ impl<T: Sync + Send + Debug + Clone + SequenceExtraDataConsecutiveCompression>
         _color: Self,
         _in_buffer: &Self::TempBuffer,
     ) {
+    }
+
+    fn to_single(
+        &self,
+        _in_buffer: &Self::TempBuffer,
+        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> Self::SingleDataType {
+        T::default()
     }
 
     fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}

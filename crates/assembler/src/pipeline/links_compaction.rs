@@ -94,7 +94,7 @@ pub fn links_compaction(
         let mut deserializer = UnitigLinkSerializer::new(());
 
         while let Some(checkpoint) =
-            file_reader.get_read_parallel_stream(AllowedCheckpointStrategy::DecompressOnly)
+            file_reader.get_read_parallel_stream(AllowedCheckpointStrategy::DecompressOnly, None)
         {
             match checkpoint {
                 ChunkReader::Reader(mut stream, _) => {

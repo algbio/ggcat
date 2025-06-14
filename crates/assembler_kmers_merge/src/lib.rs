@@ -31,7 +31,7 @@ use parallel_processor::buckets::{
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
 use std::marker::PhantomData;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use unitigs_extender::GlobalExtenderParams;
@@ -92,8 +92,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     type MapProcessorType = ParallelKmersMergeMapProcessor<MH, CX, COMPUTE_SIMPLITIGS>;
     type FinalExecutorType = ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>;
 
-    #[allow(non_camel_case_types)]
-    type FLAGS_COUNT = typenum::U2;
+    type FlagsCount = typenum::U2;
     const HAS_COLORS: bool = CX::COLORS_ENABLED;
 
     fn get_packets_init_data(
@@ -150,7 +149,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
 pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + Sync>(
     file_inputs: Vec<MultiChunkBucket>,
-    buckets_counters_path: PathBuf,
     colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
     buckets_count: BucketsCount,
     min_multiplicity: usize,
@@ -242,24 +240,24 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
         KmersTransform::<ParallelKmersMergeFactory<MH, CX, true>>::new(
             file_inputs,
             out_directory.as_ref(),
-            buckets_counters_path,
             buckets_count,
             global_data,
             threads_count,
             k,
             MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
+            true,
         )
         .parallel_kmers_transform();
     } else {
         KmersTransform::<ParallelKmersMergeFactory<MH, CX, false>>::new(
             file_inputs,
             out_directory.as_ref(),
-            buckets_counters_path,
             buckets_count,
             global_data,
             threads_count,
             k,
             MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
+            true,
         )
         .parallel_kmers_transform();
     }

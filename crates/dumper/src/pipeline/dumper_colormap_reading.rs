@@ -63,10 +63,10 @@ pub fn colormap_reading<
         )
         .decode_all_bucket_items::<CompressedReadsBucketDataSerializer<
             DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
-            typenum::consts::U0,
             NoSecondBucket,
             NoMultiplicity,
             NoMinimizerPosition,
+            typenum::consts::U0,
         >, _>(
             vec![],
             &mut (),

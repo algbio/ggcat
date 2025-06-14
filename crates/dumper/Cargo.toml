@@ -22,7 +22,6 @@ colors = { package = "ggcat_colors", path = "../colors" }
 structs = { package = "ggcat_structs", path = "../structs" }
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
 kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
-typenum = "1.17.0"
 rayon = "1.10.0"
 byteorder = "1.5.0"
 hashbrown = "0.14.5"
@@ -32,6 +31,7 @@ lz4 = "1.25.0"
 flate2 = "1.0.30"
 ggcat-logging = { version = "2.0.0", path = "../logging" }
 anyhow = "1.0.89"
+typenum = "1.18.0"
 
 [features]
 devel-build = []

@@ -37,7 +37,6 @@ csv = "1.3.0"
 flate2 = { default-features = false, features = [
     "cloudflare_zlib",
 ], version = "1.0.30" }
-typenum = "1.17.0"
 fs_extra = "1.3.0"
 atoi = "2.0.0"
 

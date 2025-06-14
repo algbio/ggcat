@@ -237,6 +237,14 @@ impl SequenceExtraDataCombiner for MinBkMultipleColors {
         out_buffer.extend_vec(&mut self.0, in_buffer.slice_vec(&color.0));
     }
 
+    fn to_single(
+        &self,
+        in_buffer: &Self::TempBuffer,
+        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> Self::SingleDataType {
+        MinBkSingleColor(in_buffer.slice_vec(&self.0)[0])
+    }
+
     fn prepare_for_serialization(&mut self, buffer: &mut Self::TempBuffer) {
         let slice = buffer.slice_vec_mut(&mut self.0);
         slice.sort_unstable();

@@ -25,7 +25,7 @@ use parallel_processor::buckets::{BucketsCount, MultiChunkBucket};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::marker::PhantomData;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -78,8 +78,7 @@ impl<CD: MinimizerBucketingSeqColorData> MinimizerBucketingExecutorFactory
 
     type RewriteBucketCompute = rewrite_bucket::RewriteBucketComputeAssembler;
 
-    #[allow(non_camel_case_types)]
-    type FLAGS_COUNT = typenum::U2;
+    type FlagsCount = typenum::U2;
 
     type ExecutorType = AssemblerMinimizerBucketingExecutor<CD>;
 
@@ -272,8 +271,9 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     threads_count: usize,
     k: usize,
     m: usize,
-    minimizer_bucketing_compaction_threshold: Option<u64>,
-) -> (Vec<MultiChunkBucket>, PathBuf) {
+    chunking_size_threshold: Option<u64>,
+    target_chunk_size: u64,
+) -> Vec<MultiChunkBucket> {
     MNHFactory::initialize(k);
 
     PHASES_TIMES_MONITOR
@@ -318,6 +318,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         Some(k - 1),
         false,
         k,
-        minimizer_bucketing_compaction_threshold,
+        chunking_size_threshold,
+        target_chunk_size,
     )
 }

@@ -389,10 +389,10 @@ pub fn build_eulertigs<
                 while circular_unitigs_reader
                     .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
                         _,
-                        typenum::consts::U0,
                         NoSecondBucket,
                         NoMultiplicity,
                         NoMinimizerPosition,
+                        typenum::consts::U0,
                     >, _>(
                         Vec::new(),
                         SequenceDataWithAbundance::<PartialUnitigsColorStructure<CX>, ()>::new_temp_buffer(),
@@ -527,10 +527,10 @@ pub fn build_eulertigs<
                 while flat_unitigs_reader
                     .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
                         _,
-                        typenum::consts::U0,
                         NoSecondBucket,
                         NoMultiplicity,
                         NoMinimizerPosition,
+                        typenum::consts::U0,
                     >, _>(
                         Vec::new(),
                         SequenceDataWithAbundance::<PartialUnitigsColorStructure<CX>, ()>::new_temp_buffer(),

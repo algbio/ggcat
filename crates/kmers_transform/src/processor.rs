@@ -96,20 +96,20 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
             // static MAX_PACKET_SIZE: AtomicUsize = AtomicUsize::new(0);
             let current_size = packet.get_size();
 
-            if real_size != proc_info.sequences_count {
-                //MAX_PACKET_SIZE.fetch_max(current_size, Ordering::Relaxed) < current_size {
-                ggcat_logging::info!(
-                    "Found bucket with max size {} ==> {:?} // EXPECTED_SIZE: {} REAL_SIZE: {} SUB: {}",
-                    current_size,
-                    proc_info
-                        .debug_bucket_first_path
-                        .as_ref()
-                        .map(|p| p.display()),
-                    proc_info.sequences_count,
-                    real_size,
-                    proc_info.sub_bucket
-                );
-            }
+            // if real_size != proc_info.sequences_count {
+            //     //MAX_PACKET_SIZE.fetch_max(current_size, Ordering::Relaxed) < current_size {
+            //     ggcat_logging::info!(
+            //         "Found bucket with max size {} ==> {:?} // EXPECTED_SIZE: {} REAL_SIZE: {} SUB: {}",
+            //         current_size,
+            //         proc_info
+            //             .debug_bucket_first_path
+            //             .as_ref()
+            //             .map(|p| p.display()),
+            //         proc_info.sequences_count,
+            //         real_size,
+            //         proc_info.sub_bucket
+            //     );
+            // }
 
             packet = final_executor.process_map(&global_context.global_extra_data, packet);
             packet.reset();

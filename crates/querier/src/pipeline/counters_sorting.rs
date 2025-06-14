@@ -3,7 +3,8 @@ use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::SingleKmerColorDataType;
 use config::{
     DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, SwapPriority, get_compression_level_info, get_memory_mode,
+    MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, SwapPriority, get_compression_level_info,
+    get_memory_mode,
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataOwned,
@@ -131,7 +132,7 @@ pub fn counters_sorting<CX: ColorsManager>(
             None,
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
-                MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+                MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
                 get_compression_level_info(),
             ),
             &(),

@@ -5,7 +5,6 @@ use colors::colors_manager::ColorsManager;
 use colors::{
     bundles::multifile_building::ColorBundleMultifileBuilding, non_colored::NonColoredManager,
 };
-use config::{MAX_BUCKETS_CHUNKING_THRESHOLD, MIN_BUCKETS_CHUNKING_THRESHOLD};
 pub use ggcat_logging::MessageLevel;
 use ggcat_logging::UnrecoverableErrorLogging;
 use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
@@ -95,9 +94,6 @@ pub struct GGCATConfig {
 
     /// The messages callback, if present, no output will be automatically written to stdout
     pub messages_callback: Option<fn(MessageLevel, &str)>,
-
-    /// Enables disk compaction optimization
-    pub enable_disk_optimization: bool,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -235,8 +231,6 @@ impl GGCATInstance {
         extra_elab: ExtraElaboration,
 
         gfa_output_version: Option<GfaVersion>,
-
-        enable_disk_optimization: bool,
     ) -> anyhow::Result<PathBuf> {
         let merging_hash_dispatch = utils::get_hash_static_id(
             debug::DEBUG_HASH_TYPE.lock().clone(),
@@ -261,22 +255,6 @@ impl GGCATInstance {
         };
 
         let temp_dir = create_tempdir(self.0.temp_dir.clone());
-
-        let bucket_size_compaction_threshold = if enable_disk_optimization {
-            let estimated_bases_count: u64 = input_streams
-                .iter()
-                .map(|file| file.estimated_bases_count().unwrap())
-                .sum();
-
-            // Heuristic for chunks used for maximum disk usage
-            Some(
-                (estimated_bases_count as u64 / 5)
-                    .min(MAX_BUCKETS_CHUNKING_THRESHOLD)
-                    .max(MIN_BUCKETS_CHUNKING_THRESHOLD),
-            )
-        } else {
-            None
-        };
 
         let output_file = assembler::dynamic_dispatch::run_assembler(
             (merging_hash_dispatch, colors_hash, output_mode),
@@ -303,7 +281,6 @@ impl GGCATInstance {
                 _ => None,
             },
             debug::DEBUG_ONLY_BSTATS.load(Ordering::Relaxed),
-            bucket_size_compaction_threshold,
         )?;
 
         remove_tempdir(temp_dir);

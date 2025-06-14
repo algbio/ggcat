@@ -200,15 +200,15 @@ impl<const ENABLED: bool> MultiplicityModeOption for MultiplicityModeFromBoolean
 
 pub struct CompressedReadsBucketDataSerializer<
     E: SequenceExtraDataConsecutiveCompression,
-    FlagsCount: typenum::Unsigned,
     BucketMode: BucketModeOption,
     MultiplicityMode: MultiplicityModeOption,
     MinimizerMode: MinimizerModeOption,
+    FlagsCount: typenum::Unsigned,
 > {
     min_size: usize,
     last_data: E::LastData,
     min_size_log: u8,
-    _phantom: PhantomData<(FlagsCount, BucketMode, MultiplicityMode, MinimizerMode)>,
+    _phantom: PhantomData<(BucketMode, MultiplicityMode, MinimizerMode, FlagsCount)>,
 }
 
 #[derive(Encode, Decode, Clone, Copy)]
@@ -230,17 +230,17 @@ pub struct DeserializedRead<'a, E> {
 impl<
     'a,
     E: SequenceExtraDataConsecutiveCompression,
-    FlagsCount: typenum::Unsigned,
     BucketMode: BucketModeOption,
     MultiplicityMode: MultiplicityModeOption,
     MinimizerMode: MinimizerModeOption,
+    FlagsCount: typenum::Unsigned,
 > BucketItemSerializer
     for CompressedReadsBucketDataSerializer<
         E,
-        FlagsCount,
         BucketMode,
         MultiplicityMode,
         MinimizerMode,
+        FlagsCount,
     >
 {
     type InputElementType<'b> = CompressedReadsBucketData<'b>;
@@ -417,9 +417,9 @@ pub mod helpers {
     pub fn helper_read_bucket_with_opt_multiplicity<
         E: SequenceExtraDataConsecutiveCompression,
         EM: SequenceExtraDataConsecutiveCompression + SequenceExtraDataCombiner<SingleDataType = E>,
-        FlagsCount: typenum::Unsigned,
         BucketMode: BucketModeOption,
         MinimizerMode: MinimizerModeOption,
+        FlagsCount: typenum::Unsigned,
     >(
         reader: &AsyncBinaryReader,
         read_thread: Arc<AsyncReaderThread>,
@@ -433,16 +433,17 @@ pub mod helpers {
         if with_multiplicity {
             let mut items = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
                 E,
-                FlagsCount,
                 NoSecondBucket,
                 WithMultiplicity,
                 MinimizerMode,
+                FlagsCount,
             >>(
                 read_thread,
                 Vec::new(),
                 <E>::new_temp_buffer(),
                 allowed_passtrough,
                 k,
+                None,
             );
             let mut tmp_mult_buffer = EM::new_temp_buffer();
 
@@ -481,16 +482,17 @@ pub mod helpers {
         } else {
             let mut items = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
                 E,
-                FlagsCount,
                 BucketMode,
                 NoMultiplicity,
                 MinimizerMode,
+                FlagsCount,
             >>(
                 read_thread,
                 Vec::new(),
                 <E>::new_temp_buffer(),
                 allowed_passtrough,
                 k,
+                None,
             );
             let mut tmp_mult_buffer = EM::new_temp_buffer();
 

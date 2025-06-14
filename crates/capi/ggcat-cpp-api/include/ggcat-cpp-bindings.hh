@@ -783,8 +783,6 @@ struct GGCATConfigFFI final {
   // Output the result in the specified version of GFA format, 0 outputs in FASTA (default)
   // Supported V1 and V2
   ::std::uint32_t gfa_output_version CXX_DEFAULT_VALUE(0);
-  // Enables the disk optimization
-  bool enable_disk_optimization CXX_DEFAULT_VALUE(false);
 
   using IsRelocatable = ::std::true_type;
 };
@@ -819,10 +817,10 @@ private:
 ::GGCATInstanceFFI const *ggcat_create(::GGCATConfigFFI config) noexcept;
 
 // Builds a new graph from the given input files, with the specified parameters
-::rust::String ggcat_build_from_files(::GGCATInstanceFFI const &instance, ::rust::Slice<::rust::String const> input_files, ::rust::String output_file, ::rust::Slice<::rust::String const> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab, ::std::uint32_t gfa_output_version, bool enable_disk_optimization) noexcept;
+::rust::String ggcat_build_from_files(::GGCATInstanceFFI const &instance, ::rust::Slice<::rust::String const> input_files, ::rust::String output_file, ::rust::Slice<::rust::String const> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab, ::std::uint32_t gfa_output_version) noexcept;
 
 // Builds a new graph from the given input streams, with the specified parameters
-::rust::String ggcat_build_from_streams(::GGCATInstanceFFI const &instance, ::rust::Slice<::InputStreamFFI const> input_streams, ::rust::String output_file, ::rust::Slice<::rust::String const> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab, ::std::uint32_t gfa_output_version, bool enable_disk_optimization) noexcept;
+::rust::String ggcat_build_from_streams(::GGCATInstanceFFI const &instance, ::rust::Slice<::InputStreamFFI const> input_streams, ::rust::String output_file, ::rust::Slice<::rust::String const> color_names, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t min_multiplicity, ::std::size_t extra_elab, ::std::uint32_t gfa_output_version) noexcept;
 
 // Queries a (optionally) colored graph with a specific set of sequences as queries
 ::rust::String ggcat_query_graph(::GGCATInstanceFFI const &instance, ::rust::String input_graph, ::rust::String input_query, ::rust::String output_file_prefix, ::std::size_t kmer_length, ::std::size_t threads_count, bool forward_only, ::std::size_t minimizer_length, bool colors, ::std::size_t color_output_format) noexcept;

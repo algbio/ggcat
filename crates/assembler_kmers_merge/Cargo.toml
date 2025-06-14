@@ -27,7 +27,6 @@ assembler_minimizer_bucketing = { package = "ggcat_assembler_minibuck", path = "
 
 # Other crates
 hashbrown = "0.14.5"
-typenum = "1.17.0"
 crossbeam = "0.8.4"
 
 # Profiler
@@ -35,6 +34,7 @@ instrumenter = "0.1.3"
 parking_lot = "0.12.3"
 ggcat-logging = { version = "2.0.0", path = "../logging" }
 rustc-hash = "2.1.0"
+typenum = "1.18.0"
 
 [dev-dependencies]
 fdlimit = "0.3.0"

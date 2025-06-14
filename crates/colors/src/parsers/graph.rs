@@ -311,6 +311,14 @@ impl SequenceExtraDataCombiner for MinBkMultipleColors {
         unimplemented!()
     }
 
+    fn to_single(
+        &self,
+        _in_buffer: &Self::TempBuffer,
+        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> Self::SingleDataType {
+        unimplemented!()
+    }
+
     fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
 
     #[inline(always)]

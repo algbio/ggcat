@@ -1,12 +1,11 @@
 use config::{
     BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, READ_FLAG_INCL_END,
-    USE_SECOND_BUCKET,
 };
 use hashes::default::MNHFactory;
 use hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use io::concurrent::temp_reads::creads_utils::{
-    AssemblerMinimizerPosition, BucketModeFromBoolean, CompressedReadsBucketDataSerializer,
-    DeserializedRead, NoMultiplicity,
+    AssemblerMinimizerPosition, CompressedReadsBucketDataSerializer, DeserializedRead,
+    NoMultiplicity, WithSecondBucket,
 };
 use parallel_processor::buckets::readers::async_binary_reader::{
     AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
@@ -49,6 +48,7 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
         true,
         RemoveFileMode::Remove { remove_fs: false },
         DEFAULT_PREFETCH_AMOUNT,
+        None,
     );
 
     let file_size = reader.get_file_size();
@@ -63,16 +63,17 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
 
     let mut checkpoints_iterator = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
         (),
-        typenum::U2,
-        BucketModeFromBoolean<USE_SECOND_BUCKET>,
+        WithSecondBucket,
         NoMultiplicity,
         AssemblerMinimizerPosition,
+        typenum::U2,
     >>(
         reader_thread.clone(),
         Vec::new(),
         (),
         AllowedCheckpointStrategy::DecompressOnly,
         k,
+        None,
     );
 
     let mut total_counters = vec![0; second_buckets_max];

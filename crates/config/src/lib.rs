@@ -2,6 +2,7 @@
 use parallel_processor::buckets::writers::compressed_binary_writer::{
     CompressedCheckpointSize, CompressionLevelInfo,
 };
+use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeCheckpointSize;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -37,7 +38,10 @@ pub const FLUSH_QUEUE_FACTOR: usize = 16;
 pub const PARTIAL_VECS_CHECKPOINT_SIZE: CompressedCheckpointSize =
     CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(2));
 
-pub const MINIMIZER_BUCKETS_CHECKPOINT_SIZE: CompressedCheckpointSize =
+pub const MINIMIZER_BUCKETS_CHECKPOINT_SIZE: LockFreeCheckpointSize =
+    LockFreeCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(8));
+
+pub const MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE: CompressedCheckpointSize =
     CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(8));
 
 pub const DEFAULT_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024 * 4;
@@ -45,22 +49,22 @@ pub const DEFAULT_PER_CPU_BUFFER_SIZE: MemoryDataSize = MemoryDataSize::from_kib
 
 pub const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(10);
 
-// 192MB of reads for each bucket
-pub const MAX_BUCKET_SIZE: u64 = 192 * 1024 * 1024;
-pub const MIN_BUCKETS_COUNT_LOG: usize = 10;
+// 1GB of reads max for each bucket
+pub const MIN_BUCKET_SIZE: u64 = 512 * 1024;
+pub const MAX_BUCKET_SIZE: u64 = 1024 * 1024 * 1024;
+pub const MIN_BUCKETS_COUNT_LOG: usize = 2;
+pub const DEFAULT_BUCKETS_COUNT_LOG: usize = 10;
 pub const MAX_BUCKETS_COUNT_LOG: usize = 13;
 pub const MAX_RESPLIT_BUCKETS_COUNT_LOG: usize = 9;
 
 pub const MIN_BUCKET_CHUNKS_FOR_READING_THREAD: usize = 2;
 
-pub const USE_SECOND_BUCKET: bool = true;
-
 pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 10;
 
 pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 32;
-pub const MAXIMUM_SECOND_BUCKETS_LOG: usize = 8;
+pub const MAXIMUM_SECOND_BUCKETS_LOG: usize = 6;
 pub const MAXIMUM_SECOND_BUCKETS_COUNT: usize = 1 << MAXIMUM_SECOND_BUCKETS_LOG;
-pub const MAXIMUM_JIT_PROCESSED_BUCKETS: usize = 16;
+pub const MIN_SUBSPLIT_COUNT: usize = 16;
 
 pub const MAX_INTERMEDIATE_MAP_SIZE: u64 = 1024 * 1024 * 32;
 
@@ -79,13 +83,25 @@ pub const PRIORITY_SCHEDULING_HIGH: usize = 0;
 pub const PRIORITY_SCHEDULING_BASE: usize = 1;
 pub const PRIORITY_SCHEDULING_LOW: usize = 2;
 
-pub const MIN_BUCKETS_CHUNKING_THRESHOLD: u64 = 1024 * 1024 * 512;
-pub const MAX_BUCKETS_CHUNKING_THRESHOLD: u64 = 1024 * 1024 * 1024 * 64;
+// Each chunk in a bucket must be between 256KB and 8MB
+pub const MIN_BUCKETS_CHUNK_SIZE: u64 = 1024 * 256;
+pub const DEFAULT_BUCKETS_CHUNK_SIZE: u64 = 1024 * 1024 * 2;
+pub const MAX_BUCKETS_CHUNK_SIZE: u64 = 1024 * 1024 * 16;
 
+// The soft limit to compaction iterations per bucket, sizes will be chosen to avoid exceeding this threshold
+pub const MAX_COMPACTION_ITERATIONS: u64 = 8;
+
+pub const TARGET_CHUNKS_PER_BUCKET: u64 = 16;
+pub const MIN_TARGET_CHUNK_SIZE: u64 = MIN_BUCKETS_CHUNK_SIZE;
+pub const DEFAULT_TARGET_CHUNK_SIZE_MULTIPLIER: u64 = 8;
+pub const MAX_TARGET_CHUNK_SIZE: u64 = 1024 * 1024 * 64;
+
+// Higher priority means faster swap to disk
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]
 impl SwapPriority {
-    pub const MinimizerBuckets: usize = 0;
+    pub const MinimizerUncompressedTempBuckets: usize = 0;
+    pub const MinimizerBuckets: usize = 1;
     pub const FinalMaps: usize = 1;
     pub const ResultBuckets: usize = 1;
     pub const HashBuckets: usize = 2;

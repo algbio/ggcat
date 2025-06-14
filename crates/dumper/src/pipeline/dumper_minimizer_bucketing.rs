@@ -88,6 +88,14 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
         unimplemented!()
     }
 
+    fn to_single(
+        &self,
+        _in_buffer: &Self::TempBuffer,
+        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> Self::SingleDataType {
+        unimplemented!()
+    }
+
     fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
 
     fn from_single_entry<'a>(
@@ -160,8 +168,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
 
     type RewriteBucketCompute = RewriteBucketComputeDumper;
 
-    #[allow(non_camel_case_types)]
-    type FLAGS_COUNT = typenum::U0;
+    type FlagsCount = typenum::U0;
 
     type ExecutorType = DumperMinimizerBucketingExecutor<CX>;
 
@@ -310,7 +317,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     k: usize,
     m: usize,
     colors_count: u64,
-) -> (Vec<SingleBucket>, PathBuf) {
+) -> Vec<SingleBucket> {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: unitigs reorganization".to_string());

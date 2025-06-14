@@ -38,10 +38,10 @@ struct FinalUnitigInfo {
 
 type CompressedReadsDataSerializerUnitigsBuilding<CX> = CompressedReadsBucketDataSerializer<
     ReorganizedReadsExtraData<PartialUnitigsColorStructure<CX>>,
-    typenum::U0,
     NoSecondBucket,
     NoMultiplicity,
     NoMinimizerPosition,
+    typenum::U0,
 >;
 
 pub fn build_unitigs<

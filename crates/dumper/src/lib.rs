@@ -12,7 +12,6 @@ use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use pipeline::dumper_colormap_querying::colormap_query;
 use pipeline::dumper_colormap_reading::colormap_reading;
-use std::fs::remove_file;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -65,7 +64,7 @@ pub fn dump_unitigs(
         INTERMEDIATE_COMPRESSION_LEVEL_FAST.store(default_compression_level, Ordering::Relaxed);
     }
 
-    let (reorganized_unitigs, buckets_stats) = minimizer_bucketing::<ColorBundleGraphQuerying>(
+    let reorganized_unitigs = minimizer_bucketing::<ColorBundleGraphQuerying>(
         graph_input.as_ref().to_path_buf(),
         BucketsCount::new(buckets_count_log, ExtraBuckets::None),
         threads_count,
@@ -74,7 +73,6 @@ pub fn dump_unitigs(
         m,
         color_map.colors_subsets_count(),
     );
-    let _ = remove_file(buckets_stats);
 
     MemoryFs::flush_all_to_disk();
     MemoryFs::free_memory();
