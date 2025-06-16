@@ -7,7 +7,7 @@ bincode = "1.3.3"
 byteorder = "1.5.0"
 config = { package = "ggcat_config", path = "../config" }
 io = { package = "ggcat_io", path = "../io" }
-parallel-processor = "0.1.29"
+parallel-processor = "0.1.30"
 serde = { version = "1.0.203", features = ["derive"] }
 
 

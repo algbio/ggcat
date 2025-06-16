@@ -15,7 +15,7 @@ utils = { package = "ggcat_utils", path = "../utils" }
 dynamic-dispatch = "0.5.4"
 
 # Common libraries
-parallel-processor = "0.1.29"
+parallel-processor = "0.1.30"
 streaming-libdeflate-rs = "0.1.5"
 nightly-quirks = "0.1.4"
 

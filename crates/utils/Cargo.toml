@@ -6,4 +6,4 @@ edition = "2024"
 parking_lot = "0.12.3"
 rand = "0.8.5"
 
-parallel-processor = "0.1.29"
+parallel-processor = "0.1.30"
