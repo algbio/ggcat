@@ -86,6 +86,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
     ])?;
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
+    let second_buckets_count_log = file_stats.best_second_buckets_count_log;
 
     if let Some(default_compression_level) = default_compression_level {
         INTERMEDIATE_COMPRESSION_LEVEL_SLOW.store(default_compression_level, Ordering::Relaxed);
@@ -93,6 +94,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
     }
 
     let buckets_count = BucketsCount::new(buckets_count_log, ExtraBuckets::None);
+    let second_buckets_count = BucketsCount::new(second_buckets_count_log, ExtraBuckets::None);
 
     let (buckets, queries_count) = if step <= QuerierStartingStep::MinimizerBucketing {
         minimizer_bucketing::<QuerierColorsManager>(
@@ -100,6 +102,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
             query_input.clone(),
             temp_dir.as_path(),
             buckets_count,
+            second_buckets_count,
             threads_count,
             k,
             m,

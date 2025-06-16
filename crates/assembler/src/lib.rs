@@ -13,8 +13,8 @@ use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
 use config::{
     DEFAULT_PER_CPU_BUFFER_SIZE, INTERMEDIATE_COMPRESSION_LEVEL_FAST,
-    INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES, MAXIMUM_SECOND_BUCKETS_LOG,
-    MINIMUM_LOG_DELTA_TIME, SwapPriority, get_compression_level_info, get_memory_mode,
+    INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES, MINIMUM_LOG_DELTA_TIME, SwapPriority,
+    get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats;
 use hashes::HashFunctionFactory;
@@ -130,13 +130,15 @@ pub fn run_assembler<
     let file_stats = compute_stats_from_input_blocks(&input_blocks)?;
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
+    let second_buckets_count_log = file_stats.best_second_buckets_count_log;
 
     // Avoid spawning too many threads
     let threads_count = threads_count.min(1 << buckets_count_log);
 
     ggcat_logging::info!(
-        "Buckets count: {} with uncompacted chunk size: {}",
+        "Buckets count: {}/{} with uncompacted chunk size: {}",
         1 << buckets_count_log,
+        1 << second_buckets_count_log,
         MemoryDataSize::from_bytes(file_stats.bucket_size_compaction_threshold as usize)
     );
 
@@ -166,11 +168,14 @@ pub fn run_assembler<
         },
     );
 
+    let second_buckets_count = BucketsCount::new(second_buckets_count_log, ExtraBuckets::None);
+
     let buckets = if step <= AssemblerStartingStep::MinimizerBucketing {
         assembler_minimizer_bucketing::static_dispatch::minimizer_bucketing::<AssemblerColorsManager>(
             input_blocks,
             temp_dir.as_path(),
             first_phase_buckets_count,
+            second_buckets_count,
             threads_count,
             k,
             m,
@@ -217,7 +222,7 @@ pub fn run_assembler<
                     chunk.clone(),
                     index,
                     buckets.len(),
-                    MAXIMUM_SECOND_BUCKETS_LOG,
+                    second_buckets_count_log,
                     k,
                     m,
                 );

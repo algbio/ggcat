@@ -58,6 +58,7 @@ pub fn dump_unitigs(
     ))])?;
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
+    let second_buckets_count_log = file_stats.best_second_buckets_count_log;
 
     if let Some(default_compression_level) = default_compression_level {
         INTERMEDIATE_COMPRESSION_LEVEL_SLOW.store(default_compression_level, Ordering::Relaxed);
@@ -67,6 +68,7 @@ pub fn dump_unitigs(
     let reorganized_unitigs = minimizer_bucketing::<ColorBundleGraphQuerying>(
         graph_input.as_ref().to_path_buf(),
         BucketsCount::new(buckets_count_log, ExtraBuckets::None),
+        BucketsCount::new(second_buckets_count_log, ExtraBuckets::None),
         threads_count,
         temp_dir.as_path(),
         k,

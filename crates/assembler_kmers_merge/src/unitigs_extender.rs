@@ -8,8 +8,10 @@ use colors::colors_manager::{
     },
 };
 use hashes::HashFunctionFactory;
-use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
-use kmers_transform::{GroupProcessStats, reads_buffer::DeserializedReadIndependent};
+use io::concurrent::temp_reads::{
+    creads_utils::DeserializedRead, extra_data::SequenceExtraDataTempBufferManagement,
+};
+use kmers_transform::GroupProcessStats;
 
 pub mod hashmap;
 
@@ -33,9 +35,8 @@ pub trait UnitigsExtenderTrait<MH: HashFunctionFactory, CX: ColorsManager> {
     fn get_memory_usage(&self) -> usize;
     fn add_sequence(
         &mut self,
-        sequences_data: &[u8],
+        sequence: &DeserializedRead<'_, MinimizerBucketingMultipleSeqColorDataType<CX>>,
         extra_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        sequence: DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>,
     );
     fn get_stats(&self) -> GroupProcessStats;
     fn compute_unitigs<const COMPUTE_SIMPLITIGS: bool>(

@@ -21,11 +21,11 @@ pub struct FastaWriterConcurrentBuffer<
 }
 
 impl<
-        'a,
-        ColorInfo: IdentSequenceWriter,
-        LinksInfo: IdentSequenceWriter,
-        Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
-    > FastaWriterConcurrentBuffer<'a, ColorInfo, LinksInfo, Backend>
+    'a,
+    ColorInfo: IdentSequenceWriter,
+    LinksInfo: IdentSequenceWriter,
+    Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
+> FastaWriterConcurrentBuffer<'a, ColorInfo, LinksInfo, Backend>
 {
     pub fn new(
         target: &'a StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>,
@@ -128,11 +128,11 @@ impl<
 }
 
 impl<
-        'a,
-        ColorInfo: IdentSequenceWriter,
-        LinksInfo: IdentSequenceWriter,
-        Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
-    > Drop for FastaWriterConcurrentBuffer<'a, ColorInfo, LinksInfo, Backend>
+    'a,
+    ColorInfo: IdentSequenceWriter,
+    LinksInfo: IdentSequenceWriter,
+    Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
+> Drop for FastaWriterConcurrentBuffer<'a, ColorInfo, LinksInfo, Backend>
 {
     fn drop(&mut self) {
         self.flush();

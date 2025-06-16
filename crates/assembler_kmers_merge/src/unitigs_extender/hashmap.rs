@@ -12,10 +12,12 @@ use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use io::{
     compressed_read::CompressedRead,
-    concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement,
+    concurrent::temp_reads::{
+        creads_utils::DeserializedRead, extra_data::SequenceExtraDataTempBufferManagement,
+    },
     varint::{decode_varint, encode_varint},
 };
-use kmers_transform::{GroupProcessStats, reads_buffer::DeserializedReadIndependent};
+use kmers_transform::GroupProcessStats;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use structs::map_entry::MapEntry;
 use utils::Utils;
@@ -343,11 +345,10 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
 
     fn add_sequence(
         &mut self,
-        sequences_data: &[u8],
+        sequence: &DeserializedRead<'_, MinimizerBucketingMultipleSeqColorDataType<CX>>,
         extra_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        sequence: DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>,
     ) {
-        let read = sequence.read.as_reference(sequences_data);
+        let read = sequence.read;
 
         let hashes = MH::new(read, self.params.k);
 

@@ -1,7 +1,6 @@
 pub mod extra_data;
 
 use std::{
-    cell::Cell,
     cmp::Reverse,
     marker::PhantomData,
     path::{Path, PathBuf},
@@ -11,15 +10,11 @@ use std::{
     },
 };
 
-use crate::{
-    MinimizerBucketMode, MinimizerBucketingExecutionContext, MinimizerBucketingExecutorFactory,
-    helper_read_bucket_with_type,
-};
+use crate::{MinimizerBucketMode, MinimizerBucketingExecutorFactory, helper_read_bucket_with_type};
 use config::{
     BucketIndexType, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
     DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE, DEFAULT_OUTPUT_BUFFER_SIZE,
     DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAX_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
-    MAXIMUM_SECOND_BUCKETS_COUNT, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
     MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, MultiplicityCounterType, SwapPriority,
     get_compression_level_info, get_memory_mode,
 };
@@ -41,12 +36,14 @@ use io::{
 };
 use parallel_processor::{
     buckets::{
-        LockFreeBucket, MultiChunkBucket,
-        readers::async_binary_reader::{AsyncBinaryReader, AsyncReaderThread},
+        BucketsCount, LockFreeBucket, MultiChunkBucket,
+        readers::{
+            compressed_decoder::CompressedStreamDecoder, typed_binary_reader::AsyncReaderThread,
+        },
         writers::compressed_binary_writer::CompressedBinaryWriter,
     },
     execution_manager::executor::{AsyncExecutor, ExecutorReceiver},
-    memory_fs::RemoveFileMode,
+    memory_fs::{RemoveFileMode, file::reader::FileReader},
     mt_debug_counters::{
         counter::{AtomicCounter, SumMode},
         declare_counter_i64,
@@ -54,8 +51,7 @@ use parallel_processor::{
 };
 use parallel_processor::{
     buckets::{
-        bucket_writer::BucketItemSerializer,
-        readers::async_binary_reader::AllowedCheckpointStrategy,
+        bucket_writer::BucketItemSerializer, readers::binary_reader::ChunkedBinaryReaderIndex,
     },
     memory_fs::MemoryFs,
 };
@@ -104,19 +100,19 @@ impl<
     FlagsCount: typenum::Unsigned,
 > BucketsCompactor<SingleData, MultipleData, FlagsCount>
 {
-    pub fn new(k: usize, target_chunk_size: u64) -> Self {
+    pub fn new(k: usize, second_buckets: &BucketsCount, target_chunk_size: u64) -> Self {
         Self {
             read_thread: AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE, 4),
-            super_kmers_hashmap: (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+            super_kmers_hashmap: (0..second_buckets.total_buckets_count)
                 .map(|_| HashTable::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
                 .collect(),
-            super_kmers_buffer: (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+            super_kmers_buffer: (0..second_buckets.total_buckets_count)
                 .map(|_| Vec::with_capacity(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS))
                 .collect(),
-            super_kmers_extra_buffer: (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+            super_kmers_extra_buffer: (0..second_buckets.total_buckets_count)
                 .map(|_| <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer())
                 .collect(),
-            super_kmers_storage: (0..MAXIMUM_SECOND_BUCKETS_COUNT)
+            super_kmers_storage: (0..second_buckets.total_buckets_count)
                 .map(|_| Vec::with_capacity(DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE))
                 .collect(),
             k,
@@ -326,99 +322,124 @@ impl<
         let mut out_extra_buffer =
             <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer();
 
+        // {
+        //     struct ReaderChunk<T> {
+        //         file_reader: FileReader,
+        //         length: usize,
+        //         extra_data: T,
+        //     }
+
+        //     let bucket_chunks = vec![vec![]; MAX_SECOND_BUCKETS_COUNT];
+        //     for chunk in &chosen_chunks[x..] {
+        //         let file_chunks: Vec<ReaderChunk<ReadsCheckpointData>> =
+        //             AsyncBinaryReader::list_chunks(chunk, remove_on_drop: true);
+
+        //         for file_chunk in file_chunks {
+        //             bucket_chunks[file_chunk.extra_data.target_subbucket as usize].push(file_chunk);
+        //         }
+
+        //         for subbucket_chunks in bucket_chunks.into_iter().enumerate() {
+        //             let reader = AsyncBinaryReader::read_chunks(subbucket_chunks);
+        //             for el in reader.get_elements() {
+        //                 // Process the data
+        //             }
+        //         }
+        //     }
+        // }
+
         while let Some(bucket_path) = chosen_chunks.pop() {
             stats!(
                 let pop_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
             );
+
             // Reading the buckets
-            let reader = AsyncBinaryReader::new(
+            let bucket_file_index = ChunkedBinaryReaderIndex::from_file(
                 &bucket_path.path,
-                true, // bucket_path.compacted,
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
                 DEFAULT_PREFETCH_AMOUNT,
-                None,
             );
 
-            let format_data: MinimizerBucketMode = reader.get_data_format_info().unwrap();
-            let checkpoint_rewrite_bucket = Cell::new(None);
+            let file_size = bucket_file_index.get_file_size() as usize;
+            input_files_size += file_size;
 
-            helper_read_bucket_with_type::<
-                SingleData,
-                MultipleData,
-                AssemblerMinimizerPosition,
-                FlagsCount,
-            >(
-                &reader,
-                self.read_thread.clone(),
-                format_data,
-                AllowedCheckpointStrategy::DecompressOnly,
-                |_passtrough| unreachable!(),
-                #[inline(always)]
-                |checkpoint_data| {
-                    checkpoint_rewrite_bucket.set(checkpoint_data.map(|d| d.target_subbucket));
-                },
-                #[inline(always)]
-                |data, in_extra_buffer| {
-                    let DeserializedRead {
-                        read,
-                        extra,
-                        multiplicity,
-                        flags,
-                        second_bucket,
-                        minimizer_pos,
-                        is_window_duplicate,
-                    } = data;
+            let format_data: MinimizerBucketMode = bucket_file_index.get_data_format_info();
 
-                    let rewrite_bucket = checkpoint_rewrite_bucket
-                        .get()
-                        .unwrap_or(second_bucket as u16);
-
-                    let super_kmers_buffer = &mut self.super_kmers_buffer[rewrite_bucket as usize];
-                    let super_kmers_storage =
-                        &mut self.super_kmers_storage[rewrite_bucket as usize];
-                    let super_kmers_extra_buffer =
-                        &mut self.super_kmers_extra_buffer[rewrite_bucket as usize];
-
-                    let new_read = CompressedReadIndipendent::from_read(&read, super_kmers_storage);
-                    super_kmers_buffer.push(SuperKmerEntry {
-                        read: new_read,
-                        multiplicity,
-                        minimizer_pos,
-                        flags,
-                        is_window_duplicate,
-                        extra: MultipleData::copy_extra_from(
+            for chunk in bucket_file_index.into_chunks() {
+                let checkpoint_rewrite_bucket = chunk
+                    .get_extra_data::<ReadsCheckpointData>()
+                    .map(|d| d.target_subbucket);
+                helper_read_bucket_with_type::<
+                    SingleData,
+                    MultipleData,
+                    AssemblerMinimizerPosition,
+                    FlagsCount,
+                >(
+                    vec![chunk],
+                    Some(self.read_thread.clone()),
+                    format_data,
+                    #[inline(always)]
+                    |data, in_extra_buffer| {
+                        let DeserializedRead {
+                            read,
                             extra,
-                            in_extra_buffer,
-                            super_kmers_extra_buffer,
-                        ),
-                    });
+                            multiplicity,
+                            flags,
+                            second_bucket,
+                            minimizer_pos,
+                            is_window_duplicate,
+                        } = data;
 
-                    if super_kmers_buffer.len() == super_kmers_buffer.capacity() {
-                        let super_kmers_hashmap =
-                            &mut self.super_kmers_hashmap[rewrite_bucket as usize];
-                        Self::process_superkmers::<MultipleData>(
-                            super_kmers_hashmap,
-                            super_kmers_buffer,
-                            super_kmers_storage,
-                            &mut total_sequences,
-                            super_kmers_extra_buffer,
-                            &mut out_extra_buffer,
-                        );
-                        MultipleData::clear_temp_buffer(super_kmers_extra_buffer);
-                    }
-                },
-                self.k,
-            );
+                        let rewrite_bucket =
+                            checkpoint_rewrite_bucket.unwrap_or(second_bucket as u16);
 
-            input_files_size += MemoryFs::get_file_size(&bucket_path.path).unwrap();
+                        let super_kmers_buffer =
+                            &mut self.super_kmers_buffer[rewrite_bucket as usize];
+                        let super_kmers_storage =
+                            &mut self.super_kmers_storage[rewrite_bucket as usize];
+                        let super_kmers_extra_buffer =
+                            &mut self.super_kmers_extra_buffer[rewrite_bucket as usize];
+
+                        let new_read =
+                            CompressedReadIndipendent::from_read(&read, super_kmers_storage);
+                        super_kmers_buffer.push(SuperKmerEntry {
+                            read: new_read,
+                            multiplicity,
+                            minimizer_pos,
+                            flags,
+                            is_window_duplicate,
+                            extra: MultipleData::copy_extra_from(
+                                extra,
+                                in_extra_buffer,
+                                super_kmers_extra_buffer,
+                            ),
+                        });
+
+                        if super_kmers_buffer.len() == super_kmers_buffer.capacity() {
+                            let super_kmers_hashmap =
+                                &mut self.super_kmers_hashmap[rewrite_bucket as usize];
+                            Self::process_superkmers::<MultipleData>(
+                                super_kmers_hashmap,
+                                super_kmers_buffer,
+                                super_kmers_storage,
+                                &mut total_sequences,
+                                super_kmers_extra_buffer,
+                                &mut out_extra_buffer,
+                            );
+                            MultipleData::clear_temp_buffer(super_kmers_extra_buffer);
+                        }
+                    },
+                    self.k,
+                );
+            }
+
             stats!(
                 let end_process_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
                 pop_stats.push(
                     ggcat_logging::stats::InputFileStats {
                         file_name: bucket_path.path.clone(),
-                        file_size: MemoryFs::get_file_size(&bucket_path.path).unwrap(),
+                        file_size,
                         start_time: pop_time.into(),
                         end_time: end_process_time.into(),
                     }
@@ -698,8 +719,11 @@ mod tests {
     use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
     use io::concurrent::temp_reads::creads_utils::AssemblerMinimizerPosition;
     use parallel_processor::{
-        buckets::readers::async_binary_reader::{
-            AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
+        buckets::readers::{
+            binary_reader::ChunkedBinaryReaderIndex,
+            typed_binary_reader::{
+                AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
+            },
         },
         memory_fs::RemoveFileMode,
     };
@@ -709,21 +733,19 @@ mod tests {
     #[test]
     #[ignore]
     fn test_bucket_decoding() {
-        let read_thread = AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE, 4);
+        // let read_thread = AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE, 4);
         let bucket_path = PathBuf::from(
             // "../../.temp_files/build_graph_4f1a5aac-a6df-4559-a0b3-5d8b8c9357e0/compacted-8586.dat.0",
             "../../.temp_files/build_graph_4f1a5aac-a6df-4559-a0b3-5d8b8c9357e0/compacted-9800.dat.0",
         );
 
-        // Reading the buckets
-        let reader = AsyncBinaryReader::new(
+        let file_index = ChunkedBinaryReaderIndex::from_file(
             &bucket_path,
-            true,
             RemoveFileMode::Keep,
             DEFAULT_PREFETCH_AMOUNT,
         );
 
-        let format_data: MinimizerBucketMode = reader.get_data_format_info().unwrap();
+        let format_data: MinimizerBucketMode = file_index.get_data_format_info();
 
         println!("Format: {:?}", format_data);
 
@@ -733,13 +755,9 @@ mod tests {
             AssemblerMinimizerPosition,
             typenum::U2,
         >(
-            &reader,
-            read_thread.clone(),
+            file_index.into_chunks(),
+            None,
             format_data,
-            AllowedCheckpointStrategy::DecompressOnly,
-            |_passtrough| unreachable!(),
-            #[inline(always)]
-            |_checkpoint_data| {},
             #[inline(always)]
             |_data, _in_extra_buffer| {},
             27,

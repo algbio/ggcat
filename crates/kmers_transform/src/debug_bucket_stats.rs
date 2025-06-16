@@ -5,11 +5,13 @@ use hashes::default::MNHFactory;
 use hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use io::concurrent::temp_reads::creads_utils::{
     AssemblerMinimizerPosition, CompressedReadsBucketDataSerializer, DeserializedRead,
-    NoMultiplicity, WithSecondBucket,
+    NoMultiplicity, ReadsCheckpointData, WithSecondBucket,
 };
-use parallel_processor::buckets::readers::async_binary_reader::{
-    AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::{
+    AsyncReaderThread, TypedStreamReader,
 };
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::memory_fs::RemoveFileMode;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -39,53 +41,42 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
     bucket: PathBuf,
     bucket_index: usize,
     buckets_count: usize,
-    second_buckets_log_max: usize,
+    second_buckets_log: usize,
     k: usize,
     m: usize,
 ) {
-    let reader = AsyncBinaryReader::new(
+    let bucket_file_index = ChunkedBinaryReaderIndex::from_file(
         &bucket,
-        true,
         RemoveFileMode::Remove { remove_fs: false },
         DEFAULT_PREFETCH_AMOUNT,
-        None,
     );
 
-    let file_size = reader.get_file_size();
+    let file_size = bucket_file_index.get_file_size();
 
-    let reader_thread = AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE, 4);
+    let second_buckets_count = 1 << second_buckets_log;
 
-    let second_buckets_max = 1 << second_buckets_log_max;
-
-    let mut hash_maps = (0..second_buckets_max)
+    let mut hash_maps = (0..second_buckets_count)
         .map(|_| HashSet::new())
         .collect::<Vec<_>>();
 
-    let mut checkpoints_iterator = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
-        (),
-        WithSecondBucket,
-        NoMultiplicity,
-        AssemblerMinimizerPosition,
-        typenum::U2,
-    >>(
-        reader_thread.clone(),
-        Vec::new(),
-        (),
-        AllowedCheckpointStrategy::DecompressOnly,
-        k,
-        None,
-    );
+    let mut total_counters = vec![0; second_buckets_count];
 
-    let mut total_counters = vec![0; second_buckets_max];
-
-    while let Some((items_iterator, _)) = checkpoints_iterator.get_next_checkpoint() {
-        while let Some((read_info, _)) = items_iterator.next() {
+    let mut checkpoints_iterator =
+        TypedStreamReader::get_items::<
+            CompressedReadsBucketDataSerializer<
+                (),
+                WithSecondBucket,
+                NoMultiplicity,
+                AssemblerMinimizerPosition,
+                typenum::U2,
+            >,
+        >(None, k, bucket_file_index.into_chunks(), |read_info, _| {
             let orig_bucket = get_sequence_bucket::<()>(
                 k,
                 m,
                 &read_info,
                 buckets_count.ilog2() as usize,
-                second_buckets_log_max,
+                second_buckets_log,
             ) as usize;
 
             let hashes = MH::new(read_info.read, k);
@@ -94,8 +85,7 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
                 total_counters[orig_bucket] += 1;
                 hash_maps[orig_bucket].insert(hash.to_unextendable());
             }
-        }
-    }
+        });
 
     let counters_string = hash_maps
         .iter()

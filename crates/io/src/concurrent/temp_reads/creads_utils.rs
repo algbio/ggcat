@@ -211,7 +211,7 @@ pub struct CompressedReadsBucketDataSerializer<
     _phantom: PhantomData<(BucketMode, MultiplicityMode, MinimizerMode, FlagsCount)>,
 }
 
-#[derive(Encode, Decode, Clone, Copy)]
+#[derive(Encode, Decode, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReadsCheckpointData {
     pub target_subbucket: BucketIndexType,
     pub sequences_count: usize,
@@ -392,16 +392,11 @@ impl<
 }
 pub mod helpers {
 
-    // use crate::concurrent::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
-
     use std::sync::Arc;
 
-    use parallel_processor::{
-        buckets::readers::async_binary_reader::{
-            AllowedCheckpointStrategy, AsyncBinaryReader, AsyncBinaryReaderIteratorData,
-            AsyncReaderThread,
-        },
-        memory_fs::file::reader::FileRangeReference,
+    use parallel_processor::buckets::readers::{
+        binary_reader::BinaryReaderChunk,
+        typed_binary_reader::{AsyncReaderThread, TypedStreamReader},
     };
 
     use crate::concurrent::temp_reads::{
@@ -411,7 +406,7 @@ pub mod helpers {
 
     use super::{
         BucketModeOption, CompressedReadsBucketDataSerializer, DeserializedRead,
-        MinimizerModeOption, NoMultiplicity, ReadsCheckpointData, WithMultiplicity,
+        MinimizerModeOption, NoMultiplicity, WithMultiplicity,
     };
 
     pub fn helper_read_bucket_with_opt_multiplicity<
@@ -421,113 +416,61 @@ pub mod helpers {
         MinimizerMode: MinimizerModeOption,
         FlagsCount: typenum::Unsigned,
     >(
-        reader: &AsyncBinaryReader,
-        read_thread: Arc<AsyncReaderThread>,
+        chunks: Vec<BinaryReaderChunk>,
+        reader_thread: Option<Arc<AsyncReaderThread>>,
         with_multiplicity: bool,
-        allowed_passtrough: AllowedCheckpointStrategy<ReadsCheckpointData>,
-        mut passtrough_callback: impl FnMut(FileRangeReference),
-        mut checkpoint_callback: impl FnMut(Option<ReadsCheckpointData>),
         mut data_callback: impl FnMut(DeserializedRead<EM>, &mut EM::TempBuffer),
         k: usize,
     ) {
+        let mut tmp_mult_buffer = EM::new_temp_buffer();
         if with_multiplicity {
-            let mut items = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
-                E,
-                NoSecondBucket,
-                WithMultiplicity,
-                MinimizerMode,
-                FlagsCount,
-            >>(
-                read_thread,
-                Vec::new(),
-                <E>::new_temp_buffer(),
-                allowed_passtrough,
-                k,
-                None,
-            );
-            let mut tmp_mult_buffer = EM::new_temp_buffer();
-
-            while let Some(checkpoint) = items.get_next_checkpoint_extended() {
-                match checkpoint {
-                    AsyncBinaryReaderIteratorData::Stream(items, checkpoint_data) => {
-                        checkpoint_callback(checkpoint_data);
-                        while let Some((data, extra_buffer)) = items.next() {
-                            let (extra, extra_buffer) = EM::from_single_entry(
-                                &mut tmp_mult_buffer,
-                                data.extra,
-                                extra_buffer,
-                            );
-                            let data = DeserializedRead {
-                                read: data.read,
-                                extra,
-                                multiplicity: data.multiplicity,
-                                flags: data.flags,
-                                second_bucket: data.second_bucket,
-                                minimizer_pos: data.minimizer_pos,
-                                is_window_duplicate: data.is_window_duplicate,
-                            };
-                            data_callback(data, extra_buffer);
-                            EM::clear_temp_buffer(extra_buffer);
-                        }
-                    }
-                    AsyncBinaryReaderIteratorData::Passtrough {
-                        file_range: passtrough_info,
-                        checkpoint_data,
-                    } => {
-                        checkpoint_callback(checkpoint_data);
-                        passtrough_callback(passtrough_info)
-                    }
-                }
-            }
+            TypedStreamReader::get_items::<
+                CompressedReadsBucketDataSerializer<
+                    E,
+                    NoSecondBucket,
+                    WithMultiplicity,
+                    MinimizerMode,
+                    FlagsCount,
+                >,
+            >(reader_thread, k, chunks, |item, extra_buffer| {
+                let (extra, extra_buffer) =
+                    EM::from_single_entry(&mut tmp_mult_buffer, item.extra, extra_buffer);
+                let item = DeserializedRead {
+                    read: item.read,
+                    extra,
+                    multiplicity: item.multiplicity,
+                    flags: item.flags,
+                    second_bucket: item.second_bucket,
+                    minimizer_pos: item.minimizer_pos,
+                    is_window_duplicate: item.is_window_duplicate,
+                };
+                data_callback(item, extra_buffer);
+                EM::clear_temp_buffer(extra_buffer);
+            });
         } else {
-            let mut items = reader.get_items_stream::<CompressedReadsBucketDataSerializer<
-                E,
-                BucketMode,
-                NoMultiplicity,
-                MinimizerMode,
-                FlagsCount,
-            >>(
-                read_thread,
-                Vec::new(),
-                <E>::new_temp_buffer(),
-                allowed_passtrough,
-                k,
-                None,
-            );
-            let mut tmp_mult_buffer = EM::new_temp_buffer();
-
-            while let Some(checkpoint) = items.get_next_checkpoint_extended() {
-                match checkpoint {
-                    AsyncBinaryReaderIteratorData::Stream(items, checkpoint_data) => {
-                        checkpoint_callback(checkpoint_data);
-                        while let Some((data, extra_buffer)) = items.next() {
-                            let (extra, extra_buffer) = EM::from_single_entry(
-                                &mut tmp_mult_buffer,
-                                data.extra,
-                                extra_buffer,
-                            );
-                            let data = DeserializedRead {
-                                read: data.read,
-                                extra,
-                                multiplicity: data.multiplicity,
-                                flags: data.flags,
-                                second_bucket: data.second_bucket,
-                                minimizer_pos: data.minimizer_pos,
-                                is_window_duplicate: data.is_window_duplicate,
-                            };
-                            data_callback(data, extra_buffer);
-                            EM::clear_temp_buffer(extra_buffer);
-                        }
-                    }
-                    AsyncBinaryReaderIteratorData::Passtrough {
-                        file_range: passtrough_info,
-                        checkpoint_data,
-                    } => {
-                        checkpoint_callback(checkpoint_data);
-                        passtrough_callback(passtrough_info)
-                    }
-                }
-            }
+            TypedStreamReader::get_items::<
+                CompressedReadsBucketDataSerializer<
+                    E,
+                    BucketMode,
+                    NoMultiplicity,
+                    MinimizerMode,
+                    FlagsCount,
+                >,
+            >(reader_thread, k, chunks, |item, extra_buffer| {
+                let (extra, extra_buffer) =
+                    EM::from_single_entry(&mut tmp_mult_buffer, item.extra, extra_buffer);
+                let item = DeserializedRead {
+                    read: item.read,
+                    extra,
+                    multiplicity: item.multiplicity,
+                    flags: item.flags,
+                    second_bucket: item.second_bucket,
+                    minimizer_pos: item.minimizer_pos,
+                    is_window_duplicate: item.is_window_duplicate,
+                };
+                data_callback(item, extra_buffer);
+                EM::clear_temp_buffer(extra_buffer);
+            });
         }
     }
 }

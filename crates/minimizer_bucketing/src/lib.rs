@@ -11,9 +11,7 @@ use crate::sequences_splitter::SequencesSplitter;
 use bincode::{Decode, Encode};
 use config::{
     BucketIndexType, DEFAULT_BUCKETS_CHUNK_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE,
-    MAXIMUM_SECOND_BUCKETS_LOG, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
     MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, READ_INTERMEDIATE_CHUNKS_SIZE, SwapPriority,
-    get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats;
 use hashes::HashableSequence;
@@ -21,8 +19,7 @@ use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::helpers::helper_read_bucket_with_opt_multiplicity;
 use io::concurrent::temp_reads::creads_utils::{
     AssemblerMinimizerPosition, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
-    DeserializedRead, MinimizerModeOption, NoMultiplicity, NoSecondBucket, ReadsCheckpointData,
-    WithSecondBucket,
+    DeserializedRead, MinimizerModeOption, NoMultiplicity, NoSecondBucket, WithSecondBucket,
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
@@ -31,15 +28,13 @@ use io::concurrent::temp_reads::extra_data::{
 use io::sequences_reader::DnaSequence;
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::async_binary_reader::{
-    AllowedCheckpointStrategy, AsyncBinaryReader, AsyncReaderThread,
-};
+use parallel_processor::buckets::readers::binary_reader::BinaryReaderChunk;
+use parallel_processor::buckets::readers::typed_binary_reader::AsyncReaderThread;
 use parallel_processor::buckets::writers::compressed_binary_writer::{
     CompressedBinaryWriter, CompressionLevelInfo,
 };
-use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{
-    BucketsCount, ChunkingStatus, ExtraBuckets, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
+    BucketsCount, ChunkingStatus, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
 };
 use parallel_processor::execution_manager::executor::{
     AddressProducer, AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
@@ -48,8 +43,6 @@ use parallel_processor::execution_manager::packet::PacketsPool;
 use parallel_processor::execution_manager::scheduler::Scheduler;
 use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use parallel_processor::memory_fs::file::reader::FileRangeReference;
-use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::{Mutex, RwLock};
 use resplit_bucket::RewriteBucketCompute;
@@ -59,7 +52,7 @@ use std::ops::Deref;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 
 #[derive(Encode, Decode, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MinimizerBucketMode {
@@ -68,18 +61,16 @@ pub enum MinimizerBucketMode {
     Compacted,
 }
 
+#[inline(always)]
 pub fn helper_read_bucket_with_type<
     E: SequenceExtraDataConsecutiveCompression,
     EM: SequenceExtraDataConsecutiveCompression + SequenceExtraDataCombiner<SingleDataType = E>,
     MinimizerMode: MinimizerModeOption,
     FlagsCount: typenum::Unsigned,
 >(
-    reader: &AsyncBinaryReader,
-    read_thread: Arc<AsyncReaderThread>,
+    chunks: Vec<BinaryReaderChunk>,
+    read_thread: Option<Arc<AsyncReaderThread>>,
     data_type: MinimizerBucketMode,
-    allowed_passtrough: AllowedCheckpointStrategy<ReadsCheckpointData>,
-    passtrough_callback: impl FnMut(FileRangeReference),
-    checkpoint_callback: impl FnMut(Option<ReadsCheckpointData>),
     data_callback: impl FnMut(DeserializedRead<EM>, &mut EM::TempBuffer),
     k: usize,
 ) {
@@ -91,16 +82,7 @@ pub fn helper_read_bucket_with_type<
                 WithSecondBucket,
                 MinimizerMode,
                 FlagsCount,
-            >(
-                reader,
-                read_thread,
-                false,
-                allowed_passtrough,
-                passtrough_callback,
-                checkpoint_callback,
-                data_callback,
-                k,
-            );
+            >(chunks, read_thread, false, data_callback, k);
         }
         MinimizerBucketMode::SingleGrouped | MinimizerBucketMode::Compacted => {
             helper_read_bucket_with_opt_multiplicity::<
@@ -110,12 +92,9 @@ pub fn helper_read_bucket_with_type<
                 MinimizerMode,
                 FlagsCount,
             >(
-                reader,
+                chunks,
                 read_thread,
                 data_type == MinimizerBucketMode::Compacted,
-                allowed_passtrough,
-                passtrough_callback,
-                checkpoint_callback,
                 data_callback,
                 k,
             );
@@ -417,6 +396,7 @@ impl<
                                 if compactor.is_none() {
                                     compactor = Some(BucketsCompactor::new(
                                         context.common.k,
+                                        &context.common.second_buckets_count,
                                         context.target_chunk_size,
                                     ));
                                 }
@@ -520,6 +500,7 @@ impl<
                 if compactor.is_none() {
                     compactor = Some(BucketsCompactor::new(
                         context.common.k,
+                        &context.common.second_buckets_count,
                         context.target_chunk_size,
                     ));
                 }
@@ -609,6 +590,7 @@ impl GenericMinimizerBucketing {
         >,
         output_path: &Path,
         buckets_count: BucketsCount,
+        second_buckets_count: BucketsCount,
         threads_count: usize,
         k: usize,
         m: usize,
@@ -621,6 +603,7 @@ impl GenericMinimizerBucketing {
             input_blocks,
             output_path,
             buckets_count,
+            second_buckets_count,
             threads_count,
             k,
             m,
@@ -649,6 +632,7 @@ impl GenericMinimizerBucketing {
         >,
         output_path: &Path,
         buckets_count: BucketsCount,
+        second_buckets_count: BucketsCount,
         threads_count: usize,
         k: usize,
         m: usize,
@@ -680,11 +664,6 @@ impl GenericMinimizerBucketing {
             ),
             &MinimizerBucketMode::Single,
         ));
-
-        let second_buckets_count = BucketsCount::new(
-            MAXIMUM_SECOND_BUCKETS_LOG.max(threads_count.next_power_of_two().ilog2() as usize),
-            ExtraBuckets::None,
-        );
 
         let compacted_buckets = uncompacted_buckets.create_matching_multichunks();
 

@@ -55,6 +55,13 @@ pub const MAX_BUCKET_SIZE: u64 = 1024 * 1024 * 1024;
 pub const MIN_BUCKETS_COUNT_LOG: usize = 2;
 pub const DEFAULT_BUCKETS_COUNT_LOG: usize = 10;
 pub const MAX_BUCKETS_COUNT_LOG: usize = 13;
+
+pub const MIN_SECOND_BUCKET_SIZE: u64 = 2 * 1024;
+pub const MAX_SECOND_BUCKET_SIZE: u64 = 4 * 1024 * 1024;
+pub const MIN_SECOND_BUCKETS_COUNT_LOG: usize = 1;
+pub const DEFAULT_SECOND_BUCKETS_COUNT_LOG: usize = 6;
+pub const MAX_SECOND_BUCKETS_COUNT_LOG: usize = 8;
+
 pub const MAX_RESPLIT_BUCKETS_COUNT_LOG: usize = 9;
 
 pub const MIN_BUCKET_CHUNKS_FOR_READING_THREAD: usize = 2;
@@ -62,8 +69,7 @@ pub const MIN_BUCKET_CHUNKS_FOR_READING_THREAD: usize = 2;
 pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 10;
 
 pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 32;
-pub const MAXIMUM_SECOND_BUCKETS_LOG: usize = 6;
-pub const MAXIMUM_SECOND_BUCKETS_COUNT: usize = 1 << MAXIMUM_SECOND_BUCKETS_LOG;
+
 pub const MIN_SUBSPLIT_COUNT: usize = 16;
 
 pub const MAX_INTERMEDIATE_MAP_SIZE: u64 = 1024 * 1024 * 32;

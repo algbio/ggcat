@@ -24,9 +24,7 @@ use io::varint::{
 use itertools::Itertools;
 use nightly_quirks::slice_partition_dedup::SlicePartitionDedup;
 use parallel_processor::buckets::LockFreeBucket;
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::memory_fs::RemoveFileMode;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::io::{Cursor, Read, Write};
@@ -45,20 +43,21 @@ struct SequencesStorage {
 
 struct SequencesStorageStream<'a> {
     buffer: Cursor<&'a [u8]>,
-    reader: Option<CompressedBinaryReader>,
+    // reader: Option<CompressedBinaryReader>,
 }
 
 impl<'a> Read for SequencesStorageStream<'a> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if let Some(ref mut reader) = self.reader {
-            let amount = reader.get_single_stream().read(buf)?;
-            if amount > 0 {
-                return Ok(amount);
-            } else {
-                self.reader.take();
-            }
-        }
-        self.buffer.read(buf)
+        // if let Some(ref mut reader) = self.reader {
+        //     let amount = reader.get_single_stream().read(buf)?;
+        //     if amount > 0 {
+        //         return Ok(amount);
+        //     } else {
+        //         self.reader.take();
+        //     }
+        // }
+        // self.buffer.read(buf)
+        todo!()
     }
 }
 
@@ -76,15 +75,21 @@ impl SequencesStorage {
     }
 
     pub fn get_stream(&mut self) -> SequencesStorageStream {
-        let reader = self.file.take().map(|f| {
-            let path = f.get_path();
-            f.finalize();
-            CompressedBinaryReader::new(path, RemoveFileMode::Remove { remove_fs: true }, None)
-        });
-        SequencesStorageStream {
-            buffer: Cursor::new(&self.buffer),
-            reader,
-        }
+        // self.file.take().map(|f| {
+        //     let path = f.get_path();
+        //     f.finalize();
+        //     ChunkedBinaryReaderIndex::from_file(
+        //         path,
+        //         RemoveFileMode::Remove { remove_fs: true },
+        //         None,
+        //     )
+        //     .into_chunks()
+        // });
+        todo!("Chunks!");
+        // SequencesStorageStream {
+        //     buffer: Cursor::new(&self.buffer),
+        //     // reader,
+        // }
     }
 
     pub fn flush(&mut self, temp_dir: &PathBuf) {
@@ -586,7 +591,7 @@ pub struct DefaultUnitigsTempColorData {
     colors: VecDeque<KmerSerializedColor>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct UnitigsSerializerTempBuffer {
     pub(crate) colors: Vec<KmerSerializedColor>,
 }

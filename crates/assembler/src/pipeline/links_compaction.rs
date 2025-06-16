@@ -5,11 +5,9 @@ use config::{
 };
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink, UnitigLinkSerializer};
 use nightly_quirks::slice_group_by::SliceGroupBy;
-use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::async_binary_reader::AllowedCheckpointStrategy;
-use parallel_processor::buckets::readers::generic_binary_reader::ChunkReader;
-use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 use parallel_processor::buckets::single::SingleBucketThreadDispatcher;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{BucketsCount, MultiThreadBuckets, SingleBucket};
@@ -77,7 +75,7 @@ pub fn links_compaction(
 
         let mut rand_bool = FastRandBool::<1>::new();
 
-        let file_reader = LockFreeBinaryReader::new(
+        let file_index = ChunkedBinaryReaderIndex::from_file(
             &input.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
@@ -87,28 +85,18 @@ pub fn links_compaction(
 
         let mut vec = Vec::new();
 
-        let mut last_unitigs_vec = Vec::new();
         let mut current_unitigs_vec = Vec::new();
         let mut final_unitigs_vec = Vec::new();
 
-        let mut deserializer = UnitigLinkSerializer::new(());
-
-        while let Some(checkpoint) =
-            file_reader.get_read_parallel_stream(AllowedCheckpointStrategy::DecompressOnly, None)
-        {
-            match checkpoint {
-                ChunkReader::Reader(mut stream, _) => {
-                    while let Some(entry) =
-                        deserializer.read_from(&mut stream, &mut last_unitigs_vec, &mut ())
-                    {
-                        vec.push(entry);
-                    }
-                }
-                ChunkReader::Passtrough { .. } => unreachable!(),
-            }
-        }
-
-        drop(file_reader);
+        let mut last_unitigs_vec = TypedStreamReader::get_items::<UnitigLinkSerializer>(
+            None,
+            (),
+            file_index.into_chunks(),
+            |entry, _| {
+                vec.push(entry);
+            },
+        )
+        .buffer;
 
         struct Compare;
         impl SortKey<UnitigLink> for Compare {

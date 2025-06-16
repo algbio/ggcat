@@ -272,16 +272,161 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
 mod tests {
     use colors::colors_manager::{ColorsManager, ColorsMergeManager};
     use colors::non_colored::NonColoredManager;
-    use config::{FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
+    use config::{DEFAULT_PREFETCH_AMOUNT, FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
+    use hashes::cn_seqhash::u128::CanonicalSeqHashFactory;
+    use io::concurrent::temp_reads::creads_utils::{
+        AssemblerMinimizerPosition, ReadsCheckpointData,
+    };
     use io::generate_bucket_names;
+    use kmers_transform::KmersTransformExecutorFactory;
+    use minimizer_bucketing::{MinimizerBucketMode, helper_read_bucket_with_type};
+    use parallel_processor::buckets::readers::binary_reader::{
+        BinaryReaderChunk, ChunkedBinaryReaderIndex,
+    };
     use parallel_processor::buckets::{BucketsCount, ExtraBuckets, SingleBucket};
     use parallel_processor::memory_data_size::MemoryDataSize;
-    use parallel_processor::memory_fs::MemoryFs;
+    use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
     use rayon::ThreadPoolBuilder;
     use std::cmp::max;
     use std::path::Path;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
+
+    use crate::ParallelKmersMergeFactory;
+
+    #[test]
+    #[ignore]
+    fn test_deserialization_mismatch() {
+        let mut bucket_chunks = vec![];
+
+        type F = ParallelKmersMergeFactory<CanonicalSeqHashFactory, NonColoredManager, false>;
+
+        let paths = [
+            "../../.temp_files/build_graph_8a973650-c549-4eb9-b9b1-ccac626dcfbe/comp-single-15123.dat.0",
+            "../../.temp_files/build_graph_8a973650-c549-4eb9-b9b1-ccac626dcfbe/comp-single-16937.dat.0",
+            "../../.temp_files/build_graph_8a973650-c549-4eb9-b9b1-ccac626dcfbe/comp-single-18709.dat.0",
+            "../../.temp_files/build_graph_8a973650-c549-4eb9-b9b1-ccac626dcfbe/comp-single-6164.dat.0",
+            "../../.temp_files/build_graph_8a973650-c549-4eb9-b9b1-ccac626dcfbe/comp-single-2799.dat.0",
+            "../../.temp_files/build_graph_8a973650-c549-4eb9-b9b1-ccac626dcfbe/comp-mult-13259.dat.0",
+            "../../.temp_files/build_graph_8a973650-c549-4eb9-b9b1-ccac626dcfbe/comp-single-20523.dat.0",
+            "../../.temp_files/build_graph_8a973650-c549-4eb9-b9b1-ccac626dcfbe/comp-mult-21902.dat.0",
+            "../../.temp_files/build_graph_8a973650-c549-4eb9-b9b1-ccac626dcfbe/comp-single-21902.dat.0",
+        ];
+
+        for file in &paths {
+            let file_index = ChunkedBinaryReaderIndex::from_file(
+                file,
+                RemoveFileMode::Remove {
+                    remove_fs: false, // !KEEP_FILES.load(Ordering::Relaxed),
+                },
+                DEFAULT_PREFETCH_AMOUNT,
+            );
+
+            let data_format = file_index.get_data_format_info::<MinimizerBucketMode>();
+
+            bucket_chunks.extend(
+                file_index
+                    .into_chunks()
+                    .into_iter()
+                    // The first element is empty and has no extra data, skip it
+                    .filter_map(|c| {
+                        Some((
+                            (
+                                c.get_extra_data::<ReadsCheckpointData>()?,
+                                data_format,
+                                c.get_unique_file_id(),
+                            ),
+                            c,
+                        ))
+                    }),
+            );
+        }
+
+        bucket_chunks.sort_by_key(|c| c.0.0.target_subbucket);
+
+        let mut sub_buckets: Vec<(
+            Vec<(ReadsCheckpointData, MinimizerBucketMode, usize)>,
+            Vec<BinaryReaderChunk>,
+        )> = vec![];
+        for chunk in bucket_chunks {
+            if let Some(last) = sub_buckets.last_mut() {
+                if last.0[last.0.len() - 1].0.target_subbucket == chunk.0.0.target_subbucket {
+                    last.0.push(chunk.0);
+                    last.1.push(chunk.1);
+                } else {
+                    sub_buckets.push((vec![chunk.0], vec![chunk.1]));
+                }
+            } else {
+                sub_buckets.push((vec![chunk.0], vec![chunk.1]));
+            }
+        }
+
+        for (mut info, chunks) in sub_buckets {
+            let mut single_chunks = vec![];
+            let mut multi_chunks = vec![];
+
+            // if info[0].0.target_subbucket != 54 {
+            //     continue;
+            // }
+
+            // println!("Infos: {:?}", info[0].0.sequences_count);
+
+            for (chunk, info) in chunks.into_iter().zip(info.iter()) {
+                match info.1 {
+                    MinimizerBucketMode::Single => unreachable!(),
+                    MinimizerBucketMode::SingleGrouped => single_chunks.push(chunk),
+                    MinimizerBucketMode::Compacted => multi_chunks.push(chunk),
+                }
+            }
+
+            let mut tot_count = 0;
+
+            helper_read_bucket_with_type::<
+                <F as KmersTransformExecutorFactory>::AssociatedExtraData,
+                <F as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
+                AssemblerMinimizerPosition,
+                <F as KmersTransformExecutorFactory>::FlagsCount,
+            >(
+                single_chunks,
+                None, // Some(reader_thread.clone()),
+                MinimizerBucketMode::SingleGrouped,
+                |_, _| {
+                    tot_count += 1;
+                },
+                27,
+            );
+
+            helper_read_bucket_with_type::<
+                <F as KmersTransformExecutorFactory>::AssociatedExtraData,
+                <F as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
+                AssemblerMinimizerPosition,
+                <F as KmersTransformExecutorFactory>::FlagsCount,
+            >(
+                multi_chunks,
+                None, // Some(reader_thread.clone()),
+                MinimizerBucketMode::Compacted,
+                |_, _| {
+                    tot_count += 1;
+                },
+                27,
+            );
+
+            info.dedup_by(|a, b| a == b);
+
+            let sum_tot_count = info.iter().map(|i| i.0.sequences_count).sum::<usize>();
+
+            println!(
+                "Found {} buckets for sub-bucket {}/{} => total seq count: {} vs {} => correct: {}",
+                info.len(),
+                0,
+                // index,
+                info[0].0.target_subbucket,
+                sum_tot_count,
+                tot_count,
+                sum_tot_count == tot_count
+            );
+        }
+    }
 
     #[ignore]
     #[test]
@@ -354,7 +499,6 @@ mod tests {
         // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
         crate::kmers_merge::<hashes::cn_seqhash::u128::CanonicalSeqHashFactory, NonColoredManager, _>(
             buckets,
-            counters,
             global_colors_table.clone(),
             buckets_count,
             min_multiplicity,

@@ -13,8 +13,8 @@ use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::BucketReader;
-use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::{BucketsCount, ExtraBuckets, MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
@@ -160,20 +160,21 @@ pub fn counters_sorting<CX: ColorsManager>(
             CounterEntry<SingleKmerColorDataType<CX>>,
             SingleKmerColorDataType<CX>,
         )> = Vec::new();
-        LockFreeBinaryReader::new(
+        let file_index = ChunkedBinaryReaderIndex::from_file(
             &input.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
             DEFAULT_PREFETCH_AMOUNT,
-        )
-        .decode_all_bucket_items::<CounterEntrySerializer<SingleKmerColorDataType<CX>>, _>(
+        );
+
+        TypedStreamReader::get_items::<CounterEntrySerializer<SingleKmerColorDataType<CX>>>(
+            None,
             (),
-            &mut (),
+            file_index.into_chunks(),
             |h, _| {
                 counters_vec.push(h);
             },
-            (),
         );
 
         struct CountersCompare;

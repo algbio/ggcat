@@ -8,6 +8,8 @@ use io::concurrent::temp_reads::creads_utils::{
     CompressedReadsBucketData, CompressedReadsBucketDataSerializer, DeserializedRead,
     NoMinimizerPosition, NoMultiplicity, NoSecondBucket,
 };
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 #[cfg(feature = "support_kmer_counters")]
 use structs::unitigs_counters::UnitigsCounters;
 
@@ -23,9 +25,6 @@ use io::concurrent::temp_reads::extra_data::{
 };
 use io::structs::unitig_link::UnitigIndex;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::BucketReader;
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
-use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::{BucketsCount, MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
@@ -53,6 +52,13 @@ pub struct ReorganizedReadsExtraData<CX: SequenceExtraDataConsecutiveCompression
 
 #[repr(transparent)]
 pub struct ReorganizedReadsBuffer<CX: SequenceExtraDataConsecutiveCompression>(pub CX::TempBuffer);
+
+impl<CX: SequenceExtraDataConsecutiveCompression> Default for ReorganizedReadsBuffer<CX> {
+    fn default() -> Self {
+        Self(CX::new_temp_buffer())
+    }
+}
+
 impl<CX: SequenceExtraDataConsecutiveCompression> ReorganizedReadsBuffer<CX> {
     #[allow(dead_code)]
     pub fn from_inner_mut(inner: &mut CX::TempBuffer) -> &mut Self {
@@ -216,20 +222,21 @@ pub fn reorganize_reads<
 
         let bucket_index = read_file.index as BucketIndexType;
 
-        LockFreeBinaryReader::new(
+        let file_index = ChunkedBinaryReaderIndex::from_file(
             &mapping_file.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
             DEFAULT_PREFETCH_AMOUNT,
-        )
-        .decode_all_bucket_items::<LinkMappingSerializer, _>(
+        );
+
+        TypedStreamReader::get_items::<LinkMappingSerializer>(
+            None,
             (),
-            &mut (),
+            file_index.into_chunks(),
             |link, _| {
                 mappings.push(link);
             },
-            (),
         );
 
         parallel_processor::make_comparer!(Compare, LinkMapping, entry: u64);
@@ -240,24 +247,26 @@ pub fn reorganize_reads<
 
         let mut decompress_buffer = Vec::new();
 
-        let mut colors_buffer = color_types::PartialUnitigsColorStructure::<CX>::new_temp_buffer();
-
-        CompressedBinaryReader::new(
+        let file_index = ChunkedBinaryReaderIndex::from_file(
             &read_file.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
             DEFAULT_PREFETCH_AMOUNT,
-        )
-        .decode_all_bucket_items::<CompressedReadsBucketDataSerializer<
-            PartialUnitigExtraData<color_types::PartialUnitigsColorStructure<CX>>,
-            NoSecondBucket,
-            NoMultiplicity,
-            NoMinimizerPosition,
-            typenum::U0,
-        >, _>(
-            Vec::new(),
-            &mut colors_buffer,
+        );
+
+        TypedStreamReader::get_items::<
+            CompressedReadsBucketDataSerializer<
+                PartialUnitigExtraData<color_types::PartialUnitigsColorStructure<CX>>,
+                NoSecondBucket,
+                NoMultiplicity,
+                NoMinimizerPosition,
+                typenum::U0,
+            >,
+        >(
+            None,
+            k,
+            file_index.into_chunks(),
             |DeserializedRead { read, extra, .. }, color_buffer| {
                 if read.bases_count() > decompress_buffer.len() {
                     decompress_buffer.resize(read.bases_count(), 0);
@@ -338,7 +347,6 @@ pub fn reorganize_reads<
 
                 index += 1;
             },
-            k,
         );
 
         buffers.put_back(tmp_reads_buffer.finalize().0);

@@ -312,6 +312,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
 pub fn minimizer_bucketing<CX: ColorsManager>(
     graph_file: PathBuf,
     buckets_count: BucketsCount,
+    second_buckets_count: BucketsCount,
     threads_count: usize,
     temp_dir: &Path,
     k: usize,
@@ -336,6 +337,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         input_files.into_iter(),
         temp_dir,
         buckets_count,
+        second_buckets_count,
         threads_count,
         k,
         m,

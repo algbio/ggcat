@@ -11,8 +11,8 @@ use io::concurrent::temp_reads::creads_utils::{
 };
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::SingleBucket;
-use parallel_processor::buckets::readers::BucketReader;
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 use parallel_processor::fast_smart_bucket_sort::{FastSortable, SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -54,22 +54,26 @@ pub fn colormap_reading<
         let mut temp_bases = Vec::new();
         let mut temp_sequences = Vec::new();
 
-        CompressedBinaryReader::new(
+        let file_index = ChunkedBinaryReaderIndex::from_file(
             &input.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
             DEFAULT_PREFETCH_AMOUNT,
-        )
-        .decode_all_bucket_items::<CompressedReadsBucketDataSerializer<
-            DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
-            NoSecondBucket,
-            NoMultiplicity,
-            NoMinimizerPosition,
-            typenum::consts::U0,
-        >, _>(
-            vec![],
-            &mut (),
+        );
+
+        TypedStreamReader::get_items::<
+            CompressedReadsBucketDataSerializer<
+                DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
+                NoSecondBucket,
+                NoMultiplicity,
+                NoMinimizerPosition,
+                typenum::consts::U0,
+            >,
+        >(
+            None,
+            k,
+            file_index.into_chunks(),
             |DeserializedRead {
                  extra: color_extra,
                  read,
@@ -79,7 +83,6 @@ pub fn colormap_reading<
                 let new_read = CompressedReadIndipendent::from_read(&read, &mut temp_bases);
                 temp_sequences.push((new_read, color_extra));
             },
-            k,
         );
 
         struct ColoredUnitigsCompare<CX: ColorsManager>(PhantomData<&'static CX>);

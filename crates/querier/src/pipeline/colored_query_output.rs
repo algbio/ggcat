@@ -1,17 +1,20 @@
-use crate::structs::query_colored_counters::{ColorsRange, QueryColoredCountersSerializer};
 use crate::ColoredQueryOutputFormat;
+use crate::structs::query_colored_counters::{ColorsRange, QueryColoredCountersSerializer};
 use colors::colors_manager::ColorMapReader;
 use colors::colors_manager::{ColorsManager, ColorsMergeManager};
 use config::{
-    get_compression_level_info, get_memory_mode, ColorIndexType, SwapPriority,
-    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, QUERIES_COUNT_MIN_BATCH,
+    ColorIndexType, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, QUERIES_COUNT_MIN_BATCH, SwapPriority,
+    get_compression_level_info, get_memory_mode,
 };
 use flate2::Compression;
 use ggcat_logging::UnrecoverableErrorLogging;
 use hashes::HashFunctionFactory;
 use nightly_quirks::prelude::*;
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
-use parallel_processor::buckets::readers::BucketReader;
+use parallel_processor::buckets::readers::binary_reader::{
+    BinaryChunkReader, ChunkedBinaryReaderIndex, DecoderType,
+};
+use parallel_processor::buckets::readers::compressed_decoder::CompressedStreamDecoder;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::{LockFreeBucket, SingleBucket};
 use parallel_processor::memory_fs::RemoveFileMode;
@@ -130,16 +133,18 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
                 let start_query_index =
                     input.index as usize * max_bucket_queries_count / buckets_count;
 
-                CompressedBinaryReader::new(
+                let file_index = ChunkedBinaryReaderIndex::from_file(
                     &input.path,
                     RemoveFileMode::Remove {
                         remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                     },
                     DEFAULT_PREFETCH_AMOUNT,
-                )
-                .decode_all_bucket_items::<QueryColoredCountersSerializer, _>(
-                    (Vec::new(), Vec::new()),
-                    &mut (),
+                );
+
+                TypedStreamReader::get_items::<QueryColoredCountersSerializer>(
+                    None,
+                    (),
+                    file_index.into_chunks(),
                     |counters, _| {
                         for query in counters.queries {
                             let (entry_epoch, colors_map_index) = &mut queries_results
@@ -168,7 +173,6 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
                             }
                         }
                     },
-                    (),
                 );
 
                 let bucket_index = input.index;
@@ -246,7 +250,7 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
                 let stream_path = compressed_stream.get_path();
                 compressed_stream.finalize();
 
-                let mut decompress_stream = CompressedBinaryReader::new(
+                let file_index = ChunkedBinaryReaderIndex::from_file(
                     stream_path,
                     RemoveFileMode::Remove { remove_fs: true },
                     DEFAULT_PREFETCH_AMOUNT,
@@ -261,7 +265,11 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
                     queries_lock.deref_mut()
                 };
 
-                std::io::copy(&mut decompress_stream.get_single_stream(), queries_file).unwrap();
+                for chunk in file_index.into_chunks() {
+                    assert_eq!(chunk.get_decoder_type(), DecoderType::Compressed);
+                    let mut reader = BinaryChunkReader::<CompressedStreamDecoder>::new(chunk);
+                    std::io::copy(&mut reader, queries_file).unwrap();
+                }
 
                 *query_write_index += 1;
                 output_sync_condvar.notify_all();

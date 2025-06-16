@@ -16,10 +16,8 @@ use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagemen
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLinkSerializer};
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::SingleBucket;
-use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
-use parallel_processor::buckets::readers::BucketReader;
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
-use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use rayon::prelude::*;
@@ -90,7 +88,7 @@ pub fn build_unitigs<
 
                 let bucket_index = read_file.index as BucketIndexType;
 
-                let mut unitigs_map_reader = LockFreeBinaryReader::new(
+                let file_index = ChunkedBinaryReaderIndex::from_file(
                     &unitigs_map_file.path,
                     RemoveFileMode::Remove {
                         remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
@@ -98,92 +96,90 @@ pub fn build_unitigs<
                     DEFAULT_PREFETCH_AMOUNT,
                 );
 
-                let mut unitigs_map_stream = unitigs_map_reader.get_single_stream();
-
                 let mut unitigs_hashmap = HashMap::new();
                 let mut unitigs_tmp_vec = Vec::new();
 
-                let mut deserializer = UnitigLinkSerializer::new(());
-
                 let mut counter: usize = 0;
-                while let Some(link) =
-                    deserializer.read_from(&mut unitigs_map_stream, &mut unitigs_tmp_vec, &mut ())
-                {
-                    let start_unitig = UnitigIndex::new(
-                        bucket_index,
-                        link.entry() as usize,
-                        link.flags().is_reverse_complemented(),
-                    );
 
-                    let is_circular = link
-                        .entries
-                        .get_slice(&unitigs_tmp_vec)
-                        .last()
-                        .map(|u| u == &start_unitig)
-                        .unwrap_or(false);
+                TypedStreamReader::get_items::<UnitigLinkSerializer>(
+                    None,
+                    (),
+                    file_index.into_chunks(),
+                    |link, _| {
+                        let start_unitig = UnitigIndex::new(
+                            bucket_index,
+                            link.entry() as usize,
+                            link.flags().is_reverse_complemented(),
+                        );
 
-                    assert!(!unitigs_hashmap.contains_key(&start_unitig));
-                    unitigs_hashmap.insert(
-                        start_unitig,
-                        (
-                            counter,
-                            FinalUnitigInfo {
-                                is_start: true,
-                                is_circular,
-                                flags: link.flags(),
-                            },
-                        ),
-                    );
+                        let is_circular = link
+                            .entries
+                            .get_slice(&unitigs_tmp_vec)
+                            .last()
+                            .map(|u| u == &start_unitig)
+                            .unwrap_or(false);
 
-                    counter += 1;
+                        assert!(!unitigs_hashmap.contains_key(&start_unitig));
+                        unitigs_hashmap.insert(
+                            start_unitig,
+                            (
+                                counter,
+                                FinalUnitigInfo {
+                                    is_start: true,
+                                    is_circular,
+                                    flags: link.flags(),
+                                },
+                            ),
+                        );
 
-                    for el in link.entries.get_slice(&unitigs_tmp_vec) {
-                        if *el != start_unitig {
-                            assert!(!unitigs_hashmap.contains_key(el));
-                            unitigs_hashmap.insert(
-                                *el,
-                                (
-                                    counter,
-                                    FinalUnitigInfo {
-                                        is_start: false,
-                                        is_circular,
-                                        flags: UnitigFlags::new_direction(
-                                            /*unused*/ false,
-                                            el.is_reverse_complemented(),
-                                        ),
-                                    },
-                                ),
-                            );
-                            counter += 1;
+                        counter += 1;
+
+                        for el in link.entries.get_slice(&unitigs_tmp_vec) {
+                            if *el != start_unitig {
+                                assert!(!unitigs_hashmap.contains_key(el));
+                                unitigs_hashmap.insert(
+                                    *el,
+                                    (
+                                        counter,
+                                        FinalUnitigInfo {
+                                            is_start: false,
+                                            is_circular,
+                                            flags: UnitigFlags::new_direction(
+                                                /*unused*/ false,
+                                                el.is_reverse_complemented(),
+                                            ),
+                                        },
+                                    ),
+                                );
+                                counter += 1;
+                            }
                         }
-                    }
 
-                    unitigs_tmp_vec.clear();
-                }
-
-                drop(unitigs_map_stream);
-                drop(unitigs_map_reader);
+                        unitigs_tmp_vec.clear();
+                    },
+                );
 
                 let mut final_sequences = Vec::with_capacity(counter);
                 let mut temp_storage = Vec::new();
                 final_sequences.resize(counter, None);
 
-                let mut color_extra_buffer = ReorganizedReadsExtraData::<
-                    color_types::PartialUnitigsColorStructure<CX>,
-                >::new_temp_buffer();
                 let mut final_color_extra_buffer =
                     color_types::PartialUnitigsColorStructure::<CX>::new_temp_buffer();
 
-                CompressedBinaryReader::new(
+                let file_index = ChunkedBinaryReaderIndex::from_file(
                     &read_file.path,
                     RemoveFileMode::Remove {
                         remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                     },
                     DEFAULT_PREFETCH_AMOUNT,
-                )
-                .decode_all_bucket_items::<CompressedReadsDataSerializerUnitigsBuilding<CX>, _>(
-                    Vec::new(),
-                    &mut color_extra_buffer,
+                );
+
+                let color_extra_buffer = TypedStreamReader::get_items::<
+                    CompressedReadsDataSerializerUnitigsBuilding<CX>,
+                >(
+                    None,
+                    k,
+                    file_index.into_chunks(),
                     |DeserializedRead {
                          read, extra: index, ..
                      },
@@ -197,8 +193,8 @@ pub fn build_unitigs<
                             index.counters,
                         ));
                     },
-                    k,
-                );
+                )
+                .extra_buffer;
 
                 let mut temp_sequence = Vec::new();
 

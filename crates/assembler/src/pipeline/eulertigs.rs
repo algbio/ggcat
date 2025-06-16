@@ -18,11 +18,10 @@ use io::concurrent::{
     },
     temp_reads::creads_utils::CompressedReadsBucketDataSerializer,
 };
-use parallel_processor::buckets::readers::async_binary_reader::AllowedCheckpointStrategy;
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
+use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use parallel_processor::{
-    buckets::readers::compressed_binary_reader::CompressedBinaryReader, memory_fs::RemoveFileMode,
-};
 use parking_lot::Mutex;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::{ParallelSlice, ParallelSliceMut};
@@ -360,7 +359,7 @@ pub fn build_eulertigs<
         .write()
         .start_phase("phase: eulertigs building part 1".to_string());
 
-    let circular_unitigs_reader = CompressedBinaryReader::new(
+    let circular_unitigs_reader_index = ChunkedBinaryReaderIndex::from_file(
         &circ_in_file,
         RemoveFileMode::Remove { remove_fs: true },
         DEFAULT_PREFETCH_AMOUNT,
@@ -381,66 +380,68 @@ pub fn build_eulertigs<
     let circular_unitigs_kmers = Mutex::new(vec![]);
     let unitigs_color_buffer = Mutex::new(<CX::ColorsMergeManagerType as ColorsMergeManager>::PartialUnitigsColorStructure::new_temp_buffer());
 
+    let circular_unitigs_reader_parallel_chunks =
+        circular_unitigs_reader_index.into_parallel_chunks();
+
     rayon::scope(|_s| {
         (0..rayon::current_num_threads())
             .into_par_iter()
             .for_each(|_thread_index| {
                 let mut kmers = vec![];
-                while circular_unitigs_reader
-                    .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
+                TypedStreamReader::get_items_parallel::<
+                    CompressedReadsBucketDataSerializer<
                         _,
                         NoSecondBucket,
                         NoMultiplicity,
                         NoMinimizerPosition,
                         typenum::consts::U0,
-                    >, _>(
-                        Vec::new(),
-                        SequenceDataWithAbundance::<PartialUnitigsColorStructure<CX>, ()>::new_temp_buffer(),
-                        AllowedCheckpointStrategy::DecompressOnly,
-                        |DeserializedRead {
-                             read,
-                             extra: SequenceDataWithAbundance::<_, ()> { index: _, mut color, link: _, abundance },
-                             ..
-                         },
-                         colors_extra_buffer,
-                         _checkpoint_data| {
-                            let unitig_index =
-                                joined.lock().add_unitig(read.get_length() - (k - 1));
-                            let mut buffer = unitigs_bases.lock();
+                    >,
+                >(
+                    k,
+                    &circular_unitigs_reader_parallel_chunks,
+                    |DeserializedRead {
+                         read,
+                         extra:
+                             SequenceDataWithAbundance::<_, ()> {
+                                 index: _,
+                                 mut color,
+                                 link: _,
+                                 abundance,
+                             },
+                         ..
+                     },
+                     colors_extra_buffer| {
+                        let unitig_index = joined.lock().add_unitig(read.get_length() - (k - 1));
+                        let mut buffer = unitigs_bases.lock();
 
-                            // Save the current circular unitig for later usage
-                            let copied_read =
-                                CompressedReadIndipendent::from_read(&read, &mut buffer);
+                        // Save the current circular unitig for later usage
+                        let copied_read = CompressedReadIndipendent::from_read(&read, &mut buffer);
 
-                            if CX::COLORS_ENABLED {
-                                // Copy the color data to the temporary buffer
-                                color = PartialUnitigsColorStructure::<CX>::copy_extra_from(
-                                    color,
-                                    &colors_extra_buffer.0,
-                                    &mut unitigs_color_buffer.lock(),
-                                );
-                            }
+                        if CX::COLORS_ENABLED {
+                            // Copy the color data to the temporary buffer
+                            color = PartialUnitigsColorStructure::<CX>::copy_extra_from(
+                                color,
+                                &colors_extra_buffer.0,
+                                &mut unitigs_color_buffer.lock(),
+                            );
+                        }
 
-                            unitig_mapping.insert(unitig_index, (copied_read, color, abundance));
+                        unitig_mapping.insert(unitig_index, (copied_read, color, abundance));
 
-                            for (offset, hash) in
-                                MH::new(read.sub_slice(0..(copied_read.bases_count() - 1)), k - 1)
-                                    .iter()
-                                    .enumerate()
-                            {
-                                kmers.push((
-                                    hash.to_unextendable(),
-                                    unitig_index,
-                                    KmerOffset::new(offset, !hash.is_forward()),
-                                ));
-                            }
-                        },
-                        k,
-                    )
-                    .is_some()
-                {
-                    continue;
-                }
+                        for (offset, hash) in
+                            MH::new(read.sub_slice(0..(copied_read.bases_count() - 1)), k - 1)
+                                .iter()
+                                .enumerate()
+                        {
+                            kmers.push((
+                                hash.to_unextendable(),
+                                unitig_index,
+                                KmerOffset::new(offset, !hash.is_forward()),
+                            ));
+                        }
+                    },
+                );
+
                 kmers.sort_unstable_by_key(|x| x.0);
                 circular_unitigs_kmers.lock().push(kmers);
             })
@@ -497,7 +498,7 @@ pub fn build_eulertigs<
     joined.flatten_parents();
     let unitigs_bases = unitigs_bases.into_inner();
 
-    let flat_unitigs_reader = CompressedBinaryReader::new(
+    let flat_unitigs_reader_index = ChunkedBinaryReaderIndex::from_file(
         &flat_in_file,
         RemoveFileMode::Remove { remove_fs: true },
         DEFAULT_PREFETCH_AMOUNT,
@@ -512,6 +513,8 @@ pub fn build_eulertigs<
     let circular_unitigs_kmers_map = circular_unitigs_kmers_map.into_read_only();
     let unitigs_color_buffer = unitigs_color_buffer.into_inner();
 
+    let flat_unitigs_reader_parallel_chunks = flat_unitigs_reader_index.into_parallel_chunks();
+
     rayon::scope(|_s| {
         (0..rayon::current_num_threads())
             .into_par_iter()
@@ -524,113 +527,110 @@ pub fn build_eulertigs<
                 let mut writer =
                     FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
 
-                while flat_unitigs_reader
-                    .decode_bucket_items_parallel::<CompressedReadsBucketDataSerializer<
+                TypedStreamReader::get_items_parallel::<
+                    CompressedReadsBucketDataSerializer<
                         _,
                         NoSecondBucket,
                         NoMultiplicity,
                         NoMinimizerPosition,
                         typenum::consts::U0,
-                    >, _>(
-                        Vec::new(),
-                        SequenceDataWithAbundance::<PartialUnitigsColorStructure<CX>, ()>::new_temp_buffer(),
-                        AllowedCheckpointStrategy::DecompressOnly,
-                        |DeserializedRead { read, extra: SequenceDataWithAbundance::<_, ()> { color, .. }, .. },
-                         color_extra_buffer,
-                         _checkpoint_data| {
-                            output_unitigs_buffer.clear();
+                    >,
+                >(
+                    k,
+                    &flat_unitigs_reader_parallel_chunks,
+                    |DeserializedRead {
+                         read,
+                         extra: SequenceDataWithAbundance::<_, ()> { color, .. },
+                         ..
+                     },
+                     color_extra_buffer| {
+                        output_unitigs_buffer.clear();
 
-                            CX::ColorsMergeManagerType::reset_unitig_color_structure(
-                                &mut final_unitig_color,
-                            );
+                        CX::ColorsMergeManagerType::reset_unitig_color_structure(
+                            &mut final_unitig_color,
+                        );
 
-                            let mut last_offset = 0;
+                        let mut last_offset = 0;
 
-                            for (offset, hash) in MH::new(read, k - 1).iter().enumerate() {
-                                if let Some(kmer) =
-                                    circular_unitigs_kmers_map.get(&hash.to_unextendable())
-                                {
-                                    let should_rc = kmer.1.is_rc() ^ !hash.is_forward();
-                                    let (index, rotation) = *kmer;
+                        for (offset, hash) in MH::new(read, k - 1).iter().enumerate() {
+                            if let Some(kmer) =
+                                circular_unitigs_kmers_map.get(&hash.to_unextendable())
+                            {
+                                let should_rc = kmer.1.is_rc() ^ !hash.is_forward();
+                                let (index, rotation) = *kmer;
 
-                                    let parent = joined.find_flatten(index);
+                                let parent = joined.find_flatten(index);
 
-                                    if joined.mappings[parent].used.swap(true, Ordering::Relaxed) {
-                                        continue;
-                                    }
-
-                                    // Found match
-                                    let end_base_offset = offset;
-                                    read.sub_slice(last_offset..end_base_offset)
-                                        .write_unpacked_to_vec(&mut output_unitigs_buffer, false);
-                                    CX::ColorsMergeManagerType::join_structures::<false>(
-                                        &mut final_unitig_color,
-                                        &color,
-                                        &color_extra_buffer.0,
-                                        last_offset,
-                                        Some(end_base_offset - last_offset),
-                                    );
-
-                                    // Dump the current circular unitig
-                                    let mut circular_unitig = joined.mappings[parent].clone();
-
-                                    circular_unitig.rotate(index, rotation.get_offset(), should_rc);
-
-                                    let mut circular_abundance = SequenceAbundanceType::default();
-                                    circular_unitig.write_unpacked::<MH, CX>(
-                                        &unitigs_bases,
-                                        &unitig_mapping,
-                                        &mut output_unitigs_buffer,
-                                        &unitigs_color_buffer,
-                                        &mut final_unitig_color,
-                                        k,
-                                        false,
-                                        &mut circular_abundance,
-                                    );
-
-                                    #[cfg(feature = "support_kmer_counters")]
-                                    {
-                                        _abundance.sum += circular_abundance.sum;
-                                    }
-
-                                    last_offset = end_base_offset;
+                                if joined.mappings[parent].used.swap(true, Ordering::Relaxed) {
+                                    continue;
                                 }
-                            }
 
-                            // Write the last part of the unitig
-                            read.sub_slice(last_offset..read.bases_count())
-                                .write_unpacked_to_vec(&mut output_unitigs_buffer, false);
-                            CX::ColorsMergeManagerType::join_structures::<false>(
-                                &mut final_unitig_color,
-                                &color,
-                                &color_extra_buffer.0,
-                                last_offset,
-                                Some(read.bases_count() - last_offset),
-                            );
-
-                            let writable_color =
-                                CX::ColorsMergeManagerType::encode_part_unitigs_colors(
+                                // Found match
+                                let end_base_offset = offset;
+                                read.sub_slice(last_offset..end_base_offset)
+                                    .write_unpacked_to_vec(&mut output_unitigs_buffer, false);
+                                CX::ColorsMergeManagerType::join_structures::<false>(
                                     &mut final_unitig_color,
-                                    &mut final_color_extra_buffer,
+                                    &color,
+                                    &color_extra_buffer.0,
+                                    last_offset,
+                                    Some(end_base_offset - last_offset),
                                 );
 
-                            writer.add_read(
-                                &output_unitigs_buffer,
-                                None,
-                                writable_color,
-                                &final_color_extra_buffer,
-                                L::default(),
-                                &default_links_buffer,
+                                // Dump the current circular unitig
+                                let mut circular_unitig = joined.mappings[parent].clone();
+
+                                circular_unitig.rotate(index, rotation.get_offset(), should_rc);
+
+                                let mut circular_abundance = SequenceAbundanceType::default();
+                                circular_unitig.write_unpacked::<MH, CX>(
+                                    &unitigs_bases,
+                                    &unitig_mapping,
+                                    &mut output_unitigs_buffer,
+                                    &unitigs_color_buffer,
+                                    &mut final_unitig_color,
+                                    k,
+                                    false,
+                                    &mut circular_abundance,
+                                );
+
                                 #[cfg(feature = "support_kmer_counters")]
-                                _abundance,
-                            );
-                        },
-                        k,
-                    )
-                    .is_some()
-                {
-                    continue;
-                }
+                                {
+                                    _abundance.sum += circular_abundance.sum;
+                                }
+
+                                last_offset = end_base_offset;
+                            }
+                        }
+
+                        // Write the last part of the unitig
+                        read.sub_slice(last_offset..read.bases_count())
+                            .write_unpacked_to_vec(&mut output_unitigs_buffer, false);
+                        CX::ColorsMergeManagerType::join_structures::<false>(
+                            &mut final_unitig_color,
+                            &color,
+                            &color_extra_buffer.0,
+                            last_offset,
+                            Some(read.bases_count() - last_offset),
+                        );
+
+                        let writable_color = CX::ColorsMergeManagerType::encode_part_unitigs_colors(
+                            &mut final_unitig_color,
+                            &mut final_color_extra_buffer,
+                        );
+
+                        writer.add_read(
+                            &output_unitigs_buffer,
+                            None,
+                            writable_color,
+                            &final_color_extra_buffer,
+                            L::default(),
+                            &default_links_buffer,
+                            #[cfg(feature = "support_kmer_counters")]
+                            _abundance,
+                        );
+                    },
+                );
             });
     });
 

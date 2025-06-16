@@ -12,17 +12,17 @@ use config::{
     MultiplicityCounterType, RESPLITTING_MAX_K_M_DIFFERENCE, SwapPriority, get_memory_mode,
 };
 use hashbrown::HashMap;
-use hashes::ExtendableHashTraitType;
 use hashes::HashFunction;
 use hashes::HashFunctionFactory;
 use hashes::default::MNHFactory;
+use hashes::{ExtendableHashTraitType, HashableSequence};
 use io::compressed_read::CompressedRead;
+use io::concurrent::temp_reads::creads_utils::DeserializedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement,
 };
 use io::varint::{decode_varint, encode_varint};
-use kmers_transform::reads_buffer::{DeserializedReadIndependent, ReadsVector};
 use kmers_transform::{
     GroupProcessStats, KmersTransform, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
     KmersTransformGlobalExtraData, KmersTransformMapProcessor,
@@ -226,10 +226,11 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
         QuerierMinimizerBucketingExecutorFactory::new(&global_data.global_resplit_data)
     }
 
-    fn new_map_processor(_global_data: &Arc<Self::GlobalExtraData>) -> Self::MapProcessorType {
+    fn new_map_processor(global_data: &Arc<Self::GlobalExtraData>) -> Self::MapProcessorType {
         Self::MapProcessorType {
             map_packet: None,
             kmers_count: 0,
+            k: global_data.k,
             _phantom: PhantomData,
         }
     }
@@ -310,6 +311,7 @@ impl<MH: HashFunctionFactory, CX: Sync + Send + 'static> PacketTrait
 struct ParallelKmersQueryMapProcessor<MH: HashFunctionFactory, CX: ColorsManager> {
     map_packet: Option<Packet<ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>>>,
     kmers_count: u64,
+    k: usize,
     _phantom: PhantomData<CX>,
 }
 
@@ -329,41 +331,35 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
         self.kmers_count = 0;
     }
 
-    fn process_group_batch_sequences(
+    #[inline(always)]
+    fn process_group_add_sequence(
         &mut self,
-        global_data: &GlobalQueryMergeData,
-        batch: &ReadsVector<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>>,
-        extra_data_buffer: &<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        ref_sequences: &Vec<u8>,
+        read: &DeserializedRead<'_, <ParallelKmersQueryFactory<MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>,
+        extra_data_buffer: &<<ParallelKmersQueryFactory<MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
     ) {
-        let k = global_data.k;
-        let map_packet = self.map_packet.as_mut().unwrap();
+        let k = self.k;
+        let map_packet = unsafe { self.map_packet.as_mut().unwrap_unchecked() };
 
-        for DeserializedReadIndependent {
-            read,
-            extra: sequence_type,
-            ..
-        } in batch.iter()
-        {
-            let hashes = MH::new(read.as_reference(ref_sequences), k);
+        let hashes = MH::new(read.read, k);
 
-            self.kmers_count += (read.bases_count() - k + 1) as u64;
+        self.kmers_count += (read.read.bases_count() - k + 1) as u64;
 
-            match sequence_type {
-                QueryKmersReferenceData::Graph(col_info) => {
-                    for (hash, color) in hashes
-                        .iter()
-                        .zip(col_info.get_iterator(&extra_data_buffer.0))
-                    {
-                        map_packet.phmap.insert(hash.to_unextendable(), color);
-                    }
+        let sequence_type = read.extra;
+
+        match sequence_type {
+            QueryKmersReferenceData::Graph(col_info) => {
+                for (hash, color) in hashes
+                    .iter()
+                    .zip(col_info.get_iterator(&extra_data_buffer.0))
+                {
+                    map_packet.phmap.insert(hash.to_unextendable(), color);
                 }
-                QueryKmersReferenceData::Query(index) => {
-                    for hash in hashes.iter() {
-                        map_packet
-                            .query_reads
-                            .push((index.get(), hash.to_unextendable()));
-                    }
+            }
+            QueryKmersReferenceData::Query(index) => {
+                for hash in hashes.iter() {
+                    map_packet
+                        .query_reads
+                        .push((index.get(), hash.to_unextendable()));
                 }
             }
         }

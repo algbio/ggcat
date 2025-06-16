@@ -12,8 +12,8 @@ use config::{
 use nightly_quirks::prelude::*;
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::BucketReader;
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::{BucketsCount, ExtraBuckets, MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
@@ -77,20 +77,21 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             );
 
         let mut counters_vec: Vec<(CounterEntry<ColorIndexType>, ColorIndexType)> = Vec::new();
-        CompressedBinaryReader::new(
+        let file_index = ChunkedBinaryReaderIndex::from_file(
             &input.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
             DEFAULT_PREFETCH_AMOUNT,
-        )
-        .decode_all_bucket_items::<CounterEntrySerializer<ColorIndexType>, _>(
+        );
+
+        TypedStreamReader::get_items::<CounterEntrySerializer<ColorIndexType>>(
+            None,
             (),
-            &mut (),
+            file_index.into_chunks(),
             |h, _| {
                 counters_vec.push(h);
             },
-            (),
         );
 
         struct CountersCompare;

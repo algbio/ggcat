@@ -158,7 +158,7 @@ pub struct DefaultUnitigsTempColorData {
     colors: VecDeque<(ColorIndexType, u64)>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct UnitigsSerializerTempBuffer {
     colors: Vec<(ColorIndexType, u64)>,
 }

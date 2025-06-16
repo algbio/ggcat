@@ -18,6 +18,12 @@ pub struct Allocator<T, const LOCAL_FITTING: usize> {
     freelist: [Vec<usize>; 32],
 }
 
+impl<T: Copy, const LOCAL_FITTING: usize> Default for Allocator<T, LOCAL_FITTING> {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
 pub type AllocatorU32 = Allocator<u32, 2>;
 pub type AllocatorU64 = Allocator<u64, 1>;
 

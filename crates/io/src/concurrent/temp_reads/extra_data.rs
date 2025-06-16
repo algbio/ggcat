@@ -29,7 +29,7 @@ impl Read for PointerDecoder {
 }
 
 pub trait SequenceExtraDataTempBufferManagement: Sized + Sync + Send + Debug + Clone {
-    type TempBuffer: Sync + Send;
+    type TempBuffer: Sync + Send + Default;
 
     fn new_temp_buffer() -> Self::TempBuffer;
     fn clear_temp_buffer(buffer: &mut Self::TempBuffer);

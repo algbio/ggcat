@@ -3,7 +3,7 @@ use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
-use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
@@ -133,7 +133,7 @@ impl BucketItemSerializer for MaximalUnitigLinkSerializer {
     type ExtraData = Vec<MaximalUnitigIndex>;
     type ReadBuffer = Vec<MaximalUnitigIndex>;
     type ExtraDataBuffer = ();
-    type ReadType<'a> = MaximalUnitigLink;
+    type ReadType<'a> = (&'a Self::ReadBuffer, MaximalUnitigLink);
     type InitData = ();
 
     type CheckpointData = ();
@@ -188,7 +188,10 @@ impl BucketItemSerializer for MaximalUnitigLinkSerializer {
             ));
         }
 
-        Some(MaximalUnitigLink::new(entry, VecSlice::new(start, len)))
+        Some((
+            read_buffer,
+            MaximalUnitigLink::new(entry, VecSlice::new(start, len)),
+        ))
     }
 
     fn get_size(&self, element: &Self::InputElementType<'_>, _: &Vec<MaximalUnitigIndex>) -> usize {

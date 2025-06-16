@@ -2,15 +2,15 @@ use crate::pipeline::maximal_unitig_links::maximal_unitig_index::{
     DoubleMaximalUnitigLinks, MaximalUnitigIndex, MaximalUnitigLink,
 };
 use config::{DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
-use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
 use parallel_processor::buckets::SingleBucket;
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parking_lot::{Mutex, RwLock};
 use std::cmp::min;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use utils::vec_slice::VecSlice;
 
 use super::maximal_unitig_index::MaximalUnitigLinkSerializer;
@@ -46,7 +46,7 @@ impl MaximalUnitigLinksMapping {
             mappings_data: vec![],
         };
 
-        let mut reader = CompressedBinaryReader::new(
+        let file_index = ChunkedBinaryReaderIndex::from_file(
             bucket,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
@@ -54,25 +54,27 @@ impl MaximalUnitigLinksMapping {
             DEFAULT_PREFETCH_AMOUNT,
         );
 
-        let mut stream = reader.get_single_stream();
+        let mappings_data = TypedStreamReader::get_items::<MaximalUnitigLinkSerializer>(
+            None,
+            (),
+            file_index.into_chunks(),
+            |(mappings_data, item), _| {
+                let index = item.index() - self_.start_index;
 
-        let mut deserializer = MaximalUnitigLinkSerializer::new(());
+                let current_slice = item.entries.get_slice(&mappings_data);
 
-        while let Some(item) =
-            deserializer.read_from(&mut stream, &mut self_.mappings_data, &mut ())
-        {
-            let index = item.index() - self_.start_index;
+                let forward_index = if current_slice[0].flags.flip_current() {
+                    1
+                } else {
+                    0
+                };
 
-            let current_slice = item.entries.get_slice(&self_.mappings_data);
+                self_.mappings[index as usize].links[forward_index] = item;
+            },
+        )
+        .buffer;
 
-            let forward_index = if current_slice[0].flags.flip_current() {
-                1
-            } else {
-                0
-            };
-
-            self_.mappings[index as usize].links[forward_index] = item;
-        }
+        self_.mappings_data = mappings_data;
 
         self_
     }

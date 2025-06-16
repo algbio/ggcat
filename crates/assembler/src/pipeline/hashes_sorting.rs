@@ -10,8 +10,8 @@ use io::structs::hash_entry::{Direction, HashCompare, HashEntrySerializer};
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLink, UnitigLinkSerializer};
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::BucketReader;
-use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{BucketsCount, MultiThreadBuckets, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
@@ -62,11 +62,18 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
 
             let mut hashes_vec = Vec::new();
 
-            LockFreeBinaryReader::new(&input.path, RemoveFileMode::Remove {
+            let file_index = ChunkedBinaryReaderIndex::from_file(&input.path, RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed)
-            }, DEFAULT_PREFETCH_AMOUNT).decode_all_bucket_items::<HashEntrySerializer<H::HashTypeUnextendable>, _>((), &mut (), |h, _| {
-                hashes_vec.push(h);
-            }, ());
+            }, DEFAULT_PREFETCH_AMOUNT);
+
+            TypedStreamReader::get_items::<HashEntrySerializer<H::HashTypeUnextendable>>(
+                None,
+                (),
+                file_index.into_chunks(),
+                |h, _| {
+                    hashes_vec.push(h);
+                }
+            );
 
             fast_smart_radix_sort::<_, HashCompare<H>, false>(&mut hashes_vec[..]);
 
