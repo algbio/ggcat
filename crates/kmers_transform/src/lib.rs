@@ -1,5 +1,5 @@
 use crate::processor::{KmersProcessorInitData, KmersTransformProcessor};
-use config::{DEFAULT_PREFETCH_AMOUNT, MINIMUM_LOG_DELTA_TIME};
+use config::{DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MINIMUM_LOG_DELTA_TIME};
 use ggcat_logging::generate_stat_id;
 use io::concurrent::temp_reads::creads_utils::{DeserializedRead, ReadsCheckpointData};
 use io::concurrent::temp_reads::extra_data::{
@@ -291,7 +291,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 let file_index = ChunkedBinaryReaderIndex::from_file(
                     file,
                     RemoveFileMode::Remove {
-                        remove_fs: false, // !KEEP_FILES.load(Ordering::Relaxed),
+                        remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                     },
                     DEFAULT_PREFETCH_AMOUNT,
                 );

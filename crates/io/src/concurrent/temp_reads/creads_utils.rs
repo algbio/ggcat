@@ -426,24 +426,13 @@ pub mod helpers {
         if with_multiplicity {
             TypedStreamReader::get_items::<
                 CompressedReadsBucketDataSerializer<
-                    E,
+                    EM,
                     NoSecondBucket,
                     WithMultiplicity,
                     MinimizerMode,
                     FlagsCount,
                 >,
             >(reader_thread, k, chunks, |item, extra_buffer| {
-                let (extra, extra_buffer) =
-                    EM::from_single_entry(&mut tmp_mult_buffer, item.extra, extra_buffer);
-                let item = DeserializedRead {
-                    read: item.read,
-                    extra,
-                    multiplicity: item.multiplicity,
-                    flags: item.flags,
-                    second_bucket: item.second_bucket,
-                    minimizer_pos: item.minimizer_pos,
-                    is_window_duplicate: item.is_window_duplicate,
-                };
                 data_callback(item, extra_buffer);
                 EM::clear_temp_buffer(extra_buffer);
             });

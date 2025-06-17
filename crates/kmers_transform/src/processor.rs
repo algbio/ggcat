@@ -127,14 +127,6 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                 },
             );
 
-            if proc_info.sequences_count != real_size {
-                println!(
-                    "Bug at {:?} {} != {}!",
-                    proc_info.debug_bucket_first_path, proc_info.sequences_count, real_size
-                );
-                std::process::abort();
-            }
-
             let GroupProcessStats {
                 total_kmers,
                 unique_kmers,
@@ -170,15 +162,6 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
 
             packet = final_executor.process_map(&global_context.global_extra_data, packet);
             packet.reset();
-            // address.packet_send(
-            //     global_context
-            //         .finalizer_address
-            //         .read()
-            //         .as_ref()
-            //         .unwrap()
-            //         .clone(),
-            //     packet,
-            // );
         }
         final_executor.finalize(&global_context.global_extra_data);
     }
