@@ -92,7 +92,7 @@ pub fn links_compaction(
             None,
             (),
             file_index.into_chunks(),
-            |entry, _| {
+            |(_, entry), _| {
                 vec.push(entry);
             },
         )

@@ -97,15 +97,13 @@ pub fn build_unitigs<
                 );
 
                 let mut unitigs_hashmap = HashMap::new();
-                let mut unitigs_tmp_vec = Vec::new();
-
                 let mut counter: usize = 0;
 
                 TypedStreamReader::get_items::<UnitigLinkSerializer>(
                     None,
                     (),
                     file_index.into_chunks(),
-                    |link, _| {
+                    |(unitigs_tmp_vec, link), _| {
                         let start_unitig = UnitigIndex::new(
                             bucket_index,
                             link.entry() as usize,

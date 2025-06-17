@@ -1,5 +1,5 @@
 use crate::concurrent::temp_reads::extra_data::{HasEmptyExtraBuffer, SequenceExtraData};
-use crate::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use crate::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use byteorder::ReadBytesExt;
 use config::BucketIndexType;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
@@ -273,7 +273,7 @@ impl BucketItemSerializer for UnitigLinkSerializer {
     type ExtraData = Vec<UnitigIndex>;
     type ReadBuffer = Vec<UnitigIndex>;
     type ExtraDataBuffer = ();
-    type ReadType<'a> = UnitigLink;
+    type ReadType<'a> = (&'a mut Self::ReadBuffer, UnitigLink);
     type InitData = ();
 
     type CheckpointData = ();
@@ -328,10 +328,9 @@ impl BucketItemSerializer for UnitigLinkSerializer {
             read_buffer.push(UnitigIndex::new_raw(bucket, index as usize));
         }
 
-        Some(UnitigLink::new(
-            entry,
-            UnitigFlags(flags),
-            VecSlice::new(start, len),
+        Some((
+            read_buffer,
+            UnitigLink::new(entry, UnitigFlags(flags), VecSlice::new(start, len)),
         ))
     }
 
