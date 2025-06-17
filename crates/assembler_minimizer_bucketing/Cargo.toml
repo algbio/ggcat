@@ -8,7 +8,7 @@ edition = "2024"
 config = { package = "ggcat_config", path = "../config" }
 
 # Common libraries
-parallel-processor = "0.1.31"
+parallel-processor = "0.1.32"
 streaming-libdeflate-rs = "0.1.5"
 
 # Static dispatch

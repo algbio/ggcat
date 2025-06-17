@@ -400,66 +400,41 @@ pub mod helpers {
     };
 
     use crate::concurrent::temp_reads::{
-        creads_utils::NoSecondBucket,
-        extra_data::{SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression},
+        creads_utils::MultiplicityModeOption, extra_data::SequenceExtraDataConsecutiveCompression,
     };
 
     use super::{
         BucketModeOption, CompressedReadsBucketDataSerializer, DeserializedRead,
-        MinimizerModeOption, NoMultiplicity, WithMultiplicity,
+        MinimizerModeOption,
     };
 
-    pub fn helper_read_bucket_with_opt_multiplicity<
+    pub fn helper_read_bucket<
         E: SequenceExtraDataConsecutiveCompression,
-        EM: SequenceExtraDataConsecutiveCompression + SequenceExtraDataCombiner<SingleDataType = E>,
         BucketMode: BucketModeOption,
+        MultiplicityMode: MultiplicityModeOption,
         MinimizerMode: MinimizerModeOption,
         FlagsCount: typenum::Unsigned,
     >(
         chunks: Vec<BinaryReaderChunk>,
         reader_thread: Option<Arc<AsyncReaderThread>>,
-        with_multiplicity: bool,
-        mut data_callback: impl FnMut(DeserializedRead<EM>, &mut EM::TempBuffer),
+        mut data_callback: impl FnMut(DeserializedRead<E>, &mut E::TempBuffer),
         k: usize,
     ) {
-        let mut tmp_mult_buffer = EM::new_temp_buffer();
-        if with_multiplicity {
-            TypedStreamReader::get_items::<
-                CompressedReadsBucketDataSerializer<
-                    EM,
-                    NoSecondBucket,
-                    WithMultiplicity,
-                    MinimizerMode,
-                    FlagsCount,
-                >,
-            >(reader_thread, k, chunks, |item, extra_buffer| {
-                data_callback(item, extra_buffer);
-                EM::clear_temp_buffer(extra_buffer);
-            });
-        } else {
-            TypedStreamReader::get_items::<
-                CompressedReadsBucketDataSerializer<
-                    E,
-                    BucketMode,
-                    NoMultiplicity,
-                    MinimizerMode,
-                    FlagsCount,
-                >,
-            >(reader_thread, k, chunks, |item, extra_buffer| {
-                let (extra, extra_buffer) =
-                    EM::from_single_entry(&mut tmp_mult_buffer, item.extra, extra_buffer);
-                let item = DeserializedRead {
-                    read: item.read,
-                    extra,
-                    multiplicity: item.multiplicity,
-                    flags: item.flags,
-                    second_bucket: item.second_bucket,
-                    minimizer_pos: item.minimizer_pos,
-                    is_window_duplicate: item.is_window_duplicate,
-                };
-                data_callback(item, extra_buffer);
-                EM::clear_temp_buffer(extra_buffer);
-            });
+        if chunks.len() == 0 {
+            return;
         }
+
+        TypedStreamReader::get_items::<
+            CompressedReadsBucketDataSerializer<
+                E,
+                BucketMode,
+                MultiplicityMode,
+                MinimizerMode,
+                FlagsCount,
+            >,
+        >(reader_thread, k, chunks, |item, extra_buffer| {
+            data_callback(item, extra_buffer);
+            E::clear_temp_buffer(extra_buffer);
+        });
     }
 }

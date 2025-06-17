@@ -151,6 +151,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
     file_inputs: Vec<MultiChunkBucket>,
     colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
     buckets_count: BucketsCount,
+    second_buckets_count: BucketsCount,
     min_multiplicity: usize,
     out_directory: P,
     k: usize,
@@ -241,11 +242,11 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             file_inputs,
             out_directory.as_ref(),
             buckets_count,
+            second_buckets_count,
             global_data,
             threads_count,
             k,
             MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
-            true,
         )
         .parallel_kmers_transform();
     } else {
@@ -253,11 +254,11 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             file_inputs,
             out_directory.as_ref(),
             buckets_count,
+            second_buckets_count,
             global_data,
             threads_count,
             k,
             MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
-            true,
         )
         .parallel_kmers_transform();
     }

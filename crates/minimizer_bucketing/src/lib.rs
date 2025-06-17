@@ -1,8 +1,10 @@
 pub mod compactor;
+pub mod decode_helper;
 mod queue_data;
 mod reader;
 pub mod resplit_bucket;
 mod sequences_splitter;
+pub mod split_buckets;
 
 use crate::compactor::BucketsCompactor;
 use crate::queue_data::MinimizerBucketingQueueData;
@@ -16,10 +18,9 @@ use config::{
 use ggcat_logging::stats;
 use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
-use io::concurrent::temp_reads::creads_utils::helpers::helper_read_bucket_with_opt_multiplicity;
 use io::concurrent::temp_reads::creads_utils::{
     AssemblerMinimizerPosition, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
-    DeserializedRead, MinimizerModeOption, NoMultiplicity, NoSecondBucket, WithSecondBucket,
+    NoMultiplicity, WithSecondBucket,
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
@@ -28,8 +29,6 @@ use io::concurrent::temp_reads::extra_data::{
 use io::sequences_reader::DnaSequence;
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::binary_reader::BinaryReaderChunk;
-use parallel_processor::buckets::readers::typed_binary_reader::AsyncReaderThread;
 use parallel_processor::buckets::writers::compressed_binary_writer::{
     CompressedBinaryWriter, CompressionLevelInfo,
 };
@@ -59,47 +58,6 @@ pub enum MinimizerBucketMode {
     Single,
     SingleGrouped,
     Compacted,
-}
-
-#[inline(always)]
-pub fn helper_read_bucket_with_type<
-    E: SequenceExtraDataConsecutiveCompression,
-    EM: SequenceExtraDataConsecutiveCompression + SequenceExtraDataCombiner<SingleDataType = E>,
-    MinimizerMode: MinimizerModeOption,
-    FlagsCount: typenum::Unsigned,
->(
-    chunks: Vec<BinaryReaderChunk>,
-    read_thread: Option<Arc<AsyncReaderThread>>,
-    data_type: MinimizerBucketMode,
-    data_callback: impl FnMut(DeserializedRead<EM>, &mut EM::TempBuffer),
-    k: usize,
-) {
-    match data_type {
-        MinimizerBucketMode::Single => {
-            helper_read_bucket_with_opt_multiplicity::<
-                E,
-                EM,
-                WithSecondBucket,
-                MinimizerMode,
-                FlagsCount,
-            >(chunks, read_thread, false, data_callback, k);
-        }
-        MinimizerBucketMode::SingleGrouped | MinimizerBucketMode::Compacted => {
-            helper_read_bucket_with_opt_multiplicity::<
-                E,
-                EM,
-                NoSecondBucket,
-                MinimizerMode,
-                FlagsCount,
-            >(
-                chunks,
-                read_thread,
-                data_type == MinimizerBucketMode::Compacted,
-                data_callback,
-                k,
-            );
-        }
-    }
 }
 
 pub struct MinimzerBucketingFilesReaderInputPacket<

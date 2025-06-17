@@ -238,6 +238,7 @@ pub fn run_assembler<
             buckets,
             global_colors_table.clone(),
             buckets_count,
+            second_buckets_count,
             min_multiplicity,
             temp_dir.as_path(),
             k,

@@ -1,17 +1,12 @@
-use config::{
-    BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, READ_FLAG_INCL_END,
-};
+use config::{BucketIndexType, DEFAULT_PREFETCH_AMOUNT, READ_FLAG_INCL_END};
 use hashes::default::MNHFactory;
 use hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use io::concurrent::temp_reads::creads_utils::{
     AssemblerMinimizerPosition, CompressedReadsBucketDataSerializer, DeserializedRead,
-    NoMultiplicity, ReadsCheckpointData, WithSecondBucket,
+    NoMultiplicity, WithSecondBucket,
 };
 use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
-use parallel_processor::buckets::readers::typed_binary_reader::{
-    AsyncReaderThread, TypedStreamReader,
-};
-use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 use parallel_processor::memory_fs::RemoveFileMode;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -61,31 +56,30 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
 
     let mut total_counters = vec![0; second_buckets_count];
 
-    let mut checkpoints_iterator =
-        TypedStreamReader::get_items::<
-            CompressedReadsBucketDataSerializer<
-                (),
-                WithSecondBucket,
-                NoMultiplicity,
-                AssemblerMinimizerPosition,
-                typenum::U2,
-            >,
-        >(None, k, bucket_file_index.into_chunks(), |read_info, _| {
-            let orig_bucket = get_sequence_bucket::<()>(
-                k,
-                m,
-                &read_info,
-                buckets_count.ilog2() as usize,
-                second_buckets_log,
-            ) as usize;
+    TypedStreamReader::get_items::<
+        CompressedReadsBucketDataSerializer<
+            (),
+            WithSecondBucket,
+            NoMultiplicity,
+            AssemblerMinimizerPosition,
+            typenum::U2,
+        >,
+    >(None, k, bucket_file_index.into_chunks(), |read_info, _| {
+        let orig_bucket = get_sequence_bucket::<()>(
+            k,
+            m,
+            &read_info,
+            buckets_count.ilog2() as usize,
+            second_buckets_log,
+        ) as usize;
 
-            let hashes = MH::new(read_info.read, k);
+        let hashes = MH::new(read_info.read, k);
 
-            for hash in hashes.iter() {
-                total_counters[orig_bucket] += 1;
-                hash_maps[orig_bucket].insert(hash.to_unextendable());
-            }
-        });
+        for hash in hashes.iter() {
+            total_counters[orig_bucket] += 1;
+            hash_maps[orig_bucket].insert(hash.to_unextendable());
+        }
+    });
 
     let counters_string = hash_maps
         .iter()

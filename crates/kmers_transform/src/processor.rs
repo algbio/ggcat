@@ -4,10 +4,9 @@ use crate::{
 };
 use config::DEFAULT_PER_CPU_BUFFER_SIZE;
 use ggcat_logging::stats::StatId;
-use io::concurrent::temp_reads::creads_utils::{AssemblerMinimizerPosition, DeserializedRead};
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
-use minimizer_bucketing::{MinimizerBucketMode, helper_read_bucket_with_type};
-use parallel_processor::buckets::readers::binary_reader::BinaryReaderChunk;
+use minimizer_bucketing::decode_helper::decode_sequences;
+use minimizer_bucketing::split_buckets::SplittedBucket;
 use parallel_processor::buckets::readers::typed_binary_reader::AsyncReaderThread;
 use parallel_processor::execution_manager::executor::{AsyncExecutor, ExecutorReceiver};
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
@@ -17,7 +16,6 @@ use parallel_processor::mt_debug_counters::declare_counter_i64;
 use parking_lot::Mutex;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use utils::track;
 
@@ -26,60 +24,11 @@ pub struct KmersTransformProcessor<F: KmersTransformExecutorFactory>(PhantomData
 static ADDR_WAITING_COUNTER: AtomicCounter<SumMode> =
     declare_counter_i64!("kt_addr_wait_processor", SumMode, false);
 
-#[derive(Clone)]
 pub struct KmersProcessorInitData {
     pub process_stat_id: StatId,
-    pub sequences_count: usize,
-    pub sub_bucket: usize,
-    // Chunks without multiplicity
-    pub single_chunks: Arc<Mutex<Option<Vec<BinaryReaderChunk>>>>,
-    // Chunks with multiplicity
-    pub multi_chunks: Arc<Mutex<Option<Vec<BinaryReaderChunk>>>>,
+    pub splitted_bucket: Mutex<Option<SplittedBucket>>,
     pub is_resplitted: bool,
     pub debug_bucket_first_path: Option<PathBuf>,
-}
-
-fn decode_sequences<F: KmersTransformExecutorFactory>(
-    reader_thread: Arc<AsyncReaderThread>,
-    init_data: &KmersProcessorInitData,
-    k: usize,
-    mut callback: impl FnMut(
-        DeserializedRead<F::AssociatedExtraDataWithMultiplicity>,
-        &mut <F::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer
-    ),
-) {
-    let single_chunks = init_data.single_chunks.lock().take().unwrap();
-    let multi_chunks = init_data.multi_chunks.lock().take().unwrap();
-
-    if single_chunks.len() > 0 {
-        helper_read_bucket_with_type::<
-            F::AssociatedExtraData,
-            F::AssociatedExtraDataWithMultiplicity,
-            AssemblerMinimizerPosition,
-            F::FlagsCount,
-        >(
-            single_chunks,
-            Some(reader_thread.clone()),
-            MinimizerBucketMode::SingleGrouped,
-            &mut callback,
-            k,
-        );
-    }
-
-    if multi_chunks.len() > 0 {
-        helper_read_bucket_with_type::<
-            F::AssociatedExtraData,
-            F::AssociatedExtraDataWithMultiplicity,
-            AssemblerMinimizerPosition,
-            F::FlagsCount,
-        >(
-            multi_chunks,
-            Some(reader_thread.clone()),
-            MinimizerBucketMode::Compacted,
-            callback,
-            k,
-        );
-    }
 }
 
 impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor<F> {
@@ -109,20 +58,28 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
             &F::get_packets_init_data(&global_context.global_extra_data),
         ));
 
+        let mut tmp_mult_buffer = <F::AssociatedExtraDataWithMultiplicity>::new_temp_buffer();
+
         while let Ok(address) = track!(receiver.obtain_address(), ADDR_WAITING_COUNTER) {
             let proc_info = address.get_init_data();
             map_processor.process_group_start(packet, &global_context.global_extra_data);
 
             let mut real_size = 0;
 
-            decode_sequences::<F>(
+            let mut splitted_bucket = proc_info.splitted_bucket.lock().take().unwrap();
+
+            decode_sequences::<
+                F::AssociatedExtraData,
+                F::AssociatedExtraDataWithMultiplicity,
+                F::FlagsCount,
+            >(
                 reader_thread.clone(),
-                proc_info,
+                &mut tmp_mult_buffer,
+                &mut splitted_bucket,
                 global_context.k,
                 |read, extra_buffer| {
                     real_size += 1;
                     map_processor.process_group_add_sequence(&read, extra_buffer);
-                    // TODO: Add reads here!
                     F::AssociatedExtraDataWithMultiplicity::clear_temp_buffer(extra_buffer);
                 },
             );
@@ -132,6 +89,23 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                 unique_kmers,
                 ..
             } = map_processor.get_stats();
+
+            packet = map_processor.process_group_finalize(&global_context.global_extra_data);
+
+            if real_size != splitted_bucket.sequences_count {
+                ggcat_logging::info!(
+                    "Found bucket ==> {:?} // EXPECTED_SIZE: {} REAL_SIZE: {} SUB: {}",
+                    proc_info
+                        .debug_bucket_first_path
+                        .as_ref()
+                        .map(|p| p.display()),
+                    splitted_bucket.sequences_count,
+                    real_size,
+                    splitted_bucket.sub_bucket
+                );
+            }
+
+            packet = final_executor.process_map(&global_context.global_extra_data, packet);
 
             if !proc_info.is_resplitted {
                 global_context
@@ -143,24 +117,16 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                 global_context
                     .unique_kmers
                     .fetch_add(unique_kmers, Ordering::Relaxed);
+
+                global_context
+                    .processed_subbuckets_count
+                    .fetch_add(1, Ordering::Relaxed);
+
+                global_context
+                    .processed_buckets_size
+                    .fetch_add(splitted_bucket.total_size as usize, Ordering::Relaxed);
             }
 
-            packet = map_processor.process_group_finalize(&global_context.global_extra_data);
-
-            if real_size != proc_info.sequences_count {
-                ggcat_logging::info!(
-                    "Found bucket ==> {:?} // EXPECTED_SIZE: {} REAL_SIZE: {} SUB: {}",
-                    proc_info
-                        .debug_bucket_first_path
-                        .as_ref()
-                        .map(|p| p.display()),
-                    proc_info.sequences_count,
-                    real_size,
-                    proc_info.sub_bucket
-                );
-            }
-
-            packet = final_executor.process_map(&global_context.global_extra_data, packet);
             packet.reset();
         }
         final_executor.finalize(&global_context.global_extra_data);

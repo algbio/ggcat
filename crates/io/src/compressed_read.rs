@@ -166,6 +166,17 @@ impl<'a> CompressedRead<'a> {
     const WINDOW_DUPLICATE_SENTINEL: u64 = u64::MAX >> 16;
 
     #[inline(always)]
+    pub fn compute_hash_aligned(&self) -> u64 {
+        use std::hash::BuildHasher;
+
+        let slice = self.get_packed_slice();
+
+        let mut hasher = FxBuildHasher.build_hasher();
+        Hash::hash_slice(slice, &mut hasher);
+        hasher.finish()
+    }
+
+    #[inline(always)]
     pub fn encode_length<MinimizerMode: MinimizerModeOption, FlagsCount: typenum::Unsigned>(
         buffer: &mut Vec<u8>,
         length: usize,
@@ -236,6 +247,7 @@ impl<'a> CompressedRead<'a> {
             flags,
             is_window_duplicate,
         );
+
         if rc {
             Self::compress_from_plain_rc(seq, |b| {
                 buffer.extend_from_slice(b);
@@ -300,7 +312,7 @@ impl<'a> CompressedRead<'a> {
             temp_buffer.set_len(buffer_start + bytes);
         }
 
-        stream.read_exact(&mut temp_buffer[buffer_start..]).ok()?;
+        stream.read_exact(&mut temp_buffer[buffer_start..]).unwrap();
 
         Some((
             CompressedRead::new_from_compressed(&temp_buffer[buffer_start..], size),

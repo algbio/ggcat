@@ -439,6 +439,7 @@ pub fn parallel_kmers_counting<
 >(
     file_inputs: Vec<SingleBucket>,
     buckets_count: BucketsCount,
+    second_buckets_count: BucketsCount,
     out_directory: P,
     k: usize,
     m: usize,
@@ -486,11 +487,11 @@ pub fn parallel_kmers_counting<
             .collect(),
         out_directory.as_ref(),
         buckets_count,
+        second_buckets_count,
         global_data.clone(),
         threads_count,
         k,
         MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
-        false,
     )
     .parallel_kmers_transform();
 

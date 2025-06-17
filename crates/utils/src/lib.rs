@@ -3,6 +3,7 @@ pub mod debug_functions;
 pub mod fast_rand_bool;
 pub mod inline_vec;
 pub mod owned_drop;
+pub mod resize_containers;
 pub mod resource_counter;
 pub mod vec_slice;
 

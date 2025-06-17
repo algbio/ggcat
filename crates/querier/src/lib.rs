@@ -124,6 +124,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
         parallel_kmers_counting::<MergingHash, QuerierColorsManager, _>(
             buckets,
             buckets_count,
+            second_buckets_count,
             temp_dir.as_path(),
             k,
             m,

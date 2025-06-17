@@ -1,16 +1,14 @@
 use crate::processor::{KmersProcessorInitData, KmersTransformProcessor};
 use config::{DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MINIMUM_LOG_DELTA_TIME};
 use ggcat_logging::generate_stat_id;
-use io::concurrent::temp_reads::creads_utils::{DeserializedRead, ReadsCheckpointData};
+use io::concurrent::temp_reads::creads_utils::DeserializedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement,
 };
+use minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
-use minimizer_bucketing::{MinimizerBucketMode, MinimizerBucketingExecutorFactory};
-use parallel_processor::buckets::readers::binary_reader::{
-    BinaryReaderChunk, ChunkedBinaryReaderIndex,
-};
+use minimizer_bucketing::split_buckets::SplittedBucket;
 
 use parallel_processor::buckets::{BucketsCount, ExtraBucketData, MultiChunkBucket};
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
@@ -21,6 +19,7 @@ use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
 use std::cmp::{max, min};
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -116,7 +115,6 @@ pub trait KmersTransformFinalExecutor<F: KmersTransformExecutorFactory>:
 
 pub struct InputBucketDesc {
     pub(crate) paths: Vec<PathBuf>,
-    // pub(crate) sub_bucket_counters: Vec<BucketCounter>,
     pub(crate) resplitted: bool,
     pub(crate) rewritten: bool,
     pub(crate) used_hash_bits: usize,
@@ -132,20 +130,18 @@ pub struct KmersTransform<F: KmersTransformExecutorFactory> {
 
 pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     k: usize,
-    min_bucket_size: u64,
     buckets_count: BucketsCount,
+    second_buckets_count: BucketsCount,
     extra_buckets_count: AtomicUsize,
     rewritten_buckets_count: AtomicUsize,
-    processed_buckets_count: AtomicUsize,
+    processed_subbuckets_count: AtomicUsize,
     processed_extra_buckets_count: AtomicUsize,
 
     total_buckets_size: usize,
     processed_buckets_size: AtomicUsize,
     processed_extra_buckets_size: AtomicUsize,
 
-    // finalizer_address: Arc<RwLock<Option<ExecutorAddress>>>,
     global_extra_data: Arc<F::GlobalExtraData>,
-    // async_readers: ScopedThreadLocal<Arc<AsyncReaderThread>>,
     compute_threads_count: usize,
     total_threads_count: usize,
     temp_dir: PathBuf,
@@ -153,8 +149,6 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     total_sequences: AtomicU64,
     total_kmers: AtomicU64,
     unique_kmers: AtomicU64,
-
-    executors_register_lock: Mutex<()>,
 }
 
 impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
@@ -162,11 +156,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         file_inputs: Vec<MultiChunkBucket>,
         temp_dir: &Path,
         buckets_count: BucketsCount,
+        second_buckets_count: BucketsCount,
         global_extra_data: Arc<F::GlobalExtraData>,
         threads_count: usize,
         k: usize,
         min_bucket_size: u64,
-        compacted_buckets: bool,
     ) -> Self {
         let mut total_buckets_size = 0;
 
@@ -243,11 +237,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
         let execution_context = Arc::new(KmersTransformContext {
             k,
-            min_bucket_size,
             buckets_count,
+            second_buckets_count,
             extra_buckets_count: AtomicUsize::new(0),
             rewritten_buckets_count: AtomicUsize::new(0),
-            processed_buckets_count: AtomicUsize::new(0),
+            processed_subbuckets_count: AtomicUsize::new(0),
             processed_extra_buckets_count: AtomicUsize::new(0),
             total_buckets_size,
             processed_buckets_size: AtomicUsize::new(0),
@@ -259,7 +253,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             total_sequences: AtomicU64::new(0),
             total_kmers: AtomicU64::new(0),
             unique_kmers: AtomicU64::new(0),
-            executors_register_lock: Mutex::new(()),
         });
 
         Self {
@@ -285,82 +278,29 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             compute_thread_pool.start(scheduler.clone(), &self.global_context);
 
         for bucket in self.normal_buckets_list.iter() {
-            let mut bucket_chunks = vec![];
+            let splitted_buckets = SplittedBucket::generate(
+                bucket.paths.iter(),
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                },
+                DEFAULT_PREFETCH_AMOUNT,
+                self.global_context.second_buckets_count.total_buckets_count,
+            );
 
-            for file in &bucket.paths {
-                let file_index = ChunkedBinaryReaderIndex::from_file(
-                    file,
-                    RemoveFileMode::Remove {
-                        remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-                    },
-                    DEFAULT_PREFETCH_AMOUNT,
-                );
-
-                let data_format = file_index.get_data_format_info::<MinimizerBucketMode>();
-
-                bucket_chunks.extend(
-                    file_index
-                        .into_chunks()
-                        .into_iter()
-                        // The first element is empty and has no extra data, skip it
-                        .filter_map(|c| {
-                            Some((
-                                (
-                                    c.get_extra_data::<ReadsCheckpointData>()?,
-                                    data_format,
-                                    c.get_unique_file_id(),
-                                ),
-                                c,
-                            ))
-                        }),
-                );
-            }
-
-            bucket_chunks.sort_by_key(|c| c.0.0.target_subbucket);
-
-            let mut sub_buckets: Vec<(
-                Vec<(ReadsCheckpointData, MinimizerBucketMode, usize)>,
-                Vec<BinaryReaderChunk>,
-            )> = vec![];
-            for chunk in bucket_chunks {
-                if let Some(last) = sub_buckets.last_mut() {
-                    if last.0[last.0.len() - 1].0.target_subbucket == chunk.0.0.target_subbucket {
-                        last.0.push(chunk.0);
-                        last.1.push(chunk.1);
-                    } else {
-                        sub_buckets.push((vec![chunk.0], vec![chunk.1]));
-                    }
-                } else {
-                    sub_buckets.push((vec![chunk.0], vec![chunk.1]));
-                }
-            }
-
-            for (mut info, chunks) in sub_buckets {
-                let mut single_chunks = vec![];
-                let mut multi_chunks = vec![];
-
-                for (chunk, info) in chunks.into_iter().zip(info.iter()) {
-                    match info.1 {
-                        MinimizerBucketMode::Single => unreachable!(),
-                        MinimizerBucketMode::SingleGrouped => single_chunks.push(chunk),
-                        MinimizerBucketMode::Compacted => multi_chunks.push(chunk),
-                    }
-                }
-
-                // Dedup headers that refer to the same bucket/sub-bucket
-                info.dedup_by(|a, b| a == b);
-
-                let sequences_count = info.iter().map(|i| i.0.sequences_count).sum::<usize>();
-                let sub_bucket = info[0].0.target_subbucket as usize;
+            for splitted_bucket in splitted_buckets.into_iter() {
+                let Some(splitted_bucket) = splitted_bucket else {
+                    // Add the sub-bucket to the global counter
+                    self.global_context
+                        .processed_subbuckets_count
+                        .fetch_add(1, Ordering::Relaxed);
+                    continue;
+                };
 
                 // Add the sub-bucket job
                 compute_thread_pool_handle.create_new_address_with_limit(
                     Arc::new(KmersProcessorInitData {
                         process_stat_id: generate_stat_id!(),
-                        sequences_count,
-                        sub_bucket,
-                        single_chunks: Arc::new(Mutex::new(Some(single_chunks))),
-                        multi_chunks: Arc::new(Mutex::new(Some(multi_chunks))),
+                        splitted_bucket: Mutex::new(Some(splitted_bucket)),
                         is_resplitted: false,
                         debug_bucket_first_path: Some(bucket.paths[0].clone()),
                     }),
@@ -415,8 +355,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             let processed_count = max(
                 1,
                 self.global_context
-                    .processed_buckets_count
-                    .load(Ordering::Relaxed),
+                    .processed_subbuckets_count
+                    .load(Ordering::Relaxed)
+                    / self.global_context.second_buckets_count.total_buckets_count,
             );
 
             let extra_processed_buckets_count = self
@@ -467,7 +408,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 },
                 rewritten_buckets_count,
                 monitor.get_formatted_counter_without_memory(),
-                eta,
+                if eta_processed_size > 0 {
+                    &eta as &dyn Debug
+                } else {
+                    &"N/A" as &dyn Debug
+                },
                 est_tot,
                 scheduler.current_running()
             );
