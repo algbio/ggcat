@@ -8,8 +8,8 @@ use colors::colors_manager::color_types::{
 };
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use config::{
-    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMUM_SUBBUCKET_KMERS_COUNT,
-    MultiplicityCounterType, RESPLITTING_MAX_K_M_DIFFERENCE, SwapPriority, get_memory_mode,
+    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, MultiplicityCounterType,
+    RESPLITTING_MAX_K_M_DIFFERENCE, SwapPriority, get_memory_mode,
 };
 use hashbrown::HashMap;
 use hashes::HashFunction;
@@ -221,7 +221,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
 
     fn new_resplitter(
         global_data: &Arc<Self::GlobalExtraData>,
-        _duplicates_bucket: u16,
+        _buckets_count: &BucketsCount,
     ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType {
         QuerierMinimizerBucketingExecutorFactory::new(&global_data.global_resplit_data)
     }
@@ -491,7 +491,6 @@ pub fn parallel_kmers_counting<
         global_data.clone(),
         threads_count,
         k,
-        MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
     )
     .parallel_kmers_transform();
 

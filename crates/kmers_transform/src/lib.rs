@@ -1,6 +1,11 @@
-use crate::processor::{KmersProcessorInitData, KmersTransformProcessor};
-use config::{DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MINIMUM_LOG_DELTA_TIME};
+use crate::processor::{KmersProcessorInitData, KmersTransformProcessor, ResplitConfig};
+use config::{
+    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAX_RESPLIT_BUCKETS_COUNT,
+    MAX_SUBBUCKET_AVERAGE_MULTIPLIER, MIN_AVERAGE_CAP, MIN_RESPLIT_BUCKETS_COUNT,
+    MINIMUM_LOG_DELTA_TIME,
+};
 use ggcat_logging::generate_stat_id;
+use io::DUPLICATES_BUCKET_EXTRA;
 use io::concurrent::temp_reads::creads_utils::DeserializedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
@@ -10,7 +15,7 @@ use minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::split_buckets::SplittedBucket;
 
-use parallel_processor::buckets::{BucketsCount, ExtraBucketData, MultiChunkBucket};
+use parallel_processor::buckets::{BucketsCount, ExtraBucketData, ExtraBuckets, MultiChunkBucket};
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::execution_manager::scheduler::Scheduler;
@@ -63,7 +68,7 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
 
     fn new_resplitter(
         global_data: &Arc<Self::GlobalExtraData>,
-        duplicates_bucket: u16,
+        buckets_count: &BucketsCount,
     ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType;
 
     fn new_map_processor(global_data: &Arc<Self::GlobalExtraData>) -> Self::MapProcessorType;
@@ -115,9 +120,6 @@ pub trait KmersTransformFinalExecutor<F: KmersTransformExecutorFactory>:
 
 pub struct InputBucketDesc {
     pub(crate) paths: Vec<PathBuf>,
-    pub(crate) resplitted: bool,
-    pub(crate) rewritten: bool,
-    pub(crate) used_hash_bits: usize,
     pub(crate) extra_bucket_data: Option<ExtraBucketData>,
 }
 
@@ -133,7 +135,6 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     buckets_count: BucketsCount,
     second_buckets_count: BucketsCount,
     extra_buckets_count: AtomicUsize,
-    rewritten_buckets_count: AtomicUsize,
     processed_subbuckets_count: AtomicUsize,
     processed_extra_buckets_count: AtomicUsize,
 
@@ -160,7 +161,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         global_extra_data: Arc<F::GlobalExtraData>,
         threads_count: usize,
         k: usize,
-        min_bucket_size: u64,
     ) -> Self {
         let mut total_buckets_size = 0;
 
@@ -200,9 +200,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
                 buckets_list.push(InputBucketDesc {
                     paths: bucket_entries.chunks,
-                    resplitted: false,
-                    rewritten: false,
-                    used_hash_bits: buckets_count.normal_buckets_count_log,
                     extra_bucket_data: bucket_entries.extra_bucket_data,
                 });
             }
@@ -224,9 +221,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
                 buckets_list.push(InputBucketDesc {
                     paths: bucket_entry.chunks,
-                    resplitted: false,
-                    rewritten: false,
-                    used_hash_bits: buckets_count.normal_buckets_count_log as usize,
                     extra_bucket_data: bucket_entry.extra_bucket_data,
                 })
             }
@@ -240,7 +234,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             buckets_count,
             second_buckets_count,
             extra_buckets_count: AtomicUsize::new(0),
-            rewritten_buckets_count: AtomicUsize::new(0),
             processed_subbuckets_count: AtomicUsize::new(0),
             processed_extra_buckets_count: AtomicUsize::new(0),
             total_buckets_size,
@@ -277,6 +270,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         let compute_thread_pool_handle =
             compute_thread_pool.start(scheduler.clone(), &self.global_context);
 
+        let mut total_subbuckets_sequences = 0;
+        let mut total_subbuckets_count = 0;
+
         for bucket in self.normal_buckets_list.iter() {
             let splitted_buckets = SplittedBucket::generate(
                 bucket.paths.iter(),
@@ -287,6 +283,16 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 self.global_context.second_buckets_count.total_buckets_count,
             );
 
+            for bucket in &splitted_buckets {
+                if let Some(bucket) = bucket {
+                    total_subbuckets_sequences += bucket.sequences_count;
+                    total_subbuckets_count += 1;
+                }
+            }
+
+            let bucket_sequences_average =
+                (total_subbuckets_sequences / total_subbuckets_count.max(1)).max(MIN_AVERAGE_CAP);
+
             for splitted_bucket in splitted_buckets.into_iter() {
                 let Some(splitted_bucket) = splitted_bucket else {
                     // Add the sub-bucket to the global counter
@@ -296,13 +302,45 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     continue;
                 };
 
+                let is_outlier = splitted_bucket.sequences_count
+                    > bucket_sequences_average * MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
+
                 // Add the sub-bucket job
                 compute_thread_pool_handle.create_new_address_with_limit(
                     Arc::new(KmersProcessorInitData {
                         process_stat_id: generate_stat_id!(),
-                        splitted_bucket: Mutex::new(Some(splitted_bucket)),
                         is_resplitted: false,
+                        resplit_config: if is_outlier {
+                            let subbuckets_count = (splitted_bucket.sequences_count
+                                / bucket_sequences_average)
+                                .next_power_of_two()
+                                .max(MIN_RESPLIT_BUCKETS_COUNT)
+                                .min(MAX_RESPLIT_BUCKETS_COUNT);
+
+                            println!(
+                                "Resplitted with {} buckets average: {}!",
+                                subbuckets_count, bucket_sequences_average
+                            );
+                            self.global_context
+                                .extra_buckets_count
+                                .fetch_add(subbuckets_count, Ordering::Relaxed);
+
+                            Some(ResplitConfig {
+                                subsplit_buckets_count: BucketsCount::new(
+                                    subbuckets_count.ilog2() as usize,
+                                    ExtraBuckets::Extra {
+                                        count: 1,
+                                        data: DUPLICATES_BUCKET_EXTRA,
+                                    },
+                                ),
+                            })
+                        } else {
+                            None
+                        },
+                        splitted_bucket: Mutex::new(Some(splitted_bucket)),
                         debug_bucket_first_path: Some(bucket.paths[0].clone()),
+                        extra_bucket_data: bucket.extra_bucket_data,
+                        processor_handle: compute_thread_pool_handle.clone(),
                     }),
                     false,
                     self.global_context.total_threads_count * 8,
@@ -347,11 +385,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 .extra_buckets_count
                 .load(Ordering::Relaxed);
 
-            let rewritten_buckets_count = self
-                .global_context
-                .rewritten_buckets_count
-                .load(Ordering::Relaxed);
-
             let processed_count = max(
                 1,
                 self.global_context
@@ -393,7 +426,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             );
 
             ggcat_logging::info!(
-                "Processing bucket {}{} of [{}{}[R:{}]] {} phase eta: {:.0?} est. tot: {:.0?} running: {}",
+                "Processing bucket {}{} of [{}{}] {} phase eta: {:.0?} est. tot: {:.0?} running: {}",
                 processed_count,
                 if extra_processed_buckets_count > 0 {
                     format!("(+{})", extra_processed_buckets_count)
@@ -406,7 +439,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 } else {
                     String::new()
                 },
-                rewritten_buckets_count,
                 monitor.get_formatted_counter_without_memory(),
                 if eta_processed_size > 0 {
                     &eta as &dyn Debug

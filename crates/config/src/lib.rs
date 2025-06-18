@@ -49,6 +49,12 @@ pub const DEFAULT_PER_CPU_BUFFER_SIZE: MemoryDataSize = MemoryDataSize::from_kib
 
 pub const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(10);
 
+// The maximum size multiplier of a subbucket when compared to the sizes averages
+pub const MAX_SUBBUCKET_AVERAGE_MULTIPLIER: usize = 8;
+pub const MIN_AVERAGE_CAP: usize = 2000;
+pub const MIN_RESPLIT_BUCKETS_COUNT: usize = 4;
+pub const MAX_RESPLIT_BUCKETS_COUNT: usize = 1024;
+
 // 1GB of reads max for each bucket
 pub const MIN_BUCKET_SIZE: u64 = 512 * 1024;
 pub const MAX_BUCKET_SIZE: u64 = 1024 * 1024 * 1024;
@@ -67,8 +73,6 @@ pub const MAX_RESPLIT_BUCKETS_COUNT_LOG: usize = 9;
 pub const MIN_BUCKET_CHUNKS_FOR_READING_THREAD: usize = 2;
 
 pub const RESPLITTING_MAX_K_M_DIFFERENCE: usize = 10;
-
-pub const MINIMUM_SUBBUCKET_KMERS_COUNT: usize = 1024 * 32;
 
 pub const MIN_SUBSPLIT_COUNT: usize = 16;
 
@@ -107,6 +111,7 @@ pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]
 impl SwapPriority {
     pub const MinimizerUncompressedTempBuckets: usize = 0;
+    pub const ResplitBuckets: usize = 0;
     pub const MinimizerBuckets: usize = 1;
     pub const FinalMaps: usize = 1;
     pub const ResultBuckets: usize = 1;

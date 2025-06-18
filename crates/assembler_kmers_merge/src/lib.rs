@@ -9,8 +9,8 @@ use colors::colors_manager::color_types::{
 };
 use colors::colors_manager::{ColorsManager, color_types};
 use config::{
-    BucketIndexType, MINIMUM_SUBBUCKET_KMERS_COUNT, RESPLITTING_MAX_K_M_DIFFERENCE, SwapPriority,
-    get_compression_level_info, get_memory_mode,
+    BucketIndexType, RESPLITTING_MAX_K_M_DIFFERENCE, SwapPriority, get_compression_level_info,
+    get_memory_mode,
 };
 use crossbeam::queue::*;
 use hashes::HashFunctionFactory;
@@ -107,11 +107,11 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
     fn new_resplitter(
         global_data: &Arc<Self::GlobalExtraData>,
-        duplicates_bucket: u16,
+        buckets_count: &BucketsCount,
     ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType {
         AssemblerMinimizerBucketingExecutorFactory::new_with_duplicates(
             &global_data.global_resplit_data,
-            duplicates_bucket,
+            buckets_count.normal_buckets_count as BucketIndexType,
         )
     }
 
@@ -246,7 +246,6 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             global_data,
             threads_count,
             k,
-            MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
         )
         .parallel_kmers_transform();
     } else {
@@ -258,7 +257,6 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             global_data,
             threads_count,
             k,
-            MINIMUM_SUBBUCKET_KMERS_COUNT as u64,
         )
         .parallel_kmers_transform();
     }
@@ -435,6 +433,7 @@ mod tests {
         const TEMP_DIR: &str = "../../../../temp-gut-test-new";
 
         let buckets_count = BucketsCount::new(10, ExtraBuckets::None);
+        let second_buckets_count = BucketsCount::new(4, ExtraBuckets::None);
 
         let buckets =
             generate_bucket_names(Path::new(TEMP_DIR).join("bucket"), buckets_count, None)
@@ -502,6 +501,7 @@ mod tests {
             buckets,
             global_colors_table.clone(),
             buckets_count,
+            second_buckets_count,
             min_multiplicity,
             Path::new(TEMP_DIR),
             k,

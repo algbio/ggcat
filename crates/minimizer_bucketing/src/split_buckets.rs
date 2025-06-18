@@ -18,6 +18,33 @@ pub struct SplittedBucket {
 }
 
 impl SplittedBucket {
+    pub fn from_multi_chunks(
+        paths: impl Iterator<Item = impl AsRef<Path>>,
+        remove_files: RemoveFileMode,
+        prefetch_amount: Option<usize>,
+        sequences_count: usize,
+    ) -> Self {
+        let mut total_size = 0;
+
+        let multi_chunks = paths
+            .map(|path| {
+                let file_index =
+                    ChunkedBinaryReaderIndex::from_file(path, remove_files, prefetch_amount);
+                total_size += file_index.get_file_size();
+                file_index.into_chunks()
+            })
+            .flatten()
+            .collect();
+
+        Self {
+            single_chunks: vec![],
+            multi_chunks,
+            sequences_count,
+            total_size,
+            sub_bucket: 0,
+        }
+    }
+
     pub fn generate(
         paths: impl Iterator<Item = impl AsRef<Path>>,
         remove_files: RemoveFileMode,
