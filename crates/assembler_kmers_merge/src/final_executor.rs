@@ -32,7 +32,6 @@ pub struct ParallelKmersMergeFinalExecutor<
         HashEntrySerializer<MH::HashTypeUnextendable>,
     >,
 
-    unitigs_temp_colors: color_types::TempUnitigColorStructure<CX>,
     current_bucket: Option<ResultsBucket<color_types::PartialUnitigsColorStructure<CX>>>,
 
     colors_data: UnitigExtensionColorsData<CX>,
@@ -53,7 +52,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                 hashes_buffer,
                 (),
             ),
-            unitigs_temp_colors: CX::ColorsMergeManagerType::alloc_unitig_color_structure(),
             current_bucket: None,
             colors_data: UnitigExtensionColorsData {
                 colors_global_table: global_data.colors_global_table.clone(),
@@ -105,7 +103,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                 );
 
                 let colors = color_types::ColorsMergeManagerType::<CX>::encode_part_unitigs_colors(
-                    &mut self.unitigs_temp_colors,
+                    &mut colors_data.unitigs_temp_colors,
                     &mut colors_data.temp_color_buffer,
                 );
 

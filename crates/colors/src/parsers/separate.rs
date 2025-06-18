@@ -158,21 +158,17 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
         reader: &mut impl Read,
         _last_data: Self::LastData,
     ) -> Option<Self> {
-        let mut vector = buffer.new_vec(1);
-        buffer.push_vec(&mut vector, 123);
-        Some(Self(vector))
+        let len = decode_varint(|| reader.read_u8().ok())? as usize + 1;
+        let mut vec = buffer.new_vec(len);
+        let slice = buffer.slice_vec_mut(&mut vec);
 
-        // let len = decode_varint(|| reader.read_u8().ok())? as usize + 1;
-        // let mut vec = buffer.new_vec(len);
-        // let slice = buffer.slice_vec_mut(&mut vec);
+        slice[0] = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
+        for i in 1..len {
+            let delta = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
+            slice[i] = slice[i - 1] + delta;
+        }
 
-        // slice[0] = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
-        // for i in 1..len {
-        //     let delta = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
-        //     slice[i] = slice[i - 1] + delta;
-        // }
-
-        // Some(Self(vec))
+        Some(Self(vec))
     }
 
     fn encode_extended(
@@ -181,20 +177,20 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
         writer: &mut impl Write,
         _last_data: Self::LastData,
     ) {
-        // let slice = buffer.slice_vec(&self.0);
-        // debug_assert!(slice.is_sorted());
-        // debug_assert_ne!(slice.len(), 0);
+        let slice = buffer.slice_vec(&self.0);
+        debug_assert!(slice.is_sorted());
+        debug_assert_ne!(slice.len(), 0);
 
-        // encode_varint(|b| writer.write_all(b), (slice.len() - 1) as u64).unwrap();
-        // encode_varint(|b| writer.write_all(b), slice[0] as u64).unwrap();
+        encode_varint(|b| writer.write_all(b), (slice.len() - 1) as u64).unwrap();
+        encode_varint(|b| writer.write_all(b), slice[0] as u64).unwrap();
 
-        // let mut last = slice[0];
+        let mut last = slice[0];
 
-        // for i in 1..slice.len() {
-        //     let delta = slice[i] - last;
-        //     encode_varint(|b| writer.write_all(b), delta as u64).unwrap();
-        //     last = slice[i];
-        // }
+        for i in 1..slice.len() {
+            let delta = slice[i] - last;
+            encode_varint(|b| writer.write_all(b), delta as u64).unwrap();
+            last = slice[i];
+        }
     }
 
     fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {

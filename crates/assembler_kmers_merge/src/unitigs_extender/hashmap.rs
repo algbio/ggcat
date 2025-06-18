@@ -388,6 +388,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                 kmer_color,
                 (idx, hash.to_unextendable()),
                 entry,
+                idx != 0,
             );
 
             // Update the valid indexes to allow saving reads that cross the min abundance threshold
@@ -396,14 +397,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                 max_idx = max(max_idx, idx);
             }
         }
-
-        CX::ColorsMergeManagerType::add_temp_buffer_sequence(
-            &mut self.temp_colors,
-            read,
-            self.params.k,
-            self.params.m,
-            sequence.flags,
-        );
 
         if !MH::INVERTIBLE {
             if min_idx != usize::MAX {
@@ -444,7 +437,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                 &colors_data.colors_global_table,
                 &mut self.temp_colors,
                 &mut self.rhash_map,
-                self.params.k,
                 self.params.min_multiplicity,
             );
         }

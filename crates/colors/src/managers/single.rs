@@ -5,7 +5,6 @@ use byteorder::ReadBytesExt;
 use config::{ColorCounterType, ColorIndexType};
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
-use io::compressed_read::CompressedRead;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
@@ -51,6 +50,7 @@ impl ColorsMergeManager for SingleColorManager {
         _kmer_color: &[ColorIndexType],
         _el: (usize, MH::HashTypeUnextendable),
         _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
+        _same_color: bool,
     ) {
         unimplemented!()
         // assert!(
@@ -58,16 +58,6 @@ impl ColorsMergeManager for SingleColorManager {
         //         || entry.color_index.color_index == *kmer_color
         // );
         // entry.color_index.color_index = *kmer_color;
-    }
-
-    #[inline(always)]
-    fn add_temp_buffer_sequence(
-        _data: &mut Self::ColorsBufferTempStructure,
-        _sequence: CompressedRead,
-        _k: usize,
-        _m: usize,
-        _flags: u8,
-    ) {
     }
 
     type HashMapTempColorIndex = SingleHashMapTempColorIndex;
@@ -82,7 +72,6 @@ impl ColorsMergeManager for SingleColorManager {
         _global_colors_table: &Self::GlobalColorsTableWriter,
         _data: &mut Self::ColorsBufferTempStructure,
         _map: &mut FxHashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
-        _k: usize,
         _min_multiplicity: usize,
     ) {
     }

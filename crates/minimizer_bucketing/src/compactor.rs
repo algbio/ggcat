@@ -441,6 +441,8 @@ impl<
             // Clear all temp data
             self.super_kmers_storage.clear();
             MultipleData::clear_temp_buffer(&mut self.super_kmers_extra_buffer);
+            serializer_single.reset();
+            serializer_multi.reset();
             // Clear and reset the hashmap capacity
             self.super_kmers_hashmap
                 .clear_with_required_capacity(total_sequences_count);

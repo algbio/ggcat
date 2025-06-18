@@ -122,7 +122,6 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
                 let new_size = (vec.size + values.len()).next_power_of_two();
                 vec.data = self.alloc(new_size);
                 unsafe {
-                    std::hint::assert_unchecked(npt >= LOCAL_FITTING);
                     std::ptr::copy_nonoverlapping(
                         self.get_mut_ptr(&mut old_data),
                         self.get_mut_ptr(&mut vec.data),
@@ -221,6 +220,7 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
 
     #[inline]
     fn get_mut_ptr_heap(&mut self, data: &mut AllocatedData<T, LOCAL_FITTING>) -> *mut T {
+        debug_assert!(unsafe { data.index & !Self::PTR_FLAG } < self.data.len());
         unsafe {
             self.data
                 .as_mut_ptr()

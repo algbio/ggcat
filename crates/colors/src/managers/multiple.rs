@@ -5,133 +5,42 @@ use atoi::{FromRadix10, FromRadix16};
 use bstr::ByteSlice;
 use byteorder::ReadBytesExt;
 use config::{
-    ColorCounterType, ColorIndexType, MinimizerType, PARTIAL_VECS_CHECKPOINT_SIZE,
-    READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END, SwapPriority, get_compression_level_info,
-    get_memory_mode,
+    ColorCounterType, ColorIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, READ_FLAG_INCL_BEGIN,
+    READ_FLAG_INCL_END,
 };
 use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
-use hashes::default::MNHFactory;
-use hashes::{HashFunction, HashFunctionFactory, HashableSequence};
-use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
+use hashes::{HashFunction, HashFunctionFactory};
+use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
-use io::varint::{
-    VARINT_MAX_SIZE, decode_varint, decode_varint_flags, encode_varint, encode_varint_flags,
-};
+use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use itertools::Itertools;
 use nightly_quirks::slice_partition_dedup::SlicePartitionDedup;
-use parallel_processor::buckets::LockFreeBucket;
-use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
-use std::io::{Cursor, Read, Write};
-use std::mem::size_of;
+use std::io::{Read, Write};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use structs::map_entry::{COUNTER_BITS, MapEntry};
-
-const COLOR_SEQUENCES_SUBBUKETS: usize = 32;
-
-struct SequencesStorage {
-    buffer: Vec<u8>,
-    file: Option<CompressedBinaryWriter>,
-}
-
-struct SequencesStorageStream<'a> {
-    buffer: Cursor<&'a [u8]>,
-    // reader: Option<CompressedBinaryReader>,
-}
-
-impl<'a> Read for SequencesStorageStream<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // if let Some(ref mut reader) = self.reader {
-        //     let amount = reader.get_single_stream().read(buf)?;
-        //     if amount > 0 {
-        //         return Ok(amount);
-        //     } else {
-        //         self.reader.take();
-        //     }
-        // }
-        // self.buffer.read(buf)
-        todo!()
-    }
-}
-
-impl SequencesStorage {
-    pub fn new() -> Self {
-        Self {
-            buffer: Vec::with_capacity(READS_BUFFERS_MAX_CAPACITY),
-            file: None,
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.buffer.clear();
-        assert!(self.file.is_none());
-    }
-
-    pub fn get_stream(&mut self) -> SequencesStorageStream {
-        // self.file.take().map(|f| {
-        //     let path = f.get_path();
-        //     f.finalize();
-        //     ChunkedBinaryReaderIndex::from_file(
-        //         path,
-        //         RemoveFileMode::Remove { remove_fs: true },
-        //         None,
-        //     )
-        //     .into_chunks()
-        // });
-        todo!("Chunks!");
-        // SequencesStorageStream {
-        //     buffer: Cursor::new(&self.buffer),
-        //     // reader,
-        // }
-    }
-
-    pub fn flush(&mut self, temp_dir: &PathBuf) {
-        if self.buffer.len() >= READS_BUFFERS_MAX_CAPACITY {
-            if self.file.is_none() {
-                static COLOR_STORAGE_INDEX: AtomicUsize = AtomicUsize::new(0);
-                self.file = Some(CompressedBinaryWriter::new(
-                    temp_dir.join("color-storage-temp").as_path(),
-                    &(
-                        get_memory_mode(SwapPriority::KmersMergeTempColors),
-                        PARTIAL_VECS_CHECKPOINT_SIZE,
-                        get_compression_level_info(),
-                    ),
-                    COLOR_STORAGE_INDEX.fetch_add(1, Ordering::Relaxed),
-                    &(),
-                ))
-            }
-
-            self.file.as_ref().unwrap().write_data(&self.buffer);
-            self.buffer.clear();
-        }
-    }
-}
+use std::path::Path;
+use std::slice::from_raw_parts;
+use structs::map_entry::MapEntry;
+use utils::inline_vec::{AllocatorU32, InlineVec};
 
 pub struct MultipleColorsManager {
-    last_colors: Vec<ColorIndexType>,
-    sequences: Vec<SequencesStorage>,
+    colors_buffer: AllocatorU32,
     kmers_count: usize,
     sequences_count: usize,
-    temp_colors_buffer: Vec<ColorIndexType>,
-    temp_dir: PathBuf,
 }
-
-const VISITED_BIT: usize = 1 << (COUNTER_BITS - 1);
-const TEMP_BUFFER_START_SIZE: usize = 1024 * 64;
-const READS_BUFFERS_MAX_CAPACITY: usize = 1024 * 32;
-
-type HashMapTempColorIndex = usize;
+pub union HashMapTempColorIndex {
+    colors: InlineVec<ColorIndexType, 2>,
+    color_index: ColorIndexType,
+}
 
 #[inline]
 fn get_entry_color(entry: &MapEntry<HashMapTempColorIndex>) -> ColorIndexType {
-    (entry.color_index & !VISITED_BIT) as ColorIndexType
+    unsafe { entry.color_index.color_index }
 }
 
 impl ColorsMergeManager for MultipleColorsManager {
@@ -156,23 +65,16 @@ impl ColorsMergeManager for MultipleColorsManager {
 
     type ColorsBufferTempStructure = Self;
 
-    fn allocate_temp_buffer_structure(temp_dir: &Path) -> Self::ColorsBufferTempStructure {
+    fn allocate_temp_buffer_structure(_temp_dir: &Path) -> Self::ColorsBufferTempStructure {
         Self {
-            last_colors: vec![],
-            sequences: (0..COLOR_SEQUENCES_SUBBUKETS)
-                .map(|_| SequencesStorage::new())
-                .collect(),
+            colors_buffer: AllocatorU32::new(DEFAULT_OUTPUT_BUFFER_SIZE),
             kmers_count: 0,
             sequences_count: 0,
-            temp_colors_buffer: vec![],
-            temp_dir: temp_dir.to_path_buf(),
         }
     }
 
     fn reinit_temp_buffer_structure(data: &mut Self::ColorsBufferTempStructure) {
-        data.sequences.iter_mut().for_each(|s| s.clear());
-        data.temp_colors_buffer.clear();
-        data.temp_colors_buffer.shrink_to(TEMP_BUFFER_START_SIZE);
+        data.colors_buffer.reset();
         data.kmers_count = 0;
         data.sequences_count = 0;
     }
@@ -182,220 +84,54 @@ impl ColorsMergeManager for MultipleColorsManager {
         kmer_color: &[ColorIndexType],
         _el: (usize, MH::HashTypeUnextendable),
         entry: &mut MapEntry<Self::HashMapTempColorIndex>,
+        _same_color: bool,
     ) {
-        data.last_colors.clear();
-        data.last_colors.extend_from_slice(&kmer_color);
-        data.last_colors.sort_unstable();
-        data.last_colors.dedup();
-        entry.color_index += data.last_colors.len();
-        assert_eq!(entry.color_index & VISITED_BIT, 0)
+        data.colors_buffer
+            .extend_vec(unsafe { &mut entry.color_index.colors }, kmer_color);
     }
 
-    #[inline(always)]
-    fn add_temp_buffer_sequence(
-        data: &mut Self::ColorsBufferTempStructure,
-        sequence: CompressedRead,
-        k: usize,
-        m: usize,
-        flags: u8,
-    ) {
-        let decr_val =
-            ((sequence.bases_count() == k) && (flags & READ_FLAG_INCL_END) == 0) as usize;
-        let hashes = MNHFactory::new(sequence.sub_slice((1 - decr_val)..(k - decr_val)), m);
-
-        let minimizer = hashes.iter().map(|m| m.to_unextendable()).min().unwrap();
-
-        const MINIMIZER_SHIFT: usize =
-            size_of::<MinimizerType>() * 8 - (2 * COLOR_SEQUENCES_SUBBUKETS.ilog2() as usize);
-        let bucket = (minimizer >> MINIMIZER_SHIFT) as usize % COLOR_SEQUENCES_SUBBUKETS;
-
-        encode_varint(
-            |b| data.sequences[bucket].buffer.extend_from_slice(b),
-            data.last_colors.len() as u64,
-        );
-
-        // Encode the colors using diffs encoding
-        if data.last_colors.len() > 0 {
-            encode_varint(
-                |b| data.sequences[bucket].buffer.extend_from_slice(b),
-                data.last_colors[0] as u64,
-            );
-            let mut last_color = data.last_colors[0];
-            for color in &data.last_colors[1..] {
-                encode_varint(
-                    |b| data.sequences[bucket].buffer.extend_from_slice(b),
-                    (last_color - *color) as u64,
-                );
-                last_color = *color;
-            }
-        }
-
-        let kmer_length_dist_flag = if sequence.bases_count() > k {
-            0
-        } else {
-            decr_val as u8
-        };
-
-        encode_varint_flags::<_, _, typenum::U1>(
-            |b| data.sequences[bucket].buffer.extend_from_slice(b),
-            sequence.bases_count() as u64,
-            kmer_length_dist_flag,
-        );
-        sequence.copy_to_buffer(&mut data.sequences[bucket].buffer);
-        data.sequences[bucket].flush(&data.temp_dir)
-    }
-
-    type HashMapTempColorIndex = usize;
+    type HashMapTempColorIndex = HashMapTempColorIndex;
 
     fn new_color_index() -> Self::HashMapTempColorIndex {
-        Default::default()
+        HashMapTempColorIndex {
+            colors: InlineVec::new(),
+        }
     }
 
     fn process_colors<MH: HashFunctionFactory>(
         global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
         map: &mut FxHashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
-        k: usize,
         min_multiplicity: usize,
     ) {
-        map.iter()
-            .for_each(|v| assert_eq!(v.1.color_index & VISITED_BIT, 0));
+        let mut last_partition = &[][..];
+        let mut last_color = 0;
 
-        for buffer in data.sequences.iter_mut() {
-            data.temp_colors_buffer.clear();
-
-            let mut stream = buffer.get_stream();
-
-            let mut read_buf = vec![];
-            let mut colors = vec![];
-
-            let mut last_partition = 0..0;
-            let mut last_color = 0;
-
-            loop {
-                {
-                    // TODO: Distinguish between error and no more data
-                    let Some(colors_count) = decode_varint(|| stream.read_u8().ok()) else {
-                        break;
-                    };
-                    colors.clear();
-                    if colors_count > 0 {
-                        let first_color = decode_varint(|| stream.read_u8().ok()).unwrap();
-                        colors.push(first_color as ColorIndexType);
-                        let mut last_color = first_color;
-                        for _ in 1..colors_count {
-                            let next_color_diff = decode_varint(|| stream.read_u8().ok()).unwrap();
-                            last_color += next_color_diff;
-                            colors.push(last_color as ColorIndexType);
-                        }
-                    }
-                }
-
-                let (read_length, only_extra_ending) =
-                    decode_varint_flags::<_, typenum::U1>(|| stream.read_u8().ok()).unwrap();
-                let only_extra_ending = if only_extra_ending != 0 { true } else { false };
-
-                let read_bytes_count = (read_length as usize + 3) / 4;
-
-                read_buf.clear();
-                read_buf.reserve(read_bytes_count);
-                unsafe { read_buf.set_len(read_bytes_count) };
-                stream.read_exact(&mut read_buf[..]).unwrap();
-
-                let read = CompressedRead::new_from_compressed(&read_buf[..], read_length as usize);
-
-                let hashes = MH::new(read, k);
-
-                data.temp_colors_buffer
-                    .reserve(data.kmers_count + data.sequences_count);
-
-                let mut is_first = !only_extra_ending;
-
-                for kmer_hash in hashes.iter() {
-                    let entry = map.get_mut(&kmer_hash.to_unextendable()).unwrap();
-
-                    let is_first = {
-                        let tmp = is_first;
-                        is_first = false;
-                        tmp
-                    };
-
-                    if entry.get_kmer_multiplicity() < min_multiplicity {
-                        continue;
-                    }
-
-                    const BIDIRECTIONAL_FLAGS: u8 = READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END;
-
-                    // Skip the entries that are duplicated within the current bucket, this could happen because of resplitting or adjacent super-kmers that share the same minimizer
-                    if entry.get_flags() & BIDIRECTIONAL_FLAGS == BIDIRECTIONAL_FLAGS
-                        && kmer_hash.is_forward() ^ is_first
-                    {
-                        continue;
-                    }
-
-                    let missing_temp_color = (entry.color_index & VISITED_BIT) == 0;
-                    if missing_temp_color {
-                        let colors_count = entry.color_index;
-
-                        let start_temp_color_index = data.temp_colors_buffer.len();
-
-                        entry.color_index = VISITED_BIT | start_temp_color_index;
-
-                        println!("Adding color count: {}", colors_count);
-
-                        data.temp_colors_buffer
-                            .resize(data.temp_colors_buffer.len() + colors_count + 1, 0);
-
-                        // // Add a flag to check if all colors were added
-                        data.temp_colors_buffer[start_temp_color_index] = 1;
-                    }
-
-                    let position = entry.color_index & !VISITED_BIT;
-
-                    let col_count = data.temp_colors_buffer[position] as usize;
-                    data.temp_colors_buffer[position] += 1;
-
-                    println!(
-                        "Adding {} colors with start count: {}!",
-                        colors.len(),
-                        col_count
-                    );
-
-                    assert_eq!(
-                        data.temp_colors_buffer[position + col_count + colors.len() - 1],
-                        0
-                    );
-                    data.temp_colors_buffer
-                        [position + col_count..position + col_count + colors.len()]
-                        .copy_from_slice(&colors);
-
-                    let has_all_colors = (position + col_count + 1)
-                        == data.temp_colors_buffer.len()
-                        || data.temp_colors_buffer[position + col_count + 1] != 0;
-
-                    // All colors were added, let's assign the final color
-                    if has_all_colors {
-                        let colors_range = &mut data.temp_colors_buffer
-                            [(position + 1)..(position + col_count + 1)];
-
-                        colors_range.sort_unstable();
-
-                        // Get the new partition indexes, start to dedup last element
-                        let new_partition = (position + 1)
-                            ..(position + 1 + colors_range.nq_partition_dedup().0.len());
-
-                        let unique_colors = &data.temp_colors_buffer[new_partition.clone()];
-
-                        // Assign the subset color index to the current kmer
-                        if unique_colors != &data.temp_colors_buffer[last_partition.clone()] {
-                            last_color = global_colors_table.get_id(unique_colors);
-                            last_partition = new_partition;
-                        }
-
-                        entry.color_index = VISITED_BIT | (last_color as usize);
-                    }
-                }
+        for entry in map.values_mut() {
+            if entry.get_kmer_multiplicity() < min_multiplicity {
+                continue;
             }
+
+            // Assign the final color
+            let colors_range = data
+                .colors_buffer
+                .slice_vec_mut(unsafe { &mut entry.color_index.colors });
+
+            colors_range.sort_unstable();
+
+            // Get the final colors count
+            let colors_count = colors_range.nq_partition_dedup().0.len();
+
+            let unique_colors = &colors_range[..colors_count];
+
+            // Assign the subset color index to the current kmer
+            if unique_colors != last_partition {
+                last_color = global_colors_table.get_id(unique_colors);
+                last_partition =
+                    unsafe { from_raw_parts(unique_colors.as_ptr(), unique_colors.len()) };
+            }
+
+            entry.color_index.color_index = last_color;
         }
     }
 

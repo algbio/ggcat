@@ -3,7 +3,6 @@ use config::{BucketIndexType, ColorCounterType, ColorIndexType};
 use dynamic_dispatch::dynamic_dispatch;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
-use io::compressed_read::CompressedRead;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
@@ -147,14 +146,7 @@ pub trait ColorsMergeManager: Sized {
         kmer_colors: &[Self::SingleKmerColorDataType],
         el: (usize, MH::HashTypeUnextendable),
         entry: &mut MapEntry<Self::HashMapTempColorIndex>,
-    );
-
-    fn add_temp_buffer_sequence(
-        data: &mut Self::ColorsBufferTempStructure,
-        sequence: CompressedRead,
-        k: usize,
-        m: usize,
-        flags: u8,
+        same_color: bool,
     );
 
     /// Temporary storage for colors associated with a single kmer in the hashmap (holds the color subset index)
@@ -166,7 +158,6 @@ pub trait ColorsMergeManager: Sized {
         global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
         map: &mut FxHashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
-        k: usize,
         min_multiplicity: usize,
     );
 

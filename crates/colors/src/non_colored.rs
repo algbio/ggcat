@@ -6,7 +6,6 @@ use config::{BucketIndexType, ColorCounterType};
 use dynamic_dispatch::dynamic_dispatch;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
-use io::compressed_read::CompressedRead;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataCombiner,
@@ -229,16 +228,7 @@ impl ColorsMergeManager for NonColoredManager {
         _kmer_colors: &[Self::SingleKmerColorDataType],
         _el: (usize, <MH as HashFunctionFactory>::HashTypeUnextendable),
         _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
-    ) {
-    }
-
-    #[inline(always)]
-    fn add_temp_buffer_sequence(
-        _data: &mut Self::ColorsBufferTempStructure,
-        _sequence: CompressedRead,
-        _k: usize,
-        _m: usize,
-        _flags: u8,
+        _same_color: bool,
     ) {
     }
 
@@ -257,7 +247,6 @@ impl ColorsMergeManager for NonColoredManager {
             <MH as HashFunctionFactory>::HashTypeUnextendable,
             MapEntry<Self::HashMapTempColorIndex>,
         >,
-        _k: usize,
         _min_multiplicity: usize,
     ) {
         unreachable!()
