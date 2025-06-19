@@ -10,7 +10,6 @@ use io::concurrent::temp_reads::extra_data::{
 };
 use nightly_quirks::prelude::*;
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
-use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -129,13 +128,12 @@ pub trait ColorsMergeManager: Sized {
     fn create_colors_table(
         path: impl AsRef<Path>,
         color_names: &[String],
+        threads_count: usize,
+        print_stats: bool,
     ) -> anyhow::Result<Self::GlobalColorsTableWriter>;
 
     /// Creates a new colors table at the given path
     fn open_colors_table(path: impl AsRef<Path>) -> anyhow::Result<Self::GlobalColorsTableReader>;
-
-    /// Prints to stdout the final stats for the colors table
-    fn print_color_stats(global_colors_table: &Self::GlobalColorsTableWriter);
 
     /// Temporary buffer that holds color values for each kmer while merging them
     type ColorsBufferTempStructure: 'static + Send + Sync;
@@ -147,6 +145,7 @@ pub trait ColorsMergeManager: Sized {
         el: (usize, MH::HashTypeUnextendable),
         entry: &mut MapEntry<Self::HashMapTempColorIndex>,
         same_color: bool,
+        reached_threshold: bool,
     );
 
     /// Temporary storage for colors associated with a single kmer in the hashmap (holds the color subset index)
@@ -157,8 +156,6 @@ pub trait ColorsMergeManager: Sized {
     fn process_colors<MH: HashFunctionFactory>(
         global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
-        map: &mut FxHashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
-        min_multiplicity: usize,
     );
 
     /// Struct used to hold color information about unitigs
@@ -170,10 +167,12 @@ pub trait ColorsMergeManager: Sized {
     fn alloc_unitig_color_structure() -> Self::TempUnitigColorStructure;
     fn reset_unitig_color_structure(ts: &mut Self::TempUnitigColorStructure);
     fn extend_forward(
+        data: &Self::ColorsBufferTempStructure,
         ts: &mut Self::TempUnitigColorStructure,
         entry: &MapEntry<Self::HashMapTempColorIndex>,
     );
     fn extend_backward(
+        data: &Self::ColorsBufferTempStructure,
         ts: &mut Self::TempUnitigColorStructure,
         entry: &MapEntry<Self::HashMapTempColorIndex>,
     );
@@ -218,6 +217,7 @@ pub trait ColorsMergeManager: Sized {
 
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]);
     fn debug_colors<MH: HashFunctionFactory>(
+        data: &Self::ColorsBufferTempStructure,
         color: &Self::PartialUnitigsColorStructure,
         colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         seq: &[u8],

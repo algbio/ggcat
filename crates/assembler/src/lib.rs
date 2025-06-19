@@ -13,8 +13,8 @@ use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
 use config::{
     DEFAULT_PER_CPU_BUFFER_SIZE, INTERMEDIATE_COMPRESSION_LEVEL_FAST,
-    INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES, MINIMUM_LOG_DELTA_TIME, SwapPriority,
-    get_compression_level_info, get_memory_mode,
+    INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES, MAX_COLORMAP_WRITING_THREADS,
+    MINIMUM_LOG_DELTA_TIME, SwapPriority, get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats;
 use hashes::HashFunctionFactory;
@@ -147,10 +147,14 @@ pub fn run_assembler<
         INTERMEDIATE_COMPRESSION_LEVEL_FAST.store(default_compression_level, Ordering::Relaxed);
     }
 
+    let colormap_threads_count = (threads_count / 2).max(1).min(MAX_COLORMAP_WRITING_THREADS);
+
     let global_colors_table = Arc::new(
         AssemblerColorsManager::ColorsMergeManagerType::create_colors_table(
             output_file.with_extension("colors.dat"),
             color_names,
+            colormap_threads_count,
+            true,
         )?,
     );
 
@@ -264,9 +268,6 @@ pub fn run_assembler<
 
     // write partial stats to allow early debug interruption
     ggcat_logging::stats::write_stats(&output_file.with_extension("elab.stats.json"));
-
-    AssemblerColorsManager::ColorsMergeManagerType::print_color_stats(&global_colors_table);
-
     drop(global_colors_table);
 
     let mut links = if step <= AssemblerStartingStep::HashesSorting {

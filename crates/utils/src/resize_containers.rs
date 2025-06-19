@@ -1,6 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use hashbrown::HashTable;
+use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use rustc_hash::FxHashMap;
 
 fn reassign<T>(value: &mut T, new_value: impl FnOnce() -> T) {
@@ -100,6 +101,26 @@ impl<C: ResizableContainer, const SIZE: usize> FixedSizeResizableContainer<C, SI
             self.0.clear_or_reinit(required_capacity);
         }
         // total_sequences_count
+    }
+}
+
+impl<C: ResizableContainer, const SIZE: usize> Default for FixedSizeResizableContainer<C, SIZE> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<C: ResizableContainer + Sync + Send + 'static, const SIZE: usize> PoolObjectTrait
+    for FixedSizeResizableContainer<C, SIZE>
+{
+    type InitData = ();
+
+    fn allocate_new(_init_data: &Self::InitData) -> Self {
+        Self::new()
+    }
+
+    fn reset(&mut self) {
+        self.clear();
     }
 }
 

@@ -4,10 +4,7 @@ use crate::colors_memmap_writer::ColorsMemMapWriter;
 use atoi::{FromRadix10, FromRadix16};
 use bstr::ByteSlice;
 use byteorder::ReadBytesExt;
-use config::{
-    ColorCounterType, ColorIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, READ_FLAG_INCL_BEGIN,
-    READ_FLAG_INCL_END,
-};
+use config::{ColorCounterType, ColorIndexType, DEFAULT_OUTPUT_BUFFER_SIZE};
 use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
 use hashes::{HashFunction, HashFunctionFactory};
@@ -19,7 +16,6 @@ use io::concurrent::temp_reads::extra_data::{
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use itertools::Itertools;
 use nightly_quirks::slice_partition_dedup::SlicePartitionDedup;
-use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::ops::Range;
@@ -27,20 +23,37 @@ use std::path::Path;
 use std::slice::from_raw_parts;
 use structs::map_entry::MapEntry;
 use utils::inline_vec::{AllocatorU32, InlineVec};
+use utils::resize_containers::ResizableVec;
+
+struct ColorEntry {
+    tracking_counter_or_color: u64,
+    colors: InlineVec<ColorIndexType, 2>,
+}
+
+impl ColorEntry {
+    const REACHED_MULTIPLICITY_FLAG_SHIFT: usize = size_of::<u64>() * 8 - 1;
+    const REACHED_MULTIPLICITY_FLAG: u64 = 1 << Self::REACHED_MULTIPLICITY_FLAG_SHIFT;
+
+    fn reached_multiplicity(&self) -> bool {
+        self.tracking_counter_or_color & Self::REACHED_MULTIPLICITY_FLAG != 0
+            && self.tracking_counter_or_color & !Self::REACHED_MULTIPLICITY_FLAG > 0
+    }
+}
 
 pub struct MultipleColorsManager {
     colors_buffer: AllocatorU32,
-    kmers_count: usize,
-    sequences_count: usize,
+    colors_list: ResizableVec<ColorEntry, DEFAULT_OUTPUT_BUFFER_SIZE>,
+    last_color_index: usize,
+    last_switch_color_index: usize,
 }
-pub union HashMapTempColorIndex {
-    colors: InlineVec<ColorIndexType, 2>,
-    color_index: ColorIndexType,
-}
+pub type HashMapTempColorIndex = usize;
 
 #[inline]
-fn get_entry_color(entry: &MapEntry<HashMapTempColorIndex>) -> ColorIndexType {
-    unsafe { entry.color_index.color_index }
+fn get_entry_color(
+    manager: &MultipleColorsManager,
+    entry: &MapEntry<HashMapTempColorIndex>,
+) -> ColorIndexType {
+    manager.colors_list[entry.color_index].tracking_counter_or_color as ColorIndexType
 }
 
 impl ColorsMergeManager for MultipleColorsManager {
@@ -51,16 +64,14 @@ impl ColorsMergeManager for MultipleColorsManager {
     fn create_colors_table(
         path: impl AsRef<Path>,
         color_names: &[String],
+        threads_count: usize,
+        print_stats: bool,
     ) -> anyhow::Result<Self::GlobalColorsTableWriter> {
-        ColorsMemMapWriter::new(path, color_names)
+        ColorsMemMapWriter::new(path, color_names, threads_count, print_stats)
     }
 
     fn open_colors_table(_path: impl AsRef<Path>) -> anyhow::Result<Self::GlobalColorsTableReader> {
         Ok(())
-    }
-
-    fn print_color_stats(global_colors_table: &Self::GlobalColorsTableWriter) {
-        global_colors_table.print_stats();
     }
 
     type ColorsBufferTempStructure = Self;
@@ -68,15 +79,15 @@ impl ColorsMergeManager for MultipleColorsManager {
     fn allocate_temp_buffer_structure(_temp_dir: &Path) -> Self::ColorsBufferTempStructure {
         Self {
             colors_buffer: AllocatorU32::new(DEFAULT_OUTPUT_BUFFER_SIZE),
-            kmers_count: 0,
-            sequences_count: 0,
+            colors_list: ResizableVec::new(),
+            last_color_index: 0,
+            last_switch_color_index: 0,
         }
     }
 
     fn reinit_temp_buffer_structure(data: &mut Self::ColorsBufferTempStructure) {
         data.colors_buffer.reset();
-        data.kmers_count = 0;
-        data.sequences_count = 0;
+        data.colors_list.clear();
     }
 
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
@@ -84,38 +95,77 @@ impl ColorsMergeManager for MultipleColorsManager {
         kmer_color: &[ColorIndexType],
         _el: (usize, MH::HashTypeUnextendable),
         entry: &mut MapEntry<Self::HashMapTempColorIndex>,
-        _same_color: bool,
+        same_color: bool,
+        reached_threshold: bool,
     ) {
-        data.colors_buffer
-            .extend_vec(unsafe { &mut entry.color_index.colors }, kmer_color);
+        if same_color && data.last_switch_color_index == entry.color_index {
+            // Shortcut to assign the same color to adjacent kmers that share the same value
+            if data.last_switch_color_index != usize::MAX {
+                data.colors_list[data.last_switch_color_index].tracking_counter_or_color -= 1;
+            }
+            entry.color_index = data.last_color_index;
+            data.colors_list[data.last_color_index].tracking_counter_or_color += 1;
+        } else {
+            data.last_switch_color_index = entry.color_index;
+            let new_colors = if entry.color_index == usize::MAX {
+                let mut new_colors = data.colors_buffer.new_vec(kmer_color.len());
+                let new_slice = data.colors_buffer.slice_vec_mut(&mut new_colors);
+                new_slice.copy_from_slice(kmer_color);
+                new_colors
+            } else {
+                let entry = &mut data.colors_list[entry.color_index];
+                // Reduce tracking counter
+                let mut new_colors = data
+                    .colors_buffer
+                    .new_vec(entry.colors.len() + kmer_color.len());
+                let old_colors = unsafe { data.colors_buffer.slice_vec_static(&entry.colors) };
+                let new_slice = data.colors_buffer.slice_vec_mut(&mut new_colors);
+                new_slice[..entry.colors.len()].copy_from_slice(old_colors);
+                new_slice[entry.colors.len()..].copy_from_slice(kmer_color);
+
+                entry.tracking_counter_or_color -= 1;
+                if entry.tracking_counter_or_color == 0 {
+                    data.colors_buffer.free_vec(&mut entry.colors);
+                }
+
+                new_colors
+            };
+
+            entry.color_index = data.colors_list.len();
+            data.colors_list.push(ColorEntry {
+                tracking_counter_or_color: 1,
+                colors: new_colors,
+            });
+
+            // Set the reached threshold flag
+            data.last_color_index = entry.color_index;
+        }
+
+        // Set the reached multiplicity flag
+        data.colors_list[entry.color_index].tracking_counter_or_color |=
+            (reached_threshold as u64) << ColorEntry::REACHED_MULTIPLICITY_FLAG_SHIFT;
     }
 
     type HashMapTempColorIndex = HashMapTempColorIndex;
 
     fn new_color_index() -> Self::HashMapTempColorIndex {
-        HashMapTempColorIndex {
-            colors: InlineVec::new(),
-        }
+        usize::MAX
     }
 
     fn process_colors<MH: HashFunctionFactory>(
         global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
-        map: &mut FxHashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
-        min_multiplicity: usize,
     ) {
         let mut last_partition = &[][..];
         let mut last_color = 0;
 
-        for entry in map.values_mut() {
-            if entry.get_kmer_multiplicity() < min_multiplicity {
+        for color_entry in data.colors_list.iter_mut() {
+            if !color_entry.reached_multiplicity() {
                 continue;
             }
 
             // Assign the final color
-            let colors_range = data
-                .colors_buffer
-                .slice_vec_mut(unsafe { &mut entry.color_index.colors });
+            let colors_range = data.colors_buffer.slice_vec_mut(&mut color_entry.colors);
 
             colors_range.sort_unstable();
 
@@ -131,7 +181,7 @@ impl ColorsMergeManager for MultipleColorsManager {
                     unsafe { from_raw_parts(unique_colors.as_ptr(), unique_colors.len()) };
             }
 
-            entry.color_index.color_index = last_color;
+            color_entry.tracking_counter_or_color = last_color as u64;
         }
     }
 
@@ -148,11 +198,13 @@ impl ColorsMergeManager for MultipleColorsManager {
         ts.colors.clear();
     }
 
+    #[inline]
     fn extend_forward(
+        data: &Self::ColorsBufferTempStructure,
         ts: &mut Self::TempUnitigColorStructure,
         entry: &MapEntry<Self::HashMapTempColorIndex>,
     ) {
-        let kmer_color = get_entry_color(entry);
+        let kmer_color = get_entry_color(data, entry);
 
         if let Some(back_ts) = ts.colors.back_mut() {
             if back_ts.color == kmer_color {
@@ -167,11 +219,13 @@ impl ColorsMergeManager for MultipleColorsManager {
         });
     }
 
+    #[inline]
     fn extend_backward(
+        data: &Self::ColorsBufferTempStructure,
         ts: &mut Self::TempUnitigColorStructure,
         entry: &MapEntry<Self::HashMapTempColorIndex>,
     ) {
-        let kmer_color = get_entry_color(entry);
+        let kmer_color = get_entry_color(data, entry);
 
         if let Some(front_ts) = ts.colors.front_mut() {
             if front_ts.color == kmer_color {
@@ -275,6 +329,7 @@ impl ColorsMergeManager for MultipleColorsManager {
     }
 
     fn debug_colors<MH: HashFunctionFactory>(
+        data: &Self::ColorsBufferTempStructure,
         color: &Self::PartialUnitigsColorStructure,
         colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         seq: &[u8],
@@ -295,7 +350,7 @@ impl ColorsMergeManager for MultipleColorsManager {
                 .flatten(),
         ) {
             let entry = hmap.get(&hash.to_unextendable()).unwrap();
-            let kmer_color = get_entry_color(entry);
+            let kmer_color = get_entry_color(data, entry);
             if kmer_color != color {
                 let hashes = MH::new(read, 31);
                 ggcat_logging::error!(
@@ -304,7 +359,7 @@ impl ColorsMergeManager for MultipleColorsManager {
                         .iter()
                         .map(|h| {
                             let entry = hmap.get(&h.to_unextendable()).unwrap();
-                            let kmer_color = get_entry_color(entry);
+                            let kmer_color = get_entry_color(data, entry);
                             kmer_color
                         })
                         .zip(

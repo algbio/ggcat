@@ -8,7 +8,7 @@ use colors::colors_manager::{
     ColorsManager, ColorsMergeManager, MinimizerBucketingSeqColorData,
     color_types::{self, MinimizerBucketingMultipleSeqColorDataType},
 };
-use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
+use config::{MultiplicityCounterType, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use io::{
     compressed_read::CompressedRead,
@@ -170,6 +170,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> HashMapUnitigsExtender<MH, CX> 
             in_b: u8,
         ) -> MH::HashTypeExtendable,
         colors_function: fn(
+            data: &color_types::ColorsBufferTempStructure<CX>,
             ts: &mut color_types::TempUnitigColorStructure<CX>,
             entry: &MapEntry<color_types::HashMapTempColorIndex<CX>>,
         ),
@@ -252,7 +253,11 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> HashMapUnitigsExtender<MH, CX> 
                 }
 
                 if CX::COLORS_ENABLED {
-                    colors_function(&mut colors_data.unitigs_temp_colors, entryref);
+                    colors_function(
+                        &self.temp_colors,
+                        &mut colors_data.unitigs_temp_colors,
+                        entryref,
+                    );
                 }
 
                 // Flag the entry as already used
@@ -389,6 +394,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                 (idx, hash.to_unextendable()),
                 entry,
                 idx != 0,
+                sequence.multiplicity >= self.params.min_multiplicity as MultiplicityCounterType,
             );
 
             // Update the valid indexes to allow saving reads that cross the min abundance threshold
@@ -436,8 +442,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             CX::ColorsMergeManagerType::process_colors::<MH>(
                 &colors_data.colors_global_table,
                 &mut self.temp_colors,
-                &mut self.rhash_map,
-                self.params.min_multiplicity,
             );
         }
 
@@ -478,6 +482,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             backward_seq.reverse();
 
             CX::ColorsMergeManagerType::extend_forward(
+                &self.temp_colors,
                 &mut colors_data.unitigs_temp_colors,
                 rhentry,
             );

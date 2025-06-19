@@ -128,7 +128,6 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
                         vec.size,
                     );
                 }
-
                 self.free(old_data, npt);
             }
             self.get_mut(&mut vec.data, vec.size) as *mut _
@@ -175,8 +174,21 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
         vec.size += 1;
     }
 
+    pub fn free_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>) {
+        if vec.size > LOCAL_FITTING {
+            self.free(vec.data, vec.size.next_power_of_two());
+        }
+        vec.data = AllocatedData::ZERO;
+        vec.size = 0;
+    }
+
     #[inline(always)]
     pub fn slice_vec(&self, vec: &InlineVec<T, LOCAL_FITTING>) -> &[T] {
+        unsafe { from_raw_parts(self.get_ptr(&vec.data), vec.size) }
+    }
+
+    #[inline(always)]
+    pub unsafe fn slice_vec_static(&self, vec: &InlineVec<T, LOCAL_FITTING>) -> &'static [T] {
         unsafe { from_raw_parts(self.get_ptr(&vec.data), vec.size) }
     }
 

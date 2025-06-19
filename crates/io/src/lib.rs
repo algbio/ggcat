@@ -10,7 +10,6 @@ use config::{
 use parallel_processor::buckets::{BucketsCount, ExtraBucketData, ExtraBuckets, SingleBucket};
 use std::path::Path;
 
-pub mod chunks_writer;
 pub mod compressed_read;
 pub mod concurrent;
 pub mod lines_reader;

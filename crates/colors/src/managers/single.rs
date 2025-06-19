@@ -10,7 +10,6 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
-use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::ops::Range;
@@ -27,6 +26,8 @@ impl ColorsMergeManager for SingleColorManager {
     fn create_colors_table(
         _path: impl AsRef<Path>,
         _color_names: &[String],
+        _threads_count: usize,
+        _print_stats: bool,
     ) -> anyhow::Result<Self::GlobalColorsTableWriter> {
         Ok(())
     }
@@ -34,8 +35,6 @@ impl ColorsMergeManager for SingleColorManager {
     fn open_colors_table(path: impl AsRef<Path>) -> anyhow::Result<Self::GlobalColorsTableReader> {
         ColorsDeserializer::new(path, true)
     }
-
-    fn print_color_stats(_global_colors_table: &Self::GlobalColorsTableWriter) {}
 
     type ColorsBufferTempStructure = ();
 
@@ -51,6 +50,7 @@ impl ColorsMergeManager for SingleColorManager {
         _el: (usize, MH::HashTypeUnextendable),
         _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
         _same_color: bool,
+        _reached_threshold: bool,
     ) {
         unimplemented!()
         // assert!(
@@ -63,16 +63,12 @@ impl ColorsMergeManager for SingleColorManager {
     type HashMapTempColorIndex = SingleHashMapTempColorIndex;
 
     fn new_color_index() -> Self::HashMapTempColorIndex {
-        SingleHashMapTempColorIndex {
-            color_index: ColorIndexType::MAX,
-        }
+        SingleHashMapTempColorIndex
     }
 
     fn process_colors<MH: HashFunctionFactory>(
         _global_colors_table: &Self::GlobalColorsTableWriter,
         _data: &mut Self::ColorsBufferTempStructure,
-        _map: &mut FxHashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
-        _min_multiplicity: usize,
     ) {
     }
 
@@ -90,6 +86,7 @@ impl ColorsMergeManager for SingleColorManager {
     }
 
     fn extend_forward(
+        _data: &Self::ColorsBufferTempStructure,
         _ts: &mut Self::TempUnitigColorStructure,
         _entry: &MapEntry<Self::HashMapTempColorIndex>,
     ) {
@@ -97,6 +94,7 @@ impl ColorsMergeManager for SingleColorManager {
     }
 
     fn extend_backward(
+        _data: &Self::ColorsBufferTempStructure,
         _ts: &mut Self::TempUnitigColorStructure,
         _entry: &MapEntry<Self::HashMapTempColorIndex>,
     ) {
@@ -129,6 +127,7 @@ impl ColorsMergeManager for SingleColorManager {
     }
 
     fn debug_colors<MH: HashFunctionFactory>(
+        _data: &Self::ColorsBufferTempStructure,
         _color: &Self::PartialUnitigsColorStructure,
         _colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         _seq: &[u8],
@@ -138,9 +137,7 @@ impl ColorsMergeManager for SingleColorManager {
     }
 }
 
-pub struct SingleHashMapTempColorIndex {
-    color_index: ColorIndexType,
-}
+pub struct SingleHashMapTempColorIndex;
 
 #[derive(Debug)]
 pub struct DefaultUnitigsTempColorData {

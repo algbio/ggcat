@@ -12,7 +12,6 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
 };
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
-use rustc_hash::FxHashMap;
 use std::fmt::Debug;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
@@ -202,6 +201,8 @@ impl ColorsMergeManager for NonColoredManager {
     fn create_colors_table(
         _path: impl AsRef<Path>,
         _color_names: &[String],
+        _threads_count: usize,
+        _print_stats: bool,
     ) -> anyhow::Result<Self::GlobalColorsTableWriter> {
         Ok(())
     }
@@ -209,8 +210,6 @@ impl ColorsMergeManager for NonColoredManager {
     fn open_colors_table(_path: impl AsRef<Path>) -> anyhow::Result<Self::GlobalColorsTableReader> {
         Ok(())
     }
-
-    fn print_color_stats(_global_colors_table: &Self::GlobalColorsTableWriter) {}
 
     type ColorsBufferTempStructure = NonColoredManager;
 
@@ -229,6 +228,7 @@ impl ColorsMergeManager for NonColoredManager {
         _el: (usize, <MH as HashFunctionFactory>::HashTypeUnextendable),
         _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
         _same_color: bool,
+        _reached_threshold: bool,
     ) {
     }
 
@@ -243,11 +243,6 @@ impl ColorsMergeManager for NonColoredManager {
     fn process_colors<MH: HashFunctionFactory>(
         _global_colors_table: &Self::GlobalColorsTableWriter,
         _data: &mut Self::ColorsBufferTempStructure,
-        _map: &mut FxHashMap<
-            <MH as HashFunctionFactory>::HashTypeUnextendable,
-            MapEntry<Self::HashMapTempColorIndex>,
-        >,
-        _min_multiplicity: usize,
     ) {
         unreachable!()
     }
@@ -265,6 +260,7 @@ impl ColorsMergeManager for NonColoredManager {
 
     #[inline(always)]
     fn extend_forward(
+        _data: &Self::ColorsBufferTempStructure,
         _ts: &mut Self::TempUnitigColorStructure,
         _entry: &MapEntry<Self::HashMapTempColorIndex>,
     ) {
@@ -272,6 +268,7 @@ impl ColorsMergeManager for NonColoredManager {
 
     #[inline(always)]
     fn extend_backward(
+        _data: &Self::ColorsBufferTempStructure,
         _ts: &mut Self::TempUnitigColorStructure,
         _entry: &MapEntry<Self::HashMapTempColorIndex>,
     ) {
@@ -300,6 +297,7 @@ impl ColorsMergeManager for NonColoredManager {
 
     fn debug_tucs(_str: &Self::TempUnitigColorStructure, _seq: &[u8]) {}
     fn debug_colors<MH: HashFunctionFactory>(
+        _data: &Self::ColorsBufferTempStructure,
         _color: &Self::PartialUnitigsColorStructure,
         _colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         _seq: &[u8],
