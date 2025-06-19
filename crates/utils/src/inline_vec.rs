@@ -4,6 +4,8 @@ use std::{
     slice::{from_raw_parts, from_raw_parts_mut},
 };
 
+use crate::resize_containers::ResizableVec;
+
 #[derive(Clone, Copy)]
 union AllocatedData<T: Copy, const LOCAL_FITTING: usize> {
     index: usize,
@@ -13,8 +15,10 @@ impl<T: Copy, const LOCAL_FITTING: usize> AllocatedData<T, LOCAL_FITTING> {
     pub const ZERO: Self = AllocatedData { index: 0 };
 }
 
+const DEFAULT_ALLOCATOR_SIZE: usize = 1024 * 1024 * 8;
+
 pub struct Allocator<T, const LOCAL_FITTING: usize> {
-    data: Vec<MaybeUninit<T>>,
+    data: ResizableVec<MaybeUninit<T>, DEFAULT_ALLOCATOR_SIZE>,
     freelist: [Vec<usize>; 32],
 }
 
@@ -83,7 +87,7 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
 
     pub fn new(capacity: usize) -> Self {
         Allocator {
-            data: Vec::with_capacity(capacity),
+            data: ResizableVec::new(),
             freelist: (0..32)
                 .map(|i| Vec::with_capacity(capacity / 32 / (1 << i)))
                 .collect::<Vec<_>>()
@@ -95,6 +99,14 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
     pub fn reset(&mut self) {
         self.data.clear();
         self.freelist.iter_mut().for_each(|v| v.clear());
+    }
+
+    pub fn used_capacity(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.data.capacity()
     }
 
     #[inline]
@@ -378,5 +390,23 @@ mod tests {
     #[test]
     fn test_inlinevec_u64() {
         test_inlinevec::<u64, 1>(10000000, 10000000);
+    }
+
+    #[test]
+    fn test_multiple_realloc() {
+        let mut allocator = Allocator::<u32, 2>::new(1024 * 1024 * 64);
+
+        let mut vec = allocator.new_vec(193);
+        for i in 0..1000000000 {
+            allocator.extend_vec(&mut vec, &[i, i + 1]);
+
+            if allocator.used_capacity() > 10000000 {
+                println!(
+                    "Used capacity: {} len: {}",
+                    allocator.used_capacity(),
+                    vec.len()
+                );
+            }
+        }
     }
 }

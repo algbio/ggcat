@@ -38,6 +38,10 @@ impl ColorEntry {
         self.tracking_counter_or_color & Self::REACHED_MULTIPLICITY_FLAG != 0
             && self.tracking_counter_or_color & !Self::REACHED_MULTIPLICITY_FLAG > 0
     }
+
+    fn get_counter(&self) -> u64 {
+        self.tracking_counter_or_color & !Self::REACHED_MULTIPLICITY_FLAG
+    }
 }
 
 pub struct MultipleColorsManager {
@@ -101,41 +105,60 @@ impl ColorsMergeManager for MultipleColorsManager {
         if same_color && data.last_switch_color_index == entry.color_index {
             // Shortcut to assign the same color to adjacent kmers that share the same value
             if data.last_switch_color_index != usize::MAX {
-                data.colors_list[data.last_switch_color_index].tracking_counter_or_color -= 1;
+                let old_colors = &mut data.colors_list[data.last_switch_color_index];
+                old_colors.tracking_counter_or_color -= 1;
+                if entry.color_index != data.last_color_index && old_colors.get_counter() == 0 {
+                    data.colors_buffer.free_vec(&mut old_colors.colors);
+                }
             }
             entry.color_index = data.last_color_index;
             data.colors_list[data.last_color_index].tracking_counter_or_color += 1;
         } else {
             data.last_switch_color_index = entry.color_index;
-            let new_colors = if entry.color_index == usize::MAX {
+            if entry.color_index == usize::MAX {
                 let mut new_colors = data.colors_buffer.new_vec(kmer_color.len());
                 let new_slice = data.colors_buffer.slice_vec_mut(&mut new_colors);
                 new_slice.copy_from_slice(kmer_color);
-                new_colors
+                entry.color_index = data.colors_list.len();
+                data.colors_list.push(ColorEntry {
+                    tracking_counter_or_color: 1,
+                    colors: new_colors,
+                });
             } else {
-                let entry = &mut data.colors_list[entry.color_index];
-                // Reduce tracking counter
-                let mut new_colors = data
-                    .colors_buffer
-                    .new_vec(entry.colors.len() + kmer_color.len());
-                let old_colors = unsafe { data.colors_buffer.slice_vec_static(&entry.colors) };
-                let new_slice = data.colors_buffer.slice_vec_mut(&mut new_colors);
-                new_slice[..entry.colors.len()].copy_from_slice(old_colors);
-                new_slice[entry.colors.len()..].copy_from_slice(kmer_color);
+                let old_colors = &mut data.colors_list[entry.color_index];
 
-                entry.tracking_counter_or_color -= 1;
-                if entry.tracking_counter_or_color == 0 {
-                    data.colors_buffer.free_vec(&mut entry.colors);
+                if old_colors.get_counter() == 1 {
+                    // It is the last reference, take ownership and extend the vector
+                    data.colors_buffer
+                        .extend_vec(&mut old_colors.colors, kmer_color);
+                } else {
+                    // Reduce tracking counter and optionally free the vector
+                    old_colors.tracking_counter_or_color -= 1;
+
+                    // Allocate a new buffer to store the colors
+                    let mut new_colors = data
+                        .colors_buffer
+                        .new_vec(old_colors.colors.len() + kmer_color.len());
+
+                    let old_colors_slice =
+                        unsafe { data.colors_buffer.slice_vec_static(&old_colors.colors) };
+                    let new_slice = data.colors_buffer.slice_vec_mut(&mut new_colors);
+                    new_slice[..old_colors.colors.len()].copy_from_slice(old_colors_slice);
+                    new_slice[old_colors.colors.len()..].copy_from_slice(kmer_color);
+
+                    // Add the new color
+                    entry.color_index = data.colors_list.len();
+                    data.colors_list.push(ColorEntry {
+                        tracking_counter_or_color: 1,
+                        colors: new_colors,
+                    });
                 }
-
-                new_colors
             };
 
-            entry.color_index = data.colors_list.len();
-            data.colors_list.push(ColorEntry {
-                tracking_counter_or_color: 1,
-                colors: new_colors,
-            });
+            let color = &data.colors_list[entry.color_index];
+            if color.reached_multiplicity() {
+                assert!(color.colors.len() > 0);
+            }
 
             // Set the reached threshold flag
             data.last_color_index = entry.color_index;
@@ -167,6 +190,14 @@ impl ColorsMergeManager for MultipleColorsManager {
             // Assign the final color
             let colors_range = data.colors_buffer.slice_vec_mut(&mut color_entry.colors);
 
+            if colors_range.len() == 0 {
+                println!(
+                    "Colors range: {} with counter: {}",
+                    colors_range.len(),
+                    color_entry.tracking_counter_or_color
+                );
+            }
+
             colors_range.sort_unstable();
 
             // Get the final colors count
@@ -183,6 +214,7 @@ impl ColorsMergeManager for MultipleColorsManager {
 
             color_entry.tracking_counter_or_color = last_color as u64;
         }
+        data.colors_buffer.reset();
     }
 
     type PartialUnitigsColorStructure = UnitigColorData;

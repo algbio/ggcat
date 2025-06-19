@@ -50,7 +50,13 @@ fn clear_hashmap<K, V>(hashmap: &mut FxHashMap<K, V>, suggested_size: usize) {
         hashmap.clear();
     } else {
         // Reset the hashmap if it gets too big
-        *hashmap = FxHashMap::with_capacity_and_hasher(suggested_capacity, FxBuildHasher);
+        unsafe {
+            drop(std::ptr::read(hashmap as *const FxHashMap<K, V>));
+            std::ptr::write(
+                hashmap as *mut FxHashMap<K, V>,
+                FxHashMap::with_capacity_and_hasher(suggested_capacity, FxBuildHasher),
+            );
+        }
     }
 }
 
