@@ -91,6 +91,8 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
         &mut self,
         map_struct: Packet<Self::MapStruct>,
         global_data: &F::GlobalExtraData,
+        extra_bucket_data: Option<ExtraBucketData>,
+        is_resplitted: bool,
     );
     fn process_group_add_sequence(
         &mut self,
@@ -150,6 +152,8 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     total_sequences: AtomicU64,
     total_kmers: AtomicU64,
     unique_kmers: AtomicU64,
+
+    forward_only: bool,
 }
 
 impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
@@ -161,6 +165,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         global_extra_data: Arc<F::GlobalExtraData>,
         threads_count: usize,
         k: usize,
+        forward_only: bool,
     ) -> Self {
         let mut total_buckets_size = 0;
 
@@ -246,6 +251,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             total_sequences: AtomicU64::new(0),
             total_kmers: AtomicU64::new(0),
             unique_kmers: AtomicU64::new(0),
+            forward_only,
         });
 
         Self {

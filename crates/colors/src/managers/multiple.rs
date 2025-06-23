@@ -97,35 +97,34 @@ impl ColorsMergeManager for MultipleColorsManager {
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         data: &mut Self::ColorsBufferTempStructure,
         kmer_color: &[ColorIndexType],
-        _el: (usize, MH::HashTypeUnextendable),
-        entry: &mut MapEntry<Self::HashMapTempColorIndex>,
+        entry_color: &mut Self::HashMapTempColorIndex,
         same_color: bool,
         reached_threshold: bool,
     ) {
-        if same_color && data.last_switch_color_index == entry.color_index {
+        if same_color && data.last_switch_color_index == *entry_color {
             // Shortcut to assign the same color to adjacent kmers that share the same value
             if data.last_switch_color_index != usize::MAX {
                 let old_colors = &mut data.colors_list[data.last_switch_color_index];
                 old_colors.tracking_counter_or_color -= 1;
-                if entry.color_index != data.last_color_index && old_colors.get_counter() == 0 {
+                if *entry_color != data.last_color_index && old_colors.get_counter() == 0 {
                     data.colors_buffer.free_vec(&mut old_colors.colors);
                 }
             }
-            entry.color_index = data.last_color_index;
+            *entry_color = data.last_color_index;
             data.colors_list[data.last_color_index].tracking_counter_or_color += 1;
         } else {
-            data.last_switch_color_index = entry.color_index;
-            if entry.color_index == usize::MAX {
+            data.last_switch_color_index = *entry_color;
+            if *entry_color == usize::MAX {
                 let mut new_colors = data.colors_buffer.new_vec(kmer_color.len());
                 let new_slice = data.colors_buffer.slice_vec_mut(&mut new_colors);
                 new_slice.copy_from_slice(kmer_color);
-                entry.color_index = data.colors_list.len();
+                *entry_color = data.colors_list.len();
                 data.colors_list.push(ColorEntry {
                     tracking_counter_or_color: 1,
                     colors: new_colors,
                 });
             } else {
-                let old_colors = &mut data.colors_list[entry.color_index];
+                let old_colors = &mut data.colors_list[*entry_color];
 
                 if old_colors.get_counter() == 1 {
                     // It is the last reference, take ownership and extend the vector
@@ -147,7 +146,7 @@ impl ColorsMergeManager for MultipleColorsManager {
                     new_slice[old_colors.colors.len()..].copy_from_slice(kmer_color);
 
                     // Add the new color
-                    entry.color_index = data.colors_list.len();
+                    *entry_color = data.colors_list.len();
                     data.colors_list.push(ColorEntry {
                         tracking_counter_or_color: 1,
                         colors: new_colors,
@@ -155,17 +154,17 @@ impl ColorsMergeManager for MultipleColorsManager {
                 }
             };
 
-            let color = &data.colors_list[entry.color_index];
+            let color = &data.colors_list[*entry_color];
             if color.reached_multiplicity() {
                 assert!(color.colors.len() > 0);
             }
 
             // Set the reached threshold flag
-            data.last_color_index = entry.color_index;
+            data.last_color_index = *entry_color;
         }
 
         // Set the reached multiplicity flag
-        data.colors_list[entry.color_index].tracking_counter_or_color |=
+        data.colors_list[*entry_color].tracking_counter_or_color |=
             (reached_threshold as u64) << ColorEntry::REACHED_MULTIPLICITY_FLAG_SHIFT;
     }
 

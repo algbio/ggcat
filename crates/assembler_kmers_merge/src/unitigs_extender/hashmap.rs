@@ -397,8 +397,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             CX::ColorsMergeManagerType::add_temp_buffer_structure_el::<MH>(
                 &mut self.temp_colors,
                 kmer_color,
-                (idx, hash.to_unextendable()),
-                entry,
+                &mut entry.color_index,
                 idx != 0,
                 sequence.multiplicity >= self.params.min_multiplicity as MultiplicityCounterType,
             );

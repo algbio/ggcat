@@ -165,6 +165,7 @@ impl<CD: MinimizerBucketingSeqColorData>
         S: MinimizerInputSequence,
         F: FnMut(PushSequenceInfo<S, AssemblerMinimizerBucketingExecutorFactory<CD>>),
         const SEPARATE_DUPLICATES: bool,
+        const FORWARD_ONLY: bool,
     >(
         &mut self,
         preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -216,9 +217,9 @@ impl<CD: MinimizerBucketingSeqColorData>
                             == 0)
                     {
                         cold();
-                        (self.duplicates_bucket, false, 1, false)
+                        (self.duplicates_bucket, false, 0, false)
                     } else {
-                        let rc = SEPARATE_DUPLICATES && !min_hash.1.is_forward;
+                        let rc = !FORWARD_ONLY && SEPARATE_DUPLICATES && !min_hash.1.is_forward;
                         (
                             MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
                             rc,
@@ -274,6 +275,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     m: usize,
     chunking_size_threshold: Option<u64>,
     target_chunk_size: u64,
+    forward_only: bool,
 ) -> Vec<MultiChunkBucket> {
     MNHFactory::initialize(k);
 
@@ -322,5 +324,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         k,
         chunking_size_threshold,
         target_chunk_size,
+        forward_only,
     )
 }

@@ -129,6 +129,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
             k,
             m,
             threads_count,
+            false,
         )
     } else {
         generate_bucket_names(temp_dir.join("counters"), buckets_count, None)

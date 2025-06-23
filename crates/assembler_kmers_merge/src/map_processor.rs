@@ -1,17 +1,22 @@
-use crate::ParallelKmersMergeFactory;
 use crate::unitigs_extender::hashmap::HashMapUnitigsExtender;
 use crate::unitigs_extender::{GlobalExtenderParams, UnitigsExtenderTrait};
+use crate::{GlobalMergeData, ParallelKmersMergeFactory};
+use assembler_minimizer_bucketing::rewrite_bucket::get_superkmer_minimizer;
 use colors::colors_manager::{ColorsManager, color_types};
 use ggcat_logging::stats;
 use ggcat_logging::stats::KmersMergeBucketReport;
 use hashbrown::HashTable;
-use hashes::HashFunctionFactory;
+use hashbrown::hash_table::Entry;
+use hashes::default::MNHFactory;
+use hashes::{HashFunction, HashFunctionFactory, HashableSequence};
+use io::DUPLICATES_BUCKET_EXTRA;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::creads_utils::DeserializedRead;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use kmers_transform::{
     GroupProcessStats, KmersTransformExecutorFactory, KmersTransformMapProcessor,
 };
+use parallel_processor::buckets::ExtraBucketData;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::mt_debug_counters::counter::{AtomicCounter, AvgMode, MaxMode};
@@ -80,13 +85,21 @@ pub struct ParallelKmersMergeMapProcessor<
             >>::MapStruct,
         >,
     >,
+    is_duplicate: bool,
+    m: usize,
+    k: usize,
 }
 
 impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     ParallelKmersMergeMapProcessor<MH, CX, COMPUTE_SIMPLITIGS>
 {
-    pub fn new() -> Self {
-        Self { map_packet: None }
+    pub fn new(context: &GlobalMergeData<CX>) -> Self {
+        Self {
+            map_packet: None,
+            is_duplicate: false,
+            m: context.m,
+            k: context.k,
+        }
     }
 }
 
@@ -101,7 +114,9 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     fn process_group_start(
         &mut self,
         map_struct: Packet<Self::MapStruct>,
-        _global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
+        global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
+        extra_bucket_data: Option<ExtraBucketData>,
+        is_resplitted: bool,
     ) {
         stats!(
             let mut map_struct = map_struct;
@@ -109,7 +124,13 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
             map_struct.detailed_stats.report_id = ggcat_logging::generate_stat_id!();
             map_struct.detailed_stats.start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();
         );
+        self.is_duplicate = extra_bucket_data == Some(DUPLICATES_BUCKET_EXTRA);
         self.map_packet = Some(map_struct);
+        if is_resplitted {
+            self.m = global_data.global_resplit_data.m;
+        } else {
+            self.m = global_data.m;
+        }
     }
 
     #[instrumenter::track]

@@ -249,6 +249,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
         S: MinimizerInputSequence,
         F: FnMut(PushSequenceInfo<S, DumperMinimizerBucketingExecutorFactory<CX>>),
         const SEPARATE_DUPLICATES: bool,
+        const FORWARD_ONLY: bool,
     >(
         &mut self,
         preprocess_info: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -348,5 +349,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         None,
         CX::COLORS_ENABLED,
         k,
+        false,
     )
 }

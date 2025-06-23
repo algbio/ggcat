@@ -120,6 +120,7 @@ pub fn run_assembler<
     generate_maximal_unitigs_links: bool,
     compute_tigs_mode: Option<MatchtigMode>,
     only_bstats: bool,
+    forward_only: bool,
 ) -> anyhow::Result<PathBuf> {
     let temp_dir = temp_dir.unwrap_or(PathBuf::new());
 
@@ -185,6 +186,7 @@ pub fn run_assembler<
             m,
             Some(file_stats.bucket_size_compaction_threshold),
             file_stats.target_chunk_size,
+            forward_only,
         )
     } else {
         generate_bucket_names(temp_dir.join("bucket"), first_phase_buckets_count, None)
@@ -249,6 +251,7 @@ pub fn run_assembler<
             m,
             compute_tigs_mode.needs_simplitigs(),
             threads_count,
+            forward_only,
         )
     } else {
         RetType {

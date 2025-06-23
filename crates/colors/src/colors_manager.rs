@@ -142,8 +142,7 @@ pub trait ColorsMergeManager: Sized {
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         data: &mut Self::ColorsBufferTempStructure,
         kmer_colors: &[Self::SingleKmerColorDataType],
-        el: (usize, MH::HashTypeUnextendable),
-        entry: &mut MapEntry<Self::HashMapTempColorIndex>,
+        color_entry: &mut Self::HashMapTempColorIndex,
         same_color: bool,
         reached_threshold: bool,
     );

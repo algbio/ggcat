@@ -209,6 +209,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
         S: MinimizerInputSequence,
         F: FnMut(PushSequenceInfo<S, QuerierMinimizerBucketingExecutorFactory<CX>>),
         const SEPARATE_DUPLICATES: bool,
+        const FORWARD_ONLY: bool,
     >(
         &mut self,
         preprocess_info: &<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -303,6 +304,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
             None,
             CX::COLORS_ENABLED,
             0,
+            false,
         ),
         queries_count.load(Ordering::Relaxed) as u64,
     )

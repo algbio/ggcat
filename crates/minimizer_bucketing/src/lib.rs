@@ -155,6 +155,7 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
         S: MinimizerInputSequence,
         F: FnMut(PushSequenceInfo<S, Factory>),
         const SEPARATE_DUPLICATES: bool,
+        const FORWARD_ONLY: bool,
     >(
         &mut self,
         preprocess_info: &Factory::PreprocessInfo,
@@ -227,6 +228,8 @@ pub struct MinimizerBucketingExecutionContext<
 
     pub partial_read_copyback: Option<usize>,
     pub copy_ident: bool,
+
+    pub forward_only: bool,
 }
 
 pub struct GenericMinimizerBucketing;
@@ -249,7 +252,7 @@ impl<
     Executor: MinimizerBucketingExecutorFactory<ReadExtraData = SingleData> + Sync + Send + 'static,
 > MinimizerBucketingExecWriter<SingleData, MultipleData, Executor>
 {
-    fn execute(
+    fn execute<const FORWARD_ONLY: bool>(
         &self,
         context: &WriterContext<Executor>,
         ops: &ExecutorAddressOperations<Self>,
@@ -315,7 +318,7 @@ impl<
                 );
 
                 sequences_splitter.process_sequences(&x, &mut |sequence: &[u8], range| {
-                    buckets_processor.process_sequence::<_, _, true>(
+                    buckets_processor.process_sequence::<_, _, true, FORWARD_ONLY>(
                         &preprocess_info,
                         sequence,
                         range,
@@ -503,7 +506,11 @@ impl<
         mut receiver: ExecutorReceiver<Self>,
     ) {
         if let Ok(address) = receiver.obtain_address() {
-            self.execute(params, &address, &receiver);
+            if params.global.forward_only {
+                self.execute::<true>(params, &address, &receiver);
+            } else {
+                self.execute::<false>(params, &address, &receiver);
+            }
         }
 
         // No more packets should arrive
@@ -556,6 +563,7 @@ impl GenericMinimizerBucketing {
         partial_read_copyback: Option<usize>,
         copy_ident: bool,
         ignored_length: usize,
+        forward_only: bool,
     ) -> Vec<SingleBucket> {
         let buckets = Self::do_bucketing::<SingleData, MultipleData, Executor, SequenceType>(
             input_blocks,
@@ -571,6 +579,7 @@ impl GenericMinimizerBucketing {
             ignored_length,
             None,
             DEFAULT_BUCKETS_CHUNK_SIZE,
+            forward_only,
         );
 
         buckets
@@ -600,6 +609,7 @@ impl GenericMinimizerBucketing {
         ignored_length: usize,
         chunking_size_threshold: Option<u64>,
         target_chunk_size: u64,
+        forward_only: bool,
     ) -> Vec<MultiChunkBucket> {
         let read_threads_count = max(1, threads_count / 2);
         let compute_threads_count = max(1, threads_count.saturating_sub(read_threads_count / 4));
@@ -658,6 +668,7 @@ impl GenericMinimizerBucketing {
             partial_read_copyback,
             read_threads_count,
             copy_ident,
+            forward_only,
         });
 
         {

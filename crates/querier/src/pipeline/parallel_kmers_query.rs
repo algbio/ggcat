@@ -31,7 +31,9 @@ use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::{BucketsCount, MultiThreadBuckets, SingleBucket};
+use parallel_processor::buckets::{
+    BucketsCount, ExtraBucketData, MultiThreadBuckets, SingleBucket,
+};
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -326,6 +328,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
         &mut self,
         map_struct: Packet<Self::MapStruct>,
         _global_data: &GlobalQueryMergeData,
+        _extra_bucket_data: Option<ExtraBucketData>,
+        _is_resplitted: bool,
     ) {
         self.map_packet = Some(map_struct);
         self.kmers_count = 0;
@@ -444,6 +448,7 @@ pub fn parallel_kmers_counting<
     k: usize,
     m: usize,
     threads_count: usize,
+    forward_only: bool,
 ) -> Vec<SingleBucket> {
     PHASES_TIMES_MONITOR
         .write()
@@ -491,6 +496,7 @@ pub fn parallel_kmers_counting<
         global_data.clone(),
         threads_count,
         k,
+        forward_only,
     )
     .parallel_kmers_transform();
 

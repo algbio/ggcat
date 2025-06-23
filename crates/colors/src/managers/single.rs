@@ -47,8 +47,7 @@ impl ColorsMergeManager for SingleColorManager {
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         _data: &mut Self::ColorsBufferTempStructure,
         _kmer_color: &[ColorIndexType],
-        _el: (usize, MH::HashTypeUnextendable),
-        _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
+        _color_entry: &mut Self::HashMapTempColorIndex,
         _same_color: bool,
         _reached_threshold: bool,
     ) {

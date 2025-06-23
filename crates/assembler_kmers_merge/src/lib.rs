@@ -115,8 +115,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         )
     }
 
-    fn new_map_processor(_global_data: &Arc<Self::GlobalExtraData>) -> Self::MapProcessorType {
-        ParallelKmersMergeMapProcessor::new()
+    fn new_map_processor(global_data: &Arc<Self::GlobalExtraData>) -> Self::MapProcessorType {
+        ParallelKmersMergeMapProcessor::new(&global_data)
     }
 
     fn new_final_executor(global_data: &Arc<Self::GlobalExtraData>) -> Self::FinalExecutorType {
@@ -158,6 +158,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
     m: usize,
     compute_simplitigs: bool,
     threads_count: usize,
+    forward_only: bool,
 ) -> RetType {
     PHASES_TIMES_MONITOR
         .write()
@@ -246,6 +247,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             global_data,
             threads_count,
             k,
+            forward_only,
         )
         .parallel_kmers_transform();
     } else {
@@ -257,6 +259,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
             global_data,
             threads_count,
             k,
+            forward_only,
         )
         .parallel_kmers_transform();
     }

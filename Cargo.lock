@@ -2500,13 +2500,12 @@ dependencies = [
 [[package]]
 name = "streaming-libdeflate-rs"
 version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2de61fa6f01dcd4a245cf4125ff9fbee9589fde686c01c62c74afa4208ef81b"
 dependencies = [
  "crc32fast",
  "filebuffer",
  "mt-debug-counters",
  "nightly-quirks",
+ "rayon",
  "static_assertions",
  "structopt",
 ]

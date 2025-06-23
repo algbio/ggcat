@@ -281,6 +281,7 @@ impl GGCATInstance {
                 _ => None,
             },
             debug::DEBUG_ONLY_BSTATS.load(Ordering::Relaxed),
+            forward_only,
         )?;
 
         remove_tempdir(temp_dir);
