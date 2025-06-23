@@ -2,13 +2,13 @@ mod mappings_loader;
 mod maximal_hash_entry;
 pub(crate) mod maximal_unitig_index;
 
-use crate::pipeline::maximal_unitig_links::mappings_loader::{
+use crate::maximal_unitig_links::mappings_loader::{
     MaximalUnitigLinksMapping, MaximalUnitigLinksMappingsLoader,
 };
-use crate::pipeline::maximal_unitig_links::maximal_hash_entry::{
+use crate::maximal_unitig_links::maximal_hash_entry::{
     MaximalHashCompare, MaximalHashEntry, MaximalHashEntrySerializer, MaximalUnitigPosition,
 };
-use crate::pipeline::maximal_unitig_links::maximal_unitig_index::{
+use crate::maximal_unitig_links::maximal_unitig_index::{
     DoubleMaximalUnitigLinks, MaximalUnitigFlags, MaximalUnitigIndex, MaximalUnitigLink,
     MaximalUnitigLinkSerializer,
 };

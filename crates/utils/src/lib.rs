@@ -1,5 +1,6 @@
 #[macro_use]
 pub mod debug_functions;
+pub mod assembler_phases;
 pub mod fast_rand_bool;
 pub mod inline_vec;
 pub mod owned_drop;

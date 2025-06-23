@@ -1,4 +1,4 @@
-use crate::pipeline::reorganize_reads::ReorganizedReadsExtraData;
+use crate::reorganize_reads::ReorganizedReadsExtraData;
 use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::{ColorsManager, color_types};

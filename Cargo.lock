@@ -1035,10 +1035,10 @@ dependencies = [
  "dashmap",
  "dynamic-dispatch",
  "fs_extra",
- "genome-graph",
  "ggcat-logging",
  "ggcat_assembler_kmerge",
  "ggcat_assembler_minibuck",
+ "ggcat_assembler_pipeline",
  "ggcat_colors",
  "ggcat_config",
  "ggcat_hashes",
@@ -1048,13 +1048,11 @@ dependencies = [
  "ggcat_utils",
  "hashbrown 0.14.5",
  "itertools 0.13.0",
- "matchtigs",
  "nightly-quirks",
  "parallel-processor",
  "parking_lot",
  "rayon",
  "streaming-libdeflate-rs",
- "traitgraph-algo",
  "typenum",
 ]
 
@@ -1063,6 +1061,7 @@ name = "ggcat_assembler_kmerge"
 version = "2.0.0"
 dependencies = [
  "crossbeam",
+ "dynamic-dispatch",
  "fdlimit",
  "ggcat-logging",
  "ggcat_assembler_minibuck",
@@ -1098,6 +1097,38 @@ dependencies = [
  "ggcat_structs",
  "parallel-processor",
  "streaming-libdeflate-rs",
+ "typenum",
+]
+
+[[package]]
+name = "ggcat_assembler_pipeline"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "bincode 2.0.1",
+ "byteorder",
+ "crossbeam",
+ "dashmap",
+ "dynamic-dispatch",
+ "fs_extra",
+ "genome-graph",
+ "ggcat-logging",
+ "ggcat_assembler_kmerge",
+ "ggcat_colors",
+ "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_io",
+ "ggcat_structs",
+ "ggcat_utils",
+ "hashbrown 0.14.5",
+ "itertools 0.13.0",
+ "matchtigs",
+ "nightly-quirks",
+ "parallel-processor",
+ "parking_lot",
+ "rayon",
+ "streaming-libdeflate-rs",
+ "traitgraph-algo",
  "typenum",
 ]
 

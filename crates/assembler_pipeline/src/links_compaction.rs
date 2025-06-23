@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use utils::fast_rand_bool::FastRandBool;
 use utils::vec_slice::VecSlice;
 
+#[inline(never)]
 pub fn links_compaction(
     links_inputs: Vec<SingleBucket>,
     output_dir: impl AsRef<Path>,

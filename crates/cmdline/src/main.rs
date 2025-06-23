@@ -44,8 +44,6 @@ arg_enum! {
     pub enum HashType {
         Auto = 0,
         SeqHash = 1,
-        RabinKarp32 = 2,
-        RabinKarp64 = 3,
         RabinKarp128 = 4
     }
 }
@@ -271,8 +269,6 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
     *ggcat_api::debug::DEBUG_HASH_TYPE.lock() = match args.hash_type {
         HashType::Auto => ggcat_api::HashType::Auto,
         HashType::SeqHash => ggcat_api::HashType::SeqHash,
-        HashType::RabinKarp32 => ggcat_api::HashType::RabinKarp32,
-        HashType::RabinKarp64 => ggcat_api::HashType::RabinKarp64,
         HashType::RabinKarp128 => ggcat_api::HashType::RabinKarp128,
     };
 
@@ -288,18 +284,30 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
     instance.unwrap()
 }
 
-fn convert_assembler_step(step: AssemblerStartingStep) -> assembler::AssemblerStartingStep {
+fn convert_assembler_step(
+    step: AssemblerStartingStep,
+) -> utils::assembler_phases::AssemblerStartingStep {
     match step {
         AssemblerStartingStep::MinimizerBucketing => {
-            assembler::AssemblerStartingStep::MinimizerBucketing
+            utils::assembler_phases::AssemblerStartingStep::MinimizerBucketing
         }
-        AssemblerStartingStep::KmersMerge => assembler::AssemblerStartingStep::KmersMerge,
-        AssemblerStartingStep::HashesSorting => assembler::AssemblerStartingStep::HashesSorting,
-        AssemblerStartingStep::LinksCompaction => assembler::AssemblerStartingStep::LinksCompaction,
-        AssemblerStartingStep::ReorganizeReads => assembler::AssemblerStartingStep::ReorganizeReads,
-        AssemblerStartingStep::BuildUnitigs => assembler::AssemblerStartingStep::BuildUnitigs,
+        AssemblerStartingStep::KmersMerge => {
+            utils::assembler_phases::AssemblerStartingStep::KmersMerge
+        }
+        AssemblerStartingStep::HashesSorting => {
+            utils::assembler_phases::AssemblerStartingStep::HashesSorting
+        }
+        AssemblerStartingStep::LinksCompaction => {
+            utils::assembler_phases::AssemblerStartingStep::LinksCompaction
+        }
+        AssemblerStartingStep::ReorganizeReads => {
+            utils::assembler_phases::AssemblerStartingStep::ReorganizeReads
+        }
+        AssemblerStartingStep::BuildUnitigs => {
+            utils::assembler_phases::AssemblerStartingStep::BuildUnitigs
+        }
         AssemblerStartingStep::MaximalUnitigsLinks => {
-            assembler::AssemblerStartingStep::MaximalUnitigsLinks
+            utils::assembler_phases::AssemblerStartingStep::MaximalUnitigsLinks
         }
     }
 }

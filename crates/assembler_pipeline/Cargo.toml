@@ -1,51 +1,63 @@
 [package]
-name = "ggcat_assembler_kmerge"
+name = "ggcat_assembler_pipeline"
 version = "2.0.0"
 edition = "2024"
 [dependencies]
 
 # Config
 config = { package = "ggcat_config", path = "../config" }
+
+# Utils
 utils = { package = "ggcat_utils", path = "../utils" }
+
+
+# Static dispatch
+dynamic-dispatch = "0.5.4"
 
 # Common libraries
 parallel-processor = "0.1.32"
 streaming-libdeflate-rs = "0.1.5"
 nightly-quirks = "0.1.4"
 
+# Pipeline crates
+assembler_kmers_merge = { package = "ggcat_assembler_kmerge", path = "../assembler_kmers_merge" }
+
+
 # Common pipeline libraries
 hashes = { package = "ggcat_hashes", path = "../hashes" }
 io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
 structs = { package = "ggcat_structs", path = "../structs" }
-kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
-minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
-
-# Dependencies
-assembler_minimizer_bucketing = { package = "ggcat_assembler_minibuck", path = "../assembler_minimizer_bucketing" }
 
 
-# Other crates
-hashbrown = "0.14.5"
-crossbeam = "0.8.4"
+# Matchtigs support
+matchtigs = "2.1.8"
+genome-graph = { version = "11.0.0", features = ["traitgraph-algo"] }
+traitgraph-algo = { version = "8.1.0", features = [
+    "hashbrown_dijkstra_node_weight_array",
+] }
 
-# Profiler
-instrumenter = "0.1.3"
+
+# Other libraries
 parking_lot = "0.12.3"
-ggcat-logging = { version = "2.0.0", path = "../logging" }
-rustc-hash = "2.1.0"
-typenum = "1.18.0"
-dynamic-dispatch = "0.5.4"
-
-[dev-dependencies]
-fdlimit = "0.3.0"
+fs_extra = "1.3.0"
 rayon = "1.10.0"
-
+hashbrown = "0.14.5"
+itertools = "0.13.0"
+byteorder = "1.5.0"
+crossbeam = "0.8.4"
+dashmap = "6.0.1"
+ggcat-logging = { version = "2.0.0", path = "../logging" }
+anyhow = "1.0.89"
+bincode = "2.0.1"
+typenum = "1.18.0"
 
 [features]
 support_kmer_counters = [
+    "io/support_kmer_counters",
     "colors/support_kmer_counters",
     "structs/support_kmer_counters",
+    "assembler_kmers_merge/support_kmer_counters",
 ]
 
 # Features used to filter ggcat capabilites

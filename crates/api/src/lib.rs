@@ -35,11 +35,11 @@ pub use querier::ColoredQueryOutputFormat;
 
 pub mod debug {
     use crate::utils::HashType;
-    use assembler::AssemblerStartingStep;
     pub use config::KEEP_FILES as DEBUG_KEEP_FILES;
     use parking_lot::Mutex;
     use querier::QuerierStartingStep;
     use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use utils::assembler_phases::AssemblerStartingStep;
 
     pub static DEBUG_ASSEMBLER_FIRST_STEP: Mutex<AssemblerStartingStep> =
         Mutex::new(AssemblerStartingStep::MinimizerBucketing);

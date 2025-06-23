@@ -1,4 +1,4 @@
-use crate::pipeline::maximal_unitig_links::maximal_unitig_index::{
+use crate::maximal_unitig_links::maximal_unitig_index::{
     DoubleMaximalUnitigLinks, MaximalUnitigIndex, MaximalUnitigLink,
 };
 use config::{DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};

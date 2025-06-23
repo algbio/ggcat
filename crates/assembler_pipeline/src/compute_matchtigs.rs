@@ -1,6 +1,6 @@
-use crate::pipeline::maximal_unitig_links::maximal_unitig_index::DoubleMaximalUnitigLinks;
+use crate::maximal_unitig_links::maximal_unitig_index::DoubleMaximalUnitigLinks;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
-use colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
+use colors::colors_manager::{ColorsManager, ColorsMergeManager, color_types};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crossbeam::channel::{Receiver, Sender};
 use genome_graph::bigraph::implementation::node_bigraph_wrapper::NodeBigraphWrapper;
@@ -271,7 +271,7 @@ impl<ColorInfo: IdentSequenceWriter + 'static> GenericNode for UnitigEdgeData<Co
     fn is_self_complemental(&self) -> bool {
         self.sequence_handle
             .get_sequence_handle()
-            .map(|s| s.0 .3.is_self_complemental)
+            .map(|s| s.0.3.is_self_complemental)
             .unwrap_or(false)
     }
 
@@ -279,7 +279,7 @@ impl<ColorInfo: IdentSequenceWriter + 'static> GenericNode for UnitigEdgeData<Co
         let links = self
             .sequence_handle
             .get_sequence_handle()
-            .map(|h| h.0 .3.clone())
+            .map(|h| h.0.3.clone())
             .unwrap_or(DoubleMaximalUnitigLinks::EMPTY);
         let storage = self.sequence_handle.0.clone();
 

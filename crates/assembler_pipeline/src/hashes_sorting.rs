@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use ::dynamic_dispatch::dynamic_dispatch;
 use config::{
     DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, SwapPriority, get_memory_mode,
 };
@@ -23,9 +24,21 @@ use rayon::iter::ParallelIterator;
 use utils::fast_rand_bool::FastRandBool;
 use utils::vec_slice::VecSlice;
 
-pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
+#[dynamic_dispatch(H = [
+    #[cfg(all(feature = "hash-forward", feature = "hash-16bit"))] hashes::fw_seqhash::u16::ForwardSeqHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-32bit"))] hashes::fw_seqhash::u32::ForwardSeqHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-64bit"))] hashes::fw_seqhash::u64::ForwardSeqHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-128bit"))] hashes::fw_seqhash::u128::ForwardSeqHashFactory,
+    #[cfg(feature = "hash-16bit")] hashes::cn_seqhash::u16::CanonicalSeqHashFactory,
+    #[cfg(feature = "hash-32bit")] hashes::cn_seqhash::u32::CanonicalSeqHashFactory,
+    #[cfg(feature = "hash-64bit")] hashes::cn_seqhash::u64::CanonicalSeqHashFactory,
+    #[cfg(feature = "hash-128bit")] hashes::cn_seqhash::u128::CanonicalSeqHashFactory,
+    #[cfg(feature = "hash-rkarp")] hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-rkarp"))] hashes::fw_rkhash::u128::ForwardRabinKarpHashFactory,
+])]
+pub fn hashes_sorting<H: HashFunctionFactory>(
     file_hashes_inputs: Vec<SingleBucket>,
-    output_dir: P,
+    output_dir: &Path,
     buckets_count: BucketsCount,
 ) -> Vec<SingleBucket> {
     PHASES_TIMES_MONITOR
@@ -34,7 +47,7 @@ pub fn hashes_sorting<H: HashFunctionFactory, P: AsRef<Path>>(
 
     let links_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
         buckets_count,
-        output_dir.as_ref().join("links"),
+        output_dir.join("links"),
         None,
         &(
             get_memory_mode(SwapPriority::LinksBuckets),

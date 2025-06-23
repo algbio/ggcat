@@ -1,6 +1,7 @@
 use crate::final_executor::ParallelKmersMergeFinalExecutor;
 use crate::map_processor::{KMERGE_TEMP_DIR, ParallelKmersMergeMapProcessor};
 use crate::structs::{ResultsBucket, RetType};
+use ::dynamic_dispatch::dynamic_dispatch;
 use assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
 use assembler_minimizer_bucketing::rewrite_bucket::RewriteBucketComputeAssembler;
 use colors::colors_manager::color_types::{
@@ -29,6 +30,7 @@ use parallel_processor::buckets::{
     BucketsCount, LockFreeBucket, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
 };
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use std::any::Any;
 use std::cmp::min;
 use std::marker::PhantomData;
 use std::path::Path;
@@ -147,30 +149,48 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     }
 }
 
-pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + Sync>(
+#[dynamic_dispatch(MH = [
+    #[cfg(all(feature = "hash-forward", feature = "hash-16bit"))] hashes::fw_seqhash::u16::ForwardSeqHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-32bit"))] hashes::fw_seqhash::u32::ForwardSeqHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-64bit"))] hashes::fw_seqhash::u64::ForwardSeqHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-128bit"))] hashes::fw_seqhash::u128::ForwardSeqHashFactory,
+    #[cfg(feature = "hash-16bit")] hashes::cn_seqhash::u16::CanonicalSeqHashFactory,
+    #[cfg(feature = "hash-32bit")] hashes::cn_seqhash::u32::CanonicalSeqHashFactory,
+    #[cfg(feature = "hash-64bit")] hashes::cn_seqhash::u64::CanonicalSeqHashFactory,
+    #[cfg(feature = "hash-128bit")] hashes::cn_seqhash::u128::CanonicalSeqHashFactory,
+    #[cfg(feature = "hash-rkarp")] hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-rkarp"))] hashes::fw_rkhash::u128::ForwardRabinKarpHashFactory,
+], CX = [
+    #[cfg(feature = "enable-colors")] colors::bundles::multifile_building::ColorBundleMultifileBuilding,
+    colors::non_colored::NonColoredManager,
+])]
+pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager>(
     file_inputs: Vec<MultiChunkBucket>,
-    colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
+    colors_global_table: Arc<dyn Any + Send + Sync>,
     buckets_count: BucketsCount,
     second_buckets_count: BucketsCount,
     min_multiplicity: usize,
-    out_directory: P,
+    out_directory: &Path,
     k: usize,
     m: usize,
     compute_simplitigs: bool,
     threads_count: usize,
     forward_only: bool,
 ) -> RetType {
+    let colors_global_table: Arc<GlobalColorsTableWriter<CX>> =
+        Arc::downcast(colors_global_table).unwrap();
+
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: kmers merge".to_string());
 
     MNHFactory::initialize(k);
     MH::initialize(k);
-    *KMERGE_TEMP_DIR.write() = Some(out_directory.as_ref().to_path_buf());
+    *KMERGE_TEMP_DIR.write() = Some(out_directory.to_path_buf());
 
     let hashes_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
         buckets_count,
-        out_directory.as_ref().join("hashes"),
+        out_directory.join("hashes"),
         None,
         &(
             get_memory_mode(SwapPriority::HashBuckets),
@@ -183,7 +203,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
 
     let reads_buckets = MultiThreadBuckets::<CompressedBinaryWriter>::new(
         buckets_count,
-        out_directory.as_ref().join("result"),
+        out_directory.join("result"),
         None,
         &(
             get_memory_mode(SwapPriority::ResultBuckets),
@@ -241,7 +261,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
     if compute_simplitigs {
         KmersTransform::<ParallelKmersMergeFactory<MH, CX, true>>::new(
             file_inputs,
-            out_directory.as_ref(),
+            out_directory,
             buckets_count,
             second_buckets_count,
             global_data,
@@ -253,7 +273,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager, P: AsRef<Path> + 
     } else {
         KmersTransform::<ParallelKmersMergeFactory<MH, CX, false>>::new(
             file_inputs,
-            out_directory.as_ref(),
+            out_directory,
             buckets_count,
             second_buckets_count,
             global_data,

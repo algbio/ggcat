@@ -262,7 +262,7 @@ impl<CD: MinimizerBucketingSeqColorData>
 #[dynamic_dispatch(H = [
     hashes::cn_nthash::CanonicalNtHashIteratorFactory,
 ], CX = [
-    #[cfg(not(feature = "devel-build"))] colors::bundles::multifile_building::ColorBundleMultifileBuilding,
+    #[cfg(feature = "enable-colors")] colors::bundles::multifile_building::ColorBundleMultifileBuilding,
     colors::non_colored::NonColoredManager,
 ])]
 pub fn minimizer_bucketing<CX: ColorsManager>(

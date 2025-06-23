@@ -4,8 +4,6 @@ use dynamic_dispatch::DynamicDispatch;
 pub enum HashType {
     Auto = 0,
     SeqHash = 1,
-    RabinKarp32 = 2,
-    RabinKarp64 = 3,
     RabinKarp128 = 4,
 }
 
@@ -55,20 +53,6 @@ pub(crate) fn get_hash_static_id(
                 }
             } else {
                 panic!("Cannot use sequence hash for k > 64!");
-            }
-        }
-        HashType::RabinKarp32 => {
-            if forward_only {
-                fw_rkhash::u32::ForwardRabinKarpHashFactory::dynamic_dispatch_id()
-            } else {
-                cn_rkhash::u32::CanonicalRabinKarpHashFactory::dynamic_dispatch_id()
-            }
-        }
-        HashType::RabinKarp64 => {
-            if forward_only {
-                fw_rkhash::u64::ForwardRabinKarpHashFactory::dynamic_dispatch_id()
-            } else {
-                cn_rkhash::u64::CanonicalRabinKarpHashFactory::dynamic_dispatch_id()
             }
         }
         HashType::RabinKarp128 => {

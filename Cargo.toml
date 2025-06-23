@@ -52,6 +52,7 @@ members = [
     # Assembler pipeline
     "crates/assembler_minimizer_bucketing",
     "crates/assembler_kmers_merge",
+    "crates/assembler_pipeline",
     "crates/assembler",
 
     # Querier pipeline
