@@ -14,7 +14,7 @@ use io::{
         fasta::FastaWriterWrapper,
         gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2},
     },
-    generate_bucket_names,
+    debug_load_single_buckets, debug_save_single_buckets,
     sequences_stream::general::GeneralSequenceBlockData,
 };
 use parallel_processor::{
@@ -25,7 +25,7 @@ use parallel_processor::{
     memory_fs::MemoryFs,
     phase_times_monitor::PHASES_TIMES_MONITOR,
 };
-use utils::assembler_phases::AssemblerStartingStep;
+use utils::assembler_phases::AssemblerPhase;
 
 use crate::maximal_unitig_links::build_maximal_unitigs_links;
 use crate::reorganize_reads::reorganize_reads;
@@ -90,8 +90,8 @@ pub fn build_final_unitigs<
     reads_map: Vec<SingleBucket>,
     unitigs_map: Vec<SingleBucket>,
     buckets_count: BucketsCount,
-    step: AssemblerStartingStep,
-    last_step: AssemblerStartingStep,
+    step: AssemblerPhase,
+    last_step: AssemblerPhase,
     output_file: &Path,
     temp_dir: &Path,
     threads_count: usize,
@@ -141,9 +141,7 @@ pub fn build_final_unitigs<
         None
     };
 
-    let (reorganized_reads, _final_unitigs_bucket) = if step
-        <= AssemblerStartingStep::ReorganizeReads
-    {
+    let reorganized_reads = if step <= AssemblerPhase::ReorganizeReads {
         if generate_maximal_unitigs_links || compute_tigs_mode.needs_temporary_tigs() {
             reorganize_reads::<MergingHash, AssemblerColorsManager, StructSeqBinaryWriter<_, _>>(
                 k,
@@ -166,32 +164,27 @@ pub fn build_final_unitigs<
             )
         }
     } else {
-        (
-            generate_bucket_names(temp_dir.join("reads_bucket"), buckets_count, Some("tmp")),
-            (generate_bucket_names(
-                temp_dir.join("reads_bucket_lonely"),
-                BucketsCount::ONE,
-                Some("tmp"),
-            )
-            .into_iter()
-            .next()
-            .unwrap()
-            .path),
-        )
+        debug_load_single_buckets(&temp_dir, "reorganized-reads-buckets.debug").unwrap()
     };
 
-    if last_step <= AssemblerStartingStep::ReorganizeReads {
+    if last_step <= AssemblerPhase::ReorganizeReads {
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Reorganize reads.".to_string());
         return;
     } else {
-        MemoryFs::flush_all_to_disk();
+        debug_save_single_buckets(
+            &temp_dir,
+            "reorganized-reads-buckets.debug",
+            &reorganized_reads,
+        );
+
+        MemoryFs::flush_to_disk(true);
         MemoryFs::free_memory();
     }
 
     // links_manager.compute_id_offsets();
-    if step <= AssemblerStartingStep::BuildUnitigs {
+    if step <= AssemblerPhase::BuildUnitigs {
         if generate_maximal_unitigs_links
             || compute_tigs_mode.needs_matchtigs_library()
             || compute_tigs_mode == Some(MatchtigMode::FastEulerTigs)
@@ -220,7 +213,7 @@ pub fn build_final_unitigs<
         }
     }
 
-    if step <= AssemblerStartingStep::MaximalUnitigsLinks {
+    if step <= AssemblerPhase::MaximalUnitigsLinks {
         if compute_tigs_mode == Some(MatchtigMode::FastEulerTigs) {
             let circular_temp_unitigs_file = circular_temp_unitigs_file.unwrap();
             let circular_temp_path = circular_temp_unitigs_file.get_path();

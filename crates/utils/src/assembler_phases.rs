@@ -1,5 +1,6 @@
-#[derive(Clone, PartialEq, PartialOrd)]
-pub enum AssemblerStartingStep {
+#[derive(Copy, Clone, PartialEq, PartialOrd, Default)]
+pub enum AssemblerPhase {
+    #[default]
     MinimizerBucketing = 0,
     KmersMerge = 1,
     HashesSorting = 2,

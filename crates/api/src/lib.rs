@@ -1,12 +1,14 @@
 mod utils;
 
+use ::utils::assembler_phases::AssemblerPhase;
 use colors::bundles::graph_querying::ColorBundleGraphQuerying;
 use colors::colors_manager::ColorsManager;
 use colors::{
     bundles::multifile_building::ColorBundleMultifileBuilding, non_colored::NonColoredManager,
 };
+use config::KEEP_FILES;
 pub use ggcat_logging::MessageLevel;
-use ggcat_logging::UnrecoverableErrorLogging;
+use ggcat_logging::{UnrecoverableErrorLogging, info, warn};
 use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
 use io::concurrent::structured_sequences::gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2};
@@ -39,19 +41,18 @@ pub mod debug {
     use parking_lot::Mutex;
     use querier::QuerierStartingStep;
     use std::sync::atomic::{AtomicBool, AtomicUsize};
-    use utils::assembler_phases::AssemblerStartingStep;
+    use utils::assembler_phases::AssemblerPhase;
 
-    pub static DEBUG_ASSEMBLER_FIRST_STEP: Mutex<AssemblerStartingStep> =
-        Mutex::new(AssemblerStartingStep::MinimizerBucketing);
-    pub static DEBUG_ASSEMBLER_LAST_STEP: Mutex<AssemblerStartingStep> =
-        Mutex::new(AssemblerStartingStep::MaximalUnitigsLinks);
+    pub static DEBUG_ASSEMBLER_FIRST_STEP: Mutex<AssemblerPhase> =
+        Mutex::new(AssemblerPhase::MinimizerBucketing);
+    pub static DEBUG_ASSEMBLER_LAST_STEP: Mutex<AssemblerPhase> =
+        Mutex::new(AssemblerPhase::MaximalUnitigsLinks);
 
     pub static DEBUG_QUERIER_FIRST_STEP: Mutex<QuerierStartingStep> =
         Mutex::new(QuerierStartingStep::MinimizerBucketing);
 
     pub static DEBUG_HASH_TYPE: Mutex<HashType> = Mutex::new(HashType::Auto);
 
-    pub static DEBUG_LINK_PHASE_ITERATION_START_STEP: AtomicUsize = AtomicUsize::new(0);
     pub static DEBUG_ONLY_BSTATS: AtomicBool = AtomicBool::new(false);
 
     pub static BUCKETS_COUNT_LOG_FORCE: Mutex<Option<usize>> = Mutex::new(None);
@@ -254,14 +255,31 @@ impl GGCATInstance {
             Some(GfaVersion::V2) => GFAWriterWrapperV2::dynamic_dispatch_id(),
         };
 
-        let temp_dir = create_tempdir(self.0.temp_dir.clone());
+        let first_step = debug::DEBUG_ASSEMBLER_FIRST_STEP.lock().clone();
+        let last_step = debug::DEBUG_ASSEMBLER_LAST_STEP.lock().clone();
+        let temp_dir = if first_step == AssemblerPhase::default() {
+            create_tempdir(self.0.temp_dir.clone())
+        } else {
+            Some(
+                self.0
+                    .temp_dir
+                    .clone()
+                    .expect("while testing successive phases the temp dir must be specified"),
+            )
+        };
+
+        if let Some(temp_dir) = &temp_dir {
+            info!("Temporary directory: {}", temp_dir.display());
+        } else {
+            warn!("No temporary directory specified, writing to cwd!");
+        }
 
         let output_file = assembler::dynamic_dispatch::run_assembler(
             (merging_hash_dispatch, colors_hash, output_mode),
             kmer_length,
             minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
-            debug::DEBUG_ASSEMBLER_FIRST_STEP.lock().clone(),
-            debug::DEBUG_ASSEMBLER_LAST_STEP.lock().clone(),
+            first_step,
+            last_step,
             input_streams,
             color_names.unwrap_or(&[]),
             output_file,
@@ -269,7 +287,6 @@ impl GGCATInstance {
             threads_count,
             min_multiplicity,
             *debug::BUCKETS_COUNT_LOG_FORCE.lock(),
-            Some(debug::DEBUG_LINK_PHASE_ITERATION_START_STEP.load(Ordering::Relaxed)),
             self.0.intermediate_compression_level,
             extra_elab == ExtraElaboration::UnitigLinks,
             match extra_elab {
@@ -284,7 +301,11 @@ impl GGCATInstance {
             forward_only,
         )?;
 
-        remove_tempdir(temp_dir);
+        if last_step == AssemblerPhase::BuildUnitigs && !KEEP_FILES.load(Ordering::Relaxed) {
+            remove_tempdir(temp_dir);
+        } else {
+            info!("Keeping temp dir at {:?}", temp_dir);
+        }
 
         Ok(output_file)
     }

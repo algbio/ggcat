@@ -76,7 +76,7 @@ pub fn dump_unitigs(
         color_map.colors_subsets_count(),
     );
 
-    MemoryFs::flush_all_to_disk();
+    MemoryFs::flush_to_disk(false);
     MemoryFs::free_memory();
 
     let colormap_file = graph_input.as_ref().with_extension("colors.dat");

@@ -170,7 +170,7 @@ pub fn reorganize_reads<
     out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<CX>, (), BK>,
     circular_out_file: Option<&StructuredSequenceWriter<PartialUnitigsColorStructure<CX>, (), BK>>,
     buckets_count: BucketsCount,
-) -> (Vec<SingleBucket>, PathBuf) {
+) -> Vec<SingleBucket> {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: reads reorganization".to_string());
@@ -355,5 +355,5 @@ pub fn reorganize_reads<
         assert_eq!(map_index, mappings.len())
     });
 
-    (buckets.finalize_single(), PathBuf::new())
+    buckets.finalize_single()
 }

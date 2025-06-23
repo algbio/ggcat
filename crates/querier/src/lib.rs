@@ -11,7 +11,7 @@ use hashes::HashFunctionFactory;
 use hashes::default::MNHFactory;
 use io::sequences_reader::SequencesReader;
 use io::sequences_stream::general::GeneralSequenceBlockData;
-use io::{compute_stats_from_input_blocks, generate_bucket_names};
+use io::{compute_stats_from_input_blocks, debug_load_single_buckets};
 use parallel_processor::buckets::{BucketsCount, ExtraBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::fs::File;
@@ -105,7 +105,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
         )
     } else {
         (
-            generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
+            debug_load_single_buckets(&temp_dir, "query-buckets.debug").unwrap(),
             {
                 let queries_count = BufReader::new(File::open(&query_input).unwrap())
                     .lines()
@@ -128,7 +128,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
             false,
         )
     } else {
-        generate_bucket_names(temp_dir.join("counters"), buckets_count, None)
+        debug_load_single_buckets(&temp_dir, "counter-buckets.debug").unwrap()
     };
 
     let colored_buckets_prefix = temp_dir.join("color_counters");
@@ -157,7 +157,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
             &query_kmers_count,
         )
     } else {
-        generate_bucket_names(colored_buckets_prefix, buckets_count, None)
+        debug_load_single_buckets(&temp_dir, "colored-buckets.debug").unwrap()
     };
 
     if QuerierColorsManager::COLORS_ENABLED {

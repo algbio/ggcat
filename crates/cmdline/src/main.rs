@@ -150,12 +150,6 @@ struct AssemblerArgs {
     #[structopt(short = "s", long = "min-multiplicity", default_value = "2")]
     pub min_multiplicity: usize,
 
-    // /// Minimum correctness probability for each kmer (using fastq quality checks)
-    // #[structopt(short = "q", long = "quality-threshold")]
-    // pub quality_threshold: Option<f64>,
-    #[structopt(short = "n", long, default_value = "0", hidden = true)]
-    pub number: usize,
-
     #[structopt(short = "o", long = "output-file", default_value = "output.fasta.lz4")]
     pub output_file: PathBuf,
 
@@ -284,30 +278,26 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
     instance.unwrap()
 }
 
-fn convert_assembler_step(
-    step: AssemblerStartingStep,
-) -> utils::assembler_phases::AssemblerStartingStep {
+fn convert_assembler_step(step: AssemblerStartingStep) -> utils::assembler_phases::AssemblerPhase {
     match step {
         AssemblerStartingStep::MinimizerBucketing => {
-            utils::assembler_phases::AssemblerStartingStep::MinimizerBucketing
+            utils::assembler_phases::AssemblerPhase::MinimizerBucketing
         }
-        AssemblerStartingStep::KmersMerge => {
-            utils::assembler_phases::AssemblerStartingStep::KmersMerge
-        }
+        AssemblerStartingStep::KmersMerge => utils::assembler_phases::AssemblerPhase::KmersMerge,
         AssemblerStartingStep::HashesSorting => {
-            utils::assembler_phases::AssemblerStartingStep::HashesSorting
+            utils::assembler_phases::AssemblerPhase::HashesSorting
         }
         AssemblerStartingStep::LinksCompaction => {
-            utils::assembler_phases::AssemblerStartingStep::LinksCompaction
+            utils::assembler_phases::AssemblerPhase::LinksCompaction
         }
         AssemblerStartingStep::ReorganizeReads => {
-            utils::assembler_phases::AssemblerStartingStep::ReorganizeReads
+            utils::assembler_phases::AssemblerPhase::ReorganizeReads
         }
         AssemblerStartingStep::BuildUnitigs => {
-            utils::assembler_phases::AssemblerStartingStep::BuildUnitigs
+            utils::assembler_phases::AssemblerPhase::BuildUnitigs
         }
         AssemblerStartingStep::MaximalUnitigsLinks => {
-            utils::assembler_phases::AssemblerStartingStep::MaximalUnitigsLinks
+            utils::assembler_phases::AssemblerPhase::MaximalUnitigsLinks
         }
     }
 }
@@ -431,12 +421,11 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
 
     *ggcat_api::debug::DEBUG_ASSEMBLER_FIRST_STEP.lock() = convert_assembler_step(args.step);
     *ggcat_api::debug::DEBUG_ASSEMBLER_LAST_STEP.lock() = convert_assembler_step(args.last_step);
-    ggcat_api::debug::DEBUG_LINK_PHASE_ITERATION_START_STEP.store(args.number, Ordering::Relaxed);
 
     let output_file = instance
         .build_graph(
             inputs,
-            args.output_file,
+            args.output_file.clone(),
             Some(&color_names),
             args.common_args.kmer_length,
             args.common_args.threads_count,
@@ -469,7 +458,7 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
         )
         .unwrap();
 
-    ggcat_logging::stats::write_stats(&output_file.with_extension("elab.stats.json"));
+    ggcat_logging::stats::write_stats(&args.output_file.with_extension("elab.stats.json"));
 
     println!("Final output saved to: {}", output_file.display());
 }

@@ -4,7 +4,7 @@ use config::{
     MAX_SUBBUCKET_AVERAGE_MULTIPLIER, MIN_AVERAGE_CAP, MIN_RESPLIT_BUCKETS_COUNT,
     MINIMUM_LOG_DELTA_TIME,
 };
-use ggcat_logging::generate_stat_id;
+use ggcat_logging::{generate_stat_id, info};
 use io::DUPLICATES_BUCKET_EXTRA;
 use io::concurrent::temp_reads::creads_utils::DeserializedRead;
 use io::concurrent::temp_reads::extra_data::{
@@ -323,8 +323,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                                 .max(MIN_RESPLIT_BUCKETS_COUNT)
                                 .min(MAX_RESPLIT_BUCKETS_COUNT);
 
-                            println!(
-                                "Resplitted with {} buckets average: {}!",
+                            info!(
+                                "Resplitted bucket in {} sub-buckets (average sequences per bucket: {})!",
                                 subbuckets_count, bucket_sequences_average
                             );
                             self.global_context

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::sequences_stream::general::GeneralSequenceBlockData;
 use config::{
     DEFAULT_BUCKETS_CHUNK_SIZE, DEFAULT_BUCKETS_COUNT_LOG, DEFAULT_PER_CPU_BUFFER_SIZE,
@@ -7,8 +9,10 @@ use config::{
     MIN_BUCKETS_CHUNK_SIZE, MIN_BUCKETS_COUNT_LOG, MIN_SECOND_BUCKET_SIZE,
     MIN_SECOND_BUCKETS_COUNT_LOG, MIN_TARGET_CHUNK_SIZE,
 };
-use parallel_processor::buckets::{BucketsCount, ExtraBucketData, ExtraBuckets, SingleBucket};
-use std::path::Path;
+use parallel_processor::{
+    DEFAULT_BINCODE_CONFIG,
+    buckets::{ExtraBucketData, MultiChunkBucket, SingleBucket},
+};
 
 pub mod compressed_read;
 pub mod concurrent;
@@ -20,32 +24,33 @@ pub mod varint;
 
 pub const DUPLICATES_BUCKET_EXTRA: ExtraBucketData = ExtraBucketData(0xdddd);
 
-pub fn generate_bucket_names(
-    root: impl AsRef<Path>,
-    count: BucketsCount,
-    suffix: Option<&str>,
-) -> Vec<SingleBucket> {
-    (0..count.total_buckets_count)
-        .map(|i| SingleBucket {
-            index: i,
-            path: root.as_ref().with_extension(format!(
-                "{}{}",
-                i,
-                match suffix {
-                    None => String::from(""),
-                    Some(s) => format!(".{}", s),
-                }
-            )),
-            extra_bucket_data: if i >= count.normal_buckets_count {
-                match count.extra_buckets_count {
-                    ExtraBuckets::None => None,
-                    ExtraBuckets::Extra { data, .. } => Some(data),
-                }
-            } else {
-                None
-            },
-        })
-        .collect()
+pub fn debug_save_single_buckets(temp_dir: &Path, file: &str, buckets: &[SingleBucket]) {
+    std::fs::write(
+        temp_dir.join(file),
+        bincode::encode_to_vec(buckets, DEFAULT_BINCODE_CONFIG).unwrap(),
+    )
+    .unwrap();
+}
+
+pub fn debug_load_single_buckets(temp_dir: &Path, file: &str) -> anyhow::Result<Vec<SingleBucket>> {
+    let data = std::fs::read(temp_dir.join(file))?;
+    let buckets: Vec<SingleBucket> = bincode::decode_from_slice(&data, DEFAULT_BINCODE_CONFIG)?.0;
+    Ok(buckets)
+}
+
+pub fn debug_save_buckets(temp_dir: &Path, file: &str, buckets: &[MultiChunkBucket]) {
+    std::fs::write(
+        temp_dir.join(file),
+        bincode::encode_to_vec(buckets, DEFAULT_BINCODE_CONFIG).unwrap(),
+    )
+    .unwrap();
+}
+
+pub fn debug_load_buckets(temp_dir: &Path, file: &str) -> anyhow::Result<Vec<MultiChunkBucket>> {
+    let data = std::fs::read(temp_dir.join(file))?;
+    let buckets: Vec<MultiChunkBucket> =
+        bincode::decode_from_slice(&data, DEFAULT_BINCODE_CONFIG)?.0;
+    Ok(buckets)
 }
 
 pub struct FilesStatsInfo {
