@@ -1924,9 +1924,7 @@ dependencies = [
 
 [[package]]
 name = "parallel-processor"
-version = "0.1.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f640f00e6037353e901ebaaf44ad6a2e2eee17a5835741ec654dc21d1c417ef7"
+version = "0.2.0"
 dependencies = [
  "arc-swap",
  "backtrace",
@@ -2531,12 +2529,13 @@ dependencies = [
 [[package]]
 name = "streaming-libdeflate-rs"
 version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2de61fa6f01dcd4a245cf4125ff9fbee9589fde686c01c62c74afa4208ef81b"
 dependencies = [
  "crc32fast",
  "filebuffer",
  "mt-debug-counters",
  "nightly-quirks",
- "rayon",
  "static_assertions",
  "structopt",
 ]
