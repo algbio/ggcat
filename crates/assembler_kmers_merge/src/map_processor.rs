@@ -3,6 +3,7 @@ use crate::unitigs_extender::{GlobalExtenderParams, UnitigsExtenderTrait};
 use crate::{GlobalMergeData, ParallelKmersMergeFactory};
 use assembler_minimizer_bucketing::rewrite_bucket::get_superkmer_minimizer;
 use colors::colors_manager::{ColorsManager, color_types};
+use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use ggcat_logging::stats;
 use ggcat_logging::stats::KmersMergeBucketReport;
 use hashbrown::HashTable;
@@ -11,7 +12,7 @@ use hashes::default::MNHFactory;
 use hashes::{HashFunction, HashFunctionFactory, HashableSequence};
 use io::DUPLICATES_BUCKET_EXTRA;
 use io::compressed_read::CompressedReadIndipendent;
-use io::concurrent::temp_reads::creads_utils::DeserializedRead;
+use io::concurrent::temp_reads::creads_utils::{DeserializedRead, DeserializedReadIndependent};
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use kmers_transform::{
     GroupProcessStats, KmersTransformExecutorFactory, KmersTransformMapProcessor,
@@ -22,13 +23,15 @@ use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::mt_debug_counters::counter::{AtomicCounter, AvgMode, MaxMode};
 use parallel_processor::mt_debug_counters::{declare_avg_counter_i64, declare_counter_i64};
 use parking_lot::RwLock;
-use rustc_hash::FxHashMap;
-use std::cmp::max;
+use rustc_hash::FxHasher;
+use std::hash::Hasher;
 use std::mem::size_of;
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use structs::map_entry::MapEntry;
+use utils::fuzzy_hashmap::FuzzyHashmap;
+use utils::inline_vec::Allocator;
 
 instrumenter::use_instrumenter!();
 
@@ -37,9 +40,12 @@ pub(crate) static KMERGE_TEMP_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
 pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManager> {
     pub detailed_stats: KmersMergeBucketReport,
     pub extender: HashMapUnitigsExtender<MH, CX>,
-    pub superkmers_hashmap: HashTable<(CompressedReadIndipendent, u64)>,
+
     pub superkmers_storage: Box<Vec<u8>>,
-    pub minimizer_collisions: FxHashMap<u64, u64>,
+    // pub minimizer_superkmers: FxHashMap<u64, InlineVec<DeserializedReadIndependent<<
+    // ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>>,
+    pub minimizer_superkmers: FuzzyHashmap<DeserializedReadIndependent<<
+        ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>,
 }
 
 impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
@@ -48,20 +54,19 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
     type InitData = GlobalExtenderParams;
 
     fn allocate_new(sizes: &Self::InitData) -> Self {
+        const MINIMIZER_MAP_DEFAULT_SIZE: usize = 1024;
         Self {
             detailed_stats: Default::default(),
             extender: HashMapUnitigsExtender::new(sizes),
-            superkmers_hashmap: HashTable::default(),
             superkmers_storage: Box::new(vec![]),
-            minimizer_collisions: FxHashMap::default(),
+            minimizer_superkmers: FuzzyHashmap::new(MINIMIZER_MAP_DEFAULT_SIZE),
         }
     }
 
     fn reset(&mut self) {
         self.extender.reset();
-        self.superkmers_hashmap.clear();
         self.superkmers_storage.clear();
-        self.minimizer_collisions.clear();
+        // self.minimizer_superkmers.clear();
     }
 }
 
@@ -90,6 +95,12 @@ pub struct ParallelKmersMergeMapProcessor<
     k: usize,
 }
 
+fn hash_integer(value: u64) -> u64 {
+    let mut hasher = FxHasher::default();
+    hasher.write_u64(value);
+    hasher.finish()
+}
+
 impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     ParallelKmersMergeMapProcessor<MH, CX, COMPUTE_SIMPLITIGS>
 {
@@ -110,6 +121,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     type MapStruct = ParallelKmersMergeMapPacket<MH, CX>;
     const MAP_SIZE: usize = size_of::<MH::HashTypeUnextendable>()
         + size_of::<MapEntry<color_types::HashMapTempColorIndex<CX>>>();
+
+    type ProcessSequencesContext = Self::MapStruct;
 
     fn process_group_start(
         &mut self,
@@ -134,100 +147,141 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     }
 
     #[instrumenter::track]
-    #[inline(always)]
-    fn process_group_add_sequence(
+    fn process_group_sequences(
         &mut self,
-        read: &DeserializedRead<'_, <ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>,
-        extra_data_buffer: &<<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        sequences_count: u64,
+        process_reads_callback: impl FnOnce(&mut Self::MapStruct, fn(
+                    context: &mut Self::MapStruct,
+                    read: &DeserializedRead<'_, <ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>,
+                    extra_buffer: &<<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer
+                )
+            ),
     ) {
-        let map_packet = unsafe { self.map_packet.as_mut().unwrap_unchecked().deref_mut() };
-        map_packet.extender.add_sequence(read, extra_data_buffer);
+        let map_packet = self.map_packet.as_mut().unwrap().deref_mut();
+
+        let map_size = sequences_count.next_power_of_two().max(4);
+        map_packet
+            .minimizer_superkmers
+            .initialize(sequences_count as usize);
+
+        if true {
+            // self.is_duplicate {
+            process_reads_callback(
+                map_packet,
+                #[inline(always)]
+                |map_packet, read, extra_buffer| {
+                    map_packet.extender.add_sequence(read, extra_buffer);
+                },
+            )
+        } else {
+            process_reads_callback(
+                map_packet,
+                #[inline(always)]
+                |map_packet, read, extra_buffer| {
+                    // TODO:
+                    // Save the start offset of the minimizer in the bucket
+
+                    // first pass: collapse unique super-kmers
+                    // index k-mers based on (loe 32-bit) 2-fold minimizer values + distance between minimizers
+                    // Betore adding a new super-kmer, check if there are k-mers already present in the current dataset
+                    // In case, define a plan to increase that k-mer counter in the end, and mask out the current k-mer.
+                    // Iterate each super-kmer, cnecking for duplicate/branching k-mers by using the minimizer pair hashtable
+
+                    // TODO:
+                    // 0) Track unicity of minimizers & improve first hash computation (x4 speed improvement)
+                    // 1) Add a flag to each read to determine if the minimizer is unique or not
+                    // 2) Find the one (or multiple) minimizers in each super-kmer and compute the left and/or right extended minimizer of size m+(k-m+1?)/2
+                    // 3) Dedup and group the super-kmers by their extended minimizers (common storage + specialized vec based hashmap)
+                    // 4) For each super-kmer extended minimizer group build the maximal unitigs and join them using an hashmap
+                    // 5) Improve the kmers hashmap storage, reducing accesses from 1 to 4
+                    // 5) Optionally increase the threshold for resplitting
+
+                    let minimizer_pos = read.minimizer_pos as usize;
+
+                    let minimizer_hash = read
+                        .read
+                        .sub_slice(minimizer_pos..minimizer_pos + 11)
+                        .get_hash_aligned();
+
+                    let new_read = CompressedReadIndipendent::from_read::<false>(
+                        &read.read,
+                        &mut map_packet.superkmers_storage,
+                    );
+
+                    let hash = hash_integer(minimizer_hash) as usize;
+
+                    map_packet.minimizer_superkmers.add_element(
+                        hash,
+                        // map_packet
+                        //     .minimizer_superkmers
+                        //     .entry(minimizer_hash)
+                        //     .or_insert(InlineVec::default()),
+                        DeserializedReadIndependent {
+                            read: new_read,
+                            extra: read.extra,
+                            multiplicity: read.multiplicity,
+                            minimizer_pos: read.minimizer_pos,
+                            flags: read.flags,
+                            second_bucket: read.second_bucket,
+                            is_window_duplicate: read.is_window_duplicate,
+                        },
+                    );
+
+                    // assert!(
+                    //     map_packet.minimizer_superkmers
+                    //         [(minimizer_hash as usize) & map_size_mask]
+                    //         .len()
+                    //         != 1239,
+                    // );
+
+                    //     let mut dupl_count = 0;
+                    //     let read_slice = read.read.get_packed_slice();
+                    //     match map_packet.superkmers_hashmap.entry(
+                    //         unsafe { read.read.compute_hash_aligned_overflow16() },
+                    //         |a| {
+                    //             a.read.bases_count() == read.read.bases_count()
+                    //                 && a.read
+                    //                     .get_packed_slice_aligned(&map_packet.superkmers_storage)
+                    //                     == read_slice
+                    //         },
+                    //         |v| unsafe {
+                    //             v.read
+                    //                 .compute_hash_aligned_overflow16(&map_packet.superkmers_storage)
+                    //         },
+                    //     ) {
+                    //         Entry::Occupied(mut occupied_entry) => {
+                    //             occupied_entry.get_mut().multiplicity += read.multiplicity as u32;
+                    //             dupl_count += 1;
+                    //         }
+                    //         Entry::Vacant(vacant_entry) => {
+
+                    //             // Make room for possible overflow
+                    //             map_packet.superkmers_storage.reserve(16);
+
+                    //             vacant_entry.insert(DeserializedReadIndependent {
+                    //                 read: new_read,
+                    //                 extra: read.extra,
+                    //                 multiplicity: read.multiplicity,
+                    //                 minimizer_pos: read.minimizer_pos,
+                    //                 flags: read.flags,
+                    //                 second_bucket: read.second_bucket,
+                    //                 is_window_duplicate: read.is_window_duplicate,
+                    //             });
+
+                    //         }
+                    //     }
+
+                    //     if dupl_count > 10 {
+                    //         println!(
+                    //             "Dupl count: {} over unique: {}",
+                    //             dupl_count,
+                    //             map_packet.superkmers_hashmap.len()
+                    //         );
+                    //     }
+                },
+            )
+        }
     }
-
-    // fn process_group_batch_sequences(
-    //     &mut self,
-    //     global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
-    //     batch: &ReadsVector<MinimizerBucketingMultipleSeqColorDataType<CX>>,
-    //     extra_data_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-    //     ref_sequences: &Vec<u8>,
-    // ) {
-    //     if true || batch.extra_bucket_data == Some(DUPLICATES_BUCKET_EXTRA) {
-    //     } else {
-    //         for sequence in batch.iter() {
-    //             // TODO:
-    //             // Save the start offset of the minimizer in the bucket
-
-    //             // first pass: collapse unique super-kmers
-    //             // index k-mers based on (loe 32-bit) 2-fold minimizer values + distance between minimizers
-    //             // Betore adding a new super-kmer, check if there are k-mers already present in the current dataset
-    //             // In case, define a plan to increase that k-mer counter in the end, and mask out the current k-mer.
-    //             // Iterate each super-kmer, cnecking for duplicate/branching k-mers by using the minimizer pair hashtable
-
-    //             // TODO:
-    //             // 0) Track unicity of minimizers & improve first hash computation (x4 speed improvement)
-    //             // 1) Add a flag to each read to determine if the minimizer is unique or not
-    //             // 2) Find the one (or multiple) minimizers in each super-kmer and compute the left and/or right extended minimizer of size m+(k-m+1?)/2
-    //             // 3) Dedup and group the super-kmers by their extended minimizers (common storage + specialized vec based hashmap)
-    //             // 4) For each super-kmer extended minimizer group build the maximal unitigs and join them using an hashmap
-    //             // 5) Improve the kmers hashmap storage, reducing accesses from 1 to 4
-    //             // 5) Optionally increase the threshold for resplitting
-    //             {
-    //                 let read_slice = sequence.read.get_packed_slice_aligned(&ref_sequences);
-    //                 match map_packet.superkmers_hashmap.entry(
-    //                     sequence.read.compute_hash_aligned(&ref_sequences),
-    //                     |a| {
-    //                         a.0.bases_count() == sequence.read.bases_count()
-    //                             && a.0.get_packed_slice_aligned(&map_packet.superkmers_storage)
-    //                                 == read_slice
-    //                     },
-    //                     |v| v.0.compute_hash_aligned(&map_packet.superkmers_storage),
-    //                 ) {
-    //                     Entry::Occupied(mut occupied_entry) => {
-    //                         occupied_entry.get_mut().1 += sequence.multiplicity as u64;
-    //                     }
-    //                     Entry::Vacant(vacant_entry) => {
-    //                         let read = sequence.read.as_reference(&ref_sequences);
-    //                         let new_read = CompressedReadIndipendent::from_read(
-    //                             &read,
-    //                             &mut map_packet.superkmers_storage,
-    //                         );
-    //                         // assert!(!map_packet.superkmers_hashmap.contains_key(read.get_borrowable()));
-    //                         // assert!(!map_packet.superkmers_hashmap.contains_key(&SuperKmerEntry::new(&kmers_storage, new_read)));
-    //                         vacant_entry.insert((new_read, sequence.multiplicity as u64));
-
-    //                         let minimizer_pos = sequence.minimizer_pos as usize;
-
-    //                         if !sequence.is_window_duplicate && batch.extra_bucket_data.is_none() {
-    //                             let first_hash = read
-    //                                 .sub_slice(minimizer_pos..minimizer_pos + batch.minimizer_size)
-    //                                 .get_hash();
-    //                         }
-    //                         if read.bases_count() >= minimizer_pos + global_data.k / 2 {
-    //                             let extra_hash = read
-    //                                 .sub_slice(minimizer_pos..minimizer_pos + global_data.k / 2)
-    //                                 .get_hash();
-
-    //                             *map_packet
-    //                                 .minimizer_collisions
-    //                                 .entry(extra_hash)
-    //                                 .or_insert(0) += 1;
-    //                         }
-
-    //                         let end = minimizer_pos + batch.minimizer_size;
-    //                         if end >= global_data.k / 2 {
-    //                             let extra_hash =
-    //                                 read.sub_slice((end - global_data.k / 2)..end).get_hash();
-    //                             *map_packet
-    //                                 .minimizer_collisions
-    //                                 .entry(extra_hash)
-    //                                 .or_insert(0) += 1;
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
 
     fn get_stats(&self) -> GroupProcessStats {
         self.map_packet.as_ref().unwrap().extender.get_stats()
@@ -244,6 +298,64 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
             declare_avg_counter_i64!("correct_reads_avg", false);
 
         let mut map_packet = self.map_packet.take().unwrap();
+        // let map_packet_ref = map_packet.deref_mut();
+
+        // for read in map_packet_ref.superkmers_hashmap.drain() {
+        //     // assert!(!map_packet_ref.superkmers_hashmap.contains_key(read.get_borrowable()));
+        //     // assert!(!map_packet_ref.superkmers_hashmap.contains_key(&SuperKmerEntry::new(&kmers_storage, new_read)));
+
+        //     let minimizer_pos = read.minimizer_pos as usize;
+
+        //     let minimizer_hash = read
+        //         .read
+        //         .as_reference(&map_packet_ref.superkmers_storage)
+        //         .sub_slice(minimizer_pos..minimizer_pos + self.m)
+        //         .get_hash_aligned();
+
+        //     /*
+        //         TODO:
+        //         - If less than x (8?) sk, process inline
+        //         - Else split the kmers with rolling hashes of (k - 4) bases, ex for k=27 run up to (k - m + 1) / 4 distinct hash computations
+        //           and cluster the results
+        //         - For every sub-hash, dedup its skmers, and if there is only one skmer, mark it a partial unitig
+        //         - If there is more than one sub-hash, make 16-bit hashes that represent the 4 bases that make up the skmer, along with the offset position
+        //         - Extend the unitigs using the hashes and put the endings in an hashmap, flagging every kmer-part as hashmap joinable
+
+        //     */
+        //     // use hashes::ExtendableHashTraitType;
+        //     // let original_minimizer = MNHFactory::new(
+        //     //     read.read.sub_slice(minimizer_pos..minimizer_pos + self.m),
+        //     //     self.m,
+        //     // )
+        //     // .iter()
+        //     // .next()
+        //     // .unwrap()
+        //     // .to_unextendable();
+
+        //     // let computed_minimizer =
+        //     //     get_superkmer_minimizer(self.k, self.m, read.flags, &read.read).1;
+
+        //     // if original_minimizer != computed_minimizer && !read.is_window_duplicate {
+        //     //     panic!(
+        //     //         "Minimizers: {:?} Orig: {} Computed: {} orig_pos: {}",
+        //     //         MNHFactory::new(read.read, self.m)
+        //     //             .iter()
+        //     //             .map(|h| h.to_unextendable())
+        //     //             .collect::<Vec<_>>(),
+        //     //         original_minimizer,
+        //     //         computed_minimizer,
+        //     //         minimizer_pos
+        //     //     );
+        //     // }
+
+        //     map_packet_ref.allocator.push_vec(
+        //         map_packet_ref
+        //             .minimizer_superkmers
+        //             .entry(minimizer_hash)
+        //             .or_insert(InlineVec::default()),
+        //         read,
+        //     );
+        // }
 
         let stats = map_packet.extender.get_stats();
 
@@ -265,7 +377,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
         map_packet.extender.set_suggested_sizes(
             kmers_total / batches_count,
-            max(256, sequences_size_total / batches_count),
+            256,
+            // max(256, sequences_size_total / batches_count),
         );
 
         COUNTER_KMERS_MAX.max(all_kmers as i64);

@@ -6,6 +6,7 @@ use crate::{
 use config::DEFAULT_PER_CPU_BUFFER_SIZE;
 use ggcat_logging::generate_stat_id;
 use ggcat_logging::stats::StatId;
+use io::concurrent::temp_reads::creads_utils::AlignToMinimizerByteBoundary;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use minimizer_bucketing::decode_helper::decode_sequences;
 use minimizer_bucketing::split_buckets::SplittedBucket;
@@ -123,19 +124,25 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                 proc_info.is_resplitted,
             );
 
-            decode_sequences::<
-                F::AssociatedExtraData,
-                F::AssociatedExtraDataWithMultiplicity,
-                F::FlagsCount,
-            >(
-                reader_thread.clone(),
-                &mut tmp_mult_buffer,
-                &mut splitted_bucket,
-                global_context.k,
-                |read, extra_buffer| {
-                    real_size += 1;
-                    map_processor.process_group_add_sequence(&read, extra_buffer);
-                    F::AssociatedExtraDataWithMultiplicity::clear_temp_buffer(extra_buffer);
+            map_processor.process_group_sequences(
+                splitted_bucket.sequences_count,
+                |ctx, process_sequence| {
+                    decode_sequences::<
+                        F::AssociatedExtraData,
+                        F::AssociatedExtraDataWithMultiplicity,
+                        F::FlagsCount,
+                        AlignToMinimizerByteBoundary,
+                    >(
+                        reader_thread.clone(),
+                        &mut tmp_mult_buffer,
+                        &mut splitted_bucket,
+                        global_context.k,
+                        |read, extra_buffer| {
+                            real_size += 1;
+                            process_sequence(ctx, &read, extra_buffer);
+                            F::AssociatedExtraDataWithMultiplicity::clear_temp_buffer(extra_buffer);
+                        },
+                    );
                 },
             );
 

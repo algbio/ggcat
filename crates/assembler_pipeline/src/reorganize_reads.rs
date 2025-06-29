@@ -1,4 +1,3 @@
-use assembler_kmers_merge::structs::PartialUnitigExtraData;
 use config::{
     BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
     SwapPriority, get_compression_level_info, get_memory_mode,
@@ -10,6 +9,7 @@ use io::concurrent::temp_reads::creads_utils::{
 };
 use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
 use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
+use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
 #[cfg(feature = "support_kmer_counters")]
 use structs::unitigs_counters::UnitigsCounters;
 

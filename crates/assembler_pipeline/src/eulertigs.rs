@@ -415,7 +415,8 @@ pub fn build_eulertigs<
                         let mut buffer = unitigs_bases.lock();
 
                         // Save the current circular unitig for later usage
-                        let copied_read = CompressedReadIndipendent::from_read(&read, &mut buffer);
+                        let copied_read =
+                            CompressedReadIndipendent::from_read::<true>(&read, &mut buffer);
 
                         if CX::COLORS_ENABLED {
                             // Copy the color data to the temporary buffer

@@ -323,6 +323,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
 {
     type MapStruct = ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>;
     const MAP_SIZE: usize = size_of::<MH::HashTypeUnextendable>() + 8;
+    type ProcessSequencesContext = Self;
 
     fn process_group_start(
         &mut self,
@@ -335,44 +336,54 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
         self.kmers_count = 0;
     }
 
-    #[inline(always)]
-    fn process_group_add_sequence(
+    fn process_group_sequences(
         &mut self,
-        read: &DeserializedRead<'_, <ParallelKmersQueryFactory<MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>,
-        extra_data_buffer: &<<ParallelKmersQueryFactory<MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _sequences_count: u64,
+        process_reads_callback: impl FnOnce(&mut Self, fn(
+                context: &mut Self,
+                    read: &DeserializedRead<'_, <ParallelKmersQueryFactory<MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>,
+                    extra_buffer: &<<ParallelKmersQueryFactory<MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer
+                )
+            ),
     ) {
-        let k = self.k;
-        let map_packet = unsafe { self.map_packet.as_mut().unwrap_unchecked() };
+        process_reads_callback(
+            self,
+            #[inline(always)]
+            |self_, read, extra_buffer| {
+                let k = self_.k;
+                let map_packet = unsafe { self_.map_packet.as_mut().unwrap_unchecked() };
 
-        let hashes = MH::new(read.read, k);
+                let hashes = MH::new(read.read, k);
 
-        self.kmers_count += (read.read.bases_count() - k + 1) as u64;
+                self_.kmers_count += (read.read.bases_count() - k + 1) as u64;
 
-        let sequence_type = read.extra;
+                let sequence_type = read.extra;
 
-        match sequence_type {
-            QueryKmersReferenceData::Graph(col_info) => {
-                for (hash, color) in hashes
-                    .iter()
-                    .zip(col_info.get_iterator(&extra_data_buffer.0))
-                {
-                    map_packet.phmap.insert(hash.to_unextendable(), color);
+                match sequence_type {
+                    QueryKmersReferenceData::Graph(col_info) => {
+                        for (hash, color) in
+                            hashes.iter().zip(col_info.get_iterator(&extra_buffer.0))
+                        {
+                            map_packet.phmap.insert(hash.to_unextendable(), color);
+                        }
+                    }
+                    QueryKmersReferenceData::Query(index) => {
+                        for hash in hashes.iter() {
+                            map_packet
+                                .query_reads
+                                .push((index.get(), hash.to_unextendable()));
+                        }
+                    }
                 }
-            }
-            QueryKmersReferenceData::Query(index) => {
-                for hash in hashes.iter() {
-                    map_packet
-                        .query_reads
-                        .push((index.get(), hash.to_unextendable()));
-                }
-            }
-        }
+            },
+        )
     }
 
     fn get_stats(&self) -> GroupProcessStats {
         GroupProcessStats {
             total_kmers: self.kmers_count,
             unique_kmers: self.kmers_count,
+            duplicated_kmers: 0,
             saved_read_bytes: 0,
         }
     }

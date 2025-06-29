@@ -184,7 +184,7 @@ pub fn build_unitigs<
                      _color_extra_buffer| {
                         let &(findex, unitig_info) = unitigs_hashmap.get(&index.unitig).unwrap();
                         final_sequences[findex] = Some((
-                            CompressedReadIndipendent::from_read(&read, &mut temp_storage),
+                            CompressedReadIndipendent::from_read::<true>(&read, &mut temp_storage),
                             unitig_info,
                             index.colors,
                             #[cfg(feature = "support_kmer_counters")]

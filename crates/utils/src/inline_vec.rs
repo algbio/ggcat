@@ -83,7 +83,13 @@ impl<T: Copy, const LOCAL_FITTING: usize> Default for InlineVec<T, LOCAL_FITTING
 
 impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
     pub const LOCAL_FITTING: usize = LOCAL_FITTING;
-    const PTR_FLAG: usize = 0x8000000000000000;
+    const PTR_FLAG: usize = if Self::SUPPORTS_LOCAL {
+        0x8000000000000000
+    } else {
+        0
+    };
+
+    const SUPPORTS_LOCAL: bool = LOCAL_FITTING > 0;
 
     pub fn new(capacity: usize) -> Self {
         Allocator {
@@ -126,7 +132,7 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
 
     #[inline]
     pub fn extend_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>, values: &[T]) {
-        let mut ptr = if vec.size + values.len() > LOCAL_FITTING {
+        let mut ptr = if !Self::SUPPORTS_LOCAL || (vec.size + values.len() > LOCAL_FITTING) {
             let npt = vec.size.next_power_of_two();
             if vec.size + values.len() > npt {
                 let mut old_data = vec.data.clone();
@@ -158,16 +164,28 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
 
     #[inline]
     pub fn push_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>, value: T) {
-        if vec.size < LOCAL_FITTING {
+        if Self::SUPPORTS_LOCAL && vec.size < LOCAL_FITTING {
             unsafe {
                 let ptr = vec.data.data.as_mut_ptr().add(vec.size);
                 std::ptr::write(ptr, value);
             }
         } else {
-            let npt = vec.size.next_power_of_two();
+            let npt = if !Self::SUPPORTS_LOCAL && vec.size == 0 {
+                0
+            } else {
+                vec.size.next_power_of_two()
+            };
+
             if vec.size >= npt {
                 let mut old_data = vec.data.clone();
-                vec.data = self.alloc(npt * 2);
+
+                let new_size = if !Self::SUPPORTS_LOCAL && npt == 0 {
+                    1
+                } else {
+                    npt * 2
+                };
+
+                vec.data = self.alloc(new_size * 2);
                 unsafe {
                     std::hint::assert_unchecked(npt >= LOCAL_FITTING);
                     std::ptr::copy_nonoverlapping(
@@ -187,7 +205,7 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
     }
 
     pub fn free_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>) {
-        if vec.size > LOCAL_FITTING {
+        if !Self::SUPPORTS_LOCAL || vec.size > LOCAL_FITTING {
             self.free(vec.data, vec.size.next_power_of_two());
         }
         vec.data = AllocatedData::ZERO;
@@ -216,7 +234,7 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
 
     #[inline(always)]
     fn get_ptr(&self, data: &AllocatedData<T, LOCAL_FITTING>) -> *const T {
-        if unsafe { data.index } & Self::PTR_FLAG != 0 {
+        if !Self::SUPPORTS_LOCAL || unsafe { data.index } & Self::PTR_FLAG != 0 {
             self.get_ptr_heap(data)
         } else {
             unsafe { data.data.as_ptr() }
@@ -225,7 +243,7 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
 
     #[inline(always)]
     fn get_mut_ptr(&mut self, data: &mut AllocatedData<T, LOCAL_FITTING>) -> *mut T {
-        if unsafe { data.index } & Self::PTR_FLAG != 0 {
+        if !Self::SUPPORTS_LOCAL || unsafe { data.index } & Self::PTR_FLAG != 0 {
             self.get_mut_ptr_heap(data)
         } else {
             unsafe { data.data.as_mut_ptr() }
@@ -244,7 +262,7 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
 
     #[inline]
     fn get_mut_ptr_heap(&mut self, data: &mut AllocatedData<T, LOCAL_FITTING>) -> *mut T {
-        debug_assert!(unsafe { data.index & !Self::PTR_FLAG } < self.data.len());
+        debug_assert!(unsafe { data.index & !Self::PTR_FLAG } <= self.data.len());
         unsafe {
             self.data
                 .as_mut_ptr()
@@ -324,6 +342,15 @@ mod tests {
 
     use super::{Allocator, InlineVec};
 
+    #[derive(Eq, PartialEq, Debug, Copy, Clone)]
+    struct Huge([u32; 32]);
+
+    impl From<u32> for Huge {
+        fn from(value: u32) -> Self {
+            Self([value; 32])
+        }
+    }
+
     fn test_inlinevec<T: Copy + From<u32> + Eq + Debug, const LOCAL_FITTING: usize>(
         count: usize,
         size: usize,
@@ -390,6 +417,11 @@ mod tests {
     #[test]
     fn test_inlinevec_u64() {
         test_inlinevec::<u64, 1>(10000000, 10000000);
+    }
+
+    #[test]
+    fn test_inlinevec_huge() {
+        test_inlinevec::<Huge, 0>(10000000, 10000000);
     }
 
     #[test]

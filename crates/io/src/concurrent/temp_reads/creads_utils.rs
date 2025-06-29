@@ -1,8 +1,8 @@
-use crate::compressed_read::CompressedRead;
+use crate::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::varint::{VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, decode_varint, encode_varint};
 use bincode::{Decode, Encode};
 use byteorder::ReadBytesExt;
-use config::{BucketIndexType, MultiplicityCounterType};
+use config::{BucketIndexType, HASH_MAX_OVERREAD, MultiplicityCounterType};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use std::io::Read;
 use std::marker::PhantomData;
@@ -193,6 +193,28 @@ impl MinimizerModeOption for AssemblerMinimizerPosition {
     const ENABLED: bool = true;
 }
 
+pub trait AlignModeOption {
+    const ENABLED: bool;
+    // Minimum space required for overflow
+    const OVERREAD_MIN: usize;
+}
+
+pub struct NoAlignment;
+pub struct NoAlignmentWithOverflow;
+pub struct AlignToMinimizerByteBoundary;
+impl AlignModeOption for NoAlignment {
+    const ENABLED: bool = false;
+    const OVERREAD_MIN: usize = 0;
+}
+impl AlignModeOption for NoAlignmentWithOverflow {
+    const ENABLED: bool = false;
+    const OVERREAD_MIN: usize = HASH_MAX_OVERREAD;
+}
+impl AlignModeOption for AlignToMinimizerByteBoundary {
+    const ENABLED: bool = true;
+    const OVERREAD_MIN: usize = HASH_MAX_OVERREAD;
+}
+
 pub struct MultiplicityModeFromBoolean<const ENABLED: bool>;
 impl<const ENABLED: bool> MultiplicityModeOption for MultiplicityModeFromBoolean<ENABLED> {
     const ENABLED: bool = ENABLED;
@@ -204,11 +226,18 @@ pub struct CompressedReadsBucketDataSerializer<
     MultiplicityMode: MultiplicityModeOption,
     MinimizerMode: MinimizerModeOption,
     FlagsCount: typenum::Unsigned,
+    AlignMode: AlignModeOption = NoAlignment,
 > {
     min_size: usize,
     last_data: E::LastData,
     min_size_log: u8,
-    _phantom: PhantomData<(BucketMode, MultiplicityMode, MinimizerMode, FlagsCount)>,
+    _phantom: PhantomData<(
+        BucketMode,
+        MultiplicityMode,
+        MinimizerMode,
+        FlagsCount,
+        AlignMode,
+    )>,
 }
 
 #[derive(Encode, Decode, Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,9 +250,20 @@ pub struct DeserializedRead<'a, E> {
     pub read: CompressedRead<'a>,
     pub extra: E,
     pub multiplicity: MultiplicityCounterType,
+    pub minimizer_pos: u16,
     pub flags: u8,
     pub second_bucket: u8,
+    pub is_window_duplicate: bool,
+}
+
+#[derive(Copy, Clone)]
+pub struct DeserializedReadIndependent<E> {
+    pub read: CompressedReadIndipendent,
+    pub extra: E,
+    pub multiplicity: MultiplicityCounterType,
     pub minimizer_pos: u16,
+    pub flags: u8,
+    pub second_bucket: u8,
     pub is_window_duplicate: bool,
 }
 
@@ -234,6 +274,7 @@ impl<
     MultiplicityMode: MultiplicityModeOption,
     MinimizerMode: MinimizerModeOption,
     FlagsCount: typenum::Unsigned,
+    AlignMode: AlignModeOption,
 > BucketItemSerializer
     for CompressedReadsBucketDataSerializer<
         E,
@@ -241,6 +282,7 @@ impl<
         MultiplicityMode,
         MinimizerMode,
         FlagsCount,
+        AlignMode,
     >
 {
     type InputElementType<'b> = CompressedReadsBucketData<'b>;
@@ -348,7 +390,7 @@ impl<
 
         read_buffer.clear();
         let (read, minimizer_pos, flags, is_window_duplicate) =
-            CompressedRead::read_from_stream::<_, MinimizerMode, FlagsCount>(
+            CompressedRead::read_from_stream::<_, MinimizerMode, FlagsCount, AlignMode>(
                 read_buffer,
                 &mut stream,
                 self.min_size,
@@ -400,7 +442,8 @@ pub mod helpers {
     };
 
     use crate::concurrent::temp_reads::{
-        creads_utils::MultiplicityModeOption, extra_data::SequenceExtraDataConsecutiveCompression,
+        creads_utils::{AlignModeOption, MultiplicityModeOption},
+        extra_data::SequenceExtraDataConsecutiveCompression,
     };
 
     use super::{
@@ -414,6 +457,7 @@ pub mod helpers {
         MultiplicityMode: MultiplicityModeOption,
         MinimizerMode: MinimizerModeOption,
         FlagsCount: typenum::Unsigned,
+        AlignMode: AlignModeOption,
     >(
         chunks: Vec<BinaryReaderChunk>,
         reader_thread: Option<Arc<AsyncReaderThread>>,
@@ -431,6 +475,7 @@ pub mod helpers {
                 MultiplicityMode,
                 MinimizerMode,
                 FlagsCount,
+                AlignMode,
             >,
         >(reader_thread, k, chunks, |item, extra_buffer| {
             data_callback(item, extra_buffer);

@@ -50,10 +50,10 @@ pub const DEFAULT_PER_CPU_BUFFER_SIZE: MemoryDataSize = MemoryDataSize::from_kib
 pub const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(10);
 
 // The maximum size multiplier of a subbucket when compared to the sizes averages
-pub const MAX_SUBBUCKET_AVERAGE_MULTIPLIER: usize = 8;
-pub const MIN_AVERAGE_CAP: usize = 2000;
-pub const MIN_RESPLIT_BUCKETS_COUNT: usize = 4;
-pub const MAX_RESPLIT_BUCKETS_COUNT: usize = 1024;
+pub const MAX_SUBBUCKET_AVERAGE_MULTIPLIER: u64 = 8;
+pub const MIN_AVERAGE_CAP: u64 = 2000;
+pub const MIN_RESPLIT_BUCKETS_COUNT: u64 = 4;
+pub const MAX_RESPLIT_BUCKETS_COUNT: u64 = 1024;
 
 // 1GB of reads max for each bucket
 pub const MIN_BUCKET_SIZE: u64 = 512 * 1024;
@@ -107,6 +107,8 @@ pub const TARGET_CHUNKS_PER_BUCKET: u64 = 16;
 pub const MIN_TARGET_CHUNK_SIZE: u64 = MIN_BUCKETS_CHUNK_SIZE;
 pub const DEFAULT_TARGET_CHUNK_SIZE_MULTIPLIER: u64 = 8;
 pub const MAX_TARGET_CHUNK_SIZE: u64 = 1024 * 1024 * 64;
+
+pub const HASH_MAX_OVERREAD: usize = 16;
 
 // Higher priority means faster swap to disk
 pub struct SwapPriority {}

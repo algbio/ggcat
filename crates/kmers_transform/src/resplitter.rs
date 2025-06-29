@@ -11,7 +11,7 @@ use hashes::HashableSequence;
 use instrumenter::local_setup_instrumenter;
 use io::concurrent::temp_reads::creads_utils::{
     AssemblerMinimizerPosition, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
-    WithMultiplicity,
+    NoAlignment, WithMultiplicity,
 };
 use io::concurrent::temp_reads::creads_utils::{DeserializedRead, NoSecondBucket};
 use minimizer_bucketing::decode_helper::decode_sequences;
@@ -96,6 +96,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
             F::AssociatedExtraData,
             F::AssociatedExtraDataWithMultiplicity,
             F::FlagsCount,
+            NoAlignment,
         >(
             reader_thread,
             &mut Default::default(),

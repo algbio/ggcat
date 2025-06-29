@@ -19,10 +19,6 @@ parallel-processor = "0.2.0"
 streaming-libdeflate-rs = "0.1.5"
 nightly-quirks = "0.1.4"
 
-# Pipeline crates
-assembler_kmers_merge = { package = "ggcat_assembler_kmerge", path = "../assembler_kmers_merge" }
-
-
 # Common pipeline libraries
 hashes = { package = "ggcat_hashes", path = "../hashes" }
 io = { package = "ggcat_io", path = "../io" }
@@ -57,7 +53,6 @@ support_kmer_counters = [
     "io/support_kmer_counters",
     "colors/support_kmer_counters",
     "structs/support_kmer_counters",
-    "assembler_kmers_merge/support_kmer_counters",
 ]
 
 # Features used to filter ggcat capabilites

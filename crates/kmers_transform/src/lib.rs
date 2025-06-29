@@ -78,6 +78,7 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
 pub struct GroupProcessStats {
     pub total_kmers: u64,
     pub unique_kmers: u64,
+    pub duplicated_kmers: u64,
     pub saved_read_bytes: u64,
 }
 
@@ -87,6 +88,8 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
     type MapStruct: PacketTrait + PoolObjectTrait<InitData = F::KmersTransformPacketInitData>;
     const MAP_SIZE: usize;
 
+    type ProcessSequencesContext;
+
     fn process_group_start(
         &mut self,
         map_struct: Packet<Self::MapStruct>,
@@ -94,10 +97,15 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
         extra_bucket_data: Option<ExtraBucketData>,
         is_resplitted: bool,
     );
-    fn process_group_add_sequence(
+    fn process_group_sequences(
         &mut self,
-        read: &DeserializedRead<'_, F::AssociatedExtraDataWithMultiplicity>,
-        extra_data_buffer: &<F::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        sequences_count: u64,
+        process_reads_callback: impl FnOnce(&mut Self::ProcessSequencesContext, fn(
+                context: &mut Self::ProcessSequencesContext,
+                read: &DeserializedRead<'_, F::AssociatedExtraDataWithMultiplicity>,
+                extra_buffer: &<F::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer
+            )
+        ),
     );
     fn get_stats(&self) -> GroupProcessStats;
     fn process_group_finalize(
@@ -329,7 +337,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                             );
                             self.global_context
                                 .extra_buckets_count
-                                .fetch_add(subbuckets_count, Ordering::Relaxed);
+                                .fetch_add(subbuckets_count as usize, Ordering::Relaxed);
 
                             Some(ResplitConfig {
                                 subsplit_buckets_count: BucketsCount::new(

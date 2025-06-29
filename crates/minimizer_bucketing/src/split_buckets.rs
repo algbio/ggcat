@@ -12,7 +12,7 @@ use crate::MinimizerBucketMode;
 pub struct SplittedBucket {
     pub single_chunks: Vec<BinaryReaderChunk>,
     pub multi_chunks: Vec<BinaryReaderChunk>,
-    pub sequences_count: usize,
+    pub sequences_count: u64,
     pub total_size: u64,
     pub sub_bucket: BucketIndexType,
 }
@@ -22,7 +22,7 @@ impl SplittedBucket {
         paths: impl Iterator<Item = impl AsRef<Path>>,
         remove_files: RemoveFileMode,
         prefetch_amount: Option<usize>,
-        sequences_count: usize,
+        sequences_count: u64,
     ) -> Self {
         let mut total_size = 0;
 
@@ -113,7 +113,7 @@ impl SplittedBucket {
             // Dedup headers that refer to the same bucket/sub-bucket
             info.dedup_by(|a, b| a == b);
 
-            let sequences_count = info.iter().map(|i| i.0.sequences_count).sum::<usize>();
+            let sequences_count = info.iter().map(|i| i.0.sequences_count as u64).sum::<u64>();
 
             let total_size = multi_chunks.iter().map(|c| c.get_length()).sum::<u64>()
                 + single_chunks.iter().map(|c| c.get_length()).sum::<u64>();

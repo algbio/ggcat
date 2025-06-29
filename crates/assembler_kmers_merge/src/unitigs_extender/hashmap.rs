@@ -37,6 +37,7 @@ pub struct HashMapUnitigsExtender<MH: HashFunctionFactory, CX: ColorsManager> {
     suggested_sequences_size: u64,
     kmers_count: u64,
     unique_kmers_count: u64,
+    duplicated_kmers: u64,
     last_saved_len: usize,
     forward_seq: Vec<u8>,
     backward_seq: Vec<u8>,
@@ -311,6 +312,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             suggested_sequences_size: 0,
             kmers_count: 0,
             unique_kmers_count: 0,
+            duplicated_kmers: 0,
             last_saved_len: 0,
             forward_seq: Vec::with_capacity(params.k * 2),
             backward_seq: Vec::with_capacity(params.k * 2),
@@ -320,7 +322,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
     fn reset(&mut self) {
         clear_hashmap(
             &mut self.rhash_map,
-            max(8192, self.suggested_hasmap_size as usize),
+            max(64, self.suggested_hasmap_size as usize),
         );
 
         let saved_reads_suggested_size =
@@ -341,6 +343,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
         self.kmers_count = 0;
         self.unique_kmers_count = 0;
         self.last_saved_len = 0;
+        self.duplicated_kmers = 0;
 
         CX::ColorsMergeManagerType::reinit_temp_buffer_structure(&mut self.temp_colors);
     }
@@ -429,6 +432,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
         GroupProcessStats {
             total_kmers: self.kmers_count,
             unique_kmers: self.unique_kmers_count,
+            duplicated_kmers: self.duplicated_kmers,
             saved_read_bytes: self.saved_reads.len() as u64,
         }
     }

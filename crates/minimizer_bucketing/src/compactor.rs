@@ -6,8 +6,9 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
+    time::Instant,
 };
 
 use crate::{
@@ -17,9 +18,9 @@ use crate::{
 use config::{
     BucketIndexType, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
     DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE, DEFAULT_OUTPUT_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, DEFAULT_UNCOMPACTED_TEMP_STORAGE, KEEP_FILES,
-    MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, MultiplicityCounterType, SwapPriority,
-    get_compression_level_info, get_memory_mode,
+    DEFAULT_PREFETCH_AMOUNT, DEFAULT_UNCOMPACTED_TEMP_STORAGE, HASH_MAX_OVERREAD, KEEP_FILES,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
+    MultiplicityCounterType, SwapPriority, get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats;
 use hashbrown::{HashTable, hash_table::Entry};
@@ -29,8 +30,9 @@ use io::{
     concurrent::temp_reads::{
         creads_utils::{
             AssemblerMinimizerPosition, CompressedReadsBucketData,
-            CompressedReadsBucketDataSerializer, DeserializedRead, NoMultiplicity, NoSecondBucket,
-            ReadsCheckpointData, WithMultiplicity, WithSecondBucket, helpers::helper_read_bucket,
+            CompressedReadsBucketDataSerializer, DeserializedRead, NoAlignment,
+            NoAlignmentWithOverflow, NoMultiplicity, NoSecondBucket, ReadsCheckpointData,
+            WithMultiplicity, WithSecondBucket, helpers::helper_read_bucket,
         },
         extra_data::{
             SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
@@ -42,7 +44,10 @@ use parallel_processor::{
     buckets::{
         BucketsCount, LockFreeBucket, MultiChunkBucket,
         readers::typed_binary_reader::AsyncReaderThread,
-        writers::compressed_binary_writer::CompressedBinaryWriter,
+        writers::{
+            compressed_binary_writer::CompressedBinaryWriter,
+            lock_free_binary_writer::LockFreeBinaryWriter,
+        },
     },
     memory_fs::RemoveFileMode,
 };
@@ -157,7 +162,7 @@ impl<
             is_window_duplicate,
         } = super_kmer;
 
-        let read_hash = read.compute_hash_aligned();
+        let read_hash = unsafe { read.compute_hash_aligned_overflow16() };
         let read_slice = read.get_packed_slice();
 
         match super_kmers_hashmap.entry(
@@ -167,7 +172,7 @@ impl<
                     && a.read.get_packed_slice_aligned(super_kmers_storage) == read_slice
                     && a.flags == flags
             },
-            |v| v.read.compute_hash_aligned(super_kmers_storage),
+            |v| unsafe { v.read.compute_hash_aligned_overflow16(super_kmers_storage) },
         ) {
             Entry::Occupied(mut entry) => {
                 let entry = entry.get_mut();
@@ -180,13 +185,14 @@ impl<
                 let extra = E::copy_extra_from(extra, in_extra_buffer, out_extra_buffer);
 
                 position.insert(SuperKmerEntry {
-                    read: CompressedReadIndipendent::from_read(&read, super_kmers_storage),
+                    read: CompressedReadIndipendent::from_read::<true>(&read, super_kmers_storage),
                     multiplicity,
                     minimizer_pos,
                     flags,
                     is_window_duplicate,
                     extra,
                 });
+                super_kmers_storage.reserve(HASH_MAX_OVERREAD);
                 *total_sequences += 1;
             }
         }
@@ -309,6 +315,8 @@ impl<
 
         let mut input_files_size = 0;
 
+        // let start_time = Instant::now();
+
         // Save in memory the uncompacted data
         for bucket in uncompacted_chosen_chunks {
             let bucket_file_index = ChunkedBinaryReaderIndex::from_file(
@@ -326,11 +334,12 @@ impl<
                 NoMultiplicity,
                 AssemblerMinimizerPosition,
                 FlagsCount,
+                NoAlignment,
             >(
                 bucket_file_index.into_chunks(),
                 None,
                 |read, extra_buffer| {
-                    let sequence = CompressedReadIndipendent::from_read(
+                    let sequence = CompressedReadIndipendent::from_read::<true>(
                         &read.read,
                         &mut self.uncompacted_super_kmers_storage,
                     );
@@ -355,28 +364,32 @@ impl<
             );
         }
 
+        // let uncompacted_time = start_time.elapsed();
+        // let start_time = Instant::now();
+
+        self.uncompacted_super_kmers_storage
+            .reserve(HASH_MAX_OVERREAD);
+
         let compact_index = COMPACTED_INDEX.fetch_add(1, Ordering::Relaxed);
 
         let new_path_multi = output_path.join(format!("comp-mult-{}.dat", compact_index));
         let new_path_single = output_path.join(format!("comp-single-{}.dat", compact_index));
 
-        let new_bucket_multi = CompressedBinaryWriter::new(
+        let new_bucket_multi = LockFreeBinaryWriter::new(
             &new_path_multi,
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
-                MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
-                get_compression_level_info(),
+                MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
             ),
             0,
             &MinimizerBucketMode::Compacted,
         );
 
-        let new_bucket_single = CompressedBinaryWriter::new(
+        let new_bucket_single = LockFreeBinaryWriter::new(
             &new_path_single,
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
-                MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
-                get_compression_level_info(),
+                MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
             ),
             0,
             &MinimizerBucketMode::SingleGrouped,
@@ -436,7 +449,7 @@ impl<
                 + compacted_sub_bucket
                     .as_ref()
                     .map(|c| c.sequences_count)
-                    .unwrap_or(0);
+                    .unwrap_or(0) as usize;
 
             // Clear all temp data
             self.super_kmers_storage.clear();
@@ -450,7 +463,7 @@ impl<
             if let Some(mut sub_bucket) = compacted_sub_bucket {
                 input_files_size += sub_bucket.total_size as usize;
 
-                decode_sequences::<SingleData, MultipleData, FlagsCount>(
+                decode_sequences::<SingleData, MultipleData, FlagsCount, NoAlignmentWithOverflow>(
                     self.read_thread.clone(),
                     &mut single_to_multiple_extra_buffer,
                     &mut sub_bucket,
@@ -661,6 +674,26 @@ impl<
         stats!(
             let end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
         );
+
+        // let compacted_time = start_time.elapsed();
+
+        // static COMPACTED_TIME: AtomicU64 = AtomicU64::new(0);
+        // static UNCOMPACTED_TIME: AtomicU64 = AtomicU64::new(0);
+
+        // let compacted_micros =
+        //     COMPACTED_TIME.fetch_add(compacted_time.as_micros() as u64, Ordering::Relaxed);
+        // let uncompacted_micros =
+        //     UNCOMPACTED_TIME.fetch_add(uncompacted_time.as_micros() as u64, Ordering::Relaxed);
+
+        // println!(
+        //     "Uncompacted: {:?} Compacted: {:?} ratio: {:.2} TOTAL: Uncompacted: {:.2}s Compacted: {:.2}s ratio: {:.2}",
+        //     uncompacted_time,
+        //     compacted_time,
+        //     uncompacted_time.as_secs_f64() / compacted_time.as_secs_f64(),
+        //     (uncompacted_micros + uncompacted_time.as_micros() as u64) as f64 / 1_000_000.0,
+        //     (compacted_micros + compacted_time.as_micros() as u64) as f64 / 1_000_000.0,
+        //     uncompacted_micros as f64 / compacted_micros as f64
+        // );
 
         stats!(
             stats

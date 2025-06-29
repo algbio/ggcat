@@ -1,6 +1,7 @@
-use crate::concurrent::temp_reads::creads_utils::MinimizerModeOption;
+use crate::concurrent::temp_reads::creads_utils::{AlignModeOption, MinimizerModeOption};
 use crate::varint::{decode_varint_flags, encode_varint_flags};
 use byteorder::ReadBytesExt;
+use config::HASH_MAX_OVERREAD;
 use core::fmt::{Debug, Formatter};
 use hashes::HashableSequence;
 use rustc_hash::FxBuildHasher;
@@ -81,6 +82,25 @@ pub struct CompressedReadIndipendent {
     size: usize,
 }
 
+unsafe fn get_hash_repr_aligned_overflow16(slice: &[u8]) -> u64 {
+    let mut buffer = [0; 16];
+    let mut start = 0;
+    while start < slice.len() {
+        let value = u128::from_le_bytes(unsafe { *(slice.as_ptr().add(start) as *const [u8; 16]) });
+        let mask_bits = ((slice.len() - start) * 8).min(128);
+        let mask = 1u128
+            .wrapping_shl(mask_bits as u32)
+            .wrapping_sub(1 + (mask_bits == 128) as u128);
+
+        buffer = (u128::from_le_bytes(buffer) ^ value & mask).to_ne_bytes();
+
+        start += 16;
+    }
+    let low = u64::from_ne_bytes(unsafe { *(buffer.as_ptr() as *const [u8; 8]) });
+    let high = u64::from_ne_bytes(unsafe { *(buffer.as_ptr().add(8) as *const [u8; 8]) });
+    low ^ high
+}
+
 impl CompressedReadIndipendent {
     pub fn from_plain(plain: &[u8], storage: &mut Vec<u8>) -> CompressedReadIndipendent {
         let start = storage.len() * 4;
@@ -112,8 +132,11 @@ impl CompressedReadIndipendent {
         }
     }
 
-    pub fn from_read(read: &CompressedRead, storage: &mut Vec<u8>) -> CompressedReadIndipendent {
-        let start = storage.len() * 4;
+    pub fn from_read<const ALIGNED: bool>(
+        read: &CompressedRead,
+        storage: &mut Vec<u8>,
+    ) -> CompressedReadIndipendent {
+        let start = storage.len() * 4 + if ALIGNED { 0 } else { read.start as usize };
         storage.extend_from_slice(read.get_packed_slice());
         CompressedReadIndipendent {
             start,
@@ -122,23 +145,23 @@ impl CompressedReadIndipendent {
     }
 
     #[inline(always)]
-    pub fn compute_hash_aligned(&self, storage: &[u8]) -> u64 {
+    pub unsafe fn compute_hash_aligned_overflow16(&self, storage: &[u8]) -> u64 {
         use std::hash::BuildHasher;
 
         let slice = self.get_packed_slice_aligned(storage);
 
         let mut hasher = FxBuildHasher.build_hasher();
-        Hash::hash_slice(slice, &mut hasher);
+        hasher.write_u64(unsafe { get_hash_repr_aligned_overflow16(slice) });
         hasher.finish()
     }
 
     #[inline(always)]
     pub fn get_packed_slice_aligned(&self, buffer: &[u8]) -> &[u8] {
-        debug_assert_eq!(self.start % 4, 0);
+        // debug_assert_eq!(self.start % 4, 0);
         unsafe {
             from_raw_parts(
                 buffer.as_ptr().add(self.buffer_start_index()),
-                (self.size + 3) / 4,
+                (self.size + self.start % 4 + 3) / 4,
             )
         }
     }
@@ -162,17 +185,21 @@ impl CompressedReadIndipendent {
     }
 }
 
+type AlignmentWordType = u64;
+const ALIGNMENT_WORD_SIZE: usize = size_of::<AlignmentWordType>();
+const ALIGNMENT_WORD_BITS: usize = ALIGNMENT_WORD_SIZE * 8;
+
 impl<'a> CompressedRead<'a> {
     const WINDOW_DUPLICATE_SENTINEL: u64 = u64::MAX >> 16;
 
     #[inline(always)]
-    pub fn compute_hash_aligned(&self) -> u64 {
+    pub unsafe fn compute_hash_aligned_overflow16(&self) -> u64 {
         use std::hash::BuildHasher;
 
         let slice = self.get_packed_slice();
 
         let mut hasher = FxBuildHasher.build_hasher();
-        Hash::hash_slice(slice, &mut hasher);
+        hasher.write_u64(unsafe { get_hash_repr_aligned_overflow16(slice) });
         hasher.finish()
     }
 
@@ -270,10 +297,38 @@ impl<'a> CompressedRead<'a> {
     }
 
     #[inline(always)]
+    fn offset_read(required_offset: usize, slice: &mut [u8], size: usize) {
+        let bit_offset = required_offset * 2;
+        let last_start =
+            ((required_offset + size + 3) / 4 / ALIGNMENT_WORD_SIZE) * ALIGNMENT_WORD_SIZE;
+
+        unsafe {
+            let start_pointer = slice.as_mut_ptr();
+
+            let mut last_align_word = start_pointer.add(last_start) as *mut AlignmentWordType;
+            let mut last_align_word_val = std::ptr::read_unaligned(last_align_word) << bit_offset;
+            while last_align_word as usize != start_pointer as usize {
+                let prev = last_align_word.sub(1);
+                let prev_val = std::ptr::read_unaligned(prev);
+                let current = last_align_word;
+                std::ptr::write_unaligned(
+                    current,
+                    last_align_word_val | prev_val >> (ALIGNMENT_WORD_BITS - bit_offset),
+                );
+
+                last_align_word_val = prev_val << bit_offset;
+                last_align_word = prev;
+            }
+            std::ptr::write_unaligned(start_pointer as *mut AlignmentWordType, last_align_word_val);
+        }
+    }
+
+    #[inline(always)]
     pub fn read_from_stream<
         S: Read,
         MinimizerMode: MinimizerModeOption,
         FlagsCount: typenum::Unsigned,
+        AlignMode: AlignModeOption,
     >(
         temp_buffer: &'a mut Vec<u8>,
         stream: &mut S,
@@ -283,7 +338,8 @@ impl<'a> CompressedRead<'a> {
         let (mut encoded_size, mut flags) =
             decode_varint_flags::<_, FlagsCount>(|| stream.read_u8().ok())?;
 
-        let (size, minimizer_pos, is_window_duplicate) = if MinimizerMode::ENABLED {
+        let (size, minimizer_pos, is_window_duplicate, required_offset) = if MinimizerMode::ENABLED
+        {
             #[cold]
             fn cold() {}
 
@@ -300,22 +356,50 @@ impl<'a> CompressedRead<'a> {
                 size as usize + min_size,
                 minimizer_pos as u16,
                 is_window_duplicate,
+                /*
+                0 => 0   |****| => |****|
+                1 => 3    |x***|* => |xxxx|****|
+                2 => 2
+                3 => 1
+                xor the second bit with the first one's value, so that 3 becomes 1 and 1 becomes 3
+                 */
+                ((minimizer_pos ^ (minimizer_pos << 1)) % 4) as usize, // Offset required to align the minimizer start to byte boundaries
             )
         } else {
-            (encoded_size as usize + min_size, 0, false)
+            (encoded_size as usize + min_size, 0, false, 0)
         };
 
         let bytes = (size + 3) / 4;
-        temp_buffer.reserve(bytes);
+        let total_bytes = (size + required_offset + 3) / 4;
+
+        let overwrite_offset = if AlignMode::ENABLED {
+            ALIGNMENT_WORD_SIZE
+        } else {
+            0
+        }
+        .max(AlignMode::OVERREAD_MIN);
+        temp_buffer.reserve(total_bytes + overwrite_offset);
         let buffer_start = temp_buffer.len();
         unsafe {
-            temp_buffer.set_len(buffer_start + bytes);
+            temp_buffer.set_len(buffer_start + total_bytes);
         }
 
-        stream.read_exact(&mut temp_buffer[buffer_start..]).unwrap();
+        stream
+            .read_exact(&mut temp_buffer[buffer_start..(buffer_start + bytes)])
+            .unwrap();
+
+        if AlignMode::ENABLED {
+            if required_offset > 0 {
+                Self::offset_read(required_offset, &mut temp_buffer[buffer_start..], size);
+            }
+        }
 
         Some((
-            CompressedRead::new_from_compressed(&temp_buffer[buffer_start..], size),
+            if AlignMode::ENABLED {
+                CompressedRead::new_offset(&temp_buffer[buffer_start..], required_offset, size)
+            } else {
+                CompressedRead::new_from_compressed(&temp_buffer[buffer_start..], size)
+            },
             minimizer_pos,
             flags,
             is_window_duplicate,
@@ -426,7 +510,7 @@ impl<'a> CompressedRead<'a> {
 
         let low = u64::from_ne_bytes(unsafe { *(buffer.as_ptr() as *const [u8; 8]) });
         let high = u64::from_ne_bytes(unsafe { *(buffer.as_ptr().add(8) as *const [u8; 8]) });
-        low | high
+        low ^ high
     }
 
     pub fn copy_to_buffer(&self, buffer: &mut Vec<u8>) {
@@ -541,6 +625,15 @@ impl<'a> CompressedRead<'a> {
         hash
     }
 
+    pub fn get_hash_aligned(&self) -> u64 {
+        debug_assert_eq!(self.start, 0);
+        use std::hash::{BuildHasher, Hasher};
+        let mut hasher = FxBuildHasher::default().build_hasher();
+        self.hash(&mut hasher);
+        let hash = hasher.finish();
+        hash
+    }
+
     #[inline(always)]
     pub unsafe fn get_base_unchecked(&self, index: usize) -> u8 {
         let index = index + self.start as usize;
@@ -639,9 +732,12 @@ mod tests {
     use std::io::Cursor;
 
     use crate::{
-        compressed_read::{CompressedRead, CompressedReadIndipendent},
+        compressed_read::{
+            ALIGNMENT_WORD_SIZE, CompressedRead, CompressedReadIndipendent,
+            get_hash_repr_aligned_overflow16,
+        },
         concurrent::temp_reads::creads_utils::{
-            AssemblerMinimizerPosition, CompressedReadsBucketData, ReadData,
+            AssemblerMinimizerPosition, CompressedReadsBucketData, NoAlignment, ReadData,
         },
     };
 
@@ -685,6 +781,51 @@ mod tests {
             std::str::from_utf8(&unpacked).unwrap(),
             std::str::from_utf8(expected_rc).unwrap()
         );
+    }
+
+    #[test]
+    fn test_offset_read() {
+        let mut buffer = vec![];
+        let bases = b"ACGTACGCGGTAGCTAAGCATCGATGCCGATCGTGTTTAACCATG";
+
+        CompressedRead::compress_from_plain_rc(bases, |b| buffer.extend_from_slice(b));
+        let before = CompressedRead::from_compressed_reads(&buffer, 0, bases.len()).to_string();
+
+        for offset in 1..3 {
+            let mut buffer = buffer.clone();
+            buffer.reserve(ALIGNMENT_WORD_SIZE);
+            CompressedRead::offset_read(offset, &mut buffer, bases.len());
+
+            let final_val = CompressedRead::new_offset(&buffer, offset, bases.len()).to_string();
+
+            if before != final_val {
+                panic!(
+                    "Alignment mismatch: before = {}, after = {} required offset: {}",
+                    before, final_val, offset
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_unsafe_hash() {
+        let mut buffer = Vec::with_capacity(64 + 16);
+
+        let mut hashes1 = vec![];
+        for i in 0..64u8 {
+            buffer.push((i.wrapping_add(7)).wrapping_mul(117));
+            let hash = unsafe { get_hash_repr_aligned_overflow16(&buffer) };
+            println!("Hash{}: {}", i, hash);
+            hashes1.push(hash);
+        }
+        buffer.fill(123);
+        buffer.clear();
+        for i in 0..64u8 {
+            buffer.push((i.wrapping_add(7)).wrapping_mul(117));
+            let hash = unsafe { get_hash_repr_aligned_overflow16(&buffer) };
+            println!("Hash{}: {}", i, hash);
+            assert_eq!(hashes1[i as usize], hash);
+        }
     }
 
     #[test]
@@ -857,6 +998,7 @@ mod tests {
             _,
             crate::concurrent::temp_reads::creads_utils::AssemblerMinimizerPosition,
             typenum::U2,
+            NoAlignment,
         >(&mut tmp_buffer, &mut Cursor::new(&input), 27, 5);
         assert!(decompressed.is_some());
     }

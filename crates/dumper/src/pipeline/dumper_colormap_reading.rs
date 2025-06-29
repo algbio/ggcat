@@ -80,7 +80,7 @@ pub fn colormap_reading<
                  ..
              },
              _| {
-                let new_read = CompressedReadIndipendent::from_read(&read, &mut temp_bases);
+                let new_read = CompressedReadIndipendent::from_read::<true>(&read, &mut temp_bases);
                 temp_sequences.push((new_read, color_extra));
             },
         );

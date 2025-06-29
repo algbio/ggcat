@@ -2,8 +2,8 @@ use std::{mem::take, sync::Arc};
 
 use io::concurrent::temp_reads::{
     creads_utils::{
-        AssemblerMinimizerPosition, DeserializedRead, NoMultiplicity, NoSecondBucket,
-        WithMultiplicity, helpers::helper_read_bucket,
+        AlignModeOption, AssemblerMinimizerPosition, DeserializedRead, NoMultiplicity,
+        NoSecondBucket, WithMultiplicity, helpers::helper_read_bucket,
     },
     extra_data::{
         SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
@@ -18,6 +18,7 @@ pub fn decode_sequences<
     SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
     MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
     FlagsCount: typenum::Unsigned,
+    AlignMode: AlignModeOption,
 >(
     reader_thread: Arc<AsyncReaderThread>,
     tmp_mult_buffer: &mut <MultipleData as SequenceExtraDataTempBufferManagement>::TempBuffer,
@@ -37,6 +38,7 @@ pub fn decode_sequences<
         NoMultiplicity,
         AssemblerMinimizerPosition,
         FlagsCount,
+        AlignMode,
     >(
         single_chunks,
         Some(reader_thread.clone()),
@@ -63,5 +65,6 @@ pub fn decode_sequences<
         WithMultiplicity,
         AssemblerMinimizerPosition,
         FlagsCount,
+        AlignMode,
     >(multi_chunks, Some(reader_thread.clone()), callback, k);
 }
