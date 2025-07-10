@@ -5,6 +5,7 @@ pub struct FuzzyHashmap<T: Copy, const LOCAL_FITTING: usize> {
     hashmap: Vec<InlineVec<T, LOCAL_FITTING>>,
     allocator: Allocator<T, LOCAL_FITTING>,
     capacity_mask: usize,
+    elcount: usize,
 }
 
 fn resize_vec_default<T: Copy + Default>(new_capacity: usize, vec: &mut Vec<T>) {
@@ -35,6 +36,7 @@ impl<T: Copy, const LOCAL_FITTING: usize> FuzzyHashmap<T, LOCAL_FITTING> {
             hashmap,
             allocator: Allocator::new(capacity),
             capacity_mask: hashmap_capacity - 1, // hashmap_capacity is a power of 2
+            elcount: 0,
         }
     }
 
@@ -45,8 +47,15 @@ impl<T: Copy, const LOCAL_FITTING: usize> FuzzyHashmap<T, LOCAL_FITTING> {
         self.capacity_mask = capacity - 1;
     }
 
+    pub fn get_elements_mut(&mut self, hash: u64) -> &mut [T] {
+        let position = (hash as usize) & self.capacity_mask;
+        // Safety: position is in and with capacity_mask
+        let element_bucket = unsafe { self.hashmap.get_unchecked_mut(position) };
+        self.allocator.slice_vec_mut(element_bucket)
+    }
+
     #[inline]
-    pub fn add_element(&mut self, hash: usize, element: T) {
+    pub fn add_element(&mut self, hash: u64, element: T) {
         let position = (hash as usize) & self.capacity_mask;
         // Safety: position is in and with capacity_mask
         let element_bucket = unsafe { self.hashmap.get_unchecked_mut(position) };
@@ -59,7 +68,13 @@ impl<T: Copy, const LOCAL_FITTING: usize> FuzzyHashmap<T, LOCAL_FITTING> {
                 .set_len(self.occupation.len() + (element_bucket.len() == 0) as usize);
         }
 
+        self.elcount += 1;
         self.allocator.push_vec(element_bucket, element);
+    }
+
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.elcount
     }
 
     #[inline(always)]

@@ -6,9 +6,8 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
-    time::Instant,
 };
 
 use crate::{
@@ -19,11 +18,9 @@ use config::{
     BucketIndexType, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
     DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE, DEFAULT_OUTPUT_BUFFER_SIZE,
     DEFAULT_PREFETCH_AMOUNT, DEFAULT_UNCOMPACTED_TEMP_STORAGE, HASH_MAX_OVERREAD, KEEP_FILES,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
-    MultiplicityCounterType, SwapPriority, get_compression_level_info, get_memory_mode,
+    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, MultiplicityCounterType, SwapPriority, get_memory_mode,
 };
 use ggcat_logging::stats;
-use hashbrown::{HashTable, hash_table::Entry};
 use hashes::HashableSequence;
 use io::{
     compressed_read::{CompressedRead, CompressedReadIndipendent},
@@ -40,14 +37,12 @@ use io::{
         },
     },
 };
+use nightly_quirks::branch_pred::likely;
 use parallel_processor::{
     buckets::{
         BucketsCount, LockFreeBucket, MultiChunkBucket,
         readers::typed_binary_reader::AsyncReaderThread,
-        writers::{
-            compressed_binary_writer::CompressedBinaryWriter,
-            lock_free_binary_writer::LockFreeBinaryWriter,
-        },
+        writers::lock_free_binary_writer::LockFreeBinaryWriter,
     },
     memory_fs::RemoveFileMode,
 };
@@ -58,7 +53,7 @@ use parallel_processor::{
     memory_fs::MemoryFs,
 };
 use parking_lot::Mutex;
-use utils::resize_containers::{ResizableHashTable, ResizableVec};
+use utils::{fuzzy_hashmap::FuzzyHashmap, resize_containers::ResizableVec};
 
 pub struct MinimizerBucketingCompactor<
     SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
@@ -68,6 +63,7 @@ pub struct MinimizerBucketingCompactor<
     _phantom: PhantomData<(Executor, SingleData, MultipleData)>, // mem_tracker: MemoryTracker<Self>,
 }
 
+#[derive(Copy, Clone)]
 struct SuperKmerEntry<E> {
     read: CompressedReadIndipendent,
     multiplicity: MultiplicityCounterType,
@@ -88,14 +84,13 @@ struct SuperKmerEntryRef<'a, E> {
 
 pub struct BucketsCompactor<
     SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
-    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
+    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + Copy + 'static,
     FlagsCount: typenum::Unsigned,
 > {
     read_thread: Arc<AsyncReaderThread>,
 
     // The single sub-bucket hashmap
-    super_kmers_hashmap:
-        ResizableHashTable<SuperKmerEntry<MultipleData>, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS>,
+    super_kmers_hashmap: FuzzyHashmap<SuperKmerEntry<MultipleData>, 0>,
 
     // The single sub-bucket extra buffer with multiplicity
     super_kmers_extra_buffer: <MultipleData as SequenceExtraDataTempBufferManagement>::TempBuffer,
@@ -121,14 +116,14 @@ pub struct BucketsCompactor<
 
 impl<
     SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
-    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
+    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + Copy + 'static,
     FlagsCount: typenum::Unsigned,
 > BucketsCompactor<SingleData, MultipleData, FlagsCount>
 {
     pub fn new(k: usize, second_buckets: &BucketsCount, target_chunk_size: u64) -> Self {
         Self {
             read_thread: AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE, 4),
-            super_kmers_hashmap: ResizableHashTable::new(),
+            super_kmers_hashmap: FuzzyHashmap::new(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS),
             super_kmers_extra_buffer:
                 <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer(),
             super_kmers_storage: ResizableVec::new(),
@@ -145,9 +140,11 @@ impl<
     }
 
     #[inline(always)]
-    fn process_superkmer<E: SequenceExtraDataCombiner + SequenceExtraDataConsecutiveCompression>(
+    fn process_superkmer<
+        E: SequenceExtraDataCombiner + SequenceExtraDataConsecutiveCompression + Copy,
+    >(
         super_kmer: SuperKmerEntryRef<E>,
-        super_kmers_hashmap: &mut HashTable<SuperKmerEntry<E>>,
+        super_kmers_hashmap: &mut FuzzyHashmap<SuperKmerEntry<E>, 0>,
         super_kmers_storage: &mut Vec<u8>,
         total_sequences: &mut usize,
         in_extra_buffer: &E::TempBuffer,
@@ -165,37 +162,37 @@ impl<
         let read_hash = unsafe { read.compute_hash_aligned_overflow16() };
         let read_slice = read.get_packed_slice();
 
-        match super_kmers_hashmap.entry(
-            read_hash,
-            |a| {
-                a.read.bases_count() == read.bases_count()
-                    && a.read.get_packed_slice_aligned(super_kmers_storage) == read_slice
-                    && a.flags == flags
-            },
-            |v| unsafe { v.read.compute_hash_aligned_overflow16(super_kmers_storage) },
-        ) {
-            Entry::Occupied(mut entry) => {
-                let entry = entry.get_mut();
+        let elements = super_kmers_hashmap.get_elements_mut(read_hash);
+
+        for entry in elements {
+            if likely({
+                entry.read.bases_count() == read.bases_count()
+                    && entry.read.get_packed_slice_aligned(super_kmers_storage) == read_slice
+                    && entry.flags == flags
+            }) {
                 entry.multiplicity += multiplicity;
                 entry
                     .extra
                     .combine_entries(out_extra_buffer, extra, in_extra_buffer);
-            }
-            Entry::Vacant(position) => {
-                let extra = E::copy_extra_from(extra, in_extra_buffer, out_extra_buffer);
-
-                position.insert(SuperKmerEntry {
-                    read: CompressedReadIndipendent::from_read::<true>(&read, super_kmers_storage),
-                    multiplicity,
-                    minimizer_pos,
-                    flags,
-                    is_window_duplicate,
-                    extra,
-                });
-                super_kmers_storage.reserve(HASH_MAX_OVERREAD);
-                *total_sequences += 1;
+                return;
             }
         }
+
+        let extra = E::copy_extra_from(extra, in_extra_buffer, out_extra_buffer);
+
+        super_kmers_hashmap.add_element(
+            read_hash,
+            SuperKmerEntry {
+                read: CompressedReadIndipendent::from_read::<true>(&read, super_kmers_storage),
+                multiplicity,
+                minimizer_pos,
+                flags,
+                is_window_duplicate,
+                extra,
+            },
+        );
+        super_kmers_storage.reserve(HASH_MAX_OVERREAD);
+        *total_sequences += 1;
     }
 
     #[inline(never)]
@@ -315,8 +312,6 @@ impl<
 
         let mut input_files_size = 0;
 
-        // let start_time = Instant::now();
-
         // Save in memory the uncompacted data
         for bucket in uncompacted_chosen_chunks {
             let bucket_file_index = ChunkedBinaryReaderIndex::from_file(
@@ -363,9 +358,6 @@ impl<
                 self.k,
             );
         }
-
-        // let uncompacted_time = start_time.elapsed();
-        // let start_time = Instant::now();
 
         self.uncompacted_super_kmers_storage
             .reserve(HASH_MAX_OVERREAD);
@@ -456,9 +448,9 @@ impl<
             MultipleData::clear_temp_buffer(&mut self.super_kmers_extra_buffer);
             serializer_single.reset();
             serializer_multi.reset();
-            // Clear and reset the hashmap capacity
+            // Clear and reset the hashmap capacity (double it to allow less collisions)
             self.super_kmers_hashmap
-                .clear_with_required_capacity(total_sequences_count);
+                .initialize(total_sequences_count.next_power_of_two() * 2);
 
             if let Some(mut sub_bucket) = compacted_sub_bucket {
                 input_files_size += sub_bucket.total_size as usize;
@@ -523,10 +515,12 @@ impl<
             super_kmers_temp[1].reserve(self.super_kmers_hashmap.len());
 
             // Split between single (multiplicity = 1) and multiple superkmers
-            for sk in self.super_kmers_hashmap.drain() {
-                let mult_type = (sk.multiplicity > 1) as usize;
-                super_kmers_temp[mult_type].push(sk);
-            }
+            self.super_kmers_hashmap.process_elements(|sks| {
+                for sk in sks {
+                    let mult_type = (sk.multiplicity > 1) as usize;
+                    super_kmers_temp[mult_type].push(*sk);
+                }
+            });
 
             new_bucket_multi.set_checkpoint_data(
                 Some(&ReadsCheckpointData {
@@ -547,9 +541,9 @@ impl<
             // Handle superkmers with multiplicity == 1
             for SuperKmerEntry {
                 read,
+                extra,
                 multiplicity: _,
                 minimizer_pos,
-                extra,
                 flags,
                 is_window_duplicate,
             } in super_kmers_temp[0].drain(..)
@@ -587,9 +581,9 @@ impl<
             // Handle superkmers with multiplicity > 1
             for SuperKmerEntry {
                 read,
+                mut extra,
                 multiplicity,
                 minimizer_pos,
-                mut extra,
                 flags,
                 is_window_duplicate,
             } in super_kmers_temp[1].drain(..)
@@ -631,7 +625,6 @@ impl<
 
         // Final clearing of all buffers
         {
-            self.super_kmers_hashmap.clear();
             MultipleData::clear_temp_buffer(&mut self.super_kmers_extra_buffer);
             self.super_kmers_storage.clear();
             self.uncompacted_super_kmers_buffer

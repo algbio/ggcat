@@ -2529,11 +2529,10 @@ dependencies = [
 
 [[package]]
 name = "streaming-libdeflate-rs"
-version = "0.1.6"
+version = "0.2.1"
 dependencies = [
  "crc32fast",
  "filebuffer",
- "mt-debug-counters",
  "nightly-quirks",
  "rayon",
  "static_assertions",

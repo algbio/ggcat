@@ -18,7 +18,7 @@ members = [
     # "libs-crates/dynamic-dispatch-rs/dynamic-dispatch-proc-macro",
     # "libs-crates/dynamic-dispatch-rs",
     # "libs-crates/mt-debug-counters-rs",
-    # "libs-crates/streaming-libdeflate-rs",
+    "libs-crates/streaming-libdeflate-rs",
     # "libs-crates/papi-bindings-rs",
     # "libs-crates/nightly-quirks-rs",
     # "libs-crates/instrumenter-rs/instrumenter-proc-macro-rs",

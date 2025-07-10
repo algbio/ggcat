@@ -235,8 +235,8 @@ pub struct MinimizerBucketingExecutionContext<
 pub struct GenericMinimizerBucketing;
 
 struct MinimizerBucketingExecWriter<
-    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
-    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
+    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + Copy + 'static,
+    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + Copy + 'static,
     Executor: MinimizerBucketingExecutorFactory<ReadExtraData = SingleData> + Sync + Send + 'static,
 > {
     _phantom: PhantomData<(SingleData, MultipleData, Executor)>, // mem_tracker: MemoryTracker<Self>,
@@ -247,8 +247,8 @@ struct WriterContext<Executor: MinimizerBucketingExecutorFactory + Sync + Send +
 }
 
 impl<
-    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
-    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
+    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + Copy + 'static,
+    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + Copy + 'static,
     Executor: MinimizerBucketingExecutorFactory<ReadExtraData = SingleData> + Sync + Send + 'static,
 > MinimizerBucketingExecWriter<SingleData, MultipleData, Executor>
 {
@@ -483,8 +483,8 @@ impl<
 }
 
 impl<
-    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
-    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
+    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + Copy + 'static,
+    MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + Copy + 'static,
     Executor: MinimizerBucketingExecutorFactory<ReadExtraData = SingleData> + Sync + Send + 'static,
 > AsyncExecutor for MinimizerBucketingExecWriter<SingleData, MultipleData, Executor>
 {
@@ -545,8 +545,8 @@ impl<
 
 impl GenericMinimizerBucketing {
     pub fn do_bucketing_no_max_usage<
-        SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
-        MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
+        SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + Copy + 'static,
+        MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + Copy + 'static,
         Executor: MinimizerBucketingExecutorFactory<ReadExtraData = SingleData> + Sync + Send + 'static,
         SequenceType: GenericSequencesStream,
     >(
@@ -589,8 +589,8 @@ impl GenericMinimizerBucketing {
     }
 
     pub fn do_bucketing<
-        SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
-        MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + 'static,
+        SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + Copy + 'static,
+        MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + Copy + 'static,
         Executor: MinimizerBucketingExecutorFactory<ReadExtraData = SingleData> + Sync + Send + 'static,
         SequenceType: GenericSequencesStream,
     >(

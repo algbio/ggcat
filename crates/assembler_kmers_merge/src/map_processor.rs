@@ -208,7 +208,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                         &mut map_packet.superkmers_storage,
                     );
 
-                    let hash = hash_integer(minimizer_hash) as usize;
+                    let hash = hash_integer(minimizer_hash);
 
                     map_packet.minimizer_superkmers.add_element(
                         hash,
