@@ -511,8 +511,8 @@ impl<
                 );
             }
 
-            super_kmers_temp[0].reserve(self.super_kmers_hashmap.len());
-            super_kmers_temp[1].reserve(self.super_kmers_hashmap.len());
+            super_kmers_temp[0].reserve(total_sequences);
+            super_kmers_temp[1].reserve(total_sequences);
 
             // Split between single (multiplicity = 1) and multiple superkmers
             self.super_kmers_hashmap.process_elements(|sks| {

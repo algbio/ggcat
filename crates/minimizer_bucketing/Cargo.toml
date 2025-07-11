@@ -9,7 +9,7 @@ config = { package = "ggcat_config", path = "../config" }
 
 # Common libraries
 parallel-processor = "0.2.0"
-streaming-libdeflate-rs = "0.2.1"
+streaming-libdeflate-rs = "0.2.2"
 nightly-quirks = "0.1.4"
 
 # Pipeline libraries
