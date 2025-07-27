@@ -22,7 +22,7 @@ impl<C: ColorsSerializerTrait> ColorsMemMapWriter<C> {
             colors: DashMap::with_hasher_and_shard_amount(
                 DummyHasherBuilder,
                 // Increase the number of shards to decrease stall while inserting new colors
-                rayon::current_num_threads() * 8,
+                (rayon::current_num_threads() * 8).next_power_of_two(),
             ),
             colors_storage: ColorsSerializer::new(file, color_names)?,
             hash_keys: (rng.next_u64(), rng.next_u64()),
