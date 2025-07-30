@@ -1,10 +1,10 @@
 use crate::concurrent::temp_reads::creads_utils::{AlignModeOption, MinimizerModeOption};
 use crate::varint::{decode_varint_flags, encode_varint_flags};
 use byteorder::ReadBytesExt;
-use config::HASH_MAX_OVERREAD;
 use core::fmt::{Debug, Formatter};
 use hashes::HashableSequence;
 use rustc_hash::FxBuildHasher;
+use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::iter::FromIterator;
@@ -30,11 +30,11 @@ impl<'a> Debug for CompressedRead<'a> {
     }
 }
 
-impl<'a> Hash for CompressedRead<'a> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.get_hash_repr().hash(state);
-    }
-}
+// impl<'a> Hash for CompressedRead<'a> {
+//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+//         self.get_hash_repr().hash(state);
+//     }
+// }
 
 #[repr(transparent)]
 pub struct BorrowableCompressedRead {
@@ -78,23 +78,30 @@ impl Eq for BorrowableCompressedRead {}
 
 #[derive(Copy, Clone)]
 pub struct CompressedReadIndipendent {
-    start: usize,
-    size: usize,
+    pub start: usize,
+    pub size: usize,
 }
 
-unsafe fn get_hash_repr_aligned_overflow16(slice: &[u8]) -> u64 {
+unsafe fn get_hash_repr_aligned_overflow16(
+    slice: &[u8],
+    start_base_offset: usize,
+    end_base: usize,
+) -> u64 {
     let mut buffer = [0; 16];
-    let mut start = 0;
-    while start < slice.len() {
-        let value = u128::from_le_bytes(unsafe { *(slice.as_ptr().add(start) as *const [u8; 16]) });
-        let mask_bits = ((slice.len() - start) * 8).min(128);
-        let mask = 1u128
-            .wrapping_shl(mask_bits as u32)
-            .wrapping_sub(1 + (mask_bits == 128) as u128);
+    let mut position = 0;
+    let mut start_mask = u128::MAX << (start_base_offset * 2);
+    while position * 4 < end_base {
+        let value =
+            u128::from_le_bytes(unsafe { *(slice.as_ptr().add(position) as *const [u8; 16]) });
 
-        buffer = (u128::from_le_bytes(buffer) ^ value & mask).to_ne_bytes();
+        let end_mask_bits = ((end_base - position * 4) * 2).min(128);
+        let end_mask = 1u128
+            .wrapping_shl(end_mask_bits as u32)
+            .wrapping_sub(1 + (end_mask_bits == 128) as u128);
 
-        start += 16;
+        buffer = (u128::from_le_bytes(buffer) ^ value & end_mask & start_mask).to_ne_bytes();
+        position += 16;
+        start_mask = u128::MAX;
     }
     let low = u64::from_ne_bytes(unsafe { *(buffer.as_ptr() as *const [u8; 8]) });
     let high = u64::from_ne_bytes(unsafe { *(buffer.as_ptr().add(8) as *const [u8; 8]) });
@@ -102,6 +109,140 @@ unsafe fn get_hash_repr_aligned_overflow16(slice: &[u8]) -> u64 {
 }
 
 impl CompressedReadIndipendent {
+    #[inline(always)]
+    pub unsafe fn get_u64_unchecked_aligned(&self, data: &[u8], base_offset: usize) -> u64 {
+        let index = base_offset + self.start;
+        unsafe { (data.as_ptr().add(index / 4) as *const u64).read_unaligned() }
+    }
+
+    pub fn get_suffix_difference_slow(
+        &self,
+        other: &Self,
+        storage: &[u8],
+        offset_self: usize,
+        offset_other: usize,
+    ) -> (usize, Ordering) {
+        let self_slice = self
+            .as_reference(storage)
+            .sub_slice(offset_self..self.bases_count())
+            .to_string();
+        let other_slice = other
+            .as_reference(storage)
+            .sub_slice(offset_other..other.bases_count())
+            .to_string();
+
+        if self_slice.starts_with(&other_slice) || other_slice.starts_with(&self_slice) {
+            return (usize::MAX, self_slice.len().cmp(&other_slice.len()));
+        }
+
+        let min_length = self_slice.len().min(other_slice.len());
+        for i in 0..min_length {
+            if self_slice.as_bytes()[i] != other_slice.as_bytes()[i] {
+                return (i, self_slice.as_bytes()[i].cmp(&other_slice.as_bytes()[i]));
+            }
+        }
+        (min_length, self_slice.len().cmp(&other_slice.len()))
+    }
+
+    #[inline(always)]
+    pub unsafe fn get_suffix_difference(
+        &self,
+        other: &Self,
+        storage: &[u8],
+        offset_self: usize,
+        offset_other: usize,
+    ) -> (usize, Ordering) {
+        unsafe {
+            let mut self_ptr = storage.as_ptr().add((self.start + offset_self) / 4);
+            let mut other_ptr = storage.as_ptr().add((other.start + offset_other) / 4);
+
+            let self_size = self.size - offset_self;
+            let other_size = other.size - offset_other;
+
+            let bases_count = self_size.min(other_size);
+            let mut offset = 0;
+            while offset < bases_count {
+                let first = (self_ptr as *const u64).read_unaligned();
+                let second = (other_ptr as *const u64).read_unaligned();
+
+                let differences = first ^ second;
+                if differences != 0 {
+                    // Find the first base mismatch
+                    let first_diff = differences.trailing_zeros() / 2;
+                    let diff_offset = offset + first_diff as usize;
+
+                    let first_diff_mask = differences & (!differences + 1);
+
+                    // TODO: Fix comdition here
+
+                    return (
+                        diff_offset.min(bases_count),
+                        (first & first_diff_mask)
+                            .cmp(&(second & first_diff_mask))
+                            .then_with(|| self_size.cmp(&other_size)),
+                    );
+                }
+
+                offset += 32;
+                self_ptr = self_ptr.add(8);
+                other_ptr = other_ptr.add(8);
+            }
+
+            // In case of equality, prefer smaller sizes first
+            (self_size.min(other_size), self_size.cmp(&other_size))
+        }
+    }
+
+    #[inline(always)]
+    pub unsafe fn get_prefix_difference(
+        &self,
+        other: &Self,
+        storage: &[u8],
+        offset_self: usize,
+        offset_other: usize,
+    ) -> (usize, Ordering) {
+        unsafe {
+            let mut self_ptr = storage.as_ptr().add((self.start + offset_self) / 4).sub(8);
+            let mut other_ptr = storage
+                .as_ptr()
+                .add((other.start + offset_other) / 4)
+                .sub(8);
+
+            let bases_count = offset_self.min(offset_other);
+            let mut offset = 0;
+            while offset < bases_count {
+                let first = (self_ptr as *const u64).read_unaligned();
+                let second = (other_ptr as *const u64).read_unaligned();
+
+                let differences = first ^ second;
+                if differences != 0 {
+                    // Find the first base mismatch
+                    let leading_zeros = differences.leading_zeros();
+                    let first_diff = leading_zeros / 2;
+                    let diff_offset = offset + first_diff as usize;
+
+                    let first_diff_mask = 1 << (63 - leading_zeros);
+                    return (
+                        diff_offset.min(bases_count),
+                        (first & first_diff_mask)
+                            .cmp(&(second & first_diff_mask))
+                            .then_with(|| offset_self.cmp(&offset_other)),
+                    );
+                }
+
+                offset += 32;
+                self_ptr = self_ptr.sub(8);
+                other_ptr = other_ptr.sub(8);
+            }
+
+            // In case of equality, prefer smaller sizes first
+            (
+                offset_self.min(offset_other),
+                offset_self.cmp(&offset_other),
+            )
+        }
+    }
+
     pub fn from_plain(plain: &[u8], storage: &mut Vec<u8>) -> CompressedReadIndipendent {
         let start = storage.len() * 4;
 
@@ -145,13 +286,19 @@ impl CompressedReadIndipendent {
     }
 
     #[inline(always)]
-    pub unsafe fn compute_hash_aligned_overflow16(&self, storage: &[u8]) -> u64 {
+    pub unsafe fn compute_hash_aligned_overflow16(
+        &self,
+        storage: &[u8],
+        start_offset: usize,
+        last_base: usize,
+    ) -> u64 {
         use std::hash::BuildHasher;
 
         let slice = self.get_packed_slice_aligned(storage);
 
         let mut hasher = FxBuildHasher.build_hasher();
-        hasher.write_u64(unsafe { get_hash_repr_aligned_overflow16(slice) });
+        hasher
+            .write_u64(unsafe { get_hash_repr_aligned_overflow16(slice, start_offset, last_base) });
         hasher.finish()
     }
 
@@ -199,7 +346,13 @@ impl<'a> CompressedRead<'a> {
         let slice = self.get_packed_slice();
 
         let mut hasher = FxBuildHasher.build_hasher();
-        hasher.write_u64(unsafe { get_hash_repr_aligned_overflow16(slice) });
+        hasher.write_u64(unsafe {
+            get_hash_repr_aligned_overflow16(
+                slice,
+                self.start as usize,
+                self.bases_count() + self.start as usize,
+            )
+        });
         hasher.finish()
     }
 
@@ -467,51 +620,51 @@ impl<'a> CompressedRead<'a> {
         unsafe { from_raw_parts(self.data, (self.size + self.start as usize + 3) / 4) }
     }
 
-    fn get_hash_repr(&self) -> u64 {
-        let mut buffer = [0; 16];
+    // fn get_hash_repr(&self) -> u64 {
+    //     let mut buffer = [0; 16];
 
-        let final_offset = (self.size ^ (self.size << 1)) % 4;
-        let mask = u8::MAX >> (final_offset * 2);
-        let mut index = 0;
+    //     let final_offset = (self.size ^ (self.size << 1)) % 4;
+    //     let mask = u8::MAX >> (final_offset * 2);
+    //     let mut index = 0;
 
-        if self.start == 0 || self.size == 0 {
-            let slice = self.get_packed_slice();
-            for chunk in slice.chunks(16) {
-                let value = u128::from_ne_bytes(unsafe { *(chunk.as_ptr() as *const [u8; 16]) });
-                buffer = (u128::from_ne_bytes(buffer) ^ value).to_ne_bytes();
-            }
-            let reminder = slice.len() % 16;
-            let remaining = &slice[slice.len() - reminder..];
-            buffer[..reminder]
-                .iter_mut()
-                .zip(remaining)
-                .for_each(|(b, v)| *b ^= v);
-            index = (slice.len() + 15) % 16;
-        } else {
-            let bytes_count = (self.size + 3) / 4;
-            unsafe {
-                let right_offset = self.start * 2;
-                let left_offset = 8 - right_offset;
+    //     if self.start == 0 || self.size == 0 {
+    //         let slice = self.get_packed_slice();
+    //         for chunk in slice.chunks(16) {
+    //             let value = u128::from_ne_bytes(unsafe { *(chunk.as_ptr() as *const [u8; 16]) });
+    //             buffer = (u128::from_ne_bytes(buffer) ^ value).to_ne_bytes();
+    //         }
+    //         let reminder = slice.len() % 16;
+    //         let remaining = &slice[slice.len() - reminder..];
+    //         buffer[..reminder]
+    //             .iter_mut()
+    //             .zip(remaining)
+    //             .for_each(|(b, v)| *b ^= v);
+    //         index = (slice.len() + 15) % 16;
+    //     } else {
+    //         let bytes_count = (self.size + 3) / 4;
+    //         unsafe {
+    //             let right_offset = self.start * 2;
+    //             let left_offset = 8 - right_offset;
 
-                for b in 1..self.get_packed_slice().len() {
-                    let current = *self.data.add(b - 1);
-                    let next = *self.data.add(b);
+    //             for b in 1..self.get_packed_slice().len() {
+    //                 let current = *self.data.add(b - 1);
+    //                 let next = *self.data.add(b);
 
-                    let value = (current >> right_offset) | (next << left_offset);
-                    buffer[index] ^= value;
-                    index = (index + 1) % 16;
-                }
-                // Handle the last one separately
-                buffer[index] = *self.data.add(bytes_count - 1) >> right_offset;
-            }
-        }
-        // Mask the last byte to ensure byte equality between partial compressions
-        buffer[index] &= mask;
+    //                 let value = (current >> right_offset) | (next << left_offset);
+    //                 buffer[index] ^= value;
+    //                 index = (index + 1) % 16;
+    //             }
+    //             // Handle the last one separately
+    //             buffer[index] = *self.data.add(bytes_count - 1) >> right_offset;
+    //         }
+    //     }
+    //     // Mask the last byte to ensure byte equality between partial compressions
+    //     buffer[index] &= mask;
 
-        let low = u64::from_ne_bytes(unsafe { *(buffer.as_ptr() as *const [u8; 8]) });
-        let high = u64::from_ne_bytes(unsafe { *(buffer.as_ptr().add(8) as *const [u8; 8]) });
-        low ^ high
-    }
+    //     let low = u64::from_ne_bytes(unsafe { *(buffer.as_ptr() as *const [u8; 8]) });
+    //     let high = u64::from_ne_bytes(unsafe { *(buffer.as_ptr().add(8) as *const [u8; 8]) });
+    //     low ^ high
+    // }
 
     pub fn copy_to_buffer(&self, buffer: &mut Vec<u8>) {
         /*
@@ -617,22 +770,22 @@ impl<'a> CompressedRead<'a> {
         }
     }
 
-    pub fn get_hash(&self) -> u64 {
-        use std::hash::{BuildHasher, Hasher};
-        let mut hasher = FxBuildHasher::default().build_hasher();
-        self.hash(&mut hasher);
-        let hash = hasher.finish();
-        hash
-    }
+    // pub fn get_hash(&self) -> u64 {
+    //     use std::hash::{BuildHasher, Hasher};
+    //     let mut hasher = FxBuildHasher::default().build_hasher();
+    //     self.hash(&mut hasher);
+    //     let hash = hasher.finish();
+    //     hash
+    // }
 
-    pub fn get_hash_aligned(&self) -> u64 {
-        debug_assert_eq!(self.start, 0);
-        use std::hash::{BuildHasher, Hasher};
-        let mut hasher = FxBuildHasher::default().build_hasher();
-        self.hash(&mut hasher);
-        let hash = hasher.finish();
-        hash
-    }
+    // pub fn get_hash_aligned(&self) -> u64 {
+    //     debug_assert_eq!(self.start, 0);
+    //     use std::hash::{BuildHasher, Hasher};
+    //     let mut hasher = FxBuildHasher::default().build_hasher();
+    //     self.hash(&mut hasher);
+    //     let hash = hasher.finish();
+    //     hash
+    // }
 
     #[inline(always)]
     pub unsafe fn get_base_unchecked(&self, index: usize) -> u8 {
@@ -729,7 +882,7 @@ impl<'a> HashableSequence for CompressedRead<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::{cmp::Ordering, io::Cursor};
 
     use crate::{
         compressed_read::{
@@ -808,13 +961,41 @@ mod tests {
     }
 
     #[test]
+    fn test_suffix_difference_check() {
+        let mut buffer = vec![];
+        let bases1 = b"GAGCAAGTCCTTGCTCTCACTC";
+        let bases2 = b"GAGCAAGTCCTG";
+
+        let first = CompressedReadIndipendent::from_plain(bases1, &mut buffer);
+        let second = CompressedReadIndipendent::from_plain(bases2, &mut buffer);
+        buffer.reserve(ALIGNMENT_WORD_SIZE);
+
+        let result = unsafe { first.get_suffix_difference(&second, &buffer, 0, 0) };
+        assert_eq!(result, (11, Ordering::Less))
+    }
+
+    #[test]
+    fn test_prefix_difference_check() {
+        let mut buffer = vec![];
+        let bases1 = b"ACGTACGCAGTAGCTAATCATCGATGCCGATCACGTACGCGGTAGCTAATCATCGATGCCGATC";
+        let bases2 = b"AAAAACGTACGCAGTAGCTAATCATCGATGCCGATCACGTACGCGGTAGCTAATCATCGATGCCGATC";
+
+        let first = CompressedReadIndipendent::from_plain(bases1, &mut buffer);
+        let second = CompressedReadIndipendent::from_plain(bases2, &mut buffer);
+        buffer.reserve(ALIGNMENT_WORD_SIZE);
+
+        let result = unsafe { first.get_prefix_difference(&second, &buffer, 4, 8) };
+        assert_eq!(result, (usize::MAX, Ordering::Less))
+    }
+
+    #[test]
     fn test_unsafe_hash() {
         let mut buffer = Vec::with_capacity(64 + 16);
 
         let mut hashes1 = vec![];
         for i in 0..64u8 {
             buffer.push((i.wrapping_add(7)).wrapping_mul(117));
-            let hash = unsafe { get_hash_repr_aligned_overflow16(&buffer) };
+            let hash = unsafe { get_hash_repr_aligned_overflow16(&buffer, buffer.len() * 4) };
             println!("Hash{}: {}", i, hash);
             hashes1.push(hash);
         }
@@ -822,10 +1003,46 @@ mod tests {
         buffer.clear();
         for i in 0..64u8 {
             buffer.push((i.wrapping_add(7)).wrapping_mul(117));
-            let hash = unsafe { get_hash_repr_aligned_overflow16(&buffer) };
+            let hash = unsafe { get_hash_repr_aligned_overflow16(&buffer, buffer.len() * 4) };
             println!("Hash{}: {}", i, hash);
             assert_eq!(hashes1[i as usize], hash);
         }
+    }
+
+    #[test]
+    fn test_unsafe_hash2() {
+        let read1 = "CGATCATATCACCGGCAATGAGAATCCCATCCGGTCTGTACCG";
+        let read2 = "ATTTGAGGAAACGTAAAATGAGAATCCATAAGGCAAAGGAAAA";
+        let offset = 16;
+
+        let mut buffer = Vec::with_capacity(64 + 16);
+
+        CompressedRead::compress_from_plain(read1.as_bytes(), |b| buffer.extend_from_slice(b));
+
+        let start2 = buffer.len();
+        CompressedRead::compress_from_plain(read2.as_bytes(), |b| buffer.extend_from_slice(b));
+        let compressed_read1 = CompressedRead::from_compressed_reads(&buffer, 0, read1.len());
+        let compressed_read2 =
+            CompressedRead::from_compressed_reads(&buffer, start2 * 4, read2.len());
+
+        println!("CR1: {}", compressed_read1.sub_slice(16..27).to_string());
+        println!("CR2: {}", compressed_read2.sub_slice(16..27).to_string());
+
+        let (hash1, hash2) = unsafe {
+            (
+                compressed_read1
+                    .sub_slice(16..27)
+                    .compute_hash_aligned_overflow16(),
+                compressed_read2
+                    .sub_slice(16..27)
+                    .compute_hash_aligned_overflow16(),
+            )
+        };
+
+        println!("CR1H: {}", hash1);
+        println!("CR2H: {}", hash2);
+
+        assert_eq!(hash1, hash2);
     }
 
     #[test]

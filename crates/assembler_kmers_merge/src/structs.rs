@@ -1,4 +1,5 @@
 use config::BucketIndexType;
+use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::{
     CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMinimizerPosition,
     NoMultiplicity, NoSecondBucket,
@@ -38,6 +39,26 @@ impl<X: SequenceExtraDataConsecutiveCompression> ResultsBucket<X> {
         self.temp_buffer.clear();
         self.serializer.write_to(
             &CompressedReadsBucketData::new(read, 0, 0, 0, false),
+            &mut self.temp_buffer,
+            &el,
+            extra_buffer,
+        );
+        self.reads_writer.write_data(self.temp_buffer.as_slice());
+
+        let read_index = self.read_index;
+        self.read_index += 1;
+        read_index
+    }
+
+    pub fn add_compressed_read(
+        &mut self,
+        el: PartialUnitigExtraData<X>,
+        read: CompressedRead,
+        extra_buffer: &X::TempBuffer,
+    ) -> u64 {
+        self.temp_buffer.clear();
+        self.serializer.write_to(
+            &CompressedReadsBucketData::new_packed(read, 0, 0, 0, false),
             &mut self.temp_buffer,
             &el,
             extra_buffer,

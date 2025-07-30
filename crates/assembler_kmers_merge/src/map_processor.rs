@@ -46,6 +46,13 @@ pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManage
     // ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>>,
     pub minimizer_superkmers: FuzzyHashmap<DeserializedReadIndependent<<
         ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>,
+
+    pub resplitting_map: FuzzyHashmap<DeserializedReadIndependent<<
+        ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>,
+
+
+    pub is_duplicate: bool,
+    pub m: usize,
 }
 
 impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
@@ -60,6 +67,9 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
             extender: HashMapUnitigsExtender::new(sizes),
             superkmers_storage: Box::new(vec![]),
             minimizer_superkmers: FuzzyHashmap::new(MINIMIZER_MAP_DEFAULT_SIZE),
+            resplitting_map: FuzzyHashmap::new(MINIMIZER_MAP_DEFAULT_SIZE),
+            m: sizes.m,
+            is_duplicate: false,
         }
     }
 
@@ -90,8 +100,6 @@ pub struct ParallelKmersMergeMapProcessor<
             >>::MapStruct,
         >,
     >,
-    is_duplicate: bool,
-    m: usize,
     k: usize,
 }
 
@@ -107,8 +115,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     pub fn new(context: &GlobalMergeData<CX>) -> Self {
         Self {
             map_packet: None,
-            is_duplicate: false,
-            m: context.m,
             k: context.k,
         }
     }
@@ -126,24 +132,23 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
     fn process_group_start(
         &mut self,
-        map_struct: Packet<Self::MapStruct>,
+        mut map_struct: Packet<Self::MapStruct>,
         global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
         extra_bucket_data: Option<ExtraBucketData>,
         is_resplitted: bool,
     ) {
         stats!(
-            let mut map_struct = map_struct;
             map_struct.detailed_stats = Default::default();
             map_struct.detailed_stats.report_id = ggcat_logging::generate_stat_id!();
             map_struct.detailed_stats.start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();
         );
-        self.is_duplicate = extra_bucket_data == Some(DUPLICATES_BUCKET_EXTRA);
-        self.map_packet = Some(map_struct);
+        map_struct.is_duplicate = extra_bucket_data == Some(DUPLICATES_BUCKET_EXTRA);
         if is_resplitted {
-            self.m = global_data.global_resplit_data.m;
+            map_struct.m = global_data.global_resplit_data.m;
         } else {
-            self.m = global_data.m;
+            map_struct.m = global_data.m;
         }
+        self.map_packet = Some(map_struct);
     }
 
     #[instrumenter::track]
@@ -164,8 +169,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
             .minimizer_superkmers
             .initialize(sequences_count as usize);
 
-        if true {
-            // self.is_duplicate {
+        if map_packet.is_duplicate {
             process_reads_callback(
                 map_packet,
                 #[inline(always)]
@@ -198,10 +202,11 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
                     let minimizer_pos = read.minimizer_pos as usize;
 
-                    let minimizer_hash = read
-                        .read
-                        .sub_slice(minimizer_pos..minimizer_pos + 11)
-                        .get_hash_aligned();
+                    let minimizer_hash = unsafe {
+                        read.read
+                            .sub_slice(minimizer_pos..minimizer_pos + map_packet.m)
+                            .compute_hash_aligned_overflow16()
+                    };
 
                     let new_read = CompressedReadIndipendent::from_read::<false>(
                         &read.read,

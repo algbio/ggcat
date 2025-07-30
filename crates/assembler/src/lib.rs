@@ -3,8 +3,8 @@
 use ::dynamic_dispatch::dynamic_dispatch;
 use assembler_kmers_merge::structs::RetType;
 use assembler_pipeline::compute_matchtigs::MatchtigHelperTrait;
-use assembler_pipeline::hashes_sorting;
-use assembler_pipeline::links_compaction::links_compaction;
+// use assembler_pipeline::hashes_sorting;
+// use assembler_pipeline::links_compaction::links_compaction;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
 use config::{
@@ -237,167 +237,169 @@ pub fn run_assembler<
     ggcat_logging::stats::write_stats(&output_file.with_extension("elab.stats.json"));
     drop(global_colors_table);
 
-    let mut links = if step <= AssemblerPhase::HashesSorting {
-        hashes_sorting::dynamic_dispatch::hashes_sorting(
-            (MergingHash::dynamic_dispatch_id(),),
-            hashes,
-            temp_dir.as_path(),
-            buckets_count,
-        )
-    } else {
-        debug_load_single_buckets(&temp_dir, "links-buckets.debug").unwrap()
-    };
-    if last_step <= AssemblerPhase::HashesSorting {
-        debug_save_single_buckets(&temp_dir, "links-buckets.debug", &links);
-        PHASES_TIMES_MONITOR
-            .write()
-            .print_stats("Hashes sorting.".to_string());
-        return Ok(PathBuf::new());
-    } else {
-        MemoryFs::flush_to_disk(true);
-        MemoryFs::free_memory();
-    }
+    unimplemented!();
 
-    let mut loop_iteration = 0;
+    // let mut links = if step <= AssemblerPhase::HashesSorting {
+    //     hashes_sorting::dynamic_dispatch::hashes_sorting(
+    //         (MergingHash::dynamic_dispatch_id(),),
+    //         hashes,
+    //         temp_dir.as_path(),
+    //         buckets_count,
+    //     )
+    // } else {
+    //     debug_load_single_buckets(&temp_dir, "links-buckets.debug").unwrap()
+    // };
+    // if last_step <= AssemblerPhase::HashesSorting {
+    //     debug_save_single_buckets(&temp_dir, "links-buckets.debug", &links);
+    //     PHASES_TIMES_MONITOR
+    //         .write()
+    //         .print_stats("Hashes sorting.".to_string());
+    //     return Ok(PathBuf::new());
+    // } else {
+    //     MemoryFs::flush_to_disk(true);
+    //     MemoryFs::free_memory();
+    // }
 
-    let (unitigs_map, reads_map) = if step <= AssemblerPhase::LinksCompaction {
-        let result_map_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
-            buckets_count,
-            temp_dir.join("results_map"),
-            None,
-            &(
-                get_memory_mode(SwapPriority::FinalMaps),
-                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-            ),
-            &(),
-        ));
+    // let mut loop_iteration = 0;
 
-        let final_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
-            buckets_count,
-            temp_dir.join("unitigs_map"),
-            None,
-            &(
-                get_memory_mode(SwapPriority::FinalMaps),
-                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-            ),
-            &(),
-        ));
+    // let (unitigs_map, reads_map) = if step <= AssemblerPhase::LinksCompaction {
+    //     let result_map_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+    //         buckets_count,
+    //         temp_dir.join("results_map"),
+    //         None,
+    //         &(
+    //             get_memory_mode(SwapPriority::FinalMaps),
+    //             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
+    //         ),
+    //         &(),
+    //     ));
 
-        PHASES_TIMES_MONITOR
-            .write()
-            .start_phase("phase: links compaction".to_string());
+    //     let final_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
+    //         buckets_count,
+    //         temp_dir.join("unitigs_map"),
+    //         None,
+    //         &(
+    //             get_memory_mode(SwapPriority::FinalMaps),
+    //             LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
+    //         ),
+    //         &(),
+    //     ));
 
-        let mut log_timer = Instant::now();
+    //     PHASES_TIMES_MONITOR
+    //         .write()
+    //         .start_phase("phase: links compaction".to_string());
 
-        let links_scoped_buffer = ScopedThreadLocal::new(move || {
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
-        });
-        let results_map_scoped_buffer = ScopedThreadLocal::new(move || {
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
-        });
+    //     let mut log_timer = Instant::now();
 
-        let result = loop {
-            let do_logging = if log_timer.elapsed() > MINIMUM_LOG_DELTA_TIME {
-                log_timer = Instant::now();
-                true
-            } else {
-                false
-            };
+    //     let links_scoped_buffer = ScopedThreadLocal::new(move || {
+    //         BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
+    //     });
+    //     let results_map_scoped_buffer = ScopedThreadLocal::new(move || {
+    //         BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
+    //     });
 
-            if do_logging {
-                ggcat_logging::info!("Iteration: {}", loop_iteration);
-            }
+    //     let result = loop {
+    //         let do_logging = if log_timer.elapsed() > MINIMUM_LOG_DELTA_TIME {
+    //             log_timer = Instant::now();
+    //             true
+    //         } else {
+    //             false
+    //         };
 
-            let (new_links, remaining) = links_compaction(
-                links,
-                temp_dir.as_path(),
-                buckets_count,
-                loop_iteration,
-                &result_map_buckets,
-                &final_buckets,
-                // &links_manager,
-                &links_scoped_buffer,
-                &results_map_scoped_buffer,
-            );
+    //         if do_logging {
+    //             ggcat_logging::info!("Iteration: {}", loop_iteration);
+    //         }
 
-            if do_logging {
-                ggcat_logging::info!(
-                    "Remaining: {} {}",
-                    remaining,
-                    PHASES_TIMES_MONITOR
-                        .read()
-                        .get_formatted_counter_without_memory()
-                );
-            }
+    //         let (new_links, remaining) = links_compaction(
+    //             links,
+    //             temp_dir.as_path(),
+    //             buckets_count,
+    //             loop_iteration,
+    //             &result_map_buckets,
+    //             &final_buckets,
+    //             // &links_manager,
+    //             &links_scoped_buffer,
+    //             &results_map_scoped_buffer,
+    //         );
 
-            links = new_links;
-            if remaining == 0 {
-                ggcat_logging::info!("Completed compaction with {} iters", loop_iteration);
-                break (
-                    final_buckets.finalize_single(),
-                    result_map_buckets.finalize_single(),
-                );
-            }
-            loop_iteration += 1;
-        };
+    //         if do_logging {
+    //             ggcat_logging::info!(
+    //                 "Remaining: {} {}",
+    //                 remaining,
+    //                 PHASES_TIMES_MONITOR
+    //                     .read()
+    //                     .get_formatted_counter_without_memory()
+    //             );
+    //         }
 
-        for link_bucket in links {
-            MemoryFs::remove_file(
-                &link_bucket.path,
-                RemoveFileMode::Remove {
-                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-                },
-            )
-            .unwrap();
-        }
-        result
-    } else {
-        (
-            debug_load_single_buckets(&temp_dir, "unitigs-map.debug").unwrap(),
-            debug_load_single_buckets(&temp_dir, "reads-map.debug").unwrap(),
-        )
-    };
+    //         links = new_links;
+    //         if remaining == 0 {
+    //             ggcat_logging::info!("Completed compaction with {} iters", loop_iteration);
+    //             break (
+    //                 final_buckets.finalize_single(),
+    //                 result_map_buckets.finalize_single(),
+    //             );
+    //         }
+    //         loop_iteration += 1;
+    //     };
 
-    if last_step <= AssemblerPhase::LinksCompaction {
-        debug_save_single_buckets(&temp_dir, "unitigs-map.debug", &unitigs_map);
-        debug_save_single_buckets(&temp_dir, "reads-map.debug", &reads_map);
+    //     for link_bucket in links {
+    //         MemoryFs::remove_file(
+    //             &link_bucket.path,
+    //             RemoveFileMode::Remove {
+    //                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+    //             },
+    //         )
+    //         .unwrap();
+    //     }
+    //     result
+    // } else {
+    //     (
+    //         debug_load_single_buckets(&temp_dir, "unitigs-map.debug").unwrap(),
+    //         debug_load_single_buckets(&temp_dir, "reads-map.debug").unwrap(),
+    //     )
+    // };
 
-        PHASES_TIMES_MONITOR
-            .write()
-            .print_stats("Links Compaction.".to_string());
-        return Ok(PathBuf::new());
-    } else {
-        MemoryFs::flush_to_disk(true);
-        MemoryFs::free_memory();
-    }
+    // if last_step <= AssemblerPhase::LinksCompaction {
+    //     debug_save_single_buckets(&temp_dir, "unitigs-map.debug", &unitigs_map);
+    //     debug_save_single_buckets(&temp_dir, "reads-map.debug", &reads_map);
 
-    assembler_pipeline::dynamic_dispatch::build_final_unitigs(
-        (
-            MergingHash::dynamic_dispatch_id(),
-            AssemblerColorsManager::dynamic_dispatch_id(),
-            OutputMode::dynamic_dispatch_id(),
-        ),
-        k,
-        sequences,
-        reads_map,
-        unitigs_map,
-        buckets_count,
-        step,
-        last_step,
-        &output_file,
-        &temp_dir,
-        threads_count,
-        generate_maximal_unitigs_links,
-        compute_tigs_mode,
-    );
+    //     PHASES_TIMES_MONITOR
+    //         .write()
+    //         .print_stats("Links Compaction.".to_string());
+    //     return Ok(PathBuf::new());
+    // } else {
+    //     MemoryFs::flush_to_disk(true);
+    //     MemoryFs::free_memory();
+    // }
 
-    let _ = std::fs::remove_dir(temp_dir.as_path());
+    // assembler_pipeline::dynamic_dispatch::build_final_unitigs(
+    //     (
+    //         MergingHash::dynamic_dispatch_id(),
+    //         AssemblerColorsManager::dynamic_dispatch_id(),
+    //         OutputMode::dynamic_dispatch_id(),
+    //     ),
+    //     k,
+    //     sequences,
+    //     reads_map,
+    //     unitigs_map,
+    //     buckets_count,
+    //     step,
+    //     last_step,
+    //     &output_file,
+    //     &temp_dir,
+    //     threads_count,
+    //     generate_maximal_unitigs_links,
+    //     compute_tigs_mode,
+    // );
 
-    PHASES_TIMES_MONITOR
-        .write()
-        .print_stats("Compacted De Bruijn graph construction completed.".to_string());
+    // let _ = std::fs::remove_dir(temp_dir.as_path());
 
-    ggcat_logging::stats::write_stats(&output_file);
+    // PHASES_TIMES_MONITOR
+    //     .write()
+    //     .print_stats("Compacted De Bruijn graph construction completed.".to_string());
+
+    // ggcat_logging::stats::write_stats(&output_file);
 
     Ok(output_file)
 }

@@ -205,6 +205,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "binary-heap-plus"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4551d8382e911ecc0d0f0ffb602777988669be09447d536ff4388d1def11296"
+dependencies = [
+ "compare",
+]
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -298,6 +307,15 @@ name = "bit-vec"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
+
+[[package]]
+name = "bitbound"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b266898f6ca2ecb4e092f326f2f31405f9384ee8cc7b890b40d0142eed91144"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "bitflags"
@@ -534,6 +552,12 @@ dependencies = [
  "thiserror 2.0.12",
  "traitsequence",
 ]
+
+[[package]]
+name = "compare"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "120133d4db2ec47efe2e26502ee984747630c67f51974fca0b6c1340cf2368d3"
 
 [[package]]
 name = "core-foundation-sys"
@@ -1060,6 +1084,8 @@ dependencies = [
 name = "ggcat_assembler_kmerge"
 version = "2.0.0"
 dependencies = [
+ "binary-heap-plus",
+ "bitbound",
  "crossbeam",
  "dynamic-dispatch",
  "fdlimit",
@@ -1270,6 +1296,7 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
+ "bitbound",
  "bstr",
  "byteorder",
  "dynamic-dispatch",

@@ -70,10 +70,10 @@ impl<T: Copy, const LOCAL_FITTING: usize> FuzzyHashmap<T, LOCAL_FITTING> {
     }
 
     #[inline(always)]
-    pub fn process_elements(&mut self, mut elements_cb: impl FnMut(&[T])) {
+    pub fn process_elements(&mut self, mut elements_cb: impl FnMut(&mut [T])) {
         for position in self.occupation.drain(..) {
             let elements = unsafe { self.hashmap.get_unchecked_mut(position) };
-            elements_cb(self.allocator.slice_vec(elements));
+            elements_cb(self.allocator.slice_vec_mut(elements));
             *elements = InlineVec::new();
         }
 

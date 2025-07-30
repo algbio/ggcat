@@ -41,6 +41,7 @@ use utils::owned_drop::OwnedDrop;
 
 mod final_executor;
 mod map_processor;
+pub mod sorting;
 pub mod structs;
 pub mod unitigs_extender;
 

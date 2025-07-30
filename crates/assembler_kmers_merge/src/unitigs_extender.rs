@@ -14,6 +14,7 @@ use io::concurrent::temp_reads::{
 use kmers_transform::GroupProcessStats;
 
 pub mod hashmap;
+pub mod sorting;
 
 #[derive(Clone, Copy, Debug)]
 pub struct GlobalExtenderParams {
