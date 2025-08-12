@@ -233,10 +233,11 @@ impl CompressedReadIndipendent {
                 let remaining_bases_mask: u64 = if remaining_bases >= 32 {
                     u64::MAX
                 } else {
-                    u64::MAX // (u64::MAX >> ((64 - remaining_bases * 2) as u32)) - 1
+                    u64::MAX << ((64 - remaining_bases * 2) as u32)
                 };
 
                 let differences = (first ^ second) & remaining_bases_mask;
+
                 if differences != 0 {
                     // Find the first base mismatch
                     let leading_zeros = differences.leading_zeros();

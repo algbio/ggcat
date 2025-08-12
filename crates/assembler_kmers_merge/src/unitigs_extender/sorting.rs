@@ -21,10 +21,6 @@ struct PrefixStackElement {
     suffix_length: usize,
 }
 
-// macro_rules! println {
-//     ($($v:tt)*) => {};
-// }
-
 #[derive(Debug)]
 struct SortedChunk {
     start: usize,
@@ -85,74 +81,74 @@ pub struct SortingExtender {
     sorting_support_vec: Vec<usize>,
 }
 
-fn check_kmers<E>(
-    k: usize,
-    reads: &[DeserializedReadIndependent<E>],
-    superkmers_storage: &Vec<u8>,
-    supertigs: &[(CompressedRead, usize)],
-) {
-    let mut kmers = vec![];
-    let mut stkmers = vec![];
-    for read in reads.iter() {
-        let kmers_count = read.read.bases_count() - k + 1;
-        for i in 0..kmers_count {
-            let kmer = read
-                .read
-                .as_reference(superkmers_storage)
-                .sub_slice(i..i + k);
-            kmers.push((kmer.to_string(), read.multiplicity));
-        }
-    }
+// fn check_kmers<E>(
+//     k: usize,
+//     reads: &[DeserializedReadIndependent<E>],
+//     superkmers_storage: &Vec<u8>,
+//     supertigs: &[(CompressedRead, usize)],
+// ) {
+//     let mut kmers = vec![];
+//     let mut stkmers = vec![];
+//     for read in reads.iter() {
+//         let kmers_count = read.read.bases_count() - k + 1;
+//         for i in 0..kmers_count {
+//             let kmer = read
+//                 .read
+//                 .as_reference(superkmers_storage)
+//                 .sub_slice(i..i + k);
+//             kmers.push((kmer.to_string(), read.multiplicity));
+//         }
+//     }
 
-    for st in supertigs.iter() {
-        let kmers_count = st.0.bases_count() - k + 1;
-        for i in 0..kmers_count {
-            let kmer = st.0.sub_slice(i..i + k);
-            stkmers.push((kmer.to_string(), st.1));
-        }
-    }
+//     for st in supertigs.iter() {
+//         let kmers_count = st.0.bases_count() - k + 1;
+//         for i in 0..kmers_count {
+//             let kmer = st.0.sub_slice(i..i + k);
+//             stkmers.push((kmer.to_string(), st.1));
+//         }
+//     }
 
-    kmers.sort_by_cached_key(|k| k.0.to_string());
-    stkmers.sort_by_cached_key(|k| k.0.to_string());
+//     kmers.sort_by_cached_key(|k| k.0.to_string());
+//     stkmers.sort_by_cached_key(|k| k.0.to_string());
 
-    for kmer in stkmers.windows(2) {
-        if kmer[0].0 == kmer[1].0 {
-            for read in reads.iter() {
-                println!(
-                    "READ: {} with multiplicity {} and offset {}",
-                    read.read.as_reference(superkmers_storage).to_string(),
-                    read.multiplicity,
-                    read.minimizer_pos
-                );
-            }
+//     for kmer in stkmers.windows(2) {
+//         if kmer[0].0 == kmer[1].0 {
+//             for read in reads.iter() {
+//                 println!(
+//                     "READ: {} with multiplicity {} and offset {}",
+//                     read.read.as_reference(superkmers_storage).to_string(),
+//                     read.multiplicity,
+//                     read.minimizer_pos
+//                 );
+//             }
 
-            for supertig in supertigs.iter() {
-                println!(
-                    "Supertig: {} with multiplicity {}",
-                    supertig.0.to_string(),
-                    supertig.1
-                );
-            }
+//             for supertig in supertigs.iter() {
+//                 println!(
+//                     "Supertig: {} with multiplicity {}",
+//                     supertig.0.to_string(),
+//                     supertig.1
+//                 );
+//             }
 
-            panic!(
-                "Found duplicate supertig kmer: {} with multiplicities {} and {}",
-                kmer[0].0, kmer[0].1, kmer[1].1
-            );
-        }
-    }
+//             panic!(
+//                 "Found duplicate supertig kmer: {} with multiplicities {} and {}",
+//                 kmer[0].0, kmer[0].1, kmer[1].1
+//             );
+//         }
+//     }
 
-    kmers.dedup_by_key(|k| k.0.to_string());
-    stkmers.dedup_by_key(|k| k.0.to_string());
+//     kmers.dedup_by_key(|k| k.0.to_string());
+//     stkmers.dedup_by_key(|k| k.0.to_string());
 
-    println!(
-        "Kmers: {} stk: {} total: {}",
-        kmers.len(),
-        stkmers.len(),
-        supertigs.len()
-    );
-    assert_eq!(kmers.len(), stkmers.len());
-    // todo!();
-}
+//     // println!(
+//     //     "Kmers: {} stk: {} total: {}",
+//     //     kmers.len(),
+//     //     stkmers.len(),
+//     //     supertigs.len()
+//     // );
+//     assert_eq!(kmers.len(), stkmers.len());
+//     // todo!();
+// }
 
 impl SortingExtender {
     /// Processes elements in range, assuming they are prefix sorted and share the same suffix of length `suffix_length`.
@@ -200,8 +196,6 @@ impl SortingExtender {
             let target_index_end = prefix_element.last_index;
             let shared_suffix = prefix_element.suffix_length;
 
-            // println!("Start stack wit shared suffix: {}", shared_suffix);
-
             while element_target_index < target_index_end {
                 let reference = &reads[self.elements_mapping[element_target_index]];
                 let reference_index = element_target_index;
@@ -239,34 +233,6 @@ impl SortingExtender {
                 let suffix_limited_suffix = target_suffix_length + 1;
                 let leftmost_allowed_suffix = prefix_limited_suffix.max(suffix_limited_suffix);
 
-                // println!("Dumping reads now from: {}", reference_index);
-
-                // for i in reference_index..element_target_index {
-                //     let crt = &reads[self.elements_mapping[i]];
-
-                //     assert!(crt.minimizer_pos as usize + shared_suffix <= crt.read.bases_count());
-
-                //     println!(
-                //         "Read {}: {} full: {} suffix: {}",
-                //         i,
-                //         crt.read
-                //             .as_reference(superkmers_storage)
-                //             .sub_slice(
-                //                 (crt.minimizer_pos as usize + leftmost_allowed_suffix - k)
-                //                     ..(crt.minimizer_pos as usize + shared_suffix)
-                //             )
-                //             .to_string(),
-                //         crt.read.as_reference(superkmers_storage).to_string(),
-                //         crt.read
-                //             .as_reference(superkmers_storage)
-                //             .sub_slice(
-                //                 crt.minimizer_pos as usize
-                //                     ..(crt.minimizer_pos as usize + shared_suffix)
-                //             )
-                //             .to_string(),
-                //     );
-                // }
-
                 output_read(
                     reference.read.as_reference(superkmers_storage).sub_slice(
                         (reference.minimizer_pos as usize + leftmost_allowed_suffix - k)
@@ -297,40 +263,9 @@ impl SortingExtender {
         k: usize,
         mut output_read: impl FnMut(CompressedRead, usize),
     ) {
-        let debug_reads = reads.to_vec();
-        let mut debug_supertigs = vec![];
-        // println!("********************************** STARTED **********************************");
-
-        // println!("Reads:");
-        // for (idx, read) in reads.iter().enumerate() {
-        //     println!(
-        //         "  {}: {} (minimizer_pos: {}, multiplicity: {})",
-        //         idx,
-        //         read.read.as_reference(superkmers_storage).to_string(),
-        //         read.minimizer_pos,
-        //         read.multiplicity
-        //     );
-        // }
-
-        // if reads.len() < 55 || reads.len() > 60 {
-        //     return;
-        // }
-
-        // let mut count = 0;
-
         // 0. Sort (reversed) by suffix and compute a lcs array
         {
             self.lcs_array.clear();
-            // elements_mapping
-            //     .extend((0..reads.len()).map(|i| ReadIndex::new(i)));
-
-            // self.reads_copy.clear();
-            // self.reads_copy.extend_from_slice(reads);
-
-            // if reads.len() > 128 {
-            //     radix_sort_reads(&mut self.reads_copy, reads, superkmers_storage, 0);
-            // } else {
-
             reads.sort_unstable_by(|a, b| unsafe {
                 let ar = a
                     .read
@@ -356,7 +291,6 @@ impl SortingExtender {
                 assert_eq!(ar, br);
                 ar
             });
-            // }
 
             for idx in 1..reads.len() {
                 let a = &reads[idx - 1];
@@ -374,8 +308,6 @@ impl SortingExtender {
             }
             // Last one has no matches with the following element
             self.lcs_array.push(0);
-
-            // println!("LCS: {} {:?}", self.lcs_array.len(), self.lcs_array);
         }
 
         // 1. Save the suffixes lengths for each read
@@ -387,54 +319,11 @@ impl SortingExtender {
             }
         }
 
-        // println!("Sorted Reads:");
-        // for (idx, read) in reads.iter().enumerate() {
-        //     println!(
-        //         "  {}: {} (minimizer_pos: {}, multiplicity: {})",
-        //         idx,
-        //         read.read.as_reference(superkmers_storage).to_string(),
-        //         read.minimizer_pos,
-        //         read.multiplicity
-        //     );
-        // }
-
         // // 2. Sort the elements indices for the prefixes and compute a (centered/reversed) lcp array
         {
-            //     self.rev_lcp_array.clear();
             self.elements_mapping.clear();
 
             self.elements_mapping.extend(0..reads.len());
-
-            //     self.elements_mapping.sort_unstable_by(|a, b| unsafe {
-            //         let a = &reads[*a];
-            //         let b = &reads[*b];
-            //         a.read
-            //             .get_prefix_difference(
-            //                 &b.read,
-            //                 superkmers_storage,
-            //                 a.minimizer_pos as usize,
-            //                 b.minimizer_pos as usize,
-            //             )
-            //             .1
-            //             .reverse()
-            //     });
-
-            //     for idx in 1..self.elements_mapping.len() {
-            //         let a = &reads[self.elements_mapping[idx - 1]];
-            //         let b = &reads[self.elements_mapping[idx]];
-            //         self.rev_lcp_array.push(unsafe {
-            //             a.read
-            //                 .get_prefix_difference(
-            //                     &b.read,
-            //                     superkmers_storage,
-            //                     a.minimizer_pos as usize,
-            //                     b.minimizer_pos as usize,
-            //                 )
-            //                 .0
-            //         })
-            //     }
-
-            //     self.rev_lcp_array.push(0);
         }
 
         // Reinitialize the skip array
@@ -446,14 +335,6 @@ impl SortingExtender {
         let mut next_position = 0;
 
         let remapped_minimizer_elements = reads;
-
-        // for (idx, read) in remapped_minimizer_elements.iter().enumerate() {
-        //     println!(
-        //         "Read: {} - {}",
-        //         idx,
-        //         read.read.as_reference(superkmers_storage).to_string()
-        //     );
-        // }
 
         'process_elements: while self.processing_stack.len() > 0
             || next_position < self.elements_mapping.len()
@@ -479,8 +360,6 @@ impl SortingExtender {
             let suffix_stack_block_last = &mut last_stack_element.last_index;
             let sorted_chunks_start = last_stack_element.sorted_chunks_start;
 
-            // println!("Start processing stack elements.");
-
             // The needed suffix is the minimum suffix size required
             // to have a chance of having a full kmer match in the current stack element
             let needed_suffix = self.suffix_sizes[suffix_stack_block_start];
@@ -489,33 +368,10 @@ impl SortingExtender {
             while *suffix_stack_block_last < self.elements_mapping.len()
                 && self.lcs_array[*suffix_stack_block_last - 1] >= needed_suffix
             {
-                // println!(
-                //     "{} vs {} with position: {} {} and {}",
-                //     self.lcs_array[*suffix_stack_block_last - 1],
-                //     needed_suffix,
-                //     self.suffix_sizes[*suffix_stack_block_last],
-                //     reads[suffix_stack_block_start]
-                //         .read
-                //         .as_reference(superkmers_storage)
-                //         .to_string(),
-                //     reads[*suffix_stack_block_last]
-                //         .read
-                //         .as_reference(superkmers_storage)
-                //         .to_string()
-                // );
-
                 // A longer suffix is found, process it before continuing
                 if self.suffix_sizes[*suffix_stack_block_last] > needed_suffix {
                     let next_position = *suffix_stack_block_last;
-                    // println!(
-                    //     "Pushing value: {} vs needed: {}/{}",
-                    //     next_position, self.suffix_sizes[*suffix_stack_block_last], needed_suffix
-                    // );
 
-                    // println!(
-                    //     "Pushing stack element: {} with suffix size: {}",
-                    //     next_position, self.suffix_sizes[*suffix_stack_block_last]
-                    // );
                     self.processing_stack.push(SuffixStackElement {
                         index: next_position,
                         last_index: next_position + 1,
@@ -549,17 +405,9 @@ impl SortingExtender {
                     last_sorted_chunk.end =
                         *suffix_stack_block_last + self.forward_skip[*suffix_stack_block_last];
                     last_sorted_chunk.is_sorted = false;
-                    // println!(
-                    //     "Add index {} with skip {} to sorted chunks",
-                    //     suffix_stack_block_last, self.forward_skip[*suffix_stack_block_last]
-                    // );
                 }
                 // Else, push a new sorted chunk with the current suffix position
                 else {
-                    // println!(
-                    //     "Push new sorted chunk at position: {} with size: {}",
-                    //     *suffix_stack_block_last, self.forward_skip[*suffix_stack_block_last]
-                    // );
                     self.sorted_chunks.push(SortedChunk {
                         start: *suffix_stack_block_last,
                         end: *suffix_stack_block_last + self.forward_skip[*suffix_stack_block_last],
@@ -568,9 +416,6 @@ impl SortingExtender {
                 }
                 *suffix_stack_block_last += self.forward_skip[*suffix_stack_block_last];
             }
-
-            // println!("Needed suffix: {}", needed_suffix);
-            // println!("Lcs: {}", self.lcs_array[*suffix_stack_block_last - 1]);
 
             // We have now to sort the prefixes of the reads in the current suffix range and
             // then find all the kmers sharing the whole needed suffix.
@@ -597,25 +442,6 @@ impl SortingExtender {
                     chunk.is_sorted = true;
                 }
 
-                // println!("Sorted chunk {}..{}:", chunk.start, chunk.end);
-                // for i in chunk.start..chunk.end {
-                //     let idx = self.elements_mapping[i];
-                //     let read = &remapped_minimizer_elements[idx];
-                //     println!(
-                //         "  {}: {} first: {} second: {}",
-                //         idx,
-                //         read.read.as_reference(superkmers_storage).to_string(),
-                //         read.read
-                //             .as_reference(superkmers_storage)
-                //             .sub_slice(0..(read.minimizer_pos as usize))
-                //             .to_string(),
-                //         read.read
-                //             .as_reference(superkmers_storage)
-                //             .sub_slice((read.minimizer_pos as usize)..read.read.bases_count())
-                //             .to_string()
-                //     );
-                // }
-
                 // Load the chunks into the heap used for merge sorting all the chunks together
                 self.sorting_heap_data.push(SortingHeapElement {
                     index: chunk.start,
@@ -637,7 +463,6 @@ impl SortingExtender {
                             [self.sorting_support_vec[a.index - suffix_stack_block_start]];
                         let b = &remapped_minimizer_elements
                             [self.sorting_support_vec[b.index - suffix_stack_block_start]];
-                        // a.minimizer_pos.cmp(&b.minimizer_pos)
                         unsafe {
                             a.read
                                 .get_prefix_difference(
@@ -685,15 +510,6 @@ impl SortingExtender {
             // The post suffix size, that is the suffix share of this block with the next read.
             let max_allowed_suffix_post = self.lcs_array[suffix_stack_block_last - 1];
 
-            /*
-               WWWWWWWWWW#######YYYYY<allowed_prev>ZZZZZZ
-               XXXXXXXXXX#######YYYYYYYYYYY
-               PPPPPPXXXX#######YYYYYYYYYYY
-               HHHHXXXXXX#######YYYYYYYYYYY
-               WWWWWWWXXX#######YYYYYYYYYYY
-               ZZZZZZXXXX#######YYYYYYY<allowed_post>WWWW
-            */
-
             let max_allowed_suffix = max_allowed_suffix_prev.max(max_allowed_suffix_post);
 
             assert!(max_allowed_suffix < needed_suffix);
@@ -706,20 +522,11 @@ impl SortingExtender {
                 needed_suffix,
                 max_allowed_suffix,
                 // &mut output_read,
-                |a, b| {
-                    debug_supertigs.push((a, b));
-                    output_read(a, b)
-                },
+                |a, b| output_read(a, b),
             );
 
             self.forward_skip[suffix_stack_block_start] =
                 suffix_stack_block_last - suffix_stack_block_start;
-
-            // println!("Next position: {}", next_position);
-            // println!("Max allowed suffix: {}", max_allowed_suffix);
-            // println!("Max allowed suffix prev: {}", max_allowed_suffix_prev);
-            // println!("Max allowed suffix post: {}", max_allowed_suffix_post);
-            // println!("Processed stack: {:?}", self.processing_stack.len());
 
             next_position = suffix_stack_block_last;
 
@@ -729,60 +536,6 @@ impl SortingExtender {
                     .truncate(last_stack_element.sorted_chunks_start);
             }
         }
-
-        check_kmers(k, &debug_reads, superkmers_storage, &debug_supertigs);
-        // println!(
-        //     "AAA Written Count {}/{}",
-        //     count,
-        //     remapped_minimizer_elements.len()
-        // );
-        // if count + 10 < remapped_minimizer_elements.len() {
-        //     panic!("AAAA")
-        // }
-
-        //         // Supertig: TACTTCTATGTCCTGTAATGAGAATCCGTTTTCCTCCTGACTG with multiplicity: 5
-        //         // Supertig: TACTTCTATGTCCTGTAATGAGAATCCGTTTTCCTCCTGACTG with multiplicity: 11
-
-        //         // Debug TACTTCTATGTCCTGTAATGAGAATCCGTTTTCCTCCTGACTG
-        //         // Supertig: TACTTCTATGTCCTGTAATGAGAATCCGTTTTCCTCCTGACTG with multiplicity: 11 expected 16? RC: CAGTCAGGAGGAAAACGGATTCTCATTACAGGACATAGAAGTA
-
-        //         // println!("Chunk size: {} elcount: {}", lower_bound - start_element_idx, reads.len());
-        //         // println!(
-        //         //     "Supertig: {} with multiplicity: {} and size: {} gc: {} offset: {} minimizer: {} count: {}/{}",
-        //         //     supertig.to_string(),
-        //         //     multiplicity,
-        //         //     needed_suffix,
-        //         //     global_counter,
-        //         //     supertig_offset,
-        //         //     prefix_element
-        //         //         .read
-        //         //         .as_reference(superkmers_storage)
-        //         //         .sub_slice(
-        //         //             supertig_offset..supertig_offset + global_data.m,
-        //         //         ).to_string(),
-        //         //         consumed_kmers,
-        //         //     lower_bound - start_element_idx
-        //         // );
-
-        //         global_counter += 1;
-
-        //    Supertig: an unitig fully contained in all super-kmers where one of its k-mers is present
-
-        //    1. Find all supertigs starting from the rightmost and going left
-        //    2. Save info about supertigs in each super-kmer they belong
-        //    3. If a right-supertig is found, check if its multiplicity matches the found one and its unique, in case mark it as joinable using a linked list
-        //    4. Keep all the linked list heads
-        //    5. At halfpoint, use the backward index to avoid including too many kmers in the search (only if worth it)
-        //    6. Iterate each list and join the supertigs in an unitig
-        //    7. PROFIT
-        // */
-        // TODO:
-
-        // If there are multiple matches when going left, it means that the current kmer is branching. Else it is guaranteed to be singly extendable to the left.
-        // Keep rightmost last used kmer, to handle already taken kmers.
-        // For simplitigs, in case of branching follow the reference super-kmer
-        // Keep a rolling window sum of multiplicities, to allow immediate check for abundance thresholds
-        //
     }
 }
 
