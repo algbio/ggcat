@@ -161,29 +161,35 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                             // }
                             // return;
 
-                            sorting_extender.process_reads(
-                                el,
-                                &map_struct.superkmers_storage,
-                                global_data.k,
-                                |read, mult| {
-                                    let read_index = current_bucket.add_compressed_read(
-                                        PartialUnitigExtraData {
-                                            colors: Default::default(),
-                                        },
-                                        read,
-                                        &temp_buffer,
-                                    );
+                            let has_duplicates = { el.iter().any(|e| e.is_window_duplicate) };
 
-                                    // + output all the supertigs until min_suffix is reached
-                                    // then keep track of mergable supertigs
-                                    // println!(
-                                    //     "Mult: {} / read: {}",
-                                    //     multiplicity,
-                                    //
-                                    //         .to_string()
-                                    // );
-                                },
-                            );
+                            if !has_duplicates {
+                                sorting_extender.process_reads(
+                                    el,
+                                    &map_struct.superkmers_storage,
+                                    global_data.k,
+                                    |read, mult| {
+                                        if mult > 1000 {
+                                            let read_index = current_bucket.add_compressed_read(
+                                                PartialUnitigExtraData {
+                                                    colors: Default::default(),
+                                                },
+                                                read,
+                                                &temp_buffer,
+                                            );
+                                        }
+
+                                        // + output all the supertigs until min_suffix is reached
+                                        // then keep track of mergable supertigs
+                                        // println!(
+                                        //     "Mult: {} / read: {}",
+                                        //     multiplicity,
+                                        //
+                                        //         .to_string()
+                                        // );
+                                    },
+                                );
+                            }
                         }
                     });
 

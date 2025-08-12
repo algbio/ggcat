@@ -256,7 +256,7 @@ pub struct DeserializedRead<'a, E> {
     pub is_window_duplicate: bool,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct DeserializedReadIndependent<E> {
     pub read: CompressedReadIndipendent,
     pub extra: E,

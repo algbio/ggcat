@@ -76,7 +76,7 @@ impl PartialEq for BorrowableCompressedRead {
 
 impl Eq for BorrowableCompressedRead {}
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct CompressedReadIndipendent {
     pub start: usize,
     pub size: usize,
@@ -126,10 +126,21 @@ impl CompressedReadIndipendent {
             .as_reference(storage)
             .sub_slice(offset_self..self.bases_count())
             .to_string();
+
+        let self_slice = self_slice.replace("A", "0");
+        let self_slice = self_slice.replace("C", "1");
+        let self_slice = self_slice.replace("G", "3");
+        let self_slice = self_slice.replace("T", "2");
+
         let other_slice = other
             .as_reference(storage)
             .sub_slice(offset_other..other.bases_count())
             .to_string();
+
+        let other_slice = other_slice.replace("A", "0");
+        let other_slice = other_slice.replace("C", "1");
+        let other_slice = other_slice.replace("G", "3");
+        let other_slice = other_slice.replace("T", "2");
 
         if self_slice.starts_with(&other_slice) || other_slice.starts_with(&self_slice) {
             return (usize::MAX, self_slice.len().cmp(&other_slice.len()));
@@ -161,19 +172,24 @@ impl CompressedReadIndipendent {
 
             let bases_count = self_size.min(other_size);
             let mut offset = 0;
+
             while offset < bases_count {
                 let first = (self_ptr as *const u64).read_unaligned();
                 let second = (other_ptr as *const u64).read_unaligned();
+                let remaining_bases = bases_count - offset;
+                let remaining_bases_mask: u64 = if remaining_bases >= 32 {
+                    u64::MAX
+                } else {
+                    (1u64 << ((remaining_bases * 2) as u32)) - 1
+                };
 
-                let differences = first ^ second;
+                let differences = (first ^ second) & remaining_bases_mask;
                 if differences != 0 {
                     // Find the first base mismatch
                     let first_diff = differences.trailing_zeros() / 2;
                     let diff_offset = offset + first_diff as usize;
 
                     let first_diff_mask = differences & (!differences + 1);
-
-                    // TODO: Fix comdition here
 
                     return (
                         diff_offset.min(bases_count),
@@ -213,8 +229,14 @@ impl CompressedReadIndipendent {
             while offset < bases_count {
                 let first = (self_ptr as *const u64).read_unaligned();
                 let second = (other_ptr as *const u64).read_unaligned();
+                let remaining_bases = bases_count - offset;
+                let remaining_bases_mask: u64 = if remaining_bases >= 32 {
+                    u64::MAX
+                } else {
+                    u64::MAX // (u64::MAX >> ((64 - remaining_bases * 2) as u32)) - 1
+                };
 
-                let differences = first ^ second;
+                let differences = (first ^ second) & remaining_bases_mask;
                 if differences != 0 {
                     // Find the first base mismatch
                     let leading_zeros = differences.leading_zeros();

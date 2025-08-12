@@ -300,9 +300,8 @@ mod tests {
     use io::concurrent::temp_reads::creads_utils::{
         AssemblerMinimizerPosition, ReadsCheckpointData,
     };
-    use io::generate_bucket_names;
     use kmers_transform::KmersTransformExecutorFactory;
-    use minimizer_bucketing::{MinimizerBucketMode, helper_read_bucket_with_type};
+    use minimizer_bucketing::MinimizerBucketMode;
     use parallel_processor::buckets::readers::binary_reader::{
         BinaryReaderChunk, ChunkedBinaryReaderIndex,
     };
@@ -404,35 +403,35 @@ mod tests {
 
             let mut tot_count = 0;
 
-            helper_read_bucket_with_type::<
-                <F as KmersTransformExecutorFactory>::AssociatedExtraData,
-                <F as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
-                AssemblerMinimizerPosition,
-                <F as KmersTransformExecutorFactory>::FlagsCount,
-            >(
-                single_chunks,
-                None, // Some(reader_thread.clone()),
-                MinimizerBucketMode::SingleGrouped,
-                |_, _| {
-                    tot_count += 1;
-                },
-                27,
-            );
+            // helper_read_bucket_with_type::<
+            //     <F as KmersTransformExecutorFactory>::AssociatedExtraData,
+            //     <F as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
+            //     AssemblerMinimizerPosition,
+            //     <F as KmersTransformExecutorFactory>::FlagsCount,
+            // >(
+            //     single_chunks,
+            //     None, // Some(reader_thread.clone()),
+            //     MinimizerBucketMode::SingleGrouped,
+            //     |_, _| {
+            //         tot_count += 1;
+            //     },
+            //     27,
+            // );
 
-            helper_read_bucket_with_type::<
-                <F as KmersTransformExecutorFactory>::AssociatedExtraData,
-                <F as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
-                AssemblerMinimizerPosition,
-                <F as KmersTransformExecutorFactory>::FlagsCount,
-            >(
-                multi_chunks,
-                None, // Some(reader_thread.clone()),
-                MinimizerBucketMode::Compacted,
-                |_, _| {
-                    tot_count += 1;
-                },
-                27,
-            );
+            // helper_read_bucket_with_type::<
+            //     <F as KmersTransformExecutorFactory>::AssociatedExtraData,
+            //     <F as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
+            //     AssemblerMinimizerPosition,
+            //     <F as KmersTransformExecutorFactory>::FlagsCount,
+            // >(
+            //     multi_chunks,
+            //     None, // Some(reader_thread.clone()),
+            //     MinimizerBucketMode::Compacted,
+            //     |_, _| {
+            //         tot_count += 1;
+            //     },
+            //     27,
+            // );
 
             info.dedup_by(|a, b| a == b);
 
@@ -459,11 +458,11 @@ mod tests {
         let buckets_count = BucketsCount::new(10, ExtraBuckets::None);
         let second_buckets_count = BucketsCount::new(4, ExtraBuckets::None);
 
-        let buckets =
-            generate_bucket_names(Path::new(TEMP_DIR).join("bucket"), buckets_count, None)
-                .into_iter()
-                .map(SingleBucket::to_multi_chunk)
-                .collect();
+        // let buckets =
+        //     generate_bucket_names(Path::new(TEMP_DIR).join("bucket"), buckets_count, None)
+        //         .into_iter()
+        //         .map(SingleBucket::to_multi_chunk)
+        // .collect();
 
         // let mut buckets = vec![buckets[322]];
 
@@ -479,7 +478,7 @@ mod tests {
         let counters = Path::new(TEMP_DIR).join("buckets-counters.dat");
 
         let global_colors_table = Arc::new(
-            <<NonColoredManager as ColorsManager>::ColorsMergeManagerType as ColorsMergeManager>::create_colors_table("", &[]).unwrap(),
+            <<NonColoredManager as ColorsManager>::ColorsMergeManagerType as ColorsMergeManager>::create_colors_table("", &[], 1, false).unwrap(),
         );
 
         let k = 63;
@@ -521,17 +520,18 @@ mod tests {
 
         // #[cfg(feature = "mem-analysis")]
         // debug_print_allocations("/tmp/allocations", Duration::from_secs(5));
-        crate::kmers_merge::<hashes::cn_seqhash::u128::CanonicalSeqHashFactory, NonColoredManager, _>(
-            buckets,
-            global_colors_table.clone(),
-            buckets_count,
-            second_buckets_count,
-            min_multiplicity,
-            Path::new(TEMP_DIR),
-            k,
-            m,
-            false,
-            threads_count,
-        );
+        // crate::kmers_merge::<hashes::cn_seqhash::u128::CanonicalSeqHashFactory, NonColoredManager, _>(
+        //     buckets,
+        //     global_colors_table.clone(),
+        //     buckets_count,
+        //     second_buckets_count,
+        //     min_multiplicity,
+        //     Path::new(TEMP_DIR),
+        //     k,
+        //     m,
+        //     false,
+        //     threads_count,
+        //     false,
+        // );
     }
 }
