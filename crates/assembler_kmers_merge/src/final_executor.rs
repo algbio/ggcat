@@ -9,7 +9,7 @@ use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::{ColorsManager, color_types};
 use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE};
 use ggcat_logging::stats;
-use hashes::HashFunctionFactory;
+use hashes::{HashFunctionFactory, HashableSequence};
 use instrumenter::local_setup_instrumenter;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::DeserializedReadIndependent;
@@ -124,8 +124,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                         .initialize(minimizer_elements.len() * (global_data.k * 2 / 8));
 
                     for element in minimizer_elements.iter() {
-                        let mut offset = 0;
-                        while offset + 16 < element.read.bases_count() {
+                        let mut offset = element.minimizer_pos as usize;
+                        loop {
                             let hash = unsafe {
                                 element
                                     .read
@@ -134,9 +134,20 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                                     .compute_hash_aligned_overflow16()
                             };
                             map_struct.resplitting_map.add_element(hash, *element);
-                            offset += 16;
+
+                            if offset < 16 {
+                                break;
+                            }
+                            offset -= 16;
                         }
                     }
+
+                    // TODO:
+                    /*
+                       Split all the superkmers using additional hashes with proper spacing.
+                       Keep track of found supertigs having overlapping k-2 mers
+                       Join supertigs having unique k-2 mers overlaps
+                    */
 
                     let mut count = 0;
                     let mut single = 0;
@@ -177,6 +188,26 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                                                 read,
                                                 &temp_buffer,
                                             );
+                                        }
+
+                                        if read.bases_count() >= global_data.k {
+                                            use std::sync::atomic::*;
+                                            static AVG_SIZE: AtomicUsize = AtomicUsize::new(0);
+                                            static COUNT: AtomicUsize = AtomicUsize::new(0);
+                                            let size = AVG_SIZE
+                                                .fetch_add(read.bases_count(), Ordering::Relaxed);
+                                            let count = COUNT.fetch_add(1, Ordering::Relaxed);
+
+                                            if read.bases_count() >= global_data.k {
+                                                println!(
+                                                    "Found read: {} {} avg: {:.2} bases k: {} mult: {}",
+                                                    read.bases_count(),
+                                                    read.to_string(),
+                                                    size as f64 / count as f64,
+                                                    global_data.k,
+                                                    mult
+                                                );
+                                            }
                                         }
 
                                         // + output all the supertigs until min_suffix is reached

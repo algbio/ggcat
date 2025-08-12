@@ -1,7 +1,6 @@
 use std::{iter::repeat, mem::take, ops::Range};
 
 use binary_heap_plus::BinaryHeap;
-use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::DeserializedReadIndependent;
 
@@ -196,6 +195,8 @@ impl SortingExtender {
             let target_index_end = prefix_element.last_index;
             let shared_suffix = prefix_element.suffix_length;
 
+            let mut prev_share_km1mer = false;
+
             while element_target_index < target_index_end {
                 let reference = &reads[self.elements_mapping[element_target_index]];
                 let reference_index = element_target_index;
@@ -218,6 +219,7 @@ impl SortingExtender {
 
                     let total_matching = left_matching + shared_suffix;
                     if total_matching < k {
+                        prev_share_km1mer = total_matching >= k - 1;
                         // Found a superkmer not sharing the kmer, break the loop
                         break;
                     }
@@ -521,7 +523,6 @@ impl SortingExtender {
                 k,
                 needed_suffix,
                 max_allowed_suffix,
-                // &mut output_read,
                 |a, b| output_read(a, b),
             );
 
