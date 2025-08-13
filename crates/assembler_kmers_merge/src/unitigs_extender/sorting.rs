@@ -1,7 +1,7 @@
 use std::{iter::repeat, mem::take, ops::Range};
 
 use binary_heap_plus::BinaryHeap;
-use io::compressed_read::CompressedRead;
+use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use io::concurrent::temp_reads::creads_utils::DeserializedReadIndependent;
 
 struct SuffixStackElement {
@@ -33,6 +33,14 @@ struct SortingHeapElement {
     last: usize,
 }
 
+#[derive(Clone)]
+struct Supertig {
+    read: CompressedReadIndipendent,
+    superkmers_count: usize,
+    multiplicity: usize,
+    next: usize,
+}
+
 #[derive(Default)]
 pub struct SortingExtender {
     /// Holds the skip values for each read. A skip value x greater than 1 means that the next x reads
@@ -52,19 +60,20 @@ pub struct SortingExtender {
     /// An array to map prefix-sorted elements to their original indices.
     elements_mapping: Vec<usize>,
 
-    /// Adjacent Longest Common Reversed Suffix (LCS) array in the suffix sorted reads.
+    /// Adjacent Longest Common Centered Suffix (LCCS) array in the suffix sorted reads.
     /// lcs_arra[0] contains the LCS between reads[0] and reads[1].
-    lcs_array: Vec<usize>,
+    lccs_array: Vec<usize>,
 
-    /// Adjacent Longest Common Reversed Prefix (LCP) array in the prefix sorted reads.
-    /// lcp_array[0] contains the LCP between reads[mapping[0]] and reads[mapping[1]].
-    lcp_array: Vec<usize>,
+    /// Adjacent Longest Common Centered Prefix (LCCP) array in the prefix sorted reads.
+    /// lcp_array[0] contains the LCCP between reads[mapping[0]] and reads[mapping[1]].
+    lccp_array: Vec<usize>,
 
-    /// Unused?
-    // rev_lcp_array: Vec<usize>,
+    /// The list of supertigs
+    supertigs: Vec<Supertig>,
 
-    /// Helper for radix sort, not used now
-    // reads_copy: Vec<DeserializedReadIndependent<E>>,
+    /// The mapping between supertigs and superkmers. This mapping is in the same order as the sorted supertigs,
+    /// so to access it the elements_mapping must be used.
+    supertigs_mapping: Vec<usize>,
 
     /// The stack of current portions of processed elements.
     processing_stack: Vec<SuffixStackElement>,
@@ -162,15 +171,15 @@ impl SortingExtender {
         target_suffix_length: usize,
         mut output_read: impl FnMut(CompressedRead<'a>, usize),
     ) {
-        // Compute the LCP array for the current range of reads.
+        // Compute the LCCP array for the current range of reads.
         {
-            self.lcp_array.clear();
+            self.lccp_array.clear();
             for idx in range.clone().skip(1) {
                 let a = &reads[self.elements_mapping[idx - 1]];
                 let b = &reads[self.elements_mapping[idx]];
-                self.lcp_array.push(unsafe {
+                self.lccp_array.push(unsafe {
                     a.read
-                        .get_prefix_difference(
+                        .get_centered_prefix_difference(
                             &b.read,
                             superkmers_storage,
                             a.minimizer_pos as usize,
@@ -180,7 +189,7 @@ impl SortingExtender {
                 })
             }
             // Last one has no matches with the following element
-            self.lcp_array.push(0);
+            self.lccp_array.push(0);
         }
 
         self.prefix_stack.clear();
@@ -194,8 +203,6 @@ impl SortingExtender {
             let mut element_target_index = prefix_element.index;
             let target_index_end = prefix_element.last_index;
             let shared_suffix = prefix_element.suffix_length;
-
-            let mut prev_share_km1mer = false;
 
             while element_target_index < target_index_end {
                 let reference = &reads[self.elements_mapping[element_target_index]];
@@ -215,11 +222,10 @@ impl SortingExtender {
                 while element_target_index < target_index_end {
                     let next_read = &reads[self.elements_mapping[element_target_index]];
 
-                    let left_matching = self.lcp_array[element_target_index - 1 - range.start];
+                    let left_matching = self.lccp_array[element_target_index - 1 - range.start];
 
                     let total_matching = left_matching + shared_suffix;
                     if total_matching < k {
-                        prev_share_km1mer = total_matching >= k - 1;
                         // Found a superkmer not sharing the kmer, break the loop
                         break;
                     }
@@ -265,13 +271,13 @@ impl SortingExtender {
         k: usize,
         mut output_read: impl FnMut(CompressedRead, usize),
     ) {
-        // 0. Sort (reversed) by suffix and compute a lcs array
+        // 0. Sort (reversed) by suffix and compute a lccs array
         {
-            self.lcs_array.clear();
+            self.lccs_array.clear();
             reads.sort_unstable_by(|a, b| unsafe {
                 let ar = a
                     .read
-                    .get_suffix_difference(
+                    .get_centered_suffix_difference(
                         &b.read,
                         superkmers_storage,
                         a.minimizer_pos as usize,
@@ -282,7 +288,7 @@ impl SortingExtender {
 
                 let br = a
                     .read
-                    .get_suffix_difference(
+                    .get_centered_suffix_difference(
                         &b.read,
                         superkmers_storage,
                         a.minimizer_pos as usize,
@@ -297,9 +303,9 @@ impl SortingExtender {
             for idx in 1..reads.len() {
                 let a = &reads[idx - 1];
                 let b = &reads[idx];
-                self.lcs_array.push(unsafe {
+                self.lccs_array.push(unsafe {
                     a.read
-                        .get_suffix_difference(
+                        .get_centered_suffix_difference(
                             &b.read,
                             superkmers_storage,
                             a.minimizer_pos as usize,
@@ -309,7 +315,7 @@ impl SortingExtender {
                 })
             }
             // Last one has no matches with the following element
-            self.lcs_array.push(0);
+            self.lccs_array.push(0);
         }
 
         // 1. Save the suffixes lengths for each read
@@ -321,16 +327,20 @@ impl SortingExtender {
             }
         }
 
-        // // 2. Sort the elements indices for the prefixes and compute a (centered/reversed) lcp array
+        // 2. Reinitialize the arrays
         {
             self.elements_mapping.clear();
-
             self.elements_mapping.extend(0..reads.len());
-        }
 
-        // Reinitialize the skip array
-        self.forward_skip.clear();
-        self.forward_skip.extend(repeat(1).take(reads.len()));
+            self.supertigs.clear();
+
+            self.supertigs_mapping.clear();
+            self.supertigs_mapping
+                .extend(repeat(usize::MAX).take(reads.len()));
+
+            self.forward_skip.clear();
+            self.forward_skip.extend(repeat(1).take(reads.len()));
+        }
 
         self.sorted_chunks.clear();
 
@@ -368,7 +378,7 @@ impl SortingExtender {
 
             // Try to extend the current stack elements until the suffix is not enough
             while *suffix_stack_block_last < self.elements_mapping.len()
-                && self.lcs_array[*suffix_stack_block_last - 1] >= needed_suffix
+                && self.lccs_array[*suffix_stack_block_last - 1] >= needed_suffix
             {
                 // A longer suffix is found, process it before continuing
                 if self.suffix_sizes[*suffix_stack_block_last] > needed_suffix {
@@ -432,7 +442,7 @@ impl SortingExtender {
                         let a = &remapped_minimizer_elements[*a];
                         let b = &remapped_minimizer_elements[*b];
                         a.read
-                            .get_prefix_difference(
+                            .get_centered_prefix_difference(
                                 &b.read,
                                 superkmers_storage,
                                 a.minimizer_pos as usize,
@@ -467,7 +477,7 @@ impl SortingExtender {
                             [self.sorting_support_vec[b.index - suffix_stack_block_start]];
                         unsafe {
                             a.read
-                                .get_prefix_difference(
+                                .get_centered_prefix_difference(
                                     &b.read,
                                     superkmers_storage,
                                     a.minimizer_pos as usize,
@@ -510,7 +520,7 @@ impl SortingExtender {
             };
 
             // The post suffix size, that is the suffix share of this block with the next read.
-            let max_allowed_suffix_post = self.lcs_array[suffix_stack_block_last - 1];
+            let max_allowed_suffix_post = self.lccs_array[suffix_stack_block_last - 1];
 
             let max_allowed_suffix = max_allowed_suffix_prev.max(max_allowed_suffix_post);
 
@@ -580,7 +590,7 @@ mod tests {
                     .sub_slice(b.minimizer_pos as usize..b.read.bases_count())
                     .to_string(),
                 a.read
-                    .get_suffix_difference(
+                    .get_centered_suffix_difference(
                         &b.read,
                         &storage,
                         a.minimizer_pos as usize,
@@ -591,7 +601,7 @@ mod tests {
             );
 
             a.read
-                .get_suffix_difference(
+                .get_centered_suffix_difference(
                     &b.read,
                     &storage,
                     a.minimizer_pos as usize,
@@ -622,7 +632,7 @@ mod tests {
             println!("Compare at indes: {}", i);
             let res = unsafe {
                 a.read
-                    .get_suffix_difference(
+                    .get_centered_suffix_difference(
                         &b.read,
                         &storage,
                         a.minimizer_pos as usize,

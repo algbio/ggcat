@@ -156,7 +156,7 @@ impl CompressedReadIndipendent {
     }
 
     #[inline(always)]
-    pub unsafe fn get_suffix_difference(
+    pub unsafe fn get_centered_suffix_difference(
         &self,
         other: &Self,
         storage: &[u8],
@@ -210,7 +210,7 @@ impl CompressedReadIndipendent {
     }
 
     #[inline(always)]
-    pub unsafe fn get_prefix_difference(
+    pub unsafe fn get_centered_prefix_difference(
         &self,
         other: &Self,
         storage: &[u8],
@@ -993,7 +993,7 @@ mod tests {
         let second = CompressedReadIndipendent::from_plain(bases2, &mut buffer);
         buffer.reserve(ALIGNMENT_WORD_SIZE);
 
-        let result = unsafe { first.get_suffix_difference(&second, &buffer, 0, 0) };
+        let result = unsafe { first.get_centered_suffix_difference(&second, &buffer, 0, 0) };
         assert_eq!(result, (11, Ordering::Less))
     }
 
@@ -1007,7 +1007,7 @@ mod tests {
         let second = CompressedReadIndipendent::from_plain(bases2, &mut buffer);
         buffer.reserve(ALIGNMENT_WORD_SIZE);
 
-        let result = unsafe { first.get_prefix_difference(&second, &buffer, 4, 8) };
+        let result = unsafe { first.get_centered_prefix_difference(&second, &buffer, 4, 8) };
         assert_eq!(result, (usize::MAX, Ordering::Less))
     }
 

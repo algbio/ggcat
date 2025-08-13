@@ -32,7 +32,7 @@ impl<E> RadixSortableRead for DeserializedReadIndependent<E> {
     fn compare(&self, other: &Self, context: Self::Context<'_>) -> Ordering {
         unsafe {
             self.read
-                .get_suffix_difference(
+                .get_centered_suffix_difference(
                     &other.read,
                     context,
                     self.minimizer_pos as usize,
