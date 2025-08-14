@@ -75,6 +75,9 @@ pub struct SortingExtender {
     /// so to access it the elements_mapping must be used.
     supertigs_mapping: Vec<usize>,
 
+    /// The current right branching supertigs
+    branching_supertigs: Vec<usize>,
+
     /// The stack of current portions of processed elements.
     processing_stack: Vec<SuffixStackElement>,
 
@@ -159,6 +162,65 @@ pub struct SortingExtender {
 // }
 
 impl SortingExtender {
+    pub fn process_supertigs<'a>(
+        &mut self,
+        superkmers_storage: &'a Vec<u8>,
+        supertigs_range_start: usize,
+    ) {
+        self.branching_supertigs.sort_unstable();
+        self.branching_supertigs.dedup();
+        if self.branching_supertigs.last() == Some(&usize::MAX) {
+            self.branching_supertigs.pop();
+        }
+
+        if self.branching_supertigs.len() > 4 {
+            for supertig in &self.branching_supertigs {
+                println!(
+                    "ERROR Right branching supertig: {}",
+                    self.supertigs[*supertig]
+                        .read
+                        .as_reference(superkmers_storage)
+                        .to_string()
+                );
+            }
+
+            for supertig in &self.supertigs[supertigs_range_start..] {
+                println!(
+                    "ERROR Left supertig: {} with multiplicity {}",
+                    supertig.read.as_reference(superkmers_storage).to_string(),
+                    supertig.multiplicity
+                );
+            }
+        }
+
+        assert!(self.branching_supertigs.len() <= 4);
+        assert!(self.supertigs.len() - supertigs_range_start <= 4);
+
+        // for supertig in &self.supertigs[supertigs_range_start..] {
+        //     output_read(
+        //         supertig.read.as_reference(superkmers_storage),
+        //         supertig.multiplicity,
+        //     );
+        // }
+
+        // if self.supertigs.len() - supertigs_range_start > 1 {
+        //     println!(
+        //         "Matching supertigs count: {}",
+        //         self.supertigs.len() - supertigs_range_start
+        //     );
+        //     if self.supertigs.len() - supertigs_range_start > 4 {
+        //         for supertig in &self.supertigs[supertigs_range_start..] {
+        //             println!(
+        //                 "ERROR Supertig: {} with multiplicity {}",
+        //                 supertig.read.as_reference(superkmers_storage).to_string(),
+        //                 supertig.multiplicity
+        //             );
+        //         }
+        //     }
+        //     assert!(self.supertigs.len() - supertigs_range_start <= 4);
+        // }
+    }
+
     /// Processes elements in range, assuming they are prefix sorted and share the same suffix of length `suffix_length`.
     /// Reduces every read suffix to exactly `target_suffix_length` bases, and outputs the used kmers
     pub fn process_reads_block<'a, E: Copy>(
@@ -204,20 +266,52 @@ impl SortingExtender {
             let target_index_end = prefix_element.last_index;
             let shared_suffix = prefix_element.suffix_length;
 
+            let mut supertigs_range_start = self.supertigs.len();
+
             while element_target_index < target_index_end {
                 let reference = &reads[self.elements_mapping[element_target_index]];
                 let reference_index = element_target_index;
+
+                self.branching_supertigs
+                    .push(self.supertigs_mapping[self.elements_mapping[element_target_index]]);
+
+                // if self.supertigs_mapping[self.elements_mapping[element_target_index]] != usize::MAX
+                // {
+                //     println!(
+                //         "Current reference: {} supertig: {}",
+                //         self.supertigs
+                //             [self.supertigs_mapping[self.elements_mapping[element_target_index]]]
+                //             .read
+                //             .as_reference(superkmers_storage)
+                //             .to_string(),
+                //         self.supertigs
+                //             [self.supertigs_mapping[self.elements_mapping[element_target_index]]]
+                //             .read
+                //             .as_reference(superkmers_storage)
+                //             .to_string()
+                //     );
+                // }
 
                 element_target_index += 1;
 
                 let mut minimum_prefix_share = reference.minimizer_pos as usize;
                 if minimum_prefix_share + shared_suffix < k {
+                    let next_matching = self.lccp_array[element_target_index - 1 - range.start];
+                    if next_matching + shared_suffix < k - 1 {
+                        // Process supertigs
+                        self.process_supertigs(superkmers_storage, supertigs_range_start);
+                        self.branching_supertigs.clear();
+                        supertigs_range_start = self.supertigs.len();
+                    }
+
                     // No more kmers to output, skip this read
                     self.suffix_sizes[reference_index] = 0;
                     continue;
                 }
 
                 let mut multiplicity = reference.multiplicity as usize;
+
+                let mut km1mer_break = true;
 
                 while element_target_index < target_index_end {
                     let next_read = &reads[self.elements_mapping[element_target_index]];
@@ -226,9 +320,13 @@ impl SortingExtender {
 
                     let total_matching = left_matching + shared_suffix;
                     if total_matching < k {
+                        km1mer_break = total_matching < k - 1;
                         // Found a superkmer not sharing the kmer, break the loop
                         break;
                     }
+
+                    self.branching_supertigs
+                        .push(self.supertigs_mapping[self.elements_mapping[element_target_index]]);
 
                     minimum_prefix_share = minimum_prefix_share.min(left_matching);
                     multiplicity += next_read.multiplicity as usize;
@@ -256,13 +354,14 @@ impl SortingExtender {
                     self.supertigs_mapping[self.elements_mapping[idx]] = supertig_index;
                 }
 
-                output_read(
-                    reference.read.as_reference(superkmers_storage).sub_slice(
-                        (reference.minimizer_pos as usize + leftmost_allowed_suffix - k)
-                            ..(reference.minimizer_pos as usize + shared_suffix),
-                    ),
-                    multiplicity,
-                );
+                if km1mer_break {
+                    // Process supertigs
+                    self.process_supertigs(superkmers_storage, supertigs_range_start);
+                    self.branching_supertigs.clear();
+
+                    // Analyze the last added supertigs and check for branching
+                    supertigs_range_start = self.supertigs.len();
+                }
 
                 if leftmost_allowed_suffix != target_suffix_length + 1 {
                     self.prefix_stack.push(PrefixStackElement {
