@@ -65,7 +65,7 @@ pub struct SortingExtender {
     lccs_array: Vec<usize>,
 
     /// Adjacent Longest Common Centered Prefix (LCCP) array in the prefix sorted reads.
-    /// lcp_array[0] contains the LCCP between reads[mapping[0]] and reads[mapping[1]].
+    /// lccp_array[0] contains the LCCP between reads[mapping[0]] and reads[mapping[1]].
     lccp_array: Vec<usize>,
 
     /// The list of supertigs
@@ -240,6 +240,21 @@ impl SortingExtender {
                 let prefix_limited_suffix = k - minimum_prefix_share;
                 let suffix_limited_suffix = target_suffix_length + 1;
                 let leftmost_allowed_suffix = prefix_limited_suffix.max(suffix_limited_suffix);
+
+                let supertig_index = self.supertigs.len();
+                self.supertigs.push(Supertig {
+                    read: reference.read.sub_slice(
+                        (reference.minimizer_pos as usize + leftmost_allowed_suffix - k)
+                            ..(reference.minimizer_pos as usize + shared_suffix),
+                    ),
+                    superkmers_count: element_target_index - reference_index,
+                    multiplicity,
+                    next: usize::MAX,
+                });
+
+                for idx in reference_index..element_target_index {
+                    self.supertigs_mapping[self.elements_mapping[idx]] = supertig_index;
+                }
 
                 output_read(
                     reference.read.as_reference(superkmers_storage).sub_slice(

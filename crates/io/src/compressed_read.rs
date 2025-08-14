@@ -337,6 +337,16 @@ impl CompressedReadIndipendent {
     }
 
     #[inline]
+    pub fn sub_slice(&self, range: Range<usize>) -> Self {
+        assert!(range.start <= range.end);
+
+        CompressedReadIndipendent {
+            size: range.end - range.start,
+            start: self.start + range.start,
+        }
+    }
+
+    #[inline]
     pub fn as_reference<'a>(&self, storage: &'a [u8]) -> CompressedRead<'a> {
         CompressedRead {
             size: self.size,

@@ -190,25 +190,25 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                                             );
                                         }
 
-                                        if read.bases_count() >= global_data.k {
-                                            use std::sync::atomic::*;
-                                            static AVG_SIZE: AtomicUsize = AtomicUsize::new(0);
-                                            static COUNT: AtomicUsize = AtomicUsize::new(0);
-                                            let size = AVG_SIZE
-                                                .fetch_add(read.bases_count(), Ordering::Relaxed);
-                                            let count = COUNT.fetch_add(1, Ordering::Relaxed);
+                                        // if read.bases_count() >= global_data.k {
+                                        //     use std::sync::atomic::*;
+                                        //     static AVG_SIZE: AtomicUsize = AtomicUsize::new(0);
+                                        //     static COUNT: AtomicUsize = AtomicUsize::new(0);
+                                        //     let size = AVG_SIZE
+                                        //         .fetch_add(read.bases_count(), Ordering::Relaxed);
+                                        //     let count = COUNT.fetch_add(1, Ordering::Relaxed);
 
-                                            if read.bases_count() >= global_data.k {
-                                                println!(
-                                                    "Found read: {} {} avg: {:.2} bases k: {} mult: {}",
-                                                    read.bases_count(),
-                                                    read.to_string(),
-                                                    size as f64 / count as f64,
-                                                    global_data.k,
-                                                    mult
-                                                );
-                                            }
-                                        }
+                                        //     if read.bases_count() >= global_data.k {
+                                        //         println!(
+                                        //             "Found read: {} {} avg: {:.2} bases k: {} mult: {}",
+                                        //             read.bases_count(),
+                                        //             read.to_string(),
+                                        //             size as f64 / count as f64,
+                                        //             global_data.k,
+                                        //             mult
+                                        //         );
+                                        //     }
+                                        // }
 
                                         // + output all the supertigs until min_suffix is reached
                                         // then keep track of mergable supertigs
