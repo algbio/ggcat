@@ -38,9 +38,9 @@ struct SortingHeapElement {
 #[derive(Clone)]
 struct Supertig {
     read: CompressedReadIndipendent,
-    superkmers_count: usize,
     multiplicity: usize,
     next: usize,
+    origin_index: usize,
     linked: bool,
 }
 
@@ -290,6 +290,8 @@ impl SortingExtender {
                 self.branching_supertigs
                     .push(self.supertigs_mapping[self.elements_mapping[element_target_index]]);
 
+                let mut origin_read_index = reference.index;
+
                 // if self.supertigs_mapping[self.elements_mapping[element_target_index]] != usize::MAX
                 // {
                 //     println!(
@@ -348,6 +350,7 @@ impl SortingExtender {
 
                     minimum_prefix_share = minimum_prefix_share.min(left_matching);
                     multiplicity += next_read.data.multiplicity as usize;
+                    origin_read_index = origin_read_index.min(next_read.index);
                     element_target_index += 1;
                 }
 
@@ -363,9 +366,9 @@ impl SortingExtender {
                         (reference.data.minimizer_pos as usize + leftmost_allowed_suffix - k)
                             ..(reference.data.minimizer_pos as usize + shared_suffix),
                     ),
-                    superkmers_count: element_target_index - reference_index,
                     multiplicity,
                     next: usize::MAX,
+                    origin_index: origin_read_index,
                     linked: false,
                 });
 
@@ -406,6 +409,10 @@ impl SortingExtender {
         for idx in range {
             self.suffix_sizes[idx] = target_suffix_length;
         }
+    }
+
+    pub fn clear_supertigs(&mut self) {
+        self.supertigs.clear();
     }
 
     pub fn process_reads<E: Copy>(
@@ -463,8 +470,6 @@ impl SortingExtender {
         {
             self.elements_mapping.clear();
             self.elements_mapping.extend(0..reads.len());
-
-            self.supertigs.clear();
 
             self.supertigs_mapping.clear();
             self.supertigs_mapping

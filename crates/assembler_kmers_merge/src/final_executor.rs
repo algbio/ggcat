@@ -125,6 +125,18 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
                     let offset_delta = 16.min(global_data.k);
 
+                    let mut count = 0;
+                    let mut single = 0;
+                    let mut avg_size = 0;
+
+                    let temp_buffer = Default::default();
+
+                    sorting_extender.clear_supertigs();
+
+                    minimizer_elements.sort_unstable_by_key(|e| {
+                        Reverse(e.read.bases_count() - e.minimizer_pos as usize)
+                    });
+
                     for (index, element) in minimizer_elements.iter().enumerate() {
                         let mut offset = element.minimizer_pos as usize;
                         loop {
@@ -140,6 +152,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                                         .compute_hash_aligned_overflow16()
                                 };
                                 let mut new_element = *element;
+                                new_element.minimizer_pos -= read_start as u16;
                                 new_element.read = element.read.sub_slice(read_start..read_end);
 
                                 map_struct.resplitting_map.add_element(
@@ -157,19 +170,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                             offset -= offset_delta;
                         }
                     }
-
-                    // TODO:
-                    /*
-                       Split all the superkmers using additional hashes with proper spacing.
-                       Keep track of found supertigs having overlapping k-2 mers
-                       Join supertigs having unique k-2 mers overlaps
-                    */
-
-                    let mut count = 0;
-                    let mut single = 0;
-                    let mut avg_size = 0;
-
-                    let temp_buffer = Default::default();
 
                     map_struct.resplitting_map.process_elements(|el| {
                         count += 1;
