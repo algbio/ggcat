@@ -1,15 +1,10 @@
 use crate::unitigs_extender::hashmap::HashMapUnitigsExtender;
 use crate::unitigs_extender::{GlobalExtenderParams, UnitigsExtenderTrait};
 use crate::{GlobalMergeData, ParallelKmersMergeFactory};
-use assembler_minimizer_bucketing::rewrite_bucket::get_superkmer_minimizer;
 use colors::colors_manager::{ColorsManager, color_types};
-use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use ggcat_logging::stats;
 use ggcat_logging::stats::KmersMergeBucketReport;
-use hashbrown::HashTable;
-use hashbrown::hash_table::Entry;
-use hashes::default::MNHFactory;
-use hashes::{HashFunction, HashFunctionFactory, HashableSequence};
+use hashes::HashFunctionFactory;
 use io::DUPLICATES_BUCKET_EXTRA;
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::creads_utils::{DeserializedRead, DeserializedReadIndependent};
@@ -31,11 +26,16 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use structs::map_entry::MapEntry;
 use utils::fuzzy_hashmap::FuzzyHashmap;
-use utils::inline_vec::Allocator;
 
 instrumenter::use_instrumenter!();
 
 pub(crate) static KMERGE_TEMP_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+#[derive(Copy, Clone, Default)]
+pub struct ResplittedRead<E> {
+    pub data: DeserializedReadIndependent<E>,
+    pub index: usize,
+}
 
 pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManager> {
     pub detailed_stats: KmersMergeBucketReport,
@@ -47,7 +47,7 @@ pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManage
     pub minimizer_superkmers: FuzzyHashmap<DeserializedReadIndependent<<
         ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>,
 
-    pub resplitting_map: FuzzyHashmap<DeserializedReadIndependent<<
+    pub resplitting_map: FuzzyHashmap<ResplittedRead<<
         ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>,
 
 

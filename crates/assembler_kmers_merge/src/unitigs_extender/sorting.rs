@@ -4,6 +4,8 @@ use binary_heap_plus::BinaryHeap;
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use io::concurrent::temp_reads::creads_utils::DeserializedReadIndependent;
 
+use crate::map_processor::ResplittedRead;
+
 struct SuffixStackElement {
     /// The start index of the current chunk of reads being processed
     index: usize,
@@ -39,6 +41,7 @@ struct Supertig {
     superkmers_count: usize,
     multiplicity: usize,
     next: usize,
+    linked: bool,
 }
 
 #[derive(Default)]
@@ -166,11 +169,22 @@ impl SortingExtender {
         &mut self,
         superkmers_storage: &'a Vec<u8>,
         supertigs_range_start: usize,
+        // mut output_read: impl FnMut(CompressedRead<'a>, usize),
     ) {
         self.branching_supertigs.sort_unstable();
         self.branching_supertigs.dedup();
         if self.branching_supertigs.last() == Some(&usize::MAX) {
             self.branching_supertigs.pop();
+        }
+
+        let x = self.supertigs.len() - supertigs_range_start;
+
+        let unitig_extendable = self.branching_supertigs.len() == 1 && x == 1;
+
+        if unitig_extendable {
+            // output_read
+            self.supertigs[self.branching_supertigs[0]].linked = true;
+            self.supertigs[supertigs_range_start].next = self.branching_supertigs[0];
         }
 
         if self.branching_supertigs.len() > 4 {
@@ -225,7 +239,7 @@ impl SortingExtender {
     /// Reduces every read suffix to exactly `target_suffix_length` bases, and outputs the used kmers
     pub fn process_reads_block<'a, E: Copy>(
         &mut self,
-        reads: &[DeserializedReadIndependent<E>],
+        reads: &[ResplittedRead<E>],
         superkmers_storage: &'a Vec<u8>,
         range: Range<usize>,
         k: usize,
@@ -240,12 +254,13 @@ impl SortingExtender {
                 let a = &reads[self.elements_mapping[idx - 1]];
                 let b = &reads[self.elements_mapping[idx]];
                 self.lccp_array.push(unsafe {
-                    a.read
+                    a.data
+                        .read
                         .get_centered_prefix_difference(
-                            &b.read,
+                            &b.data.read,
                             superkmers_storage,
-                            a.minimizer_pos as usize,
-                            b.minimizer_pos as usize,
+                            a.data.minimizer_pos as usize,
+                            b.data.minimizer_pos as usize,
                         )
                         .0
                 })
@@ -294,10 +309,12 @@ impl SortingExtender {
 
                 element_target_index += 1;
 
-                let mut minimum_prefix_share = reference.minimizer_pos as usize;
+                let mut minimum_prefix_share = reference.data.minimizer_pos as usize;
                 if minimum_prefix_share + shared_suffix < k {
                     let next_matching = self.lccp_array[element_target_index - 1 - range.start];
-                    if next_matching + shared_suffix < k - 1 {
+                    if next_matching + shared_suffix < k - 1
+                        || element_target_index >= target_index_end
+                    {
                         // Process supertigs
                         self.process_supertigs(superkmers_storage, supertigs_range_start);
                         self.branching_supertigs.clear();
@@ -306,10 +323,11 @@ impl SortingExtender {
 
                     // No more kmers to output, skip this read
                     self.suffix_sizes[reference_index] = 0;
+
                     continue;
                 }
 
-                let mut multiplicity = reference.multiplicity as usize;
+                let mut multiplicity = reference.data.multiplicity as usize;
 
                 let mut km1mer_break = true;
 
@@ -329,7 +347,7 @@ impl SortingExtender {
                         .push(self.supertigs_mapping[self.elements_mapping[element_target_index]]);
 
                     minimum_prefix_share = minimum_prefix_share.min(left_matching);
-                    multiplicity += next_read.multiplicity as usize;
+                    multiplicity += next_read.data.multiplicity as usize;
                     element_target_index += 1;
                 }
 
@@ -341,17 +359,29 @@ impl SortingExtender {
 
                 let supertig_index = self.supertigs.len();
                 self.supertigs.push(Supertig {
-                    read: reference.read.sub_slice(
-                        (reference.minimizer_pos as usize + leftmost_allowed_suffix - k)
-                            ..(reference.minimizer_pos as usize + shared_suffix),
+                    read: reference.data.read.sub_slice(
+                        (reference.data.minimizer_pos as usize + leftmost_allowed_suffix - k)
+                            ..(reference.data.minimizer_pos as usize + shared_suffix),
                     ),
                     superkmers_count: element_target_index - reference_index,
                     multiplicity,
                     next: usize::MAX,
+                    linked: false,
                 });
 
                 for idx in reference_index..element_target_index {
                     self.supertigs_mapping[self.elements_mapping[idx]] = supertig_index;
+                }
+
+                if element_target_index >= target_index_end && !km1mer_break {
+                    panic!(
+                        "Reached the end of the range without breaking on a km1mer: {}",
+                        reference
+                            .data
+                            .read
+                            .as_reference(superkmers_storage)
+                            .to_string()
+                    );
                 }
 
                 if km1mer_break {
@@ -380,7 +410,7 @@ impl SortingExtender {
 
     pub fn process_reads<E: Copy>(
         &mut self,
-        reads: &mut [DeserializedReadIndependent<E>],
+        reads: &mut [ResplittedRead<E>],
         superkmers_storage: &Vec<u8>,
         k: usize,
         mut output_read: impl FnMut(CompressedRead, usize),
@@ -389,41 +419,29 @@ impl SortingExtender {
         {
             self.lccs_array.clear();
             reads.sort_unstable_by(|a, b| unsafe {
-                let ar = a
+                a.data
                     .read
                     .get_centered_suffix_difference(
-                        &b.read,
+                        &b.data.read,
                         superkmers_storage,
-                        a.minimizer_pos as usize,
-                        b.minimizer_pos as usize,
+                        a.data.minimizer_pos as usize,
+                        b.data.minimizer_pos as usize,
                     )
                     .1
-                    .reverse();
-
-                let br = a
-                    .read
-                    .get_centered_suffix_difference(
-                        &b.read,
-                        superkmers_storage,
-                        a.minimizer_pos as usize,
-                        b.minimizer_pos as usize,
-                    )
-                    .1
-                    .reverse();
-                assert_eq!(ar, br);
-                ar
+                    .reverse()
             });
 
             for idx in 1..reads.len() {
                 let a = &reads[idx - 1];
                 let b = &reads[idx];
                 self.lccs_array.push(unsafe {
-                    a.read
+                    a.data
+                        .read
                         .get_centered_suffix_difference(
-                            &b.read,
+                            &b.data.read,
                             superkmers_storage,
-                            a.minimizer_pos as usize,
-                            b.minimizer_pos as usize,
+                            a.data.minimizer_pos as usize,
+                            b.data.minimizer_pos as usize,
                         )
                         .0
                 })
@@ -437,7 +455,7 @@ impl SortingExtender {
             self.suffix_sizes.clear();
             for el in reads.iter() {
                 self.suffix_sizes
-                    .push(el.read.bases_count() - el.minimizer_pos as usize);
+                    .push(el.data.read.bases_count() - el.data.minimizer_pos as usize);
             }
         }
 
@@ -555,12 +573,13 @@ impl SortingExtender {
                     self.elements_mapping[chunk.start..chunk.end].sort_unstable_by(|a, b| unsafe {
                         let a = &remapped_minimizer_elements[*a];
                         let b = &remapped_minimizer_elements[*b];
-                        a.read
+                        a.data
+                            .read
                             .get_centered_prefix_difference(
-                                &b.read,
+                                &b.data.read,
                                 superkmers_storage,
-                                a.minimizer_pos as usize,
-                                b.minimizer_pos as usize,
+                                a.data.minimizer_pos as usize,
+                                b.data.minimizer_pos as usize,
                             )
                             .1
                             .reverse()
@@ -590,12 +609,13 @@ impl SortingExtender {
                         let b = &remapped_minimizer_elements
                             [self.sorting_support_vec[b.index - suffix_stack_block_start]];
                         unsafe {
-                            a.read
+                            a.data
+                                .read
                                 .get_centered_prefix_difference(
-                                    &b.read,
+                                    &b.data.read,
                                     superkmers_storage,
-                                    a.minimizer_pos as usize,
-                                    b.minimizer_pos as usize,
+                                    a.data.minimizer_pos as usize,
+                                    b.data.minimizer_pos as usize,
                                 )
                                 .1
                         }
@@ -661,6 +681,19 @@ impl SortingExtender {
                     .truncate(last_stack_element.sorted_chunks_start);
             }
         }
+
+        let mut tot_st = 0;
+        let mut start_st = 0;
+        for supertig in self.supertigs.iter() {
+            if !supertig.linked {
+                start_st += 1;
+            }
+            tot_st += 1;
+        }
+
+        std::hint::black_box(start_st);
+
+        // println!("Total supertigs: {} not linked: {}", tot_st, start_st);
     }
 }
 

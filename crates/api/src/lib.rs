@@ -40,7 +40,7 @@ pub mod debug {
     pub use config::KEEP_FILES as DEBUG_KEEP_FILES;
     use parking_lot::Mutex;
     use querier::QuerierStartingStep;
-    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use std::sync::atomic::AtomicBool;
     use utils::assembler_phases::AssemblerPhase;
 
     pub static DEBUG_ASSEMBLER_FIRST_STEP: Mutex<AssemblerPhase> =

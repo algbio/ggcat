@@ -1,4 +1,4 @@
-use crate::map_processor::ParallelKmersMergeMapPacket;
+use crate::map_processor::{ParallelKmersMergeMapPacket, ResplittedRead};
 use crate::sorting::radix_sort_reads;
 use crate::unitigs_extender::sorting::SortingExtender;
 use crate::unitigs_extender::{UnitigExtensionColorsData, UnitigsExtenderTrait};
@@ -123,22 +123,38 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                         .resplitting_map
                         .initialize(minimizer_elements.len() * (global_data.k * 2 / 8));
 
-                    for element in minimizer_elements.iter() {
+                    let offset_delta = 16.min(global_data.k);
+
+                    for (index, element) in minimizer_elements.iter().enumerate() {
                         let mut offset = element.minimizer_pos as usize;
                         loop {
-                            let hash = unsafe {
-                                element
-                                    .read
-                                    .as_reference(&map_struct.superkmers_storage)
-                                    .sub_slice(offset..offset + 16)
-                                    .compute_hash_aligned_overflow16()
-                            };
-                            map_struct.resplitting_map.add_element(hash, *element);
+                            let read_end = element.read.bases_count().min(global_data.k);
+                            let read_start = offset.saturating_sub(offset_delta);
 
-                            if offset < 16 {
+                            if read_end - read_start >= global_data.k {
+                                let hash = unsafe {
+                                    element
+                                        .read
+                                        .as_reference(&map_struct.superkmers_storage)
+                                        .sub_slice(offset..offset + offset_delta)
+                                        .compute_hash_aligned_overflow16()
+                                };
+                                let mut new_element = *element;
+                                new_element.read = element.read.sub_slice(read_start..read_end);
+
+                                map_struct.resplitting_map.add_element(
+                                    hash,
+                                    ResplittedRead {
+                                        data: new_element,
+                                        index,
+                                    },
+                                );
+                            }
+
+                            if offset < offset_delta {
                                 break;
                             }
-                            offset -= 16;
+                            offset -= offset_delta;
                         }
                     }
 
@@ -172,9 +188,11 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                             // }
                             // return;
 
-                            let has_duplicates = { el.iter().any(|e| e.is_window_duplicate) };
+                            let has_duplicates = { el.iter().any(|e| e.data.is_window_duplicate) };
 
-                            if !has_duplicates {
+                            if has_duplicates {
+                                // Map
+                            } else {
                                 sorting_extender.process_reads(
                                     el,
                                     &map_struct.superkmers_storage,
