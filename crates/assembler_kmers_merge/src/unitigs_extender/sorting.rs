@@ -713,58 +713,53 @@ impl SortingExtender {
                     // Linked unitig, join all the stabletigs together
                     self.unitig_storage.clear();
 
-                    let start = supertig.read.start % 4; // ??
+                    let start_offset = supertig.read.start % 4;
                     let mut unitig_bases_count = 0;
                     let mut mask = 0;
                     self.unitig_storage.push(0);
 
                     loop {
-                        if unitig_bases_count == 0 {
-                        } else {
-                        }
+                        let skip_offset = if unitig_bases_count == 0 { 0 } else { k - 1 };
 
-                        unitig_bases_count += supertig.read.bases_count() - k;
+                        unitig_bases_count += supertig.read.bases_count() - skip_offset;
 
-                        let byte0_index = supertig.read.start / 4;
+                        let byte0_index = (supertig.read.start + skip_offset) / 4;
                         let byte0 = superkmers_storage[byte0_index];
+
+                        let last_byte_entry = (supertig.read.size + supertig.read.start + 3) / 4;
 
                         let last_unitig_byte = self.unitig_storage.last_mut().unwrap();
 
                         *last_unitig_byte = byte0 & !mask | *last_unitig_byte & mask;
 
-                        // let mut remaining_bases = su
-
-                        // for byte in 1..supertig.read.bytes() {
-                        //     self.unitig_storage.push(byte);
-                        // }
+                        self.unitig_storage.extend_from_slice(
+                            &superkmers_storage[(byte0_index + 1)..last_byte_entry],
+                        );
 
                         if supertig.next == usize::MAX {
                             break;
                         }
 
-                        let alignment = (supertig.read.start + supertig.read.size) % 4;
+                        let alignment = (supertig.read.size + supertig.read.start) % 4;
                         if alignment == 0 {
                             self.unitig_storage.push(0);
                         }
+                        mask = (1 << (alignment * 2)) - 1;
 
                         supertig = &self.supertigs[supertig.next];
                     }
 
-                    // let unitig =
-                    //     CompressedRead::new_offset(&self.unitig_storage, start, unitig_bases_count);
+                    let final_unitig = CompressedRead::new_offset(
+                        &self.unitig_storage,
+                        start_offset,
+                        unitig_bases_count,
+                    );
 
-                    // output_read(
-                    //     unitig, 0, // supertig.multiplicity,
-                    // );
-
-                    // The reads are all aligned, so we can write them in the unitig storage
-
-                    // supertig.read
-                    //     .write_to(&mut self.unitig_storage, supertig.multiplicity);
-                    // output_read(
-                    //     supertig.read.as_reference(&self.unitig_storage),
-                    //     supertig.multiplicity,
-                    // );
+                    output_read(
+                        final_unitig,
+                        0,
+                        // supertig.multiplicity,
+                    );
                 }
             }
         }

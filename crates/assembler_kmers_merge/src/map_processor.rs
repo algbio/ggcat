@@ -40,9 +40,8 @@ pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManage
     // ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>>,
     pub minimizer_superkmers: FuzzyHashmap<DeserializedReadIndependent<<
         ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>,
-
-    pub resplitting_map: FuzzyHashmap<DeserializedReadIndependent<<
-        ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>,
+    pub superkmers_extra_buffer:
+        <<ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
 
 
     pub is_duplicate: bool,
@@ -61,7 +60,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
             extender: HashMapUnitigsExtender::new(sizes),
             superkmers_storage: Box::new(vec![]),
             minimizer_superkmers: FuzzyHashmap::new(MINIMIZER_MAP_DEFAULT_SIZE),
-            resplitting_map: FuzzyHashmap::new(MINIMIZER_MAP_DEFAULT_SIZE),
+            superkmers_extra_buffer: Default::default(),
             m: sizes.m,
             is_duplicate: false,
         }
@@ -70,6 +69,9 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
     fn reset(&mut self) {
         self.extender.reset();
         self.superkmers_storage.clear();
+        <<ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>
+            ::clear_temp_buffer(&mut self.superkmers_extra_buffer);
+
         // self.minimizer_superkmers.clear();
     }
 }
@@ -217,7 +219,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                         //     .or_insert(InlineVec::default()),
                         DeserializedReadIndependent {
                             read: new_read,
-                            extra: read.extra,
+                            extra: <ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity
+                                ::copy_extra_from(read.extra, extra_buffer, &mut map_packet.superkmers_extra_buffer),
                             multiplicity: read.multiplicity,
                             minimizer_pos: read.minimizer_pos,
                             flags: read.flags,

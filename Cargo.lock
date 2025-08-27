@@ -1076,7 +1076,7 @@ dependencies = [
  "parallel-processor",
  "parking_lot",
  "rayon",
- "streaming-libdeflate-rs 0.2.2",
+ "streaming-libdeflate-rs",
  "typenum",
 ]
 
@@ -1106,7 +1106,7 @@ dependencies = [
  "parking_lot",
  "rayon",
  "rustc-hash",
- "streaming-libdeflate-rs 0.2.2",
+ "streaming-libdeflate-rs",
  "typenum",
 ]
 
@@ -1122,7 +1122,7 @@ dependencies = [
  "ggcat_minimizer_bucketing",
  "ggcat_structs",
  "parallel-processor",
- "streaming-libdeflate-rs 0.2.2",
+ "streaming-libdeflate-rs",
  "typenum",
 ]
 
@@ -1152,7 +1152,7 @@ dependencies = [
  "parallel-processor",
  "parking_lot",
  "rayon",
- "streaming-libdeflate-rs 0.2.2",
+ "streaming-libdeflate-rs",
  "traitgraph-algo",
  "typenum",
 ]
@@ -1236,7 +1236,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "siphasher",
- "streaming-libdeflate-rs 0.2.2",
+ "streaming-libdeflate-rs",
  "typenum",
 ]
 
@@ -1271,7 +1271,7 @@ dependencies = [
  "parallel-processor",
  "parking_lot",
  "rayon",
- "streaming-libdeflate-rs 0.2.2",
+ "streaming-libdeflate-rs",
  "typenum",
 ]
 
@@ -1311,7 +1311,7 @@ dependencies = [
  "parking_lot",
  "rand 0.8.5",
  "rustc-hash",
- "streaming-libdeflate-rs 0.2.2",
+ "streaming-libdeflate-rs",
  "typenum",
 ]
 
@@ -1330,7 +1330,7 @@ dependencies = [
  "parallel-processor",
  "parking_lot",
  "replace_with",
- "streaming-libdeflate-rs 0.2.2",
+ "streaming-libdeflate-rs",
  "tokio",
  "typenum",
 ]
@@ -1353,7 +1353,7 @@ dependencies = [
  "parking_lot",
  "replace_with",
  "rustc-hash",
- "streaming-libdeflate-rs 0.2.2",
+ "streaming-libdeflate-rs",
  "tokio",
  "typenum",
 ]
@@ -1382,7 +1382,7 @@ dependencies = [
  "parallel-processor",
  "parking_lot",
  "rayon",
- "streaming-libdeflate-rs 0.2.2",
+ "streaming-libdeflate-rs",
  "typenum",
 ]
 
@@ -2556,26 +2556,12 @@ dependencies = [
 
 [[package]]
 name = "streaming-libdeflate-rs"
-version = "0.1.6"
+version = "0.2.2"
 dependencies = [
  "crc32fast",
  "filebuffer",
- "mt-debug-counters",
  "nightly-quirks",
  "rayon",
- "static_assertions",
- "structopt",
-]
-
-[[package]]
-name = "streaming-libdeflate-rs"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eeb70e73e5f5eaa01353e7af55c13ddbb7a62c90fcf2b89d5a451643a6733f03"
-dependencies = [
- "crc32fast",
- "filebuffer",
- "nightly-quirks",
  "static_assertions",
  "structopt",
 ]
