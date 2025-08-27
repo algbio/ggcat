@@ -1,4 +1,4 @@
-use crate::map_processor::{ParallelKmersMergeMapPacket, ResplittedRead};
+use crate::map_processor::ParallelKmersMergeMapPacket;
 use crate::sorting::radix_sort_reads;
 use crate::unitigs_extender::sorting::SortingExtender;
 use crate::unitigs_extender::{UnitigExtensionColorsData, UnitigsExtenderTrait};
@@ -23,6 +23,7 @@ use std::cmp::Reverse;
 use std::iter::repeat;
 use std::mem::take;
 use std::ops::DerefMut;
+use std::time::Instant;
 use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
 #[cfg(feature = "support_kmer_counters")]
 use structs::unitigs_counters::UnitigsCounters;
@@ -123,13 +124,89 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                         .resplitting_map
                         .initialize(minimizer_elements.len() * (global_data.k * 2 / 8));
 
-                    let offset_delta = 16.min(global_data.k);
+                    // for sk in minimizer_elements.iter() {
+                    //     println!("Sk len: {} size: {}", sk.read.bases_count(), minimizer_elements.len());   
+                    // }
+
+                    let offset_delta = 11.min(global_data.k);
 
                     let mut count = 0;
                     let mut single = 0;
                     let mut avg_size = 0;
 
                     let temp_buffer = Default::default();
+
+                    let start = Instant::now();
+
+                    if true {
+                        sorting_extender.clear_supertigs();
+                        sorting_extender.process_reads(
+                            minimizer_elements,
+                            &map_struct.superkmers_storage,
+                            global_data.k,
+                            global_data.min_multiplicity,
+                            |read, mult| {
+
+                                println!(
+                                    "Processing read: {} with mult: {}",
+                                    read.to_string(),
+                                    mult
+                                );
+                                // if mult > 1000 {
+                                    let read_index = current_bucket.add_compressed_read(
+                                        PartialUnitigExtraData {
+                                            colors: Default::default(),
+                                        },
+                                        read,
+                                        &temp_buffer,
+                                    );
+                                // }
+
+                                // if read.bases_count() >= global_data.k {
+                                //     use std::sync::atomic::*;
+                                //     static AVG_SIZE: AtomicUsize = AtomicUsize::new(0);
+                                //     static COUNT: AtomicUsize = AtomicUsize::new(0);
+                                //     let size = AVG_SIZE
+                                //         .fetch_add(read.bases_count(), Ordering::Relaxed);
+                                //     let count = COUNT.fetch_add(1, Ordering::Relaxed);
+
+                                //     if read.bases_count() >= global_data.k {
+                                //         println!(
+                                //             "Found read: {} {} avg: {:.2} bases k: {} mult: {}",
+                                //             read.bases_count(),
+                                //             read.to_string(),
+                                //             size as f64 / count as f64,
+                                //             global_data.k,
+                                //             mult
+                                //         );
+                                //     }
+                                // }
+
+                                // + output all the supertigs until min_suffix is reached
+                                // then keep track of mergable supertigs
+                                // println!(
+                                //     "Mult: {} / read: {}",
+                                //     multiplicity,
+                                //
+                                //         .to_string()
+                                // );
+                            },
+                        );
+                        return;
+                    }
+
+
+                    let mut print = false;
+                    // minimizer_elements.len() == 200 && minimizer_elements
+                    //     .iter()
+                    //     .any(|e| e.read.bases_count() == 43);
+
+                    // if !print {
+                    //     return;
+                    // }
+
+                    let elapsed1 = start.elapsed();
+                    let start = Instant::now();
 
                     sorting_extender.clear_supertigs();
 
@@ -138,12 +215,13 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                     });
 
                     for (index, element) in minimizer_elements.iter().enumerate() {
+                        let mut count = 0;
                         let mut offset = element.minimizer_pos as usize;
                         loop {
                             let read_end = element.read.bases_count().min(global_data.k);
                             let read_start = offset.saturating_sub(offset_delta);
 
-                            if read_end - read_start >= global_data.k {
+                            // if read_end - read_start >= global_data.k {
                                 let hash = unsafe {
                                     element
                                         .read
@@ -152,23 +230,21 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                                         .compute_hash_aligned_overflow16()
                                 };
                                 let mut new_element = *element;
-                                new_element.minimizer_pos -= read_start as u16;
-                                new_element.read = element.read.sub_slice(read_start..read_end);
+                                // new_element.minimizer_pos -= read_start as u16;
+                                new_element.read = element.read;//.sub_slice(read_start..read_end);
 
-                                map_struct.resplitting_map.add_element(
-                                    hash,
-                                    ResplittedRead {
-                                        data: new_element,
-                                        index,
-                                    },
-                                );
-                            }
+                                count += 1;
+                                map_struct.resplitting_map.add_element(hash, new_element);
+                            // }
+
+                            break;
 
                             if offset < offset_delta {
                                 break;
                             }
                             offset -= offset_delta;
                         }
+                        assert!( count > 0);
                     }
 
                     map_struct.resplitting_map.process_elements(|el| {
@@ -177,6 +253,27 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                         if el.len() == 1 {
                             single += 1;
                         } else {
+
+                            if print {
+                                println!(
+                                    "Processing element with size {}:",
+                                    el.len(),
+                                );
+
+                                for r in el.iter() {
+                                    println!(
+                                        "  {} {}",
+                                        r.read.bases_count(),
+                                        r.read.as_reference(&map_struct.superkmers_storage).to_string()
+                                    );
+                                }
+                                
+                                
+
+                            }
+
+
+
                             // for el in el {
                             //     let read_index = current_bucket.add_compressed_read(
                             //         PartialUnitigExtraData {
@@ -188,7 +285,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                             // }
                             // return;
 
-                            let has_duplicates = { el.iter().any(|e| e.data.is_window_duplicate) };
+                            let has_duplicates = { el.iter().any(|e| e.is_window_duplicate) };
 
                             if has_duplicates {
                                 // Map
@@ -197,6 +294,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                                     el,
                                     &map_struct.superkmers_storage,
                                     global_data.k,
+                                    global_data.min_multiplicity,
                                     |read, mult| {
                                         if mult > 1000 {
                                             let read_index = current_bucket.add_compressed_read(
@@ -241,6 +339,23 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                             }
                         }
                     });
+
+                    let elapsed2 = start.elapsed();
+
+                    if print {
+                        if minimizer_elements.len() > 100 {
+                            println!(
+                                "Processed {} minimizers in {:?}/{:?} => {} with {} single and avg size: {:.2?} ({} batches)",
+                                minimizer_elements.len(),
+                                elapsed1, elapsed2,
+                                elapsed1.as_secs_f64() / elapsed2.as_secs_f64(),
+                                single,
+                                avg_size as f64 / count as f64,
+                                count,
+                            );
+                        }
+                        panic!("AAA");
+                    }
 
                     // println!(
                     //     "Count: {}/{} single: {} avg size: {:.2?}",

@@ -624,7 +624,7 @@ impl<'a> CompressedRead<'a> {
     }
 
     #[inline]
-    fn new_offset(data: &'a [u8], offset: usize, bases_count: usize) -> Self {
+    pub fn new_offset(data: &'a [u8], offset: usize, bases_count: usize) -> Self {
         if (data.len() * 4) < bases_count {
             panic!("Compressed read overflow!");
         }

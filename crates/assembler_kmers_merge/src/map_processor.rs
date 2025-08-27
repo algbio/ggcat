@@ -31,12 +31,6 @@ instrumenter::use_instrumenter!();
 
 pub(crate) static KMERGE_TEMP_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
 
-#[derive(Copy, Clone, Default)]
-pub struct ResplittedRead<E> {
-    pub data: DeserializedReadIndependent<E>,
-    pub index: usize,
-}
-
 pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManager> {
     pub detailed_stats: KmersMergeBucketReport,
     pub extender: HashMapUnitigsExtender<MH, CX>,
@@ -47,7 +41,7 @@ pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManage
     pub minimizer_superkmers: FuzzyHashmap<DeserializedReadIndependent<<
         ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>,
 
-    pub resplitting_map: FuzzyHashmap<ResplittedRead<<
+    pub resplitting_map: FuzzyHashmap<DeserializedReadIndependent<<
         ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>,
 
 
