@@ -902,6 +902,12 @@ impl<'a> CompressedRead<'a> {
 //
 impl<'a> HashableSequence for CompressedRead<'a> {
     const IS_COMPRESSED: bool = true;
+
+    #[inline(always)]
+    fn subslice(&self, start: usize, end: usize) -> Self {
+        self.sub_slice(start..end)
+    }
+
     #[inline(always)]
     unsafe fn get_unchecked_cbase(&self, index: usize) -> u8 {
         unsafe { self.get_base_unchecked(index) }

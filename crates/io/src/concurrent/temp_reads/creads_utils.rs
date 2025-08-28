@@ -3,6 +3,7 @@ use crate::varint::{VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, decode_varint, encod
 use bincode::{Decode, Encode};
 use byteorder::ReadBytesExt;
 use config::{BucketIndexType, HASH_MAX_OVERREAD, MultiplicityCounterType};
+use hashes::HashableSequence;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use std::io::Read;
 use std::marker::PhantomData;
@@ -17,6 +18,24 @@ pub enum ReadData<'a> {
     PackedRc(CompressedRead<'a>),
 }
 
+pub trait ToReadData<'a>: HashableSequence {
+    fn to_read_data(self) -> ReadData<'a>;
+}
+
+impl<'a> ToReadData<'a> for &'a [u8] {
+    #[inline(always)]
+    fn to_read_data(self) -> ReadData<'a> {
+        ReadData::Plain(self)
+    }
+}
+
+impl<'a> ToReadData<'a> for CompressedRead<'a> {
+    #[inline(always)]
+    fn to_read_data(self) -> ReadData<'a> {
+        ReadData::Packed(self)
+    }
+}
+
 pub struct CompressedReadsBucketData<'a> {
     pub read: ReadData<'a>,
     pub multiplicity: MultiplicityCounterType,
@@ -28,15 +47,15 @@ pub struct CompressedReadsBucketData<'a> {
 
 impl<'a> CompressedReadsBucketData<'a> {
     #[inline(always)]
-    pub fn new(
-        read: &'a [u8],
+    pub fn new<R: ToReadData<'a>>(
+        read: R,
         flags: u8,
         extra_bucket: u8,
         minimizer_pos: u16,
         is_window_duplicate: bool,
     ) -> Self {
         Self {
-            read: ReadData::Plain(read),
+            read: read.to_read_data(),
             extra_bucket,
             multiplicity: 1,
             minimizer_pos,

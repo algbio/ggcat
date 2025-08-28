@@ -22,7 +22,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap};
 use structs::map_entry::MapEntry;
 use utils::Utils;
 
-use crate::KMERGE_TEMP_DIR;
+use crate::{KMERGE_TEMP_DIR, final_executor::PrecomputedHash};
 
 use super::{GlobalExtenderParams, UnitigExtensionColorsData, UnitigsExtenderTrait};
 
@@ -443,8 +443,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
         mut output_unitig: impl FnMut(
             &mut UnitigExtensionColorsData<CX>,
             &[u8],
-            Option<MH::HashTypeUnextendable>,
-            Option<MH::HashTypeUnextendable>,
+            Option<PrecomputedHash<MH>>,
+            Option<PrecomputedHash<MH>>,
         ),
     ) {
         if CX::COLORS_ENABLED {
@@ -547,7 +547,12 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                 &backward_seq[..]
             };
 
-            output_unitig(colors_data, out_seq, fw_hash, bw_hash)
+            output_unitig(
+                colors_data,
+                out_seq,
+                fw_hash.map(PrecomputedHash),
+                bw_hash.map(PrecomputedHash),
+            )
         });
     }
 

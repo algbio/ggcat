@@ -138,12 +138,19 @@ pub trait HashFunction<HF: HashFunctionFactory> {
 pub trait HashableSequence: Clone {
     // If true the base is in the classical compressed form ((chr >> 1) & 0x3)
     const IS_COMPRESSED: bool;
+    fn subslice(&self, start: usize, end: usize) -> Self;
     unsafe fn get_unchecked_cbase(&self, index: usize) -> u8;
     fn bases_count(&self) -> usize;
 }
 
 impl HashableSequence for &[u8] {
     const IS_COMPRESSED: bool = false;
+
+    #[inline(always)]
+    fn subslice(&self, start: usize, end: usize) -> Self {
+        &self[start..end]
+    }
+
     #[inline(always)]
     unsafe fn get_unchecked_cbase(&self, index: usize) -> u8 {
         unsafe { *self.get_unchecked(index) }
@@ -237,6 +244,11 @@ pub mod tests {
 
     impl<'a> HashableSequence for CompressedRead<'a> {
         const IS_COMPRESSED: bool = true;
+        #[inline(always)]
+        fn subslice(&self, start: usize, end: usize) -> Self {
+            unimplemented!()
+        }
+
         #[inline(always)]
         unsafe fn get_unchecked_cbase(&self, index: usize) -> u8 {
             unsafe { self.get_base_unchecked(index) }

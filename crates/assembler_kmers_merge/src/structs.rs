@@ -2,7 +2,7 @@ use config::BucketIndexType;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::{
     CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMinimizerPosition,
-    NoMultiplicity, NoSecondBucket,
+    NoMultiplicity, NoSecondBucket, ToReadData,
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
@@ -30,10 +30,10 @@ pub struct ResultsBucket<X: SequenceExtraDataConsecutiveCompression> {
 }
 
 impl<X: SequenceExtraDataConsecutiveCompression> ResultsBucket<X> {
-    pub fn add_read(
+    pub fn add_read<'a, R: ToReadData<'a>>(
         &mut self,
         el: PartialUnitigExtraData<X>,
-        read: &[u8],
+        read: R,
         extra_buffer: &X::TempBuffer,
     ) -> u64 {
         self.temp_buffer.clear();

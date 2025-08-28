@@ -3,8 +3,11 @@ use std::{iter::repeat, mem::take, ops::Range};
 
 use binary_heap_plus::BinaryHeap;
 use colors::storage;
+use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use io::concurrent::temp_reads::creads_utils::DeserializedReadIndependent;
+
+use crate::final_executor::DelayedHashComputation;
 
 struct SuffixStackElement {
     /// The start index of the current chunk of reads being processed
@@ -41,6 +44,8 @@ struct Supertig {
     multiplicity: usize,
     next: usize,
     linked: bool,
+    backward_extra_base: bool,
+    forward_extra_base: bool,
 }
 
 #[derive(Default)]
@@ -249,14 +254,7 @@ impl SortingExtender {
         suffix_length: usize,
         target_suffix_length: usize,
         abundance_cutoff: usize,
-        mut output_read: impl FnMut(CompressedRead<'a>, usize),
     ) {
-        // for idx in range {
-        //     self.suffix_sizes[idx] = target_suffix_length;
-        // }
-        // return;
-        let start_stcount = self.supertigs.len();
-
         // Compute the LCCP array for the current range of reads.
         {
             self.lccp_array.clear();
@@ -369,6 +367,13 @@ impl SortingExtender {
 
                 if multiplicity >= abundance_cutoff {
                     let supertig_index = self.supertigs.len();
+
+                    let forward_extra_base = (reference.flags & READ_FLAG_INCL_END == 0)
+                        && shared_suffix
+                            == (reference.read.bases_count() - reference.minimizer_pos as usize);
+                    let backward_extra_base = (reference.flags & READ_FLAG_INCL_BEGIN == 0)
+                        && (reference.minimizer_pos as usize + leftmost_allowed_suffix - k) == 0;
+
                     self.supertigs.push(Supertig {
                         read: reference.read.sub_slice(
                             (reference.minimizer_pos as usize + leftmost_allowed_suffix - k)
@@ -377,6 +382,8 @@ impl SortingExtender {
                         multiplicity,
                         next: usize::MAX,
                         linked: false,
+                        backward_extra_base,
+                        forward_extra_base,
                     });
 
                     for idx in reference_index..element_target_index {
@@ -431,7 +438,11 @@ impl SortingExtender {
         superkmers_storage: &Vec<u8>,
         k: usize,
         abundance_cutoff: usize,
-        mut output_read: impl FnMut(CompressedRead, usize),
+        mut output_unitig: impl FnMut(
+            CompressedRead,
+            Option<DelayedHashComputation>,
+            Option<DelayedHashComputation>,
+        ),
     ) {
         // 0. Sort (reversed) by suffix and compute a lccs array
         {
@@ -686,7 +697,6 @@ impl SortingExtender {
                 needed_suffix,
                 max_allowed_suffix,
                 abundance_cutoff,
-                |a, b| output_read(a, b),
             );
 
             self.forward_skip[suffix_stack_block_start] =
@@ -705,9 +715,18 @@ impl SortingExtender {
             if !supertig.linked {
                 // Unique unitig, output it
                 if supertig.next == usize::MAX {
-                    output_read(
+                    output_unitig(
                         supertig.read.as_reference(&superkmers_storage),
-                        supertig.multiplicity,
+                        if supertig.forward_extra_base {
+                            Some(DelayedHashComputation)
+                        } else {
+                            None
+                        },
+                        if supertig.backward_extra_base {
+                            Some(DelayedHashComputation)
+                        } else {
+                            None
+                        },
                     );
                 } else {
                     // Linked unitig, join all the stabletigs together
@@ -717,6 +736,9 @@ impl SortingExtender {
                     let mut unitig_bases_count = 0;
                     let mut mask = 0;
                     self.unitig_storage.push(0);
+
+                    let mut forward_extra_base = false;
+                    let mut backward_extra_base = false;
 
                     loop {
                         let skip_offset = if unitig_bases_count == 0 { 0 } else { k - 1 };
@@ -735,6 +757,9 @@ impl SortingExtender {
                         self.unitig_storage.extend_from_slice(
                             &superkmers_storage[(byte0_index + 1)..last_byte_entry],
                         );
+
+                        forward_extra_base |= supertig.forward_extra_base;
+                        backward_extra_base |= supertig.backward_extra_base;
 
                         if supertig.next == usize::MAX {
                             break;
@@ -755,10 +780,18 @@ impl SortingExtender {
                         unitig_bases_count,
                     );
 
-                    output_read(
+                    output_unitig(
                         final_unitig,
-                        0,
-                        // supertig.multiplicity,
+                        if forward_extra_base {
+                            Some(DelayedHashComputation)
+                        } else {
+                            None
+                        },
+                        if backward_extra_base {
+                            Some(DelayedHashComputation)
+                        } else {
+                            None
+                        },
                     );
                 }
             }

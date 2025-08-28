@@ -13,6 +13,8 @@ use io::concurrent::temp_reads::{
 };
 use kmers_transform::GroupProcessStats;
 
+use crate::final_executor::PrecomputedHash;
+
 pub mod hashmap;
 pub mod sorting;
 
@@ -46,8 +48,8 @@ pub trait UnitigsExtenderTrait<MH: HashFunctionFactory, CX: ColorsManager> {
         output_unitig: impl FnMut(
             &mut UnitigExtensionColorsData<CX>,
             &[u8],
-            Option<MH::HashTypeUnextendable>,
-            Option<MH::HashTypeUnextendable>,
+            Option<PrecomputedHash<MH>>,
+            Option<PrecomputedHash<MH>>,
         ),
     );
     fn set_suggested_sizes(&mut self, hashmap_size: u64, sequences_size: u64);
