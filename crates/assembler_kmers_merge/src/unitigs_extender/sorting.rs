@@ -187,12 +187,19 @@ impl SortingExtender {
 
         let x = self.supertigs.len() - supertigs_range_start;
 
+        let valid_joining = x > 0
+            && self.branching_supertigs.len() > 0
+            && !self.supertigs[supertigs_range_start].forward_extra_base
+            && !self.supertigs[self.branching_supertigs[0]].backward_extra_base;
+
         let unitig_extendable = self.branching_supertigs.len() == 1 && x == 1;
 
-        if unitig_extendable {
-            // output_read
-            self.supertigs[self.branching_supertigs[0]].linked = true;
-            self.supertigs[supertigs_range_start].next = self.branching_supertigs[0];
+        if valid_joining {
+            if unitig_extendable {
+                // output_read
+                self.supertigs[self.branching_supertigs[0]].linked = true;
+                self.supertigs[supertigs_range_start].next = self.branching_supertigs[0];
+            }
         }
 
         // if self.branching_supertigs.len() > 4 {

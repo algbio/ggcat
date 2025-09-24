@@ -223,7 +223,9 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                     let has_duplicate_kmers =
                         minimizer_elements.iter().any(|m| m.is_window_duplicate);
 
-                    if has_duplicate_kmers {
+                    if has_duplicate_kmers || minimizer_elements.len() <= 1 {
+                        map_struct.extender.reset();
+
                         for element in minimizer_elements {
                             map_struct.extender.add_sequence(
                                 &DeserializedRead {

@@ -16,7 +16,7 @@ pub struct BatchMinQueue<X> {
 #[cold]
 fn cold() {}
 
-impl<X: Clone + Copy + Default + Debug> BatchMinQueue<X> {
+impl<X: Clone + Copy + Default + Debug + PartialEq> BatchMinQueue<X> {
     pub fn new(size: usize) -> Self {
         Self {
             size,
@@ -43,7 +43,7 @@ impl<X: Clone + Copy + Default + Debug> BatchMinQueue<X> {
         &mut self,
         mut iter: I,
         skip_ending_count: usize,
-        mut minimizers_callback: impl FnMut((u64, X), usize, bool),
+        mut minimizers_callback: impl FnMut((u64, X), usize),
         mut minimizers_flush: impl FnMut(bool),
     ) {
         let mut size = iter.len() - skip_ending_count;
@@ -55,8 +55,6 @@ impl<X: Clone + Copy + Default + Debug> BatchMinQueue<X> {
             self.backward.fill_with(|| iter.next().unwrap_unchecked());
             let mut offset = 0;
             size -= self.backward.len();
-
-            let mut last_out = u64::MAX;
 
             while offset < size {
                 let remaining = (size - offset).min(self.backward.len());
@@ -87,14 +85,8 @@ impl<X: Clone + Copy + Default + Debug> BatchMinQueue<X> {
                     first_minimum.0 &= Self::hash_mask::<ENABLE_DUPLICATE_CHECKING>();
                 }
 
-                minimizers_callback(
-                    (first_minimum.0, first_minimum.1),
-                    offset,
-                    ENABLE_DUPLICATE_CHECKING && offset > 0 && last_out == new_item.0,
-                );
-                if ENABLE_DUPLICATE_CHECKING {
-                    last_out = (*self.backward.get_unchecked_mut(0)).0;
-                }
+                minimizers_callback((first_minimum.0, first_minimum.1), offset);
+
                 let mut last_forward = new_item;
                 *self.backward.get_unchecked_mut(0) = new_item;
 
@@ -116,23 +108,14 @@ impl<X: Clone + Copy + Default + Debug> BatchMinQueue<X> {
 
                     // If the forward and backward minimums match, there is a duplicate ONLY for the current minimum
                     let is_duplicated = last_forward.0 == current_backward.0;
-                    let window_duplicate = ENABLE_DUPLICATE_CHECKING && last_out == last_forward.0;
-                    if ENABLE_DUPLICATE_CHECKING {
-                        last_out = current_backward.0;
-                    }
 
                     if ENABLE_DUPLICATE_CHECKING && is_duplicated {
                         cold();
                         current_minimum.0 &= Self::hash_mask::<ENABLE_DUPLICATE_CHECKING>();
                         // If current minimum is duplicated, then clear the uniqueness flag also for the last out
-                        last_out &= Self::hash_mask::<ENABLE_DUPLICATE_CHECKING>();
                     }
 
-                    minimizers_callback(
-                        (current_minimum.0, current_minimum.1),
-                        offset + i,
-                        window_duplicate,
-                    );
+                    minimizers_callback((current_minimum.0, current_minimum.1), offset + i);
 
                     *current_backward = new_item;
                 }
@@ -182,11 +165,10 @@ impl<X: Clone + Copy + Default + Debug> BatchMinQueue<X> {
         fn set_window_duplicates<X>(
             data: &DuplicatesData<X>,
             splits_ptr: *mut ((u64, X), ExtraInfo),
-            is_different: bool,
         ) {
             unsafe {
                 let index = splits_ptr.offset_from(data.splits_start) as usize;
-                *data.window_duplicates.add(index + (is_different as usize)) = true;
+                *data.window_duplicates.add(index) = true;
             }
         }
 
@@ -196,18 +178,19 @@ impl<X: Clone + Copy + Default + Debug> BatchMinQueue<X> {
             iter,
             skip_ending_count,
             #[inline(always)]
-            |m, index, is_dupl| {
-                let is_different = !is_first && last_value.get().0 != m.0;
+            |m, index| {
+                let has_different_value = !is_first && last_value.get().0 != m.0;
+                let has_different_position = !is_first && last_value.get().1 != m.1;
 
-                if is_dupl {
-                    set_window_duplicates(&dupl_data, splits_ptr.get(), is_different);
+                if !has_different_value && has_different_position {
+                    set_window_duplicates(&dupl_data, splits_ptr.get());
                 }
 
                 unsafe {
                     let splits_pos = &mut *splits_ptr.get();
                     splits_pos.0 = last_value.get();
                     splits_pos.1.position = index + skip_beginning_count;
-                    splits_ptr.set(splits_ptr.get().add(is_different as usize));
+                    splits_ptr.set(splits_ptr.get().add(has_different_value as usize));
                 }
                 is_first = false;
                 last_value.set(m);

@@ -43,7 +43,7 @@ impl<N: HashableSequence> CanonicalSeqHashIterator<N> {
 
     #[inline(always)]
     fn roll_hash(&mut self, index: usize) -> ExtCanonicalSeqHash {
-        assert!(unsafe { self.seq.get_unchecked_cbase(index) } < 4);
+        debug_assert!(unsafe { self.seq.get_unchecked_cbase(index) } < 4);
 
         self.fh = (self.fh >> 2)
             | ((unsafe { self.seq.get_unchecked_cbase(index) as HashIntegerType })
@@ -61,15 +61,14 @@ impl<N: HashableSequence> HashFunction<CanonicalSeqHashFactory> for CanonicalSeq
     fn iter(
         mut self,
     ) -> impl ExactSizeIterator
-           + Iterator<Item = <CanonicalSeqHashFactory as HashFunctionFactory>::HashTypeExtendable>
-    {
+    + Iterator<Item = <CanonicalSeqHashFactory as HashFunctionFactory>::HashTypeExtendable> {
         (self.k_minus1..self.seq.bases_count()).map(move |idx| self.roll_hash(idx))
     }
 
     fn iter_enumerate(
         mut self,
     ) -> impl ExactSizeIterator
-           + Iterator<
+    + Iterator<
         Item = (
             usize,
             <CanonicalSeqHashFactory as HashFunctionFactory>::HashTypeExtendable,

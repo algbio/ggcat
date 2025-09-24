@@ -1,5 +1,5 @@
 use crate::concurrent::temp_reads::creads_utils::{AlignModeOption, MinimizerModeOption};
-use crate::varint::{decode_varint_flags, encode_varint_flags};
+use crate::varint::{decode_varint, decode_varint_flags, encode_varint, encode_varint_flags};
 use byteorder::ReadBytesExt;
 use core::fmt::{Debug, Formatter};
 use hashes::HashableSequence;
@@ -394,7 +394,7 @@ impl<'a> CompressedRead<'a> {
         buffer: &mut Vec<u8>,
         length: usize,
         min_size: usize,
-        minimizer_position: u16,
+        mut minimizer_position: u16,
         min_size_log: u8,
         flags: u8,
         is_window_duplicate: bool,
@@ -409,7 +409,10 @@ impl<'a> CompressedRead<'a> {
                     |b| buffer.extend_from_slice(b),
                     Self::WINDOW_DUPLICATE_SENTINEL,
                     0,
-                )
+                );
+                // The minimizer position is encoded separately as it could be bigger than the maximum allowed in normal reads
+                encode_varint::<_>(|b| buffer.extend_from_slice(b), minimizer_position as u64);
+                minimizer_position = 0;
             }
 
             debug_assert!(
@@ -530,14 +533,17 @@ impl<'a> CompressedRead<'a> {
             fn cold() {}
 
             let is_window_duplicate = encoded_size == Self::WINDOW_DUPLICATE_SENTINEL;
-            if is_window_duplicate {
+            let minimizer_pos = if is_window_duplicate {
+                let extra_minimizer_pos = decode_varint(|| stream.read_u8().ok())?;
                 cold();
                 (encoded_size, flags) =
                     decode_varint_flags::<_, FlagsCount>(|| stream.read_u8().ok())?;
-            }
+                extra_minimizer_pos
+            } else {
+                encoded_size & ((1 << min_size_log) - 1)
+            };
 
             let size = encoded_size >> min_size_log;
-            let minimizer_pos = encoded_size & ((1 << min_size_log) - 1);
             (
                 size as usize + min_size,
                 minimizer_pos as u16,

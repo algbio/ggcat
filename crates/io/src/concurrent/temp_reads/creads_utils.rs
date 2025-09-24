@@ -20,6 +20,7 @@ pub enum ReadData<'a> {
 
 pub trait ToReadData<'a>: HashableSequence {
     fn to_read_data(self) -> ReadData<'a>;
+    fn debug_to_string(&self) -> String;
 }
 
 impl<'a> ToReadData<'a> for &'a [u8] {
@@ -27,12 +28,19 @@ impl<'a> ToReadData<'a> for &'a [u8] {
     fn to_read_data(self) -> ReadData<'a> {
         ReadData::Plain(self)
     }
+    fn debug_to_string(&self) -> String {
+        std::str::from_utf8(self).unwrap().to_string()
+    }
 }
 
 impl<'a> ToReadData<'a> for CompressedRead<'a> {
     #[inline(always)]
     fn to_read_data(self) -> ReadData<'a> {
         ReadData::Packed(self)
+    }
+
+    fn debug_to_string(&self) -> String {
+        self.to_string()
     }
 }
 

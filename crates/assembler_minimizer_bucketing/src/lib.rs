@@ -28,7 +28,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct MinimizerExtraData {
     index: u32,
     is_forward: bool,
@@ -223,15 +223,10 @@ impl<CD: MinimizerBucketingSeqColorData>
                         (
                             MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
                             rc,
-                            if is_dupl {
-                                cold();
-                                0
+                            if rc {
+                                (index + self.global_data.k - 1 - (min_hash.1.index as usize) - self.global_data.m) as u16
                             } else {
-                                if rc {
-                                    (index + self.global_data.k - 1 - (min_hash.1.index as usize) - self.global_data.m) as u16
-                                } else {
-                                    (min_hash.1.index - (last_index as u32 - 1)) as u16
-                                }
+                                (min_hash.1.index - (last_index as u32 - 1)) as u16
                             },
                             is_dupl
                         )

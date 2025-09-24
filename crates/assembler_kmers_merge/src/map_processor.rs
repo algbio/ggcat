@@ -1,6 +1,7 @@
 use crate::unitigs_extender::hashmap::HashMapUnitigsExtender;
 use crate::unitigs_extender::{GlobalExtenderParams, UnitigsExtenderTrait};
 use crate::{GlobalMergeData, ParallelKmersMergeFactory};
+use assembler_minimizer_bucketing::rewrite_bucket::get_superkmer_minimizer;
 use colors::colors_manager::{ColorsManager, color_types};
 use ggcat_logging::stats;
 use ggcat_logging::stats::KmersMergeBucketReport;
@@ -46,6 +47,7 @@ pub struct ParallelKmersMergeMapPacket<MH: HashFunctionFactory, CX: ColorsManage
 
     pub is_duplicate: bool,
     pub m: usize,
+    pub k: usize,
 }
 
 impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
@@ -62,6 +64,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> PoolObjectTrait
             minimizer_superkmers: FuzzyHashmap::new(MINIMIZER_MAP_DEFAULT_SIZE),
             superkmers_extra_buffer: Default::default(),
             m: sizes.m,
+            k: sizes.k,
             is_duplicate: false,
         }
     }

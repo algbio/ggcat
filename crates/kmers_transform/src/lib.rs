@@ -316,8 +316,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     continue;
                 };
 
-                let is_outlier = splitted_bucket.sequences_count
-                    > bucket_sequences_average * MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
+                let is_outlier = false;
+                // splitted_bucket.sequences_count
+                //     > bucket_sequences_average * MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
 
                 // Add the sub-bucket job
                 compute_thread_pool_handle.create_new_address_with_limit(
