@@ -2,17 +2,18 @@
 
 use ::dynamic_dispatch::dynamic_dispatch;
 use assembler_kmers_merge::structs::RetType;
+use assembler_pipeline::OutputFileMode;
+use assembler_pipeline::build_final_unitigs;
 use assembler_pipeline::compute_matchtigs::MatchtigHelperTrait;
 use assembler_pipeline::compute_matchtigs::MatchtigsStorageBackend;
 use assembler_pipeline::compute_matchtigs::compute_matchtigs_thread;
 use assembler_pipeline::eulertigs::build_eulertigs;
 use assembler_pipeline::extend_unitigs::extend_unitigs;
-use assembler_pipeline::hashes_sorting;
-use assembler_pipeline::hashes_sorting::hashes_sorting;
-use assembler_pipeline::links_compaction::links_compaction;
+use assembler_pipeline::get_final_output_writer;
 use assembler_pipeline::maximal_unitig_links::build_maximal_unitigs_links;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
+use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use config::get_compression_level_info;
 use config::{
     DEFAULT_PER_CPU_BUFFER_SIZE, INTERMEDIATE_COMPRESSION_LEVEL_FAST,
@@ -219,75 +220,32 @@ pub fn run_assembler<
 
     let buckets_count = BucketsCount::new(buckets_count_log, ExtraBuckets::None);
 
-    enum OutputFileMode<
-        OutputMode: StructuredSequenceBackendWrapper,
-        ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
-        LinksInfo: IdentSequenceWriter + SequenceExtraData,
-    > {
-        Final {
-            output_file: Arc<
-                StructuredSequenceWriter<
-                    ColorInfo,
-                    LinksInfo,
-                    OutputMode::Backend<ColorInfo, LinksInfo>,
-                >,
-            >,
-        },
-        Intermediate {
-            flat_unitigs: Arc<
-                StructuredSequenceWriter<
-                    ColorInfo,
-                    LinksInfo,
-                    StructSeqBinaryWriter<ColorInfo, LinksInfo>,
-                >,
-            >,
-            circular_unitigs: Option<
-                Arc<
-                    StructuredSequenceWriter<
-                        ColorInfo,
-                        LinksInfo,
-                        StructSeqBinaryWriter<ColorInfo, LinksInfo>,
-                    >,
-                >,
-            >,
-        },
-    }
-
-    fn get_writer<
-        C: IdentSequenceWriter,
-        L: IdentSequenceWriter,
-        W: StructuredSequenceBackend<C, L> + StructuredSequenceBackendInit,
-    >(
-        output_file: &Path,
-    ) -> W {
-        match output_file.extension() {
-            Some(ext) => match ext.to_string_lossy().to_string().as_str() {
-                "lz4" => W::new_compressed_lz4(&output_file, 2),
-                "gz" => W::new_compressed_gzip(&output_file, 2),
-                _ => W::new_plain(&output_file),
-            },
-            None => W::new_plain(&output_file),
-        }
-    }
-
     let output_file_mode: OutputFileMode<OutputMode, _, ()> = if generate_maximal_unitigs_links
         || compute_tigs_mode.needs_matchtigs_library()
         || compute_tigs_mode == Some(MatchtigMode::FastEulerTigs)
     {
         OutputFileMode::Intermediate {
             // Temporary file to store maximal unitigs data without links info, if further processing is requested
-            flat_unitigs: Arc::new(StructuredSequenceWriter::new(
-                StructSeqBinaryWriter::new(
-                    temp_dir.join("maximal_unitigs.tmp"),
-                    &(
-                        get_memory_mode(SwapPriority::FinalMaps as usize),
-                        CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
-                        get_compression_level_info(),
+            flat_unitigs:
+                Arc::new(
+                    StructuredSequenceWriter::new(
+                        StructSeqBinaryWriter::<
+                            PartialUnitigsColorStructure<AssemblerColorsManager>,
+                            (),
+                        >::new(
+                            temp_dir.join("maximal_unitigs.tmp"),
+                            &(
+                                get_memory_mode(SwapPriority::FinalMaps as usize),
+                                CompressedCheckpointSize::new_from_size(
+                                    MemoryDataSize::from_mebioctets(4),
+                                ),
+                                get_compression_level_info(),
+                            ),
+                            &(),
+                        ),
+                        k,
                     ),
-                    &(),
                 ),
-                k,
-            )),
             circular_unitigs: if let Some(MatchtigMode::FastEulerTigs) = compute_tigs_mode {
                 Some(Arc::new(StructuredSequenceWriter::new(
                     StructSeqBinaryWriter::new(
@@ -310,7 +268,7 @@ pub fn run_assembler<
     } else {
         OutputFileMode::Final {
             output_file: Arc::new(StructuredSequenceWriter::new(
-                get_writer::<_, _, OutputMode::Backend<_, _>>(&output_file),
+                get_final_output_writer::<_, _, OutputMode::Backend<_, _>>(&output_file),
                 k,
             )),
         }
@@ -390,151 +348,18 @@ pub fn run_assembler<
     ggcat_logging::stats::write_stats(&output_file.with_extension("elab.stats.json"));
     drop(global_colors_table);
 
-    //     PHASES_TIMES_MONITOR
-    //         .write()
-    //         .start_phase("phase: links compaction".to_string());
-
-    //     let mut log_timer = Instant::now();
-    //         let do_logging = if log_timer.elapsed() > MINIMUM_LOG_DELTA_TIME {
-    //             log_timer = Instant::now();
-    //             true
-    //         } else {
-    //             false
-    //         };
-
-    //         if do_logging {
-    //             ggcat_logging::info!("Iteration: {}", loop_iteration);
-    //         }
-
-    //         if do_logging {
-    //             ggcat_logging::info!(
-    //                 "Remaining: {} {}",
-    //                 remaining,
-    //                 PHASES_TIMES_MONITOR
-    //                     .read()
-    //                     .get_formatted_counter_without_memory()
-    //             );
-    //         }
-
-    if step <= AssemblerPhase::UnitigsExtension {
-        match &output_file_mode {
-            OutputFileMode::Final { output_file } => {
-                extend_unitigs::<MergingHash, AssemblerColorsManager, OutputMode::Backend<_, _>>(
-                    sequences,
-                    &temp_dir,
-                    output_file,
-                    None,
-                    k,
-                );
-            }
-            OutputFileMode::Intermediate {
-                flat_unitigs,
-                circular_unitigs,
-            } => {
-                extend_unitigs::<MergingHash, AssemblerColorsManager, StructSeqBinaryWriter<_, _>>(
-                    sequences,
-                    &temp_dir,
-                    flat_unitigs,
-                    circular_unitigs.as_deref(),
-                    k,
-                );
-            }
-        }
-    }
-
-    if step <= AssemblerPhase::MaximalUnitigsLinks {
-        match output_file_mode {
-            OutputFileMode::Final { output_file } => {
-                Arc::try_unwrap(output_file)
-                    .map_err(|_| ())
-                    .unwrap()
-                    .finalize();
-            }
-            OutputFileMode::Intermediate {
-                flat_unitigs,
-                circular_unitigs,
-            } => {
-                let final_unitigs_file = StructuredSequenceWriter::new(
-                    get_writer::<_, _, OutputMode::Backend<_, _>>(&output_file),
-                    k,
-                );
-
-                if compute_tigs_mode == Some(MatchtigMode::FastEulerTigs) {
-                    let circular_temp_unitigs_file = Arc::try_unwrap(circular_unitigs.unwrap())
-                        .map_err(|_| ())
-                        .unwrap();
-                    let circular_temp_path = circular_temp_unitigs_file.get_path();
-                    circular_temp_unitigs_file.finalize();
-
-                    let compressed_temp_unitigs_file =
-                        Arc::try_unwrap(flat_unitigs).map_err(|_| ()).unwrap();
-                    let temp_path = compressed_temp_unitigs_file.get_path();
-                    compressed_temp_unitigs_file.finalize();
-
-                    build_eulertigs::<MergingHash, AssemblerColorsManager, _, _>(
-                        circular_temp_path,
-                        temp_path,
-                        &temp_dir,
-                        &final_unitigs_file,
-                        k,
-                    );
-                } else if generate_maximal_unitigs_links
-                    || compute_tigs_mode.needs_matchtigs_library()
-                {
-                    let compressed_temp_unitigs_file =
-                        Arc::try_unwrap(flat_unitigs).map_err(|_| ()).unwrap();
-                    let temp_path = compressed_temp_unitigs_file.get_path();
-                    compressed_temp_unitigs_file.finalize();
-
-                    if let Some(compute_tigs_mode) = compute_tigs_mode.get_matchtigs_mode() {
-                        let matchtigs_backend = MatchtigsStorageBackend::new();
-
-                        let matchtigs_receiver = matchtigs_backend.get_receiver();
-
-                        let handle = std::thread::Builder::new()
-                            .name("greedy_matchtigs".to_string())
-                            .spawn(move || {
-                                compute_matchtigs_thread::<AssemblerColorsManager, _>(
-                                    k,
-                                    threads_count,
-                                    matchtigs_receiver,
-                                    &final_unitigs_file,
-                                    compute_tigs_mode,
-                                );
-                            })
-                            .unwrap();
-
-                        build_maximal_unitigs_links::<
-                            MergingHash,
-                            AssemblerColorsManager,
-                            MatchtigsStorageBackend<_>,
-                        >(
-                            temp_path,
-                            &temp_dir,
-                            &StructuredSequenceWriter::new(matchtigs_backend, k),
-                            k,
-                        );
-
-                        handle.join().unwrap();
-                    } else if generate_maximal_unitigs_links {
-                        final_unitigs_file.finalize();
-
-                        let final_unitigs_file = StructuredSequenceWriter::new(
-                            get_writer::<_, _, OutputMode::Backend<_, _>>(&output_file),
-                            k,
-                        );
-
-                        build_maximal_unitigs_links::<
-                            MergingHash,
-                            AssemblerColorsManager,
-                            OutputMode::Backend<_, _>,
-                        >(temp_path, &temp_dir, &final_unitigs_file, k);
-                        final_unitigs_file.finalize();
-                    }
-                }
-            }
-        }
-    }
+    build_final_unitigs::<MergingHash, AssemblerColorsManager, OutputMode>(
+        k,
+        sequences,
+        step,
+        last_step,
+        &output_file,
+        &temp_dir,
+        threads_count,
+        generate_maximal_unitigs_links,
+        compute_tigs_mode,
+        Box::new(output_file_mode),
+    );
 
     let _ = std::fs::remove_dir(temp_dir.as_path());
 

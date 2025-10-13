@@ -12,7 +12,6 @@ use io::concurrent::temp_reads::extra_data::{
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::MapEntry;
 

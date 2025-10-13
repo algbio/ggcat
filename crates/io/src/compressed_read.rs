@@ -395,7 +395,7 @@ impl<'a> CompressedRead<'a> {
         debug_assert!(self.size != 0);
         let complete_bytes_count = self.size / 4;
         let last_byte_index = (self.size + 3) / 4 - 1;
-        let last_byte_mask = 0xFFu8.wrapping_shr((self.size as u32 % 4) * 2);
+        let last_byte_mask = 0xFFu8.wrapping_shr(8 - (self.size as u32 % 4) * 2);
         unsafe {
             from_raw_parts(self.data, complete_bytes_count)
                 == from_raw_parts(other.data, complete_bytes_count)

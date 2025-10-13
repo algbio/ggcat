@@ -18,7 +18,6 @@ use itertools::Itertools;
 use nightly_quirks::slice_partition_dedup::SlicePartitionDedup;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::ops::Range;
 use std::path::Path;
 use std::slice::from_raw_parts;
 use structs::map_entry::MapEntry;

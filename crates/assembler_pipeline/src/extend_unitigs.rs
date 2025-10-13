@@ -1,11 +1,10 @@
-use crate::reorganize_reads::ReorganizedReadsExtraData;
 use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::color_types::{PartialUnitigsColorStructure, TempUnitigColorStructure};
 use colors::colors_manager::{ColorsManager, color_types};
 use config::{
     BucketIndexType, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS, DEFAULT_OUTPUT_BUFFER_SIZE,
-    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, SwapPriority,
-    get_compression_level_info, get_memory_mode,
+    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MINIMUM_LOG_DELTA_TIME,
+    SwapPriority, get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::info;
 use hashbrown::hash_table::Entry;
@@ -42,6 +41,7 @@ use std::cmp::Reverse;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Instant;
 use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
 use typenum::U2;
 use utils::fast_rand_bool::FastRandBool;
@@ -226,6 +226,8 @@ pub fn extend_unitigs<
         BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
     });
 
+    let mut log_timer = Instant::now();
+
     loop {
         let new_buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
             buckets_count,
@@ -240,6 +242,7 @@ pub fn extend_unitigs<
         ));
 
         let has_joinable_unitigs = AtomicBool::new(false);
+        let total_remaining_count = AtomicUsize::new(0);
 
         rayon::scope(|_s| {
             let inputs_count = current_buckets.len();
@@ -293,9 +296,7 @@ pub fn extend_unitigs<
 
                 let mut fast_random = FastRandBool::<1>::new();
 
-                let mut joined_count = 0;
-                let mut total_count = 0;
-
+                let mut remaining_count = 0;
                 let mut has_written = false;
 
                 #[inline]
@@ -360,8 +361,6 @@ pub fn extend_unitigs<
                             },
                         );
 
-                        total_count += 1;
-
                         // The current bucket is empty, fill it with the read
                         match element_entry {
                             Entry::Vacant(entry) => {
@@ -406,7 +405,6 @@ pub fn extend_unitigs<
 
                                 // Reset the current bucket
                                 if let Some(joined) = joined {
-                                    joined_count += 2;
                                     entry.remove();
 
                                     if let Some(extremity_hash) = joined.extremity_hash {
@@ -432,6 +430,7 @@ pub fn extend_unitigs<
                                         //     joined.read.start,
                                         //     joined.should_rc
                                         // );
+                                        remaining_count += 1;
                                         joined_unitigs_buckets.add_element_extended(
                                             MH::get_bucket(
                                                 0,
@@ -572,6 +571,7 @@ pub fn extend_unitigs<
                             (read.bases_count() - k) % 4
                         };
 
+                        remaining_count += 1;
                         joined_unitigs_buckets.add_element_extended(
                             target_bucket,
                             &PartialUnitigExtraData {
@@ -596,6 +596,8 @@ pub fn extend_unitigs<
                     has_joinable_unitigs.store(true, Ordering::Relaxed);
                 }
 
+                total_remaining_count.fetch_add(remaining_count, Ordering::Relaxed);
+
                 reads_storage.clear();
                 reads_vec.clear();
                 PartialUnitigsColorStructure::<CX>::clear_temp_buffer(&mut extra_buffer);
@@ -607,6 +609,27 @@ pub fn extend_unitigs<
 
         if !has_joinable_unitigs.into_inner() {
             break;
+        }
+
+        let do_logging = if log_timer.elapsed() > MINIMUM_LOG_DELTA_TIME {
+            log_timer = Instant::now();
+            true
+        } else {
+            false
+        };
+
+        if do_logging {
+            ggcat_logging::info!("Iteration: {}", iter_count);
+        }
+
+        if do_logging {
+            ggcat_logging::info!(
+                "Remaining: {} {}",
+                total_remaining_count.into_inner(),
+                PHASES_TIMES_MONITOR
+                    .read()
+                    .get_formatted_counter_without_memory()
+            );
         }
 
         current_buckets = new_buckets.finalize_single();
