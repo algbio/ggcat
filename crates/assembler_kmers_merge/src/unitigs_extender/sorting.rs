@@ -206,27 +206,40 @@ impl<CX: ColorsManager> Default for SortingExtender<CX> {
 // }
 
 impl<CX: ColorsManager> SortingExtender<CX> {
-    pub fn process_supertigs<'a>(&mut self, supertigs_range_start: usize) {
+    pub fn process_supertigs<'a, const COMPUTE_SIMPLITIGS: bool>(
+        &mut self,
+        supertigs_range_start: usize,
+    ) {
         self.branching_supertigs.sort_unstable();
         self.branching_supertigs.dedup();
         if self.branching_supertigs.last() == Some(&usize::MAX) {
             self.branching_supertigs.pop();
         }
 
-        let x = self.supertigs.len() - supertigs_range_start;
+        let left_supertigs_count = self.supertigs.len() - supertigs_range_start;
 
-        let valid_joining = x > 0
+        let valid_joining = left_supertigs_count > 0
             && self.branching_supertigs.len() > 0
             && !self.supertigs[supertigs_range_start].forward_extra_base
             && !self.supertigs[self.branching_supertigs[0]].backward_extra_base;
 
-        let unitig_extendable = self.branching_supertigs.len() == 1 && x == 1;
+        let unitig_extendable = self.branching_supertigs.len() == 1 && left_supertigs_count == 1;
 
         if valid_joining {
-            if unitig_extendable {
-                // output_read
-                self.supertigs[self.branching_supertigs[0]].linked = true;
-                self.supertigs[supertigs_range_start].next = self.branching_supertigs[0];
+            if COMPUTE_SIMPLITIGS {
+                for (prev_idx, next_idx) in (supertigs_range_start..self.supertigs.len())
+                    .zip(self.branching_supertigs.iter().copied())
+                {
+                    // Link supertigs
+                    self.supertigs[next_idx].linked = true;
+                    self.supertigs[prev_idx].next = next_idx;
+                }
+            } else {
+                if unitig_extendable {
+                    // Link supertigs
+                    self.supertigs[self.branching_supertigs[0]].linked = true;
+                    self.supertigs[supertigs_range_start].next = self.branching_supertigs[0];
+                }
             }
         }
 
@@ -259,28 +272,11 @@ impl<CX: ColorsManager> SortingExtender<CX> {
         //         supertig.multiplicity,
         //     );
         // }
-
-        // if self.supertigs.len() - supertigs_range_start > 1 {
-        //     println!(
-        //         "Matching supertigs count: {}",
-        //         self.supertigs.len() - supertigs_range_start
-        //     );
-        //     if self.supertigs.len() - supertigs_range_start > 4 {
-        //         for supertig in &self.supertigs[supertigs_range_start..] {
-        //             println!(
-        //                 "ERROR Supertig: {} with multiplicity {}",
-        //                 supertig.read.as_reference(superkmers_storage).to_string(),
-        //                 supertig.multiplicity
-        //             );
-        //         }
-        //     }
-        //     assert!(self.supertigs.len() - supertigs_range_start <= 4);
-        // }
     }
 
     /// Processes elements in range, assuming they are prefix sorted and share the same suffix of length `suffix_length`.
     /// Reduces every read suffix to exactly `target_suffix_length` bases, and outputs the used kmers
-    pub fn process_reads_block<'a>(
+    pub fn process_reads_block<'a, const COMPUTE_SIMPLITIGS: bool>(
         &mut self,
         colors_data: &mut UnitigExtensionColorsData<CX>,
         reads: &[DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>],
@@ -360,7 +356,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                         || element_target_index >= target_index_end
                     {
                         // Process supertigs
-                        self.process_supertigs(supertigs_range_start);
+                        self.process_supertigs::<COMPUTE_SIMPLITIGS>(supertigs_range_start);
                         self.branching_supertigs.clear();
                         supertigs_range_start = self.supertigs.len();
                     }
@@ -463,7 +459,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
 
                 if km1mer_break {
                     // Process supertigs
-                    self.process_supertigs(supertigs_range_start);
+                    self.process_supertigs::<COMPUTE_SIMPLITIGS>(supertigs_range_start);
                     self.branching_supertigs.clear();
 
                     // Analyze the last added supertigs and check for branching
@@ -489,7 +485,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
         self.supertigs.clear();
     }
 
-    pub fn process_reads(
+    pub fn process_reads<const COMPUTE_SIMPLITIGS: bool>(
         &mut self,
         colors_data: &mut UnitigExtensionColorsData<CX>,
         reads: &mut [DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>],
@@ -749,7 +745,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
 
             assert!(max_allowed_suffix < needed_suffix);
 
-            self.process_reads_block(
+            self.process_reads_block::<COMPUTE_SIMPLITIGS>(
                 colors_data,
                 remapped_minimizer_elements,
                 extra_buffer,

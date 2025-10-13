@@ -291,7 +291,7 @@ impl<
                     }
 
                     sorting_extender.clear_supertigs();
-                    sorting_extender.process_reads(
+                    sorting_extender.process_reads::<COMPUTE_SIMPLITIGS>(
                         &mut self.colors_data,
                         minimizer_elements,
                         &map_struct.superkmers_extra_buffer,
