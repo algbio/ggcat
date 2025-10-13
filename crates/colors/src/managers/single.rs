@@ -20,6 +20,7 @@ pub struct SingleColorManager;
 
 impl ColorsMergeManager for SingleColorManager {
     type SingleKmerColorDataType = ColorIndexType;
+    type TableColorEntry = ();
     type GlobalColorsTableWriter = ();
     type GlobalColorsTableReader = ColorsDeserializer<DefaultColorsSerializer>;
 
@@ -38,7 +39,7 @@ impl ColorsMergeManager for SingleColorManager {
 
     type ColorsBufferTempStructure = ();
 
-    fn allocate_temp_buffer_structure(_init_data: &Path) -> Self::ColorsBufferTempStructure {
+    fn allocate_temp_buffer_structure() -> Self::ColorsBufferTempStructure {
         ()
     }
 
@@ -71,6 +72,13 @@ impl ColorsMergeManager for SingleColorManager {
     ) {
     }
 
+    fn assign_color(
+        _global_colors_table: &Self::GlobalColorsTableWriter,
+        _data: &mut [Self::SingleKmerColorDataType],
+    ) -> Self::TableColorEntry {
+        ()
+    }
+
     type PartialUnitigsColorStructure = UnitigColorDataSerializer;
     type TempUnitigColorStructure = DefaultUnitigsTempColorData;
 
@@ -87,7 +95,7 @@ impl ColorsMergeManager for SingleColorManager {
     fn extend_forward(
         _data: &Self::ColorsBufferTempStructure,
         _ts: &mut Self::TempUnitigColorStructure,
-        _entry: &MapEntry<Self::HashMapTempColorIndex>,
+        _entry: Self::HashMapTempColorIndex,
     ) {
         panic!("Unsupported!");
     }
@@ -95,7 +103,15 @@ impl ColorsMergeManager for SingleColorManager {
     fn extend_backward(
         _data: &Self::ColorsBufferTempStructure,
         _ts: &mut Self::TempUnitigColorStructure,
-        _entry: &MapEntry<Self::HashMapTempColorIndex>,
+        _entry: Self::HashMapTempColorIndex,
+    ) {
+        panic!("Unsupported!");
+    }
+
+    fn extend_forward_with_color(
+        _ts: &mut Self::TempUnitigColorStructure,
+        _entry_color: Self::TableColorEntry,
+        _count: usize,
     ) {
         panic!("Unsupported!");
     }
@@ -136,6 +152,7 @@ impl ColorsMergeManager for SingleColorManager {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct SingleHashMapTempColorIndex;
 
 #[derive(Debug)]
@@ -148,14 +165,18 @@ pub struct UnitigsSerializerTempBuffer {
     colors: Vec<(ColorIndexType, u64)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct UnitigColorDataSerializer {
-    slice: Range<usize>,
+    slice_start: usize,
+    slice_end: usize,
 }
 
 impl Default for UnitigColorDataSerializer {
     fn default() -> Self {
-        Self { slice: 0..0 }
+        Self {
+            slice_start: 0,
+            slice_end: 0,
+        }
     }
 }
 
@@ -181,9 +202,11 @@ impl SequenceExtraDataTempBufferManagement for UnitigColorDataSerializer {
         dst: &mut UnitigsSerializerTempBuffer,
     ) -> Self {
         let start = dst.colors.len();
-        dst.colors.extend(&src.colors[extra.slice]);
+        dst.colors
+            .extend(&src.colors[extra.slice_start..extra.slice_end]);
         Self {
-            slice: start..dst.colors.len(),
+            slice_start: start,
+            slice_end: dst.colors.len(),
         }
     }
 }
@@ -201,15 +224,16 @@ impl SequenceExtraData for UnitigColorDataSerializer {
             ));
         }
         Some(Self {
-            slice: start..buffer.colors.len(),
+            slice_start: start,
+            slice_end: buffer.colors.len(),
         })
     }
 
     fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write) {
-        let colors_count = self.slice.end - self.slice.start;
+        let colors_count = self.slice_end - self.slice_start;
         encode_varint(|b| writer.write_all(b), colors_count as u64).unwrap();
 
-        for i in self.slice.clone() {
+        for i in self.slice_start..self.slice_end {
             let el = buffer.colors[i];
             encode_varint(|b| writer.write_all(b), el.0 as u64).unwrap();
             encode_varint(|b| writer.write_all(b), el.1).unwrap();
@@ -218,7 +242,7 @@ impl SequenceExtraData for UnitigColorDataSerializer {
 
     #[inline(always)]
     fn max_size(&self) -> usize {
-        (2 * (self.slice.end - self.slice.start) + 1) * VARINT_MAX_SIZE
+        (2 * (self.slice_end - self.slice_start) + 1) * VARINT_MAX_SIZE
     }
 }
 

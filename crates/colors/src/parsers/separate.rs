@@ -124,6 +124,10 @@ impl MinimizerBucketingSeqColorData for MinBkSingleColor {
     fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
         *self
     }
+
+    fn get_unique_color<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
+        self.0
+    }
 }
 
 impl SequenceExtraDataTempBufferManagement for MinBkMultipleColors {
@@ -218,6 +222,10 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
 
     fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
         *self
+    }
+
+    fn get_unique_color<'a>(&'a self, extra_buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
+        extra_buffer.slice_vec(&self.0)
     }
 }
 

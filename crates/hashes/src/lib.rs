@@ -8,6 +8,7 @@ mod nthash_base;
 
 pub mod cn_rkhash;
 pub mod dummy_hasher;
+pub mod extremal;
 pub mod fw_rkhash;
 pub mod rolling;
 

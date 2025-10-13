@@ -1,8 +1,11 @@
 use crate::concurrent::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
+use crate::concurrent::temp_reads::extra_data::{
+    SequenceExtraData, SequenceExtraDataConsecutiveCompression,
+};
 use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE};
 use dynamic_dispatch::dynamic_dispatch;
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -19,8 +22,10 @@ pub struct FastaWriterWrapper;
 
 #[dynamic_dispatch]
 impl StructuredSequenceBackendWrapper for FastaWriterWrapper {
-    type Backend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> =
-        FastaWriter<ColorInfo, LinksInfo>;
+    type Backend<
+        ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
+        LinksInfo: IdentSequenceWriter + SequenceExtraData,
+    > = FastaWriter<ColorInfo, LinksInfo>;
 }
 
 pub struct FastaWriter<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> {

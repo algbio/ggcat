@@ -7,13 +7,11 @@ use colors::colors_manager::{
         PartialUnitigsColorStructure, TempUnitigColorStructure,
     },
 };
-use hashes::HashFunctionFactory;
+use hashes::{HashFunctionFactory, extremal::PrecomputedHash};
 use io::concurrent::temp_reads::{
     creads_utils::DeserializedRead, extra_data::SequenceExtraDataTempBufferManagement,
 };
 use kmers_transform::GroupProcessStats;
-
-use crate::final_executor::PrecomputedHash;
 
 pub mod hashmap;
 pub mod sorting;

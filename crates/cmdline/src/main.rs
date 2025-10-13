@@ -21,11 +21,9 @@ arg_enum! {
     pub enum AssemblerStartingStep {
         MinimizerBucketing = 0,
         KmersMerge = 1,
-        HashesSorting = 2,
-        LinksCompaction = 3,
-        ReorganizeReads = 4,
-        BuildUnitigs = 5,
-        MaximalUnitigsLinks = 6,
+        UnitigsExtension = 2,
+        MaximalUnitigsLinks = 3,
+        FinalStep = 4
     }
 }
 
@@ -156,7 +154,7 @@ struct AssemblerArgs {
     #[structopt(long, default_value = "MinimizerBucketing")]
     pub step: AssemblerStartingStep,
 
-    #[structopt(long = "last-step", default_value = "BuildUnitigs")]
+    #[structopt(long = "last-step", default_value = "FinalStep")]
     pub last_step: AssemblerStartingStep,
 
     /// Generate maximal unitigs connections references, in BCALM2 format L:<+/->:<other id>:<+/->
@@ -284,21 +282,13 @@ fn convert_assembler_step(step: AssemblerStartingStep) -> utils::assembler_phase
             utils::assembler_phases::AssemblerPhase::MinimizerBucketing
         }
         AssemblerStartingStep::KmersMerge => utils::assembler_phases::AssemblerPhase::KmersMerge,
-        AssemblerStartingStep::HashesSorting => {
-            utils::assembler_phases::AssemblerPhase::HashesSorting
-        }
-        AssemblerStartingStep::LinksCompaction => {
-            utils::assembler_phases::AssemblerPhase::LinksCompaction
-        }
-        AssemblerStartingStep::ReorganizeReads => {
-            utils::assembler_phases::AssemblerPhase::ReorganizeReads
-        }
-        AssemblerStartingStep::BuildUnitigs => {
-            utils::assembler_phases::AssemblerPhase::BuildUnitigs
+        AssemblerStartingStep::UnitigsExtension => {
+            utils::assembler_phases::AssemblerPhase::UnitigsExtension
         }
         AssemblerStartingStep::MaximalUnitigsLinks => {
             utils::assembler_phases::AssemblerPhase::MaximalUnitigsLinks
         }
+        AssemblerStartingStep::FinalStep => utils::assembler_phases::AssemblerPhase::FinalStep,
     }
 }
 

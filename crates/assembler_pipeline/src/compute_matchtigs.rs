@@ -577,7 +577,7 @@ pub fn compute_matchtigs_thread<
         );
 
         output_buffer.add_read(
-            &read_buffer,
+            read_buffer.iter().copied(),
             None,
             writable_color,
             &final_color_extra_buffer,

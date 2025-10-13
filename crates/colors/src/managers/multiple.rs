@@ -55,13 +55,14 @@ pub type HashMapTempColorIndex = usize;
 #[inline]
 fn get_entry_color(
     manager: &MultipleColorsManager,
-    entry: &MapEntry<HashMapTempColorIndex>,
+    color_index: HashMapTempColorIndex,
 ) -> ColorIndexType {
-    manager.colors_list[entry.color_index].tracking_counter_or_color as ColorIndexType
+    manager.colors_list[color_index].tracking_counter_or_color as ColorIndexType
 }
 
 impl ColorsMergeManager for MultipleColorsManager {
     type SingleKmerColorDataType = ColorIndexType;
+    type TableColorEntry = ColorIndexType;
     type GlobalColorsTableWriter = ColorsMemMapWriter<DefaultColorsSerializer>;
     type GlobalColorsTableReader = ();
 
@@ -80,7 +81,7 @@ impl ColorsMergeManager for MultipleColorsManager {
 
     type ColorsBufferTempStructure = Self;
 
-    fn allocate_temp_buffer_structure(_temp_dir: &Path) -> Self::ColorsBufferTempStructure {
+    fn allocate_temp_buffer_structure() -> Self::ColorsBufferTempStructure {
         Self {
             colors_buffer: AllocatorU32::new(DEFAULT_OUTPUT_BUFFER_SIZE),
             colors_list: ResizableVec::new(),
@@ -216,6 +217,19 @@ impl ColorsMergeManager for MultipleColorsManager {
         data.colors_buffer.reset();
     }
 
+    fn assign_color(
+        global_colors_table: &Self::GlobalColorsTableWriter,
+        colors: &mut [Self::SingleKmerColorDataType],
+    ) -> Self::TableColorEntry {
+        colors.sort_unstable();
+        let colors_count = colors.nq_partition_dedup().0.len();
+        let unique_colors = &colors[..colors_count];
+
+        // Assign the subset color index to the current kmer
+        let color = global_colors_table.get_id(unique_colors);
+        color
+    }
+
     type PartialUnitigsColorStructure = UnitigColorData;
     type TempUnitigColorStructure = DefaultUnitigsTempColorData;
 
@@ -233,9 +247,9 @@ impl ColorsMergeManager for MultipleColorsManager {
     fn extend_forward(
         data: &Self::ColorsBufferTempStructure,
         ts: &mut Self::TempUnitigColorStructure,
-        entry: &MapEntry<Self::HashMapTempColorIndex>,
+        entry_color: Self::HashMapTempColorIndex,
     ) {
-        let kmer_color = get_entry_color(data, entry);
+        let kmer_color = get_entry_color(data, entry_color);
 
         if let Some(back_ts) = ts.colors.back_mut() {
             if back_ts.color == kmer_color {
@@ -254,9 +268,9 @@ impl ColorsMergeManager for MultipleColorsManager {
     fn extend_backward(
         data: &Self::ColorsBufferTempStructure,
         ts: &mut Self::TempUnitigColorStructure,
-        entry: &MapEntry<Self::HashMapTempColorIndex>,
+        entry_color: Self::HashMapTempColorIndex,
     ) {
-        let kmer_color = get_entry_color(data, entry);
+        let kmer_color = get_entry_color(data, entry_color);
 
         if let Some(front_ts) = ts.colors.front_mut() {
             if front_ts.color == kmer_color {
@@ -271,6 +285,24 @@ impl ColorsMergeManager for MultipleColorsManager {
         });
     }
 
+    fn extend_forward_with_color(
+        ts: &mut Self::TempUnitigColorStructure,
+        entry_color: Self::TableColorEntry,
+        count: usize,
+    ) {
+        if let Some(front_ts) = ts.colors.front_mut() {
+            if front_ts.color == entry_color {
+                front_ts.counter += count;
+                return;
+            }
+        }
+
+        ts.colors.push_front(KmerSerializedColor {
+            color: entry_color,
+            counter: count,
+        });
+    }
+
     fn join_structures<const REVERSE: bool>(
         dest: &mut Self::TempUnitigColorStructure,
         src: &Self::PartialUnitigsColorStructure,
@@ -280,13 +312,13 @@ impl ColorsMergeManager for MultipleColorsManager {
     ) {
         let get_index = |i| {
             if REVERSE {
-                src.slice.end - i - 1
+                src.slice_end - i - 1
             } else {
-                src.slice.start + i
+                src.slice_start + i
             }
         };
 
-        let len = src.slice.end - src.slice.start;
+        let len = src.slice_end - src.slice_start;
 
         let colors_slice = &src_buffer.colors.as_slice();
 
@@ -341,7 +373,8 @@ impl ColorsMergeManager for MultipleColorsManager {
         colors_buffer.colors.extend(ts.colors.iter());
 
         UnitigColorData {
-            slice: 0..colors_buffer.colors.len(),
+            slice_start: 0,
+            slice_end: colors_buffer.colors.len(),
         }
     }
 
@@ -372,7 +405,7 @@ impl ColorsMergeManager for MultipleColorsManager {
 
         let hashes = MH::new(read, 31);
 
-        let subslice = &colors_buffer.colors[color.slice.clone()];
+        let subslice = &colors_buffer.colors[color.slice_start..color.slice_end];
 
         for (hash, color) in hashes.iter().zip(
             subslice
@@ -381,7 +414,7 @@ impl ColorsMergeManager for MultipleColorsManager {
                 .flatten(),
         ) {
             let entry = hmap.get(&hash.to_unextendable()).unwrap();
-            let kmer_color = get_entry_color(data, entry);
+            let kmer_color = get_entry_color(data, entry.color_index);
             if kmer_color != color {
                 let hashes = MH::new(read, 31);
                 ggcat_logging::error!(
@@ -390,7 +423,7 @@ impl ColorsMergeManager for MultipleColorsManager {
                         .iter()
                         .map(|h| {
                             let entry = hmap.get(&h.to_unextendable()).unwrap();
-                            let kmer_color = get_entry_color(data, entry);
+                            let kmer_color = get_entry_color(data, entry.color_index);
                             kmer_color
                         })
                         .zip(
@@ -418,14 +451,18 @@ pub struct UnitigsSerializerTempBuffer {
     pub(crate) colors: Vec<KmerSerializedColor>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct UnitigColorData {
-    pub(crate) slice: Range<usize>,
+    pub(crate) slice_start: usize,
+    pub(crate) slice_end: usize,
 }
 
 impl Default for UnitigColorData {
     fn default() -> Self {
-        Self { slice: 0..0 }
+        Self {
+            slice_start: 0,
+            slice_end: 0,
+        }
     }
 }
 
@@ -457,9 +494,11 @@ impl SequenceExtraDataTempBufferManagement for UnitigColorData {
         dst: &mut UnitigsSerializerTempBuffer,
     ) -> Self {
         let start = dst.colors.len();
-        dst.colors.extend(&src.colors[extra.slice]);
+        dst.colors
+            .extend(&src.colors[extra.slice_start..extra.slice_end]);
         Self {
-            slice: start..dst.colors.len(),
+            slice_start: start,
+            slice_end: dst.colors.len(),
         }
     }
 }
@@ -477,15 +516,16 @@ impl SequenceExtraData for UnitigColorData {
             });
         }
         Some(Self {
-            slice: start..buffer.colors.len(),
+            slice_start: start,
+            slice_end: buffer.colors.len(),
         })
     }
 
     fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write) {
-        let colors_count = self.slice.end - self.slice.start;
+        let colors_count = self.slice_end - self.slice_start;
         encode_varint(|b| writer.write_all(b), colors_count as u64).unwrap();
 
-        for i in self.slice.clone() {
+        for i in self.slice_start..self.slice_end {
             let el = buffer.colors[i];
             encode_varint(|b| writer.write_all(b), el.color as u64).unwrap();
             encode_varint(|b| writer.write_all(b), el.counter as u64).unwrap();
@@ -494,13 +534,13 @@ impl SequenceExtraData for UnitigColorData {
 
     #[inline(always)]
     fn max_size(&self) -> usize {
-        (2 * (self.slice.end - self.slice.start) + 1) * VARINT_MAX_SIZE
+        (2 * (self.slice_end - self.slice_start) + 1) * VARINT_MAX_SIZE
     }
 }
 
 impl IdentSequenceWriter for UnitigColorData {
     fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
-        for i in self.slice.clone() {
+        for i in self.slice_start..self.slice_end {
             write!(
                 stream,
                 " C:{:x}:{}",
@@ -519,11 +559,11 @@ impl IdentSequenceWriter for UnitigColorData {
         stream: &mut impl Write,
         extra_buffer: &Self::TempBuffer,
     ) {
-        if self.slice.len() > 0 {
+        if (self.slice_end - self.slice_start) > 0 {
             write!(stream, "CS",).unwrap();
         }
 
-        for i in self.slice.clone() {
+        for i in self.slice_start..self.slice_end {
             write!(
                 stream,
                 ":{:x}:{}",
@@ -551,7 +591,8 @@ impl IdentSequenceWriter for UnitigColorData {
         }
 
         Some(UnitigColorData {
-            slice: 0..colors_count,
+            slice_start: 0,
+            slice_end: colors_count,
         })
     }
 
@@ -576,7 +617,8 @@ impl IdentSequenceWriter for UnitigColorData {
         }
 
         Some(UnitigColorData {
-            slice: 0..colors_count,
+            slice_start: 0,
+            slice_end: colors_count,
         })
     }
 }

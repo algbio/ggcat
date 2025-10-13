@@ -3,11 +3,17 @@
 use ::dynamic_dispatch::dynamic_dispatch;
 use assembler_kmers_merge::structs::RetType;
 use assembler_pipeline::compute_matchtigs::MatchtigHelperTrait;
+use assembler_pipeline::compute_matchtigs::MatchtigsStorageBackend;
+use assembler_pipeline::compute_matchtigs::compute_matchtigs_thread;
+use assembler_pipeline::eulertigs::build_eulertigs;
+use assembler_pipeline::extend_unitigs::extend_unitigs;
 use assembler_pipeline::hashes_sorting;
 use assembler_pipeline::hashes_sorting::hashes_sorting;
 use assembler_pipeline::links_compaction::links_compaction;
+use assembler_pipeline::maximal_unitig_links::build_maximal_unitigs_links;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
+use config::get_compression_level_info;
 use config::{
     DEFAULT_PER_CPU_BUFFER_SIZE, INTERMEDIATE_COMPRESSION_LEVEL_FAST,
     INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES, MAX_COLORMAP_WRITING_THREADS,
@@ -15,24 +21,36 @@ use config::{
 };
 use ggcat_logging::stats;
 use hashes::HashFunctionFactory;
+use io::concurrent::structured_sequences::IdentSequenceWriter;
+use io::concurrent::structured_sequences::StructuredSequenceBackend;
+use io::concurrent::structured_sequences::StructuredSequenceBackendInit;
 use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
+use io::concurrent::structured_sequences::StructuredSequenceWriter;
+use io::concurrent::structured_sequences::binary::StructSeqBinaryWriter;
+use io::concurrent::structured_sequences::binary::StructSeqBinaryWriterWrapper;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
 use io::concurrent::structured_sequences::gfa::GFAWriterWrapperV1;
 use io::concurrent::structured_sequences::gfa::GFAWriterWrapperV2;
+use io::concurrent::temp_reads::extra_data::SequenceExtraData;
+use io::concurrent::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
 use io::debug_load_buckets;
 use io::debug_load_single_buckets;
 use io::debug_save_buckets;
 use io::debug_save_single_buckets;
 use io::sequences_stream::general::GeneralSequenceBlockData;
 use io::{DUPLICATES_BUCKET_EXTRA, compute_stats_from_input_blocks};
+use parallel_processor::buckets::ExtraBucketData;
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{BucketsCount, ExtraBuckets, MultiThreadBuckets};
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
+use std::any::Any;
 use std::fs::remove_file;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -164,8 +182,11 @@ pub fn run_assembler<
         buckets.iter().map(|x| x.chunks.len()).sum::<usize>()
     );
 
-    if last_step <= AssemblerPhase::MinimizerBucketing {
+    if KEEP_FILES.load(Ordering::Relaxed) {
         debug_save_buckets(&temp_dir, "minimizer-bucketing.debug", &buckets);
+    }
+
+    if last_step <= AssemblerPhase::MinimizerBucketing {
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Completed minimizer bucketing.".to_string());
@@ -198,33 +219,164 @@ pub fn run_assembler<
 
     let buckets_count = BucketsCount::new(buckets_count_log, ExtraBuckets::None);
 
-    let RetType { sequences, hashes } = if step <= AssemblerPhase::KmersMerge {
-        assembler_kmers_merge::dynamic_dispatch::kmers_merge(
-            (
-                MergingHash::dynamic_dispatch_id(),
-                AssemblerColorsManager::dynamic_dispatch_id(),
+    enum OutputFileMode<
+        OutputMode: StructuredSequenceBackendWrapper,
+        ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
+        LinksInfo: IdentSequenceWriter + SequenceExtraData,
+    > {
+        Final {
+            output_file: Arc<
+                StructuredSequenceWriter<
+                    ColorInfo,
+                    LinksInfo,
+                    OutputMode::Backend<ColorInfo, LinksInfo>,
+                >,
+            >,
+        },
+        Intermediate {
+            flat_unitigs: Arc<
+                StructuredSequenceWriter<
+                    ColorInfo,
+                    LinksInfo,
+                    StructSeqBinaryWriter<ColorInfo, LinksInfo>,
+                >,
+            >,
+            circular_unitigs: Option<
+                Arc<
+                    StructuredSequenceWriter<
+                        ColorInfo,
+                        LinksInfo,
+                        StructSeqBinaryWriter<ColorInfo, LinksInfo>,
+                    >,
+                >,
+            >,
+        },
+    }
+
+    fn get_writer<
+        C: IdentSequenceWriter,
+        L: IdentSequenceWriter,
+        W: StructuredSequenceBackend<C, L> + StructuredSequenceBackendInit,
+    >(
+        output_file: &Path,
+    ) -> W {
+        match output_file.extension() {
+            Some(ext) => match ext.to_string_lossy().to_string().as_str() {
+                "lz4" => W::new_compressed_lz4(&output_file, 2),
+                "gz" => W::new_compressed_gzip(&output_file, 2),
+                _ => W::new_plain(&output_file),
+            },
+            None => W::new_plain(&output_file),
+        }
+    }
+
+    let output_file_mode: OutputFileMode<OutputMode, _, ()> = if generate_maximal_unitigs_links
+        || compute_tigs_mode.needs_matchtigs_library()
+        || compute_tigs_mode == Some(MatchtigMode::FastEulerTigs)
+    {
+        OutputFileMode::Intermediate {
+            // Temporary file to store maximal unitigs data without links info, if further processing is requested
+            flat_unitigs: Arc::new(StructuredSequenceWriter::new(
+                StructSeqBinaryWriter::new(
+                    temp_dir.join("maximal_unitigs.tmp"),
+                    &(
+                        get_memory_mode(SwapPriority::FinalMaps as usize),
+                        CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
+                        get_compression_level_info(),
+                    ),
+                    &(),
+                ),
+                k,
+            )),
+            circular_unitigs: if let Some(MatchtigMode::FastEulerTigs) = compute_tigs_mode {
+                Some(Arc::new(StructuredSequenceWriter::new(
+                    StructSeqBinaryWriter::new(
+                        temp_dir.join("circular_unitigs.tmp"),
+                        &(
+                            get_memory_mode(SwapPriority::FinalMaps as usize),
+                            CompressedCheckpointSize::new_from_size(
+                                MemoryDataSize::from_mebioctets(1),
+                            ),
+                            get_compression_level_info(),
+                        ),
+                        &(),
+                    ),
+                    k,
+                )))
+            } else {
+                None
+            },
+        }
+    } else {
+        OutputFileMode::Final {
+            output_file: Arc::new(StructuredSequenceWriter::new(
+                get_writer::<_, _, OutputMode::Backend<_, _>>(&output_file),
+                k,
+            )),
+        }
+    };
+
+    let RetType { sequences } = if step <= AssemblerPhase::KmersMerge {
+        match &output_file_mode {
+            OutputFileMode::Final { output_file } => {
+                assembler_kmers_merge::dynamic_dispatch::kmers_merge(
+                    (
+                        MergingHash::dynamic_dispatch_id(),
+                        AssemblerColorsManager::dynamic_dispatch_id(),
+                        OutputMode::dynamic_dispatch_id(),
+                    ),
+                    buckets,
+                    output_file.clone(),
+                    None,
+                    global_colors_table.clone(),
+                    buckets_count,
+                    second_buckets_count,
+                    min_multiplicity,
+                    temp_dir.as_path(),
+                    k,
+                    m,
+                    compute_tigs_mode.needs_simplitigs(),
+                    threads_count,
+                    forward_only,
+                )
+            }
+            OutputFileMode::Intermediate {
+                flat_unitigs,
+                circular_unitigs,
+            } => assembler_kmers_merge::dynamic_dispatch::kmers_merge(
+                (
+                    MergingHash::dynamic_dispatch_id(),
+                    AssemblerColorsManager::dynamic_dispatch_id(),
+                    StructSeqBinaryWriterWrapper::dynamic_dispatch_id(),
+                ),
+                buckets,
+                flat_unitigs.clone(),
+                circular_unitigs
+                    .as_ref()
+                    .map(|a| a.clone() as Arc<dyn Any + Sync + Send + 'static>),
+                global_colors_table.clone(),
+                buckets_count,
+                second_buckets_count,
+                min_multiplicity,
+                temp_dir.as_path(),
+                k,
+                m,
+                compute_tigs_mode.needs_simplitigs(),
+                threads_count,
+                forward_only,
             ),
-            buckets,
-            global_colors_table.clone(),
-            buckets_count,
-            second_buckets_count,
-            min_multiplicity,
-            temp_dir.as_path(),
-            k,
-            m,
-            compute_tigs_mode.needs_simplitigs(),
-            threads_count,
-            forward_only,
-        )
+        }
     } else {
         RetType {
             sequences: debug_load_single_buckets(&temp_dir, "sequences-buckets.debug").unwrap(),
-            hashes: debug_load_single_buckets(&temp_dir, "hashes-buckets.debug").unwrap(),
         }
     };
-    if last_step <= AssemblerPhase::KmersMerge {
+
+    if KEEP_FILES.load(Ordering::Relaxed) {
         debug_save_single_buckets(&temp_dir, "sequences-buckets.debug", &sequences);
-        debug_save_single_buckets(&temp_dir, "hashes-buckets.debug", &hashes);
+    }
+
+    if last_step <= AssemblerPhase::KmersMerge {
         PHASES_TIMES_MONITOR
             .write()
             .print_stats("Completed kmers merge.".to_string());
@@ -238,159 +390,151 @@ pub fn run_assembler<
     ggcat_logging::stats::write_stats(&output_file.with_extension("elab.stats.json"));
     drop(global_colors_table);
 
-    let mut links = if step <= AssemblerPhase::HashesSorting {
-        hashes_sorting::dynamic_dispatch::hashes_sorting(
-            (MergingHash::dynamic_dispatch_id(),),
-            hashes,
-            temp_dir.as_path(),
-            buckets_count,
-        )
-    } else {
-        debug_load_single_buckets(&temp_dir, "links-buckets.debug").unwrap()
-    };
-    if last_step <= AssemblerPhase::HashesSorting {
-        debug_save_single_buckets(&temp_dir, "links-buckets.debug", &links);
-        PHASES_TIMES_MONITOR
-            .write()
-            .print_stats("Hashes sorting.".to_string());
-        return Ok(PathBuf::new());
-    } else {
-        MemoryFs::flush_to_disk(true);
-        MemoryFs::free_memory();
-    }
+    //     PHASES_TIMES_MONITOR
+    //         .write()
+    //         .start_phase("phase: links compaction".to_string());
 
-    let mut loop_iteration = 0;
+    //     let mut log_timer = Instant::now();
+    //         let do_logging = if log_timer.elapsed() > MINIMUM_LOG_DELTA_TIME {
+    //             log_timer = Instant::now();
+    //             true
+    //         } else {
+    //             false
+    //         };
 
-    let (unitigs_map, reads_map) = if step <= AssemblerPhase::LinksCompaction {
-        let result_map_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
-            buckets_count,
-            temp_dir.join("results_map"),
-            None,
-            &(
-                get_memory_mode(SwapPriority::FinalMaps),
-                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-            ),
-            &(),
-        ));
+    //         if do_logging {
+    //             ggcat_logging::info!("Iteration: {}", loop_iteration);
+    //         }
 
-        let final_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
-            buckets_count,
-            temp_dir.join("unitigs_map"),
-            None,
-            &(
-                get_memory_mode(SwapPriority::FinalMaps),
-                LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-            ),
-            &(),
-        ));
+    //         if do_logging {
+    //             ggcat_logging::info!(
+    //                 "Remaining: {} {}",
+    //                 remaining,
+    //                 PHASES_TIMES_MONITOR
+    //                     .read()
+    //                     .get_formatted_counter_without_memory()
+    //             );
+    //         }
 
-        PHASES_TIMES_MONITOR
-            .write()
-            .start_phase("phase: links compaction".to_string());
-
-        let mut log_timer = Instant::now();
-
-        let links_scoped_buffer = ScopedThreadLocal::new(move || {
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
-        });
-        let results_map_scoped_buffer = ScopedThreadLocal::new(move || {
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
-        });
-
-        let result = loop {
-            let do_logging = if log_timer.elapsed() > MINIMUM_LOG_DELTA_TIME {
-                log_timer = Instant::now();
-                true
-            } else {
-                false
-            };
-
-            if do_logging {
-                ggcat_logging::info!("Iteration: {}", loop_iteration);
-            }
-
-            let (new_links, remaining) = links_compaction(
-                links,
-                temp_dir.as_path(),
-                buckets_count,
-                loop_iteration,
-                &result_map_buckets,
-                &final_buckets,
-                // &links_manager,
-                &links_scoped_buffer,
-                &results_map_scoped_buffer,
-            );
-
-            if do_logging {
-                ggcat_logging::info!(
-                    "Remaining: {} {}",
-                    remaining,
-                    PHASES_TIMES_MONITOR
-                        .read()
-                        .get_formatted_counter_without_memory()
+    if step <= AssemblerPhase::UnitigsExtension {
+        match &output_file_mode {
+            OutputFileMode::Final { output_file } => {
+                extend_unitigs::<MergingHash, AssemblerColorsManager, OutputMode::Backend<_, _>>(
+                    sequences,
+                    &temp_dir,
+                    output_file,
+                    None,
+                    k,
                 );
             }
-
-            links = new_links;
-            if remaining == 0 {
-                ggcat_logging::info!("Completed compaction with {} iters", loop_iteration);
-                break (
-                    final_buckets.finalize_single(),
-                    result_map_buckets.finalize_single(),
+            OutputFileMode::Intermediate {
+                flat_unitigs,
+                circular_unitigs,
+            } => {
+                extend_unitigs::<MergingHash, AssemblerColorsManager, StructSeqBinaryWriter<_, _>>(
+                    sequences,
+                    &temp_dir,
+                    flat_unitigs,
+                    circular_unitigs.as_deref(),
+                    k,
                 );
             }
-            loop_iteration += 1;
-        };
-
-        for link_bucket in links {
-            MemoryFs::remove_file(
-                &link_bucket.path,
-                RemoveFileMode::Remove {
-                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-                },
-            )
-            .unwrap();
         }
-        result
-    } else {
-        (
-            debug_load_single_buckets(&temp_dir, "unitigs-map.debug").unwrap(),
-            debug_load_single_buckets(&temp_dir, "reads-map.debug").unwrap(),
-        )
-    };
-
-    if last_step <= AssemblerPhase::LinksCompaction {
-        debug_save_single_buckets(&temp_dir, "unitigs-map.debug", &unitigs_map);
-        debug_save_single_buckets(&temp_dir, "reads-map.debug", &reads_map);
-
-        PHASES_TIMES_MONITOR
-            .write()
-            .print_stats("Links Compaction.".to_string());
-        return Ok(PathBuf::new());
-    } else {
-        MemoryFs::flush_to_disk(true);
-        MemoryFs::free_memory();
     }
 
-    assembler_pipeline::dynamic_dispatch::build_final_unitigs(
-        (
-            MergingHash::dynamic_dispatch_id(),
-            AssemblerColorsManager::dynamic_dispatch_id(),
-            OutputMode::dynamic_dispatch_id(),
-        ),
-        k,
-        sequences,
-        reads_map,
-        unitigs_map,
-        buckets_count,
-        step,
-        last_step,
-        &output_file,
-        &temp_dir,
-        threads_count,
-        generate_maximal_unitigs_links,
-        compute_tigs_mode,
-    );
+    if step <= AssemblerPhase::MaximalUnitigsLinks {
+        match output_file_mode {
+            OutputFileMode::Final { output_file } => {
+                Arc::try_unwrap(output_file)
+                    .map_err(|_| ())
+                    .unwrap()
+                    .finalize();
+            }
+            OutputFileMode::Intermediate {
+                flat_unitigs,
+                circular_unitigs,
+            } => {
+                let final_unitigs_file = StructuredSequenceWriter::new(
+                    get_writer::<_, _, OutputMode::Backend<_, _>>(&output_file),
+                    k,
+                );
+
+                if compute_tigs_mode == Some(MatchtigMode::FastEulerTigs) {
+                    let circular_temp_unitigs_file = Arc::try_unwrap(circular_unitigs.unwrap())
+                        .map_err(|_| ())
+                        .unwrap();
+                    let circular_temp_path = circular_temp_unitigs_file.get_path();
+                    circular_temp_unitigs_file.finalize();
+
+                    let compressed_temp_unitigs_file =
+                        Arc::try_unwrap(flat_unitigs).map_err(|_| ()).unwrap();
+                    let temp_path = compressed_temp_unitigs_file.get_path();
+                    compressed_temp_unitigs_file.finalize();
+
+                    build_eulertigs::<MergingHash, AssemblerColorsManager, _, _>(
+                        circular_temp_path,
+                        temp_path,
+                        &temp_dir,
+                        &final_unitigs_file,
+                        k,
+                    );
+                } else if generate_maximal_unitigs_links
+                    || compute_tigs_mode.needs_matchtigs_library()
+                {
+                    let compressed_temp_unitigs_file =
+                        Arc::try_unwrap(flat_unitigs).map_err(|_| ()).unwrap();
+                    let temp_path = compressed_temp_unitigs_file.get_path();
+                    compressed_temp_unitigs_file.finalize();
+
+                    if let Some(compute_tigs_mode) = compute_tigs_mode.get_matchtigs_mode() {
+                        let matchtigs_backend = MatchtigsStorageBackend::new();
+
+                        let matchtigs_receiver = matchtigs_backend.get_receiver();
+
+                        let handle = std::thread::Builder::new()
+                            .name("greedy_matchtigs".to_string())
+                            .spawn(move || {
+                                compute_matchtigs_thread::<AssemblerColorsManager, _>(
+                                    k,
+                                    threads_count,
+                                    matchtigs_receiver,
+                                    &final_unitigs_file,
+                                    compute_tigs_mode,
+                                );
+                            })
+                            .unwrap();
+
+                        build_maximal_unitigs_links::<
+                            MergingHash,
+                            AssemblerColorsManager,
+                            MatchtigsStorageBackend<_>,
+                        >(
+                            temp_path,
+                            &temp_dir,
+                            &StructuredSequenceWriter::new(matchtigs_backend, k),
+                            k,
+                        );
+
+                        handle.join().unwrap();
+                    } else if generate_maximal_unitigs_links {
+                        final_unitigs_file.finalize();
+
+                        let final_unitigs_file = StructuredSequenceWriter::new(
+                            get_writer::<_, _, OutputMode::Backend<_, _>>(&output_file),
+                            k,
+                        );
+
+                        build_maximal_unitigs_links::<
+                            MergingHash,
+                            AssemblerColorsManager,
+                            OutputMode::Backend<_, _>,
+                        >(temp_path, &temp_dir, &final_unitigs_file, k);
+                        final_unitigs_file.finalize();
+                    }
+                }
+            }
+        }
+    }
 
     let _ = std::fs::remove_dir(temp_dir.as_path());
 

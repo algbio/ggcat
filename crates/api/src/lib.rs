@@ -301,7 +301,7 @@ impl GGCATInstance {
             forward_only,
         )?;
 
-        if last_step == AssemblerPhase::BuildUnitigs && !KEEP_FILES.load(Ordering::Relaxed) {
+        if last_step == AssemblerPhase::FinalStep && !KEEP_FILES.load(Ordering::Relaxed) {
             remove_tempdir(temp_dir);
         } else {
             info!("Keeping temp dir at {:?}", temp_dir);

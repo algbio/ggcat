@@ -1,34 +1,32 @@
 use crate::final_executor::ParallelKmersMergeFinalExecutor;
 use crate::map_processor::{KMERGE_TEMP_DIR, ParallelKmersMergeMapProcessor};
-use crate::structs::{ResultsBucket, RetType};
+use crate::structs::RetType;
 use ::dynamic_dispatch::dynamic_dispatch;
 use assembler_minimizer_bucketing::AssemblerMinimizerBucketingExecutorFactory;
 use assembler_minimizer_bucketing::rewrite_bucket::RewriteBucketComputeAssembler;
+use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::{
     GlobalColorsTableWriter, MinimizerBucketingMultipleSeqColorDataType,
-    MinimizerBucketingSeqColorDataType,
+    MinimizerBucketingSeqColorDataType, PartialUnitigsColorStructure,
 };
-use colors::colors_manager::{ColorsManager, color_types};
 use config::{
     BucketIndexType, RESPLITTING_MAX_K_M_DIFFERENCE, SwapPriority, get_compression_level_info,
     get_memory_mode,
 };
-use crossbeam::queue::*;
 use hashes::HashFunctionFactory;
 use hashes::default::MNHFactory;
-use io::structs::hash_entry::HashEntry;
-use io::structs::hash_entry::{Direction, HashEntrySerializer};
+use io::concurrent::structured_sequences::binary::StructSeqBinaryWriterWrapper;
+use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
+use io::concurrent::structured_sequences::gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2};
+use io::concurrent::structured_sequences::{
+    StructuredSequenceBackendWrapper, StructuredSequenceWriter,
+};
 use kmers_transform::{
     KmersTransform, KmersTransformExecutorFactory, KmersTransformGlobalExtraData,
 };
 use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory};
-use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
-use parallel_processor::buckets::concurrent::BucketsThreadDispatcher;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
-use parallel_processor::buckets::{
-    BucketsCount, LockFreeBucket, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
-};
+use parallel_processor::buckets::{BucketsCount, MultiChunkBucket, MultiThreadBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::any::Any;
 use std::cmp::min;
@@ -37,7 +35,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use unitigs_extender::GlobalExtenderParams;
-use utils::owned_drop::OwnedDrop;
 
 mod final_executor;
 mod map_processor;
@@ -45,22 +42,38 @@ pub mod sorting;
 pub mod structs;
 pub mod unitigs_extender;
 
-pub struct GlobalMergeData<CX: ColorsManager> {
+pub struct GlobalMergeData<CX: ColorsManager, O: StructuredSequenceBackendWrapper> {
     k: usize,
     m: usize,
     buckets_count: BucketsCount,
     min_multiplicity: usize,
     colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
-    output_results_buckets:
-        ArrayQueue<ResultsBucket<color_types::PartialUnitigsColorStructure<CX>>>,
-    hashes_buckets: Arc<MultiThreadBuckets<LockFreeBinaryWriter>>,
+    output_results_buckets: Arc<MultiThreadBuckets<CompressedBinaryWriter>>,
+    final_unitigs_file: Arc<
+        StructuredSequenceWriter<
+            PartialUnitigsColorStructure<CX>,
+            (),
+            O::Backend<PartialUnitigsColorStructure<CX>, ()>,
+        >,
+    >,
+    final_circular_unitigs_file: Option<
+        Arc<
+            StructuredSequenceWriter<
+                PartialUnitigsColorStructure<CX>,
+                (),
+                O::Backend<PartialUnitigsColorStructure<CX>, ()>,
+            >,
+        >,
+    >,
     global_resplit_data: Arc<MinimizerBucketingCommonData<()>>,
     sequences_size_total: AtomicU64,
     hasnmap_kmers_total: AtomicU64,
     kmer_batches_count: AtomicU64,
 }
 
-impl<CX: ColorsManager> KmersTransformGlobalExtraData for GlobalMergeData<CX> {
+impl<CX: ColorsManager, O: StructuredSequenceBackendWrapper> KmersTransformGlobalExtraData
+    for GlobalMergeData<CX, O>
+{
     #[inline(always)]
     fn get_k(&self) -> usize {
         self.k
@@ -78,22 +91,27 @@ impl<CX: ColorsManager> KmersTransformGlobalExtraData for GlobalMergeData<CX> {
 pub struct ParallelKmersMergeFactory<
     MH: HashFunctionFactory,
     CX: ColorsManager,
+    O: StructuredSequenceBackendWrapper,
     const COMPUTE_SIMPLITIGS: bool,
->(PhantomData<(MH, CX)>);
+>(PhantomData<(MH, CX, O)>);
 
-impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
-    KmersTransformExecutorFactory for ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS>
+impl<
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+    O: StructuredSequenceBackendWrapper,
+    const COMPUTE_SIMPLITIGS: bool,
+> KmersTransformExecutorFactory for ParallelKmersMergeFactory<MH, CX, O, COMPUTE_SIMPLITIGS>
 {
     type KmersTransformPacketInitData = GlobalExtenderParams;
     type SequencesResplitterFactory =
         AssemblerMinimizerBucketingExecutorFactory<Self::AssociatedExtraDataWithMultiplicity>;
-    type GlobalExtraData = GlobalMergeData<CX>;
+    type GlobalExtraData = GlobalMergeData<CX, O>;
     type AssociatedExtraData = MinimizerBucketingSeqColorDataType<CX>;
     type AssociatedExtraDataWithMultiplicity = MinimizerBucketingMultipleSeqColorDataType<CX>;
 
     type PreprocessorType = RewriteBucketComputeAssembler;
-    type MapProcessorType = ParallelKmersMergeMapProcessor<MH, CX, COMPUTE_SIMPLITIGS>;
-    type FinalExecutorType = ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>;
+    type MapProcessorType = ParallelKmersMergeMapProcessor<MH, CX, O, COMPUTE_SIMPLITIGS>;
+    type FinalExecutorType = ParallelKmersMergeFinalExecutor<MH, CX, O, COMPUTE_SIMPLITIGS>;
 
     type FlagsCount = typenum::U2;
     const HAS_COLORS: bool = CX::COLORS_ENABLED;
@@ -127,29 +145,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     }
 }
 
-impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
-    ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>
-{
-    #[inline(always)]
-    fn write_hashes(
-        hashes_tmp: &mut BucketsThreadDispatcher<
-            LockFreeBinaryWriter,
-            HashEntrySerializer<MH::HashTypeUnextendable>,
-        >,
-        hash: MH::HashTypeUnextendable,
-        bucket: BucketIndexType,
-        entry: u64,
-        direction: Direction,
-        buckets_count_bits: usize,
-    ) {
-        hashes_tmp.add_element(
-            MH::get_bucket(0, buckets_count_bits, hash),
-            &(),
-            &HashEntry::new(hash, bucket, entry, direction),
-        );
-    }
-}
-
 #[dynamic_dispatch(MH = [
     #[cfg(all(feature = "hash-forward", feature = "hash-16bit"))] hashes::fw_seqhash::u16::ForwardSeqHashFactory,
     #[cfg(all(feature = "hash-forward", feature = "hash-32bit"))] hashes::fw_seqhash::u32::ForwardSeqHashFactory,
@@ -164,9 +159,20 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 ], CX = [
     #[cfg(feature = "enable-colors")] colors::bundles::multifile_building::ColorBundleMultifileBuilding,
     colors::non_colored::NonColoredManager,
+], OM = [
+    StructSeqBinaryWriterWrapper,
+    FastaWriterWrapper,
+    #[cfg(feature = "enable-gfa")] GFAWriterWrapperV1,
+    #[cfg(feature = "enable-gfa")] GFAWriterWrapperV2,
 ])]
-pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager>(
+pub fn kmers_merge<
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+    OM: StructuredSequenceBackendWrapper,
+>(
     file_inputs: Vec<MultiChunkBucket>,
+    final_unitigs_file: Arc<dyn Any + Send + Sync>,
+    final_circular_unitigs_file: Option<Arc<dyn Any + Send + Sync>>,
     colors_global_table: Arc<dyn Any + Send + Sync>,
     buckets_count: BucketsCount,
     second_buckets_count: BucketsCount,
@@ -181,6 +187,23 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager>(
     let colors_global_table: Arc<GlobalColorsTableWriter<CX>> =
         Arc::downcast(colors_global_table).unwrap();
 
+    let final_unitigs_file: Arc<
+        StructuredSequenceWriter<
+            PartialUnitigsColorStructure<CX>,
+            (),
+            OM::Backend<PartialUnitigsColorStructure<CX>, ()>,
+        >,
+    > = Arc::downcast(final_unitigs_file).unwrap();
+    let final_circular_unitigs_file: Option<
+        Arc<
+            StructuredSequenceWriter<
+                PartialUnitigsColorStructure<CX>,
+                (),
+                OM::Backend<PartialUnitigsColorStructure<CX>, ()>,
+            >,
+        >,
+    > = final_circular_unitigs_file.map(|f| Arc::downcast(f).unwrap());
+
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: kmers merge".to_string());
@@ -188,19 +211,6 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager>(
     MNHFactory::initialize(k);
     MH::initialize(k);
     *KMERGE_TEMP_DIR.write() = Some(out_directory.to_path_buf());
-
-    let hashes_buckets = Arc::new(MultiThreadBuckets::<LockFreeBinaryWriter>::new(
-        buckets_count,
-        out_directory.join("hashes"),
-        None,
-        &(
-            get_memory_mode(SwapPriority::HashBuckets),
-            LockFreeBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
-        ),
-        &(),
-    ));
-
-    let mut sequences = Vec::new();
 
     let reads_buckets = MultiThreadBuckets::<CompressedBinaryWriter>::new(
         buckets_count,
@@ -214,34 +224,15 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager>(
         &(),
     );
 
-    let output_results_buckets =
-        ArrayQueue::new(reads_buckets.get_buckets_count().total_buckets_count);
-    for (index, bucket) in reads_buckets.into_buckets().enumerate() {
-        let bucket_read = ResultsBucket::<color_types::PartialUnitigsColorStructure<CX>> {
-            read_index: 0,
-            reads_writer: OwnedDrop::new(bucket),
-            temp_buffer: Vec::with_capacity(256),
-            bucket_index: index as BucketIndexType,
-            _phantom: PhantomData,
-            serializer: BucketItemSerializer::new(k),
-        };
-        sequences.push(SingleBucket {
-            index,
-            path: bucket_read.reads_writer.get_path(),
-            extra_bucket_data: None,
-        });
-        let res = output_results_buckets.push(bucket_read).is_ok();
-        assert!(res);
-    }
-
-    let global_data = Arc::new(GlobalMergeData::<CX> {
+    let global_data = Arc::new(GlobalMergeData::<CX, OM> {
         k,
         m,
         buckets_count,
         min_multiplicity,
         colors_global_table,
-        output_results_buckets,
-        hashes_buckets: hashes_buckets.clone(),
+        output_results_buckets: Arc::new(reads_buckets),
+        final_unitigs_file,
+        final_circular_unitigs_file,
         global_resplit_data: Arc::new(MinimizerBucketingCommonData::new(
             k,
             if k > RESPLITTING_MAX_K_M_DIFFERENCE + 1 {
@@ -260,24 +251,24 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager>(
     });
 
     if compute_simplitigs {
-        KmersTransform::<ParallelKmersMergeFactory<MH, CX, true>>::new(
+        KmersTransform::<ParallelKmersMergeFactory<MH, CX, OM, true>>::new(
             file_inputs,
             out_directory,
             buckets_count,
             second_buckets_count,
-            global_data,
+            global_data.clone(),
             threads_count,
             k,
             forward_only,
         )
         .parallel_kmers_transform();
     } else {
-        KmersTransform::<ParallelKmersMergeFactory<MH, CX, false>>::new(
+        KmersTransform::<ParallelKmersMergeFactory<MH, CX, OM, false>>::new(
             file_inputs,
             out_directory,
             buckets_count,
             second_buckets_count,
-            global_data,
+            global_data.clone(),
             threads_count,
             k,
             forward_only,
@@ -285,9 +276,12 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager>(
         .parallel_kmers_transform();
     }
 
+    let Ok(global_data) = Arc::try_unwrap(global_data) else {
+        unreachable!()
+    };
+
     RetType {
-        sequences,
-        hashes: hashes_buckets.finalize_single(),
+        sequences: global_data.output_results_buckets.finalize_single(),
     }
 }
 
@@ -297,6 +291,7 @@ mod tests {
     use colors::non_colored::NonColoredManager;
     use config::{DEFAULT_PREFETCH_AMOUNT, FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
     use hashes::cn_seqhash::u128::CanonicalSeqHashFactory;
+    use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
     use io::concurrent::temp_reads::creads_utils::{
         AssemblerMinimizerPosition, ReadsCheckpointData,
     };
@@ -321,7 +316,12 @@ mod tests {
     fn test_deserialization_mismatch() {
         let mut bucket_chunks = vec![];
 
-        type F = ParallelKmersMergeFactory<CanonicalSeqHashFactory, NonColoredManager, false>;
+        type F = ParallelKmersMergeFactory<
+            CanonicalSeqHashFactory,
+            NonColoredManager,
+            FastaWriterWrapper,
+            false,
+        >;
 
         let paths = [
             "../../.temp_files/build_graph_8a973650-c549-4eb9-b9b1-ccac626dcfbe/comp-single-15123.dat.0",

@@ -335,7 +335,7 @@ pub fn build_unitigs<
                             .as_mut()
                             .unwrap()
                             .add_read(
-                                temp_sequence.as_slice(),
+                                temp_sequence.iter().copied(),
                                 None,
                                 writable_color,
                                 &final_color_extra_buffer,
@@ -346,7 +346,7 @@ pub fn build_unitigs<
                             );
                     } else {
                         tmp_final_unitigs_buffer.add_read(
-                            temp_sequence.as_slice(),
+                            temp_sequence.iter().copied(),
                             None,
                             writable_color,
                             &final_color_extra_buffer,

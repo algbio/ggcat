@@ -257,8 +257,8 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
         Self {
             buffer_slice: ColorRange::new(buffer_start, buffer.colors.len()),
             colors_subslice: ColorRange::new(
-                colors_subslice.slice.start,
-                colors_subslice.slice.end,
+                colors_subslice.slice_start,
+                colors_subslice.slice_end,
             ),
         }
     }
@@ -292,6 +292,10 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
             buffer_slice: self.buffer_slice.clone(),
             colors_subslice: ColorRange::new(start, end),
         }
+    }
+
+    fn get_unique_color<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
+        unimplemented!()
     }
 
     fn debug_count(&self) -> usize {

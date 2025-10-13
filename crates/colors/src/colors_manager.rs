@@ -61,6 +61,7 @@ pub trait MinimizerBucketingSeqColorData:
     fn create(stream_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self;
     fn get_iterator<'a>(&'a self, buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator<'a>;
     fn get_subslice(&self, range: Range<usize>, reverse: bool) -> Self;
+    fn get_unique_color<'a>(&'a self, buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a>;
 
     fn debug_count(&self) -> usize {
         0
@@ -121,6 +122,8 @@ pub trait ColorsMergeManager: Sized {
         + Sync
         + Send
         + 'static;
+    type TableColorEntry: Copy + Default;
+
     type GlobalColorsTableWriter: Sync + Send + 'static;
     type GlobalColorsTableReader: ColorMapReader + Sync + Send + 'static;
 
@@ -137,7 +140,7 @@ pub trait ColorsMergeManager: Sized {
 
     /// Temporary buffer that holds color values for each kmer while merging them
     type ColorsBufferTempStructure: 'static + Send + Sync;
-    fn allocate_temp_buffer_structure(temp_dir: &Path) -> Self::ColorsBufferTempStructure;
+    fn allocate_temp_buffer_structure() -> Self::ColorsBufferTempStructure;
     fn reinit_temp_buffer_structure(data: &mut Self::ColorsBufferTempStructure);
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         data: &mut Self::ColorsBufferTempStructure,
@@ -148,7 +151,7 @@ pub trait ColorsMergeManager: Sized {
     );
 
     /// Temporary storage for colors associated with a single kmer in the hashmap (holds the color subset index)
-    type HashMapTempColorIndex: 'static + Send + Sync;
+    type HashMapTempColorIndex: 'static + Send + Sync + Copy;
     fn new_color_index() -> Self::HashMapTempColorIndex;
 
     /// This step finds the color subset indexes for each map entry
@@ -157,8 +160,14 @@ pub trait ColorsMergeManager: Sized {
         data: &mut Self::ColorsBufferTempStructure,
     );
 
+    /// This step finds the color subset indexes for each map entry
+    fn assign_color(
+        global_colors_table: &Self::GlobalColorsTableWriter,
+        data: &mut [Self::SingleKmerColorDataType],
+    ) -> Self::TableColorEntry;
+
     /// Struct used to hold color information about unitigs
-    type PartialUnitigsColorStructure: Default + IdentSequenceWriter + Clone + 'static;
+    type PartialUnitigsColorStructure: Default + IdentSequenceWriter + Copy + 'static;
     /// Struct holding the result of joining multiple partial unitigs to build a final unitig
     type TempUnitigColorStructure: 'static + Send + Sync;
 
@@ -168,12 +177,19 @@ pub trait ColorsMergeManager: Sized {
     fn extend_forward(
         data: &Self::ColorsBufferTempStructure,
         ts: &mut Self::TempUnitigColorStructure,
-        entry: &MapEntry<Self::HashMapTempColorIndex>,
+        entry_color: Self::HashMapTempColorIndex,
     );
+
     fn extend_backward(
         data: &Self::ColorsBufferTempStructure,
         ts: &mut Self::TempUnitigColorStructure,
-        entry: &MapEntry<Self::HashMapTempColorIndex>,
+        entry_color: Self::HashMapTempColorIndex,
+    );
+
+    fn extend_forward_with_color(
+        ts: &mut Self::TempUnitigColorStructure,
+        entry_color: Self::TableColorEntry,
+        count: usize,
     );
 
     fn join_structures<const REVERSE: bool>(

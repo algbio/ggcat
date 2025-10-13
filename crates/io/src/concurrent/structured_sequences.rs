@@ -1,3 +1,5 @@
+use crate::concurrent::temp_reads::extra_data::SequenceExtraData;
+
 use super::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
 use dynamic_dispatch::dynamic_dispatch;
 use parking_lot::{Condvar, Mutex};
@@ -78,8 +80,8 @@ pub trait StructuredSequenceBackendInit: Sync + Send + Sized {
 }
 
 #[dynamic_dispatch]
-pub trait StructuredSequenceBackendWrapper: 'static {
-    type Backend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>:
+pub trait StructuredSequenceBackendWrapper: 'static + Sync + Send {
+    type Backend<ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression, LinksInfo: IdentSequenceWriter + SequenceExtraData>:
          StructuredSequenceBackendInit +
          StructuredSequenceBackend<ColorInfo, LinksInfo>;
 }
@@ -124,10 +126,10 @@ pub struct StructuredSequenceWriter<
 }
 
 impl<
-        ColorInfo: IdentSequenceWriter,
-        LinksInfo: IdentSequenceWriter,
-        Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
-    > StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>
+    ColorInfo: IdentSequenceWriter,
+    LinksInfo: IdentSequenceWriter,
+    Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
+> StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>
 {
     pub fn new(backend: Backend, k: usize) -> Self {
         Self {

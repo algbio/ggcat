@@ -102,6 +102,10 @@ impl MinimizerBucketingSeqColorData for NonColoredManager {
     fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
         Self
     }
+
+    fn get_unique_color<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
+        NonColoredManager
+    }
 }
 
 impl<T: Sync + Send + Debug + Copy + Default + MinimizerBucketingSeqColorData + 'static>
@@ -121,6 +125,10 @@ impl<T: Sync + Send + Debug + Copy + Default + MinimizerBucketingSeqColorData + 
 
     fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
         Self(PhantomData)
+    }
+
+    fn get_unique_color<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
+        &[]
     }
 }
 
@@ -195,6 +203,7 @@ impl IdentSequenceWriter for NonColoredManager {
 
 impl ColorsMergeManager for NonColoredManager {
     type SingleKmerColorDataType = NonColoredManager;
+    type TableColorEntry = NonColoredManager;
     type GlobalColorsTableWriter = ();
     type GlobalColorsTableReader = ();
 
@@ -214,7 +223,7 @@ impl ColorsMergeManager for NonColoredManager {
     type ColorsBufferTempStructure = NonColoredManager;
 
     #[inline(always)]
-    fn allocate_temp_buffer_structure(_init_data: &Path) -> Self::ColorsBufferTempStructure {
+    fn allocate_temp_buffer_structure() -> Self::ColorsBufferTempStructure {
         NonColoredManager
     }
 
@@ -246,6 +255,13 @@ impl ColorsMergeManager for NonColoredManager {
         unreachable!()
     }
 
+    fn assign_color(
+        _global_colors_table: &Self::GlobalColorsTableWriter,
+        _data: &mut [Self::SingleKmerColorDataType],
+    ) -> Self::HashMapTempColorIndex {
+        Self
+    }
+
     type PartialUnitigsColorStructure = NonColoredManager;
     type TempUnitigColorStructure = NonColoredManager;
 
@@ -261,7 +277,7 @@ impl ColorsMergeManager for NonColoredManager {
     fn extend_forward(
         _data: &Self::ColorsBufferTempStructure,
         _ts: &mut Self::TempUnitigColorStructure,
-        _entry: &MapEntry<Self::HashMapTempColorIndex>,
+        _entry: Self::HashMapTempColorIndex,
     ) {
     }
 
@@ -269,7 +285,14 @@ impl ColorsMergeManager for NonColoredManager {
     fn extend_backward(
         _data: &Self::ColorsBufferTempStructure,
         _ts: &mut Self::TempUnitigColorStructure,
-        _entry: &MapEntry<Self::HashMapTempColorIndex>,
+        _entry: Self::HashMapTempColorIndex,
+    ) {
+    }
+
+    fn extend_forward_with_color(
+        _ts: &mut Self::TempUnitigColorStructure,
+        _entry_color: Self::TableColorEntry,
+        _count: usize,
     ) {
     }
 

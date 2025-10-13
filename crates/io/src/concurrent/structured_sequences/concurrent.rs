@@ -72,9 +72,9 @@ impl<
         vec.len() > 0 && (vec.len() + len > vec.capacity())
     }
 
-    pub fn add_read(
+    pub fn add_read<S: ExactSizeIterator<Item = u8>>(
         &mut self,
-        sequence: &[u8],
+        sequence: S,
         sequence_index: Option<u64>,
         color: ColorInfo,
         color_extra_buffer: &ColorInfo::TempBuffer,

@@ -400,7 +400,7 @@ pub fn build_maximal_unitigs_links<
                             links.is_self_complemental = self_complemental_unitigs.contains(&index);
 
                             tmp_final_unitigs_buffer.add_read(
-                                &temp_sequence_buffer,
+                                temp_sequence_buffer.iter().copied(),
                                 Some(index),
                                 color,
                                 &extra_buffer.0,

@@ -1,13 +1,15 @@
-use std::sync::atomic::AtomicUsize;
-use std::{iter::repeat, mem::take, ops::Range};
-
 use binary_heap_plus::BinaryHeap;
-use colors::storage;
+use colors::colors_manager::ColorsManager;
+use colors::colors_manager::color_types::MinimizerBucketingMultipleSeqColorDataType;
+use colors::colors_manager::{ColorsMergeManager, MinimizerBucketingSeqColorData};
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
+use hashes::extremal::DelayedHashComputation;
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use io::concurrent::temp_reads::creads_utils::DeserializedReadIndependent;
+use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use std::{iter::repeat, mem::take, ops::Range};
 
-use crate::final_executor::DelayedHashComputation;
+use crate::unitigs_extender::UnitigExtensionColorsData;
 
 struct SuffixStackElement {
     /// The start index of the current chunk of reads being processed
@@ -39,8 +41,9 @@ struct SortingHeapElement {
 }
 
 #[derive(Clone)]
-struct Supertig {
+struct Supertig<C> {
     read: CompressedReadIndipendent,
+    color: C,
     multiplicity: usize,
     next: usize,
     linked: bool,
@@ -48,8 +51,7 @@ struct Supertig {
     forward_extra_base: bool,
 }
 
-#[derive(Default)]
-pub struct SortingExtender {
+pub struct SortingExtender<CX: ColorsManager> {
     /// Holds the skip values for each read. A skip value x greater than 1 means that the next x reads
     /// were already processed and thus are sorted.
     /// This can be used to immediately create a sorted chunk without reading again all the reads.
@@ -82,7 +84,7 @@ pub struct SortingExtender {
     lccp_array: Vec<usize>,
 
     /// The list of supertigs
-    supertigs: Vec<Supertig>,
+    supertigs: Vec<Supertig<<CX::ColorsMergeManagerType as ColorsMergeManager>::TableColorEntry>>,
 
     /// The mapping between supertigs and superkmers. This mapping is in the same order as the sorted supertigs,
     /// so to access it the elements_mapping must be used.
@@ -106,6 +108,32 @@ pub struct SortingExtender {
 
     /// Storage holding the current unitig
     unitig_storage: Vec<u8>,
+
+    unitig_colors: Vec<CX::SingleKmerColorDataType>,
+}
+
+impl<CX: ColorsManager> Default for SortingExtender<CX> {
+    fn default() -> Self {
+        Self {
+            forward_skip: Default::default(),
+            sorted_chunks: Default::default(),
+            suffix_sizes: Default::default(),
+            elements_mapping: Default::default(),
+            prefix_sort_mapping: Default::default(),
+            prefix_sort_order: Default::default(),
+            lccs_array: Default::default(),
+            lccp_array: Default::default(),
+            supertigs: Default::default(),
+            supertigs_mapping: Default::default(),
+            branching_supertigs: Default::default(),
+            processing_stack: Default::default(),
+            prefix_stack: Default::default(),
+            sorting_heap_data: Default::default(),
+            sorting_support_vec: Default::default(),
+            unitig_storage: Default::default(),
+            unitig_colors: Default::default(),
+        }
+    }
 }
 
 // fn check_kmers<E>(
@@ -177,7 +205,7 @@ pub struct SortingExtender {
 //     // todo!();
 // }
 
-impl SortingExtender {
+impl<CX: ColorsManager> SortingExtender<CX> {
     pub fn process_supertigs<'a>(&mut self, supertigs_range_start: usize) {
         self.branching_supertigs.sort_unstable();
         self.branching_supertigs.dedup();
@@ -252,9 +280,11 @@ impl SortingExtender {
 
     /// Processes elements in range, assuming they are prefix sorted and share the same suffix of length `suffix_length`.
     /// Reduces every read suffix to exactly `target_suffix_length` bases, and outputs the used kmers
-    pub fn process_reads_block<'a, E: Copy>(
+    pub fn process_reads_block<'a>(
         &mut self,
-        reads: &[DeserializedReadIndependent<E>],
+        colors_data: &mut UnitigExtensionColorsData<CX>,
+        reads: &[DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>],
+        extra_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
         superkmers_storage: &'a Vec<u8>,
         range: Range<usize>,
         k: usize,
@@ -341,7 +371,15 @@ impl SortingExtender {
                     continue;
                 }
 
+                if CX::COLORS_ENABLED {
+                    self.unitig_colors.clear();
+                }
+
                 let mut multiplicity = reference.multiplicity as usize;
+                if CX::COLORS_ENABLED {
+                    self.unitig_colors
+                        .extend_from_slice(reference.extra.get_unique_color(extra_buffer));
+                }
 
                 let mut km1mer_break = true;
 
@@ -362,6 +400,10 @@ impl SortingExtender {
 
                     minimum_prefix_share = minimum_prefix_share.min(left_matching);
                     multiplicity += next_read.multiplicity as usize;
+                    if CX::COLORS_ENABLED {
+                        self.unitig_colors
+                            .extend_from_slice(next_read.extra.get_unique_color(extra_buffer));
+                    }
 
                     element_target_index += 1;
                 }
@@ -386,6 +428,14 @@ impl SortingExtender {
                             (reference.minimizer_pos as usize + leftmost_allowed_suffix - k)
                                 ..(reference.minimizer_pos as usize + shared_suffix),
                         ),
+                        color: if CX::COLORS_ENABLED {
+                            CX::ColorsMergeManagerType::assign_color(
+                                &colors_data.colors_global_table,
+                                &mut self.unitig_colors,
+                            )
+                        } else {
+                            Default::default()
+                        },
                         multiplicity,
                         next: usize::MAX,
                         linked: false,
@@ -439,13 +489,16 @@ impl SortingExtender {
         self.supertigs.clear();
     }
 
-    pub fn process_reads<E: Copy>(
+    pub fn process_reads(
         &mut self,
-        reads: &mut [DeserializedReadIndependent<E>],
+        colors_data: &mut UnitigExtensionColorsData<CX>,
+        reads: &mut [DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>],
+        extra_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
         superkmers_storage: &Vec<u8>,
         k: usize,
         abundance_cutoff: usize,
         mut output_unitig: impl FnMut(
+            &mut UnitigExtensionColorsData<CX>,
             CompressedRead,
             Option<DelayedHashComputation>,
             Option<DelayedHashComputation>,
@@ -697,7 +750,9 @@ impl SortingExtender {
             assert!(max_allowed_suffix < needed_suffix);
 
             self.process_reads_block(
+                colors_data,
                 remapped_minimizer_elements,
+                extra_buffer,
                 superkmers_storage,
                 suffix_stack_block_start..suffix_stack_block_last,
                 k,
@@ -720,9 +775,20 @@ impl SortingExtender {
 
         for mut supertig in self.supertigs.iter() {
             if !supertig.linked {
+                CX::ColorsMergeManagerType::reset_unitig_color_structure(
+                    &mut colors_data.unitigs_temp_colors,
+                );
+
+                CX::ColorsMergeManagerType::extend_forward_with_color(
+                    &mut colors_data.unitigs_temp_colors,
+                    supertig.color,
+                    supertig.read.bases_count() - k + 1,
+                );
+
                 // Unique unitig, output it
                 if supertig.next == usize::MAX {
                     output_unitig(
+                        colors_data,
                         supertig.read.as_reference(&superkmers_storage),
                         if supertig.forward_extra_base {
                             Some(DelayedHashComputation)
@@ -779,6 +845,12 @@ impl SortingExtender {
                         mask = (1 << (alignment * 2)) - 1;
 
                         supertig = &self.supertigs[supertig.next];
+
+                        CX::ColorsMergeManagerType::extend_forward_with_color(
+                            &mut colors_data.unitigs_temp_colors,
+                            supertig.color,
+                            supertig.read.bases_count() - k + 1,
+                        );
                     }
 
                     let final_unitig = CompressedRead::new_offset(
@@ -788,6 +860,7 @@ impl SortingExtender {
                     );
 
                     output_unitig(
+                        colors_data,
                         final_unitig,
                         if forward_extra_base {
                             Some(DelayedHashComputation)

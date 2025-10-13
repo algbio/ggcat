@@ -389,6 +389,21 @@ impl<'a> CompressedRead<'a> {
         hasher.finish()
     }
 
+    pub fn equality_compare_start_zero(&self, other: &Self) -> bool {
+        debug_assert_eq!(self.start, 0);
+        debug_assert_eq!(other.start, 0);
+        debug_assert!(self.size != 0);
+        let complete_bytes_count = self.size / 4;
+        let last_byte_index = (self.size + 3) / 4 - 1;
+        let last_byte_mask = 0xFFu8.wrapping_shr((self.size as u32 % 4) * 2);
+        unsafe {
+            from_raw_parts(self.data, complete_bytes_count)
+                == from_raw_parts(other.data, complete_bytes_count)
+                && (*self.data.add(last_byte_index) & last_byte_mask
+                    == *other.data.add(last_byte_index) & last_byte_mask)
+        }
+    }
+
     #[inline(always)]
     pub fn encode_length<MinimizerMode: MinimizerModeOption, FlagsCount: typenum::Unsigned>(
         buffer: &mut Vec<u8>,
@@ -862,11 +877,11 @@ impl<'a> CompressedRead<'a> {
         }
     }
 
-    pub fn as_bases_iter(&'a self) -> impl Iterator<Item = u8> + 'a {
+    pub fn as_bases_iter(&'a self) -> impl ExactSizeIterator<Item = u8> + 'a {
         (0..self.size).map(move |i| unsafe { Utils::decompress_base(self.get_base_unchecked(i)) })
     }
 
-    pub fn as_reverse_complement_bases_iter(&'a self) -> impl Iterator<Item = u8> + 'a {
+    pub fn as_reverse_complement_bases_iter(&'a self) -> impl ExactSizeIterator<Item = u8> + 'a {
         (0..self.size)
             .rev()
             .map(move |i| unsafe { Utils::decompress_base(self.get_base_unchecked(i) ^ 2) })

@@ -1,4 +1,7 @@
-use crate::concurrent::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
+use crate::concurrent::structured_sequences::{
+    IdentSequenceWriter, StructuredSequenceBackend, StructuredSequenceBackendInit,
+    StructuredSequenceBackendWrapper,
+};
 use crate::concurrent::temp_reads::creads_utils::{
     CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMinimizerPosition,
     NoMultiplicity, NoSecondBucket,
@@ -11,6 +14,7 @@ use crate::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use bincode::Encode;
 use byteorder::ReadBytesExt;
 use config::DEFAULT_PER_CPU_BUFFER_SIZE;
+use dynamic_dispatch::dynamic_dispatch;
 use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::writers::compressed_binary_writer::{
@@ -29,6 +33,16 @@ pub struct StructSeqBinaryWriter<
 > {
     writer: CompressedBinaryWriter,
     _phantom: PhantomData<(ColorInfo, LinksInfo)>,
+}
+
+pub struct StructSeqBinaryWriterWrapper;
+
+#[dynamic_dispatch]
+impl StructuredSequenceBackendWrapper for StructSeqBinaryWriterWrapper {
+    type Backend<
+        ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
+        LinksInfo: IdentSequenceWriter + SequenceExtraData,
+    > = StructSeqBinaryWriter<ColorInfo, LinksInfo>;
 }
 
 unsafe impl<
@@ -63,6 +77,24 @@ impl<
             writer: CompressedBinaryWriter::new(path.as_ref(), file_mode, 0, data_format),
             _phantom: Default::default(),
         }
+    }
+}
+
+impl<
+    ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
+    LinksInfo: IdentSequenceWriter + SequenceExtraData,
+> StructuredSequenceBackendInit for StructSeqBinaryWriter<ColorInfo, LinksInfo>
+{
+    fn new_compressed_gzip(_path: impl AsRef<Path>, _level: u32) -> Self {
+        unimplemented!()
+    }
+
+    fn new_compressed_lz4(_path: impl AsRef<Path>, _level: u32) -> Self {
+        unimplemented!()
+    }
+
+    fn new_plain(_path: impl AsRef<Path>) -> Self {
+        unimplemented!()
     }
 }
 

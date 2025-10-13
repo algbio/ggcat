@@ -298,7 +298,7 @@ pub fn reorganize_reads<
                             // Check if unitig is circular
                             if first_kmer_node == last_kmer_node {
                                 circular_unitigs_buffer.add_read(
-                                    read,
+                                    read.iter().copied(),
                                     None,
                                     extra.colors,
                                     color_buffer,
@@ -317,7 +317,7 @@ pub fn reorganize_reads<
 
                         // No mapping, write unitig to file
                         tmp_lonely_unitigs_buffer.add_read(
-                            read,
+                            read.iter().copied(),
                             None,
                             extra.colors,
                             color_buffer,

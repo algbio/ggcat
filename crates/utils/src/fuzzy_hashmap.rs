@@ -7,7 +7,7 @@ pub struct FuzzyHashmap<T: Copy, const LOCAL_FITTING: usize> {
     capacity_mask: usize,
 }
 
-fn resize_vec_default<T: Copy + Default>(new_capacity: usize, vec: &mut Vec<T>) {
+pub(crate) fn resize_vec_default<T: Copy + Default>(new_capacity: usize, vec: &mut Vec<T>) {
     unsafe {
         if vec.capacity() < new_capacity {
             let previous = std::ptr::read(vec as *const Vec<T>);

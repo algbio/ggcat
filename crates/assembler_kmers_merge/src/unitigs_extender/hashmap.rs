@@ -1,6 +1,5 @@
 use std::{
     cmp::{max, min},
-    ops::Deref,
     slice::from_raw_parts,
 };
 
@@ -9,7 +8,10 @@ use colors::colors_manager::{
     color_types::{self, MinimizerBucketingMultipleSeqColorDataType},
 };
 use config::{MultiplicityCounterType, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
-use hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
+use hashes::{
+    ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
+    extremal::PrecomputedHash,
+};
 use io::{
     compressed_read::CompressedRead,
     concurrent::temp_reads::{
@@ -21,8 +23,6 @@ use kmers_transform::GroupProcessStats;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use structs::map_entry::MapEntry;
 use utils::Utils;
-
-use crate::{KMERGE_TEMP_DIR, final_executor::PrecomputedHash};
 
 use super::{GlobalExtenderParams, UnitigExtensionColorsData, UnitigsExtenderTrait};
 
@@ -179,10 +179,10 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> HashMapUnitigsExtender<MH, CX> 
         colors_function: fn(
             data: &color_types::ColorsBufferTempStructure<CX>,
             ts: &mut color_types::TempUnitigColorStructure<CX>,
-            entry: &MapEntry<color_types::HashMapTempColorIndex<CX>>,
+            entry_color: color_types::HashMapTempColorIndex<CX>,
         ),
         #[cfg(feature = "support_kmer_counters")] is_forward: bool,
-    ) -> Option<MH::HashTypeUnextendable> {
+    ) -> Option<MH::HashTypeExtendable> {
         let mut temp_data = (hash, 0);
         let mut current_hash;
 
@@ -263,7 +263,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> HashMapUnitigsExtender<MH, CX> 
                     colors_function(
                         &self.temp_colors,
                         &mut colors_data.unitigs_temp_colors,
-                        entryref,
+                        entryref.color_index,
                     );
                 }
 
@@ -286,7 +286,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> HashMapUnitigsExtender<MH, CX> 
                 let contig_break = (entryref.get_flags() == READ_FLAG_INCL_BEGIN)
                     || (entryref.get_flags() == READ_FLAG_INCL_END);
                 if contig_break {
-                    break Some(temp_data.0.to_unextendable());
+                    break Some(temp_data.0);
                 }
             } else {
                 break None;
@@ -305,9 +305,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             rhash_map: FxHashMap::with_capacity_and_hasher(4096, FxBuildHasher),
             saved_reads: vec![],
             encoded_saved_reads_indexes: vec![],
-            temp_colors: CX::ColorsMergeManagerType::allocate_temp_buffer_structure(
-                KMERGE_TEMP_DIR.read().deref().as_ref().unwrap(),
-            ),
+            temp_colors: CX::ColorsMergeManagerType::allocate_temp_buffer_structure(),
             suggested_hasmap_size: 0,
             suggested_sequences_size: 0,
             kmers_count: 0,
@@ -493,7 +491,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             CX::ColorsMergeManagerType::extend_forward(
                 &self.temp_colors,
                 &mut colors_data.unitigs_temp_colors,
-                rhentry,
+                rhentry.color_index,
             );
             rhentry.set_used();
 
@@ -509,7 +507,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
 
             let fw_hash = {
                 if end_ignored {
-                    Some(hash.to_unextendable())
+                    Some(hash)
                 } else {
                     self.try_extend_function::<COMPUTE_SIMPLITIGS>(
                         colors_data,
@@ -526,7 +524,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
 
             let bw_hash = {
                 if begin_ignored {
-                    Some(hash.to_unextendable())
+                    Some(hash)
                 } else {
                     self.try_extend_function::<COMPUTE_SIMPLITIGS>(
                         colors_data,

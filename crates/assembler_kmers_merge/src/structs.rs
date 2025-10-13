@@ -83,5 +83,4 @@ impl<X: SequenceExtraDataConsecutiveCompression> Drop for ResultsBucket<X> {
 
 pub struct RetType {
     pub sequences: Vec<SingleBucket>,
-    pub hashes: Vec<SingleBucket>,
 }

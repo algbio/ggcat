@@ -621,7 +621,7 @@ pub fn build_eulertigs<
                         );
 
                         writer.add_read(
-                            &output_unitigs_buffer,
+                            output_unitigs_buffer.iter().copied(),
                             None,
                             writable_color,
                             &final_color_extra_buffer,
@@ -675,7 +675,7 @@ pub fn build_eulertigs<
         );
 
         writer.add_read(
-            &seq_buffer,
+            seq_buffer.iter().copied(),
             None,
             writable_color,
             &final_color_extra_buffer,

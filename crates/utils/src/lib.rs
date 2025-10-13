@@ -2,6 +2,7 @@
 pub mod debug_functions;
 pub mod assembler_phases;
 pub mod fast_rand_bool;
+pub mod fuzzy_buckets;
 pub mod fuzzy_hashmap;
 pub mod inline_vec;
 pub mod owned_drop;

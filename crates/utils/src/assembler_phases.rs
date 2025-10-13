@@ -3,9 +3,7 @@ pub enum AssemblerPhase {
     #[default]
     MinimizerBucketing = 0,
     KmersMerge = 1,
-    HashesSorting = 2,
-    LinksCompaction = 3,
-    ReorganizeReads = 4,
-    BuildUnitigs = 5,
-    MaximalUnitigsLinks = 6,
+    UnitigsExtension = 2,
+    MaximalUnitigsLinks = 3,
+    FinalStep = 4,
 }

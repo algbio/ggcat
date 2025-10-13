@@ -1,9 +1,7 @@
 use crate::map_processor::ParallelKmersMergeMapPacket;
-use crate::sorting::radix_sort_reads;
 use crate::unitigs_extender::sorting::SortingExtender;
 use crate::unitigs_extender::{UnitigExtensionColorsData, UnitigsExtenderTrait};
-use crate::{GlobalMergeData, ParallelKmersMergeFactory, ResultsBucket};
-use binary_heap_plus::BinaryHeap;
+use crate::{GlobalMergeData, ParallelKmersMergeFactory};
 use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::{ColorsManager, color_types};
@@ -12,138 +10,112 @@ use config::{
     READ_FLAG_INCL_END,
 };
 use ggcat_logging::stats;
-use hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
+use hashes::extremal::{DelayedHashComputation, HashGenerator};
+use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use instrumenter::local_setup_instrumenter;
-use io::compressed_read::CompressedRead;
+use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
+use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::temp_reads::creads_utils::{
-    DeserializedRead, DeserializedReadIndependent, ToReadData,
+    AlignToMinimizerByteBoundary, AssemblerMinimizerPosition, CompressedReadsBucketData,
+    CompressedReadsBucketDataSerializer, DeserializedRead, NoMultiplicity, NoSecondBucket,
+    ToReadData,
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
-use io::structs::hash_entry::{Direction, HashEntrySerializer};
 use kmers_transform::{KmersTransformExecutorFactory, KmersTransformFinalExecutor};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
+use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::execution_manager::packet::Packet;
-use std::cmp::Reverse;
-use std::iter::repeat;
 use std::marker::PhantomData;
-use std::mem::take;
 use std::ops::DerefMut;
-use std::time::Instant;
 use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
 #[cfg(feature = "support_kmer_counters")]
 use structs::unitigs_counters::UnitigsCounters;
-use utils::fuzzy_hashmap::FuzzyHashmap;
+use typenum::U2;
 
 local_setup_instrumenter!();
 
 pub struct ParallelKmersMergeFinalExecutor<
     MH: HashFunctionFactory,
     CX: ColorsManager,
+    OM: StructuredSequenceBackendWrapper,
     const COMPUTE_SIMPLITIGS: bool,
 > {
-    hashes_tmp: BucketsThreadDispatcher<
-        LockFreeBinaryWriter,
-        HashEntrySerializer<MH::HashTypeUnextendable>,
+    unitigs_tmp: BucketsThreadDispatcher<
+        CompressedBinaryWriter,
+        CompressedReadsBucketDataSerializer<
+            PartialUnitigExtraData<color_types::PartialUnitigsColorStructure<CX>>,
+            NoSecondBucket,
+            NoMultiplicity,
+            AssemblerMinimizerPosition,
+            U2,
+            AlignToMinimizerByteBoundary,
+        >,
     >,
 
-    current_bucket: Option<ResultsBucket<color_types::PartialUnitigsColorStructure<CX>>>,
-
     colors_data: UnitigExtensionColorsData<CX>,
-    bucket_counter: usize,
-    bucket_change_threshold: usize,
+    _phantom: PhantomData<(MH, OM)>,
 }
 
-impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
-    ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>
+impl<
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+    OM: StructuredSequenceBackendWrapper,
+    const COMPUTE_SIMPLITIGS: bool,
+> ParallelKmersMergeFinalExecutor<MH, CX, OM, COMPUTE_SIMPLITIGS>
 {
-    pub fn new(global_data: &GlobalMergeData<CX>) -> Self {
-        let hashes_buffer =
+    pub fn new(global_data: &GlobalMergeData<CX, OM>) -> Self {
+        let unitigs_out_buffer =
             BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &global_data.buckets_count);
 
         Self {
-            hashes_tmp: BucketsThreadDispatcher::new(
-                &global_data.hashes_buckets,
-                hashes_buffer,
-                (),
+            unitigs_tmp: BucketsThreadDispatcher::new(
+                &global_data.output_results_buckets,
+                unitigs_out_buffer,
+                global_data.k,
             ),
-            current_bucket: None,
             colors_data: UnitigExtensionColorsData {
                 colors_global_table: global_data.colors_global_table.clone(),
                 unitigs_temp_colors: CX::ColorsMergeManagerType::alloc_unitig_color_structure(),
                 temp_color_buffer: <PartialUnitigsColorStructure<CX> as SequenceExtraDataTempBufferManagement>::new_temp_buffer()
             },
-            bucket_counter: 0,
-            bucket_change_threshold: 16, // TODO: Parametrize
+            _phantom: PhantomData
         }
     }
 }
 
 // static DEBUG_MAPS_HOLDER: Mutex<Vec<Box<dyn Any + Sync + Send>>> = const_mutex(Vec::new());
 
-trait HashGenerator<MH: HashFunctionFactory> {
-    fn get_extremal_hash<'a, R: ToReadData<'a>>(
-        &self,
-        seq: R,
-        k: usize,
-        beginning: bool,
-    ) -> MH::HashTypeUnextendable;
-}
-
-pub struct PrecomputedHash<MH: HashFunctionFactory>(pub MH::HashTypeUnextendable);
-
-impl<MH: HashFunctionFactory> HashGenerator<MH> for PrecomputedHash<MH> {
-    fn get_extremal_hash<'a, R: ToReadData<'a>>(
-        &self,
-        _seq: R,
-        _k: usize,
-        _beginning: bool,
-    ) -> MH::HashTypeUnextendable {
-        self.0
-    }
-}
-
-pub struct DelayedHashComputation;
-
-impl<MH: HashFunctionFactory> HashGenerator<MH> for DelayedHashComputation {
-    #[inline(always)]
-    fn get_extremal_hash<'a, R: ToReadData<'a>>(
-        &self,
-        seq: R,
-        k: usize,
-        beginning: bool,
-    ) -> <MH as HashFunctionFactory>::HashTypeUnextendable {
-        if beginning {
-            let hash = MH::new(seq, k);
-            hash.iter().next().unwrap().to_unextendable()
-        } else {
-            let hash = MH::new(seq.subslice(seq.bases_count() - k, seq.bases_count()), k);
-            hash.iter().next().unwrap().to_unextendable()
-        }
-    }
-}
-
-impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
-    ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>
+impl<
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+    OM: StructuredSequenceBackendWrapper,
+    const COMPUTE_SIMPLITIGS: bool,
+> ParallelKmersMergeFinalExecutor<MH, CX, OM, COMPUTE_SIMPLITIGS>
 {
     #[inline]
     fn output_sequence<'a, R: ToReadData<'a> + Copy, H: HashGenerator<MH>>(
-        current_bucket: &mut ResultsBucket<color_types::PartialUnitigsColorStructure<CX>>,
-        hashes_tmp: &mut BucketsThreadDispatcher<
-            LockFreeBinaryWriter,
-            HashEntrySerializer<MH::HashTypeUnextendable>,
+        lonely_unitigs: &mut FastaWriterConcurrentBuffer<
+            PartialUnitigsColorStructure<CX>,
+            (),
+            OM::Backend<PartialUnitigsColorStructure<CX>, ()>,
+        >,
+        unitigs_tmp: &mut BucketsThreadDispatcher<
+            CompressedBinaryWriter,
+            CompressedReadsBucketDataSerializer<
+                PartialUnitigExtraData<color_types::PartialUnitigsColorStructure<CX>>,
+                NoSecondBucket,
+                NoMultiplicity,
+                AssemblerMinimizerPosition,
+                U2,
+                AlignToMinimizerByteBoundary,
+            >,
         >,
         colors_data: &mut UnitigExtensionColorsData<CX>,
         out_seq: R,
         forward_linked: Option<H>,
         backward_linked: Option<H>,
         k: usize,
-        normal_buckets_count_log: usize,
     ) {
-        stats!(
-            stat_output_kmers_count += 1;
-        );
-
         let colors = color_types::ColorsMergeManagerType::<CX>::encode_part_unitigs_colors(
             &mut colors_data.unitigs_temp_colors,
             &mut colors_data.temp_color_buffer,
@@ -156,53 +128,76 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
             counters,
         };
 
-        let read_index =
-            current_bucket.add_read(extra_data, out_seq, &colors_data.temp_color_buffer);
+        if forward_linked.is_none() && backward_linked.is_none() {
+            lonely_unitigs.add_read(
+                out_seq.into_bases_iter(),
+                None,
+                extra_data.colors,
+                &colors_data.temp_color_buffer,
+                (),
+                &(),
+                #[cfg(feature = "support_kmer_counters")]
+                counters,
+            );
+        } else {
+            let hash_beginning = forward_linked.is_none();
+            let both_ends = forward_linked.is_some() && backward_linked.is_some();
+            let hash = forward_linked.or(backward_linked).unwrap();
 
+            let extremal_hash = hash.get_extremal_hash(out_seq, k, hash_beginning);
+            let should_rc = !extremal_hash.is_forward();
+
+            let last_align = if hash_beginning ^ should_rc {
+                0
+            } else {
+                (out_seq.bases_count() - k) % 4
+            };
+
+            unitigs_tmp.add_element_extended(
+                MH::get_bucket(
+                    0,
+                    unitigs_tmp.get_buckets_count().normal_buckets_count_log,
+                    extremal_hash.to_unextendable(),
+                ),
+                &extra_data,
+                &colors_data.temp_color_buffer,
+                &CompressedReadsBucketData {
+                    read: out_seq.to_read_data().reverse_complement(should_rc),
+                    multiplicity: 0,
+                    minimizer_pos: last_align as u16,
+                    extra_bucket: 0,
+                    flags: (!hash_beginning ^ should_rc) as u8 | ((both_ends as u8) << 1),
+                    is_window_duplicate: false,
+                },
+            );
+        }
         color_types::PartialUnitigsColorStructure::<CX>::clear_temp_buffer(
             &mut colors_data.temp_color_buffer,
         );
 
-        if let Some(fw_hash) = forward_linked {
-            Self::write_hashes(
-                hashes_tmp,
-                fw_hash.get_extremal_hash(out_seq, k, false),
-                current_bucket.get_bucket_index(),
-                read_index,
-                Direction::Forward,
-                normal_buckets_count_log,
-            );
-        }
-
-        if let Some(bw_hash) = backward_linked {
-            Self::write_hashes(
-                hashes_tmp,
-                bw_hash.get_extremal_hash(out_seq, k, true),
-                current_bucket.get_bucket_index(),
-                read_index,
-                Direction::Backward,
-                normal_buckets_count_log,
-            );
-        }
+        // TODO:
+        // - write sequences to disk in buckets based on their extremal hash (randomly left or right)
+        // - Group sequences using an hashmap on a fast extremity hash + join them
+        // - Write sequences again using an hashmap
     }
 }
 
-impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
-    KmersTransformFinalExecutor<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS>>
-    for ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>
+impl<
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+    OM: StructuredSequenceBackendWrapper,
+    const COMPUTE_SIMPLITIGS: bool,
+> KmersTransformFinalExecutor<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS>>
+    for ParallelKmersMergeFinalExecutor<MH, CX, OM, COMPUTE_SIMPLITIGS>
 {
-    type MapStruct = ParallelKmersMergeMapPacket<MH, CX>;
+    type MapStruct = ParallelKmersMergeMapPacket<MH, CX, OM>;
 
     #[instrumenter::track(fields(map_capacity = map_struct_packet.rhash_map.capacity(), map_size = map_struct_packet.rhash_map.len()))]
     fn process_map(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
+        global_data: &<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
         mut map_struct_packet: Packet<Self::MapStruct>,
     ) -> Packet<Self::MapStruct> {
-        if self.current_bucket.is_none() {
-            self.current_bucket = Some(global_data.output_results_buckets.pop().unwrap());
-        }
-
         stats!(
             map_struct_packet.detailed_stats.start_finalize_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();
             let mut stat_output_kmers_count = 0;
@@ -210,11 +205,14 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
         let map_struct = map_struct_packet.deref_mut();
 
-        let buckets_count = global_data.buckets_count;
+        let mut tmp_final_unitigs_buffer = FastaWriterConcurrentBuffer::new(
+            &global_data.final_unitigs_file,
+            DEFAULT_OUTPUT_BUFFER_SIZE,
+            true,
+            global_data.k,
+        );
 
-        let current_bucket = self.current_bucket.as_mut().unwrap();
-
-        let mut sorting_extender = SortingExtender::default();
+        let mut sorting_extender = SortingExtender::<CX>::default();
 
         if !map_struct.is_duplicate {
             map_struct.minimizer_superkmers.process_elements(
@@ -245,15 +243,17 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                             &mut self.colors_data,
                             #[inline(always)]
                             |colors_data, out_seq, fw_hash, bw_hash| {
+                                stats!(
+                                    stat_output_kmers_count += 1;
+                                );
                                 Self::output_sequence(
-                                    current_bucket,
-                                    &mut self.hashes_tmp,
+                                    &mut tmp_final_unitigs_buffer,
+                                    &mut self.unitigs_tmp,
                                     colors_data,
                                     out_seq,
                                     fw_hash,
                                     bw_hash,
                                     global_data.k,
-                                    buckets_count.normal_buckets_count_log,
                                 )
                             },
                         );
@@ -263,9 +263,12 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
                     if minimizer_elements.len() <= 1 {
                         let read = &minimizer_elements[0];
+                        stats!(
+                            stat_output_kmers_count += 1;
+                        );
                         Self::output_sequence(
-                            current_bucket,
-                            &mut self.hashes_tmp,
+                            &mut tmp_final_unitigs_buffer,
+                            &mut self.unitigs_tmp,
                             &mut self.colors_data,
                             read.read.as_reference(&map_struct.superkmers_storage),
                             if read.flags & READ_FLAG_INCL_END == 0 {
@@ -279,7 +282,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                                 None
                             },
                             global_data.k,
-                            buckets_count.normal_buckets_count_log,
                         );
 
                         return;
@@ -287,20 +289,24 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
                     sorting_extender.clear_supertigs();
                     sorting_extender.process_reads(
+                        &mut self.colors_data,
                         minimizer_elements,
+                        &map_struct.superkmers_extra_buffer,
                         &map_struct.superkmers_storage,
                         global_data.k,
                         global_data.min_multiplicity,
-                        |read, fw_linked, bw_linked| {
+                        |colors_data, read, fw_linked, bw_linked| {
+                            stats!(
+                                stat_output_kmers_count += 1;
+                            );
                             Self::output_sequence(
-                                current_bucket,
-                                &mut self.hashes_tmp,
-                                &mut self.colors_data,
+                                &mut tmp_final_unitigs_buffer,
+                                &mut self.unitigs_tmp,
+                                colors_data,
                                 read,
                                 fw_linked,
                                 bw_linked,
                                 global_data.k,
-                                buckets_count.normal_buckets_count_log,
                             )
                         },
                     );
@@ -311,26 +317,20 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                 &mut self.colors_data,
                 #[inline(always)]
                 |colors_data, out_seq, fw_hash, bw_hash| {
+                    stats!(
+                        stat_output_kmers_count += 1;
+                    );
                     Self::output_sequence(
-                        current_bucket,
-                        &mut self.hashes_tmp,
+                        &mut tmp_final_unitigs_buffer,
+                        &mut self.unitigs_tmp,
                         colors_data,
                         out_seq,
                         fw_hash,
                         bw_hash,
                         global_data.k,
-                        buckets_count.normal_buckets_count_log,
                     )
                 },
             );
-        }
-
-        self.bucket_counter += 1;
-        if self.bucket_counter >= self.bucket_change_threshold {
-            self.bucket_counter = 0;
-            let _ = global_data
-                .output_results_buckets
-                .push(self.current_bucket.take().unwrap());
         }
 
         stats!(
@@ -340,14 +340,13 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
         stats!(stats.assembler.kmers_merge_stats.push(map_struct_packet.detailed_stats.clone()););
 
-        // DEBUG_MAPS_HOLDER.lock().push(Box::new(map_struct_packet));
         map_struct_packet
     }
 
     fn finalize(
         self,
-        _global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
+        _global_data: &<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) {
-        self.hashes_tmp.finalize();
+        self.unitigs_tmp.finalize();
     }
 }
