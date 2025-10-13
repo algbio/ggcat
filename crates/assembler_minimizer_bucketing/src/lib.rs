@@ -195,7 +195,7 @@ impl<CD: MinimizerBucketingSeqColorData>
                     (
                         x.to_unextendable()
             // Set the unique flag if the minimizer is not rc_symmetric
-            | (SEPARATE_DUPLICATES || !x.is_rc_symmetric()) as u64,
+            | (SEPARATE_DUPLICATES && !x.is_rc_symmetric()) as u64,
                         MinimizerExtraData {
                             index: index as u32,
                             is_forward: x.is_forward(),

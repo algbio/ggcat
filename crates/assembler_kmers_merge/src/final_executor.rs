@@ -221,7 +221,7 @@ impl<
                     let has_duplicate_kmers =
                         minimizer_elements.iter().any(|m| m.is_window_duplicate);
 
-                    if has_duplicate_kmers || minimizer_elements.len() <= 1 {
+                    if has_duplicate_kmers {
                         map_struct.extender.reset();
 
                         for element in minimizer_elements {
@@ -261,7 +261,10 @@ impl<
                         return;
                     }
 
-                    if minimizer_elements.len() <= 1 {
+                    if minimizer_elements.len() <= 1
+                        && minimizer_elements[0].multiplicity as usize
+                            >= global_data.min_multiplicity
+                    {
                         let read = &minimizer_elements[0];
                         stats!(
                             stat_output_kmers_count += 1;

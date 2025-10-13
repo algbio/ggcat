@@ -469,13 +469,66 @@ pub fn extend_unitigs<
                                     }
                                 } else {
                                     // Cannot join, this means the current reads are oriented in a wrong way
-                                    println!(
-                                        "Cannot join {} with {}",
-                                        read.to_string(),
-                                        other_read.read.as_reference(&reads_storage).to_string()
+                                    // let hash1 = compute_hash(read, flags, k);
+                                    // let hash2 = compute_hash(
+                                    //     other_read.read.as_reference(&reads_storage),
+                                    //     other_read.flags,
+                                    //     k,
+                                    // );
+
+                                    // println!(
+                                    //     "Cannot join {} with {} => {} => {} == {}",
+                                    //     read.to_string(),
+                                    //     other_read.read.as_reference(&reads_storage).to_string(),
+                                    //     read.equality_compare_start_zero(
+                                    //         &other_read.read.as_reference(&reads_storage),
+                                    //     ),
+                                    //     hash1,
+                                    //     hash2
+                                    // );
+                                    // TODO: Test this branch
+
+                                    let hash_beginning = flags & HASH_ENDING_FLAG_MASK == 0;
+                                    let hash = HashGenerator::<MH>::get_extremal_hash(
+                                        &DelayedHashComputation,
+                                        read,
+                                        k,
+                                        hash_beginning,
                                     );
 
-                                    // todo!();
+                                    let target_bucket = MH::get_bucket(
+                                        0,
+                                        joined_unitigs_buckets
+                                            .get_buckets_count()
+                                            .normal_buckets_count_log,
+                                        hash.to_unextendable(),
+                                    );
+
+                                    // Write the current unitig reverse complementing it
+                                    let last_align = if !hash_beginning {
+                                        0
+                                    } else {
+                                        (read.bases_count() - k) % 4
+                                    };
+
+                                    remaining_count += 1;
+                                    joined_unitigs_buckets.add_element_extended(
+                                        target_bucket,
+                                        &PartialUnitigExtraData {
+                                            colors: extra.colors,
+                                            #[cfg(feature = "support_kmer_counters")]
+                                            counters,
+                                        },
+                                        &color_extra_buffer,
+                                        &CompressedReadsBucketData {
+                                            read: ReadData::PackedRc(read),
+                                            multiplicity: 0,
+                                            minimizer_pos: last_align as u16,
+                                            extra_bucket: 0,
+                                            flags: flags ^ HASH_ENDING_FLAG_MASK,
+                                            is_window_duplicate: false,
+                                        },
+                                    );
                                 }
                             }
                         }

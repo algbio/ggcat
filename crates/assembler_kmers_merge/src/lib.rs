@@ -66,7 +66,6 @@ pub struct GlobalMergeData<CX: ColorsManager, O: StructuredSequenceBackendWrappe
         >,
     >,
     global_resplit_data: Arc<MinimizerBucketingCommonData<()>>,
-    sequences_size_total: AtomicU64,
     hasnmap_kmers_total: AtomicU64,
     kmer_batches_count: AtomicU64,
 }
@@ -245,7 +244,6 @@ pub fn kmers_merge<
             BucketsCount::ONE,
             (),
         )),
-        sequences_size_total: AtomicU64::new(0),
         hasnmap_kmers_total: AtomicU64::new(0),
         kmer_batches_count: AtomicU64::new(0),
     });

@@ -382,20 +382,14 @@ impl<
             .hasnmap_kmers_total
             .fetch_add(all_kmers, Ordering::Relaxed)
             + all_kmers;
-        let sequences_size_total = global_data
-            .sequences_size_total
-            .fetch_add(sequences_sizes, Ordering::Relaxed)
-            + sequences_sizes;
         let batches_count = global_data
             .kmer_batches_count
             .fetch_add(1, Ordering::Relaxed)
             + 1;
 
-        map_packet.extender.set_suggested_sizes(
-            kmers_total / batches_count,
-            256,
-            // max(256, sequences_size_total / batches_count),
-        );
+        map_packet
+            .extender
+            .set_suggested_sizes(kmers_total / batches_count, 256);
 
         COUNTER_KMERS_MAX.max(all_kmers as i64);
         COUNTER_READS_AVG.add_value(all_kmers as i64);
