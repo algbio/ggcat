@@ -14,8 +14,11 @@ use hashes::{
 };
 use io::{
     compressed_read::CompressedRead,
-    concurrent::temp_reads::{
-        creads_utils::DeserializedRead, extra_data::SequenceExtraDataTempBufferManagement,
+    concurrent::{
+        structured_sequences::SequenceAbundanceType,
+        temp_reads::{
+            creads_utils::DeserializedRead, extra_data::SequenceExtraDataTempBufferManagement,
+        },
     },
     varint::{decode_varint, encode_varint},
 };
@@ -181,7 +184,10 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> HashMapUnitigsExtender<MH, CX> 
             ts: &mut color_types::TempUnitigColorStructure<CX>,
             entry_color: color_types::HashMapTempColorIndex<CX>,
         ),
+        is_circular: &mut bool,
         #[cfg(feature = "support_kmer_counters")] is_forward: bool,
+        #[cfg(feature = "support_kmer_counters")]
+        counters: &mut io::concurrent::structured_sequences::SequenceAbundance,
     ) -> Option<MH::HashTypeExtendable> {
         let mut temp_data = (hash, 0);
         let mut current_hash;
@@ -256,6 +262,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> HashMapUnitigsExtender<MH, CX> 
 
                 // Found a cycle unitig
                 if already_used {
+                    *is_circular = true;
                     break None;
                 }
 
@@ -443,6 +450,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             &[u8],
             Option<PrecomputedHash<MH>>,
             Option<PrecomputedHash<MH>>,
+            bool,
+            SequenceAbundanceType,
         ),
     ) {
         if CX::COLORS_ENABLED {
@@ -499,11 +508,13 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             let first_count = rhentry.get_kmer_multiplicity() as u64;
 
             #[cfg(feature = "support_kmer_counters")]
-            let mut counters = UnitigsCounters {
+            let mut counters = io::concurrent::structured_sequences::SequenceAbundance {
                 first: first_count,
                 sum: first_count,
                 last: first_count,
             };
+
+            let mut is_circular = false;
 
             let fw_hash = {
                 if end_ignored {
@@ -516,8 +527,11 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                         MH::manual_roll_forward,
                         MH::manual_roll_reverse,
                         CX::ColorsMergeManagerType::extend_forward,
+                        &mut is_circular,
                         #[cfg(feature = "support_kmer_counters")]
                         true,
+                        #[cfg(feature = "support_kmer_counters")]
+                        &mut counters,
                     )
                 }
             };
@@ -533,8 +547,11 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                         MH::manual_roll_reverse,
                         MH::manual_roll_forward,
                         CX::ColorsMergeManagerType::extend_backward,
+                        &mut is_circular,
                         #[cfg(feature = "support_kmer_counters")]
                         false,
+                        #[cfg(feature = "support_kmer_counters")]
+                        &mut counters,
                     )
                 }
             };
@@ -550,6 +567,13 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                 out_seq,
                 fw_hash.map(PrecomputedHash),
                 bw_hash.map(PrecomputedHash),
+                is_circular,
+                match () {
+                    #[cfg(feature = "support_kmer_counters")]
+                    () => counters,
+                    #[cfg(not(feature = "support_kmer_counters"))]
+                    () => (),
+                },
             )
         });
     }

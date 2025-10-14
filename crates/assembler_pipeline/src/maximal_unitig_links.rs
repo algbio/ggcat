@@ -384,7 +384,13 @@ pub fn build_maximal_unitigs_links<
                         &maximal_unitigs_reader_step3_parallel_chunks,
                         |DeserializedRead {
                              read,
-                             extra: SequenceDataWithAbundance::<_, ()> { index, color, .. },
+                             extra:
+                                 SequenceDataWithAbundance::<_, ()> {
+                                     index,
+                                     color,
+                                     abundance: _abundance,
+                                     ..
+                                 },
                              ..
                          },
                          extra_buffer| {

@@ -1,15 +1,18 @@
 use std::sync::Arc;
 
 use colors::colors_manager::{
-    ColorsManager,
+    ColorsManager, ColorsMergeManager,
     color_types::{
-        GlobalColorsTableWriter, MinimizerBucketingMultipleSeqColorDataType,
+        self, GlobalColorsTableWriter, MinimizerBucketingMultipleSeqColorDataType,
         PartialUnitigsColorStructure, TempUnitigColorStructure,
     },
 };
 use hashes::{HashFunctionFactory, extremal::PrecomputedHash};
-use io::concurrent::temp_reads::{
-    creads_utils::DeserializedRead, extra_data::SequenceExtraDataTempBufferManagement,
+use io::concurrent::{
+    structured_sequences::SequenceAbundanceType,
+    temp_reads::{
+        creads_utils::DeserializedRead, extra_data::SequenceExtraDataTempBufferManagement,
+    },
 };
 use kmers_transform::GroupProcessStats;
 
@@ -30,6 +33,15 @@ pub struct UnitigExtensionColorsData<CX: ColorsManager> {
         <PartialUnitigsColorStructure<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
 }
 
+impl<CX: ColorsManager> UnitigExtensionColorsData<CX> {
+    pub fn get_colors(&mut self) -> PartialUnitigsColorStructure<CX> {
+        color_types::ColorsMergeManagerType::<CX>::encode_part_unitigs_colors(
+            &mut self.unitigs_temp_colors,
+            &mut self.temp_color_buffer,
+        )
+    }
+}
+
 pub trait UnitigsExtenderTrait<MH: HashFunctionFactory, CX: ColorsManager> {
     fn new(params: &GlobalExtenderParams) -> Self;
     fn reset(&mut self);
@@ -48,6 +60,8 @@ pub trait UnitigsExtenderTrait<MH: HashFunctionFactory, CX: ColorsManager> {
             &[u8],
             Option<PrecomputedHash<MH>>,
             Option<PrecomputedHash<MH>>,
+            bool,
+            SequenceAbundanceType,
         ),
     );
     fn set_suggested_sizes(&mut self, hashmap_size: u64, sequences_size: u64);

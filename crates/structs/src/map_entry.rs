@@ -36,10 +36,11 @@ impl<CHI> MapEntry<CHI> {
         value: MultiplicityCounterType,
         check_threshold: usize,
     ) -> bool {
-        let exceeded = self.count_flags.get() >= check_threshold;
+        let exceeded = self.get_counter() >= check_threshold;
         self.count_flags
             .set(self.count_flags.get() + value as usize);
-        let now_exceeded = self.count_flags.get() < check_threshold;
+
+        let now_exceeded = self.get_counter() >= check_threshold;
         !exceeded && now_exceeded
     }
 

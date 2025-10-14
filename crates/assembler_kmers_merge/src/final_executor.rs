@@ -2,9 +2,9 @@ use crate::map_processor::ParallelKmersMergeMapPacket;
 use crate::unitigs_extender::sorting::SortingExtender;
 use crate::unitigs_extender::{UnitigExtensionColorsData, UnitigsExtenderTrait};
 use crate::{GlobalMergeData, ParallelKmersMergeFactory};
-use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use colors::colors_manager::{ColorsManager, color_types};
+use colors::colors_manager::{ColorsMergeManager, MinimizerBucketingSeqColorData};
 use config::{
     DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE, READ_FLAG_INCL_BEGIN,
     READ_FLAG_INCL_END,
@@ -28,8 +28,6 @@ use parallel_processor::execution_manager::packet::Packet;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
-#[cfg(feature = "support_kmer_counters")]
-use structs::unitigs_counters::UnitigsCounters;
 use typenum::U2;
 
 local_setup_instrumenter!();
@@ -93,11 +91,20 @@ impl<
 > ParallelKmersMergeFinalExecutor<MH, CX, OM, COMPUTE_SIMPLITIGS>
 {
     #[inline]
-    fn output_sequence<'a, R: ToReadData<'a> + Copy, H: HashGenerator<MH>>(
+    fn output_sequence<'a, 'b, R: ToReadData<'a> + Copy, H: HashGenerator<MH>>(
         lonely_unitigs: &mut FastaWriterConcurrentBuffer<
+            'b,
             PartialUnitigsColorStructure<CX>,
             (),
             OM::Backend<PartialUnitigsColorStructure<CX>, ()>,
+        >,
+        lonely_circular_unitigs: Option<
+            &mut FastaWriterConcurrentBuffer<
+                'b,
+                PartialUnitigsColorStructure<CX>,
+                (),
+                OM::Backend<PartialUnitigsColorStructure<CX>, ()>,
+            >,
         >,
         unitigs_tmp: &mut BucketsThreadDispatcher<
             CompressedBinaryWriter,
@@ -115,6 +122,9 @@ impl<
         forward_linked: Option<H>,
         backward_linked: Option<H>,
         k: usize,
+        #[cfg(feature = "support_kmer_counters")]
+        counters: io::concurrent::structured_sequences::SequenceAbundance,
+        is_circular: bool,
     ) {
         let colors = color_types::ColorsMergeManagerType::<CX>::encode_part_unitigs_colors(
             &mut colors_data.unitigs_temp_colors,
@@ -123,22 +133,34 @@ impl<
 
         let extra_data = PartialUnitigExtraData {
             colors,
-
             #[cfg(feature = "support_kmer_counters")]
             counters,
         };
 
         if forward_linked.is_none() && backward_linked.is_none() {
-            lonely_unitigs.add_read(
-                out_seq.into_bases_iter(),
-                None,
-                extra_data.colors,
-                &colors_data.temp_color_buffer,
-                (),
-                &(),
-                #[cfg(feature = "support_kmer_counters")]
-                counters,
-            );
+            if is_circular {
+                lonely_circular_unitigs.unwrap_or(lonely_unitigs).add_read(
+                    out_seq.into_bases_iter(),
+                    None,
+                    extra_data.colors,
+                    &colors_data.temp_color_buffer,
+                    (),
+                    &(),
+                    #[cfg(feature = "support_kmer_counters")]
+                    counters,
+                );
+            } else {
+                lonely_unitigs.add_read(
+                    out_seq.into_bases_iter(),
+                    None,
+                    extra_data.colors,
+                    &colors_data.temp_color_buffer,
+                    (),
+                    &(),
+                    #[cfg(feature = "support_kmer_counters")]
+                    counters,
+                );
+            }
         } else {
             let hash_beginning = forward_linked.is_none();
             let both_ends = forward_linked.is_some() && backward_linked.is_some();
@@ -212,7 +234,13 @@ impl<
             global_data.k,
         );
 
+        let mut tmp_final_unitigs_circular_buffer =
+            global_data.final_circular_unitigs_file.as_ref().map(|f| {
+                FastaWriterConcurrentBuffer::new(f, DEFAULT_OUTPUT_BUFFER_SIZE, true, global_data.k)
+            });
+
         let mut sorting_extender = SortingExtender::<CX>::default();
+        let mut single_entry_colors = vec![];
 
         if !map_struct.is_duplicate {
             map_struct.minimizer_superkmers.process_elements(
@@ -242,18 +270,22 @@ impl<
                         map_struct.extender.compute_unitigs::<COMPUTE_SIMPLITIGS>(
                             &mut self.colors_data,
                             #[inline(always)]
-                            |colors_data, out_seq, fw_hash, bw_hash| {
+                            |colors_data, out_seq, fw_hash, bw_hash, is_circular, _abundance| {
                                 stats!(
                                     stat_output_kmers_count += 1;
                                 );
                                 Self::output_sequence(
                                     &mut tmp_final_unitigs_buffer,
+                                    tmp_final_unitigs_circular_buffer.as_mut(),
                                     &mut self.unitigs_tmp,
                                     colors_data,
                                     out_seq,
                                     fw_hash,
                                     bw_hash,
                                     global_data.k,
+                                    #[cfg(feature = "support_kmer_counters")]
+                                    _abundance,
+                                    is_circular,
                                 )
                             },
                         );
@@ -264,13 +296,38 @@ impl<
                     if minimizer_elements.len() <= 1
                         && minimizer_elements[0].multiplicity as usize
                             >= global_data.min_multiplicity
+                        && !minimizer_elements[0].is_window_duplicate
                     {
                         let read = &minimizer_elements[0];
                         stats!(
                             stat_output_kmers_count += 1;
                         );
+
+                        // Assign color for this entry
+                        if CX::COLORS_ENABLED {
+                            CX::ColorsMergeManagerType::reset_unitig_color_structure(
+                                &mut self.colors_data.unitigs_temp_colors,
+                            );
+
+                            single_entry_colors.clear();
+                            single_entry_colors.extend_from_slice(
+                                read.extra
+                                    .get_unique_color(&map_struct.superkmers_extra_buffer),
+                            );
+                            let color = CX::ColorsMergeManagerType::assign_color(
+                                &self.colors_data.colors_global_table,
+                                &mut single_entry_colors,
+                            );
+                            CX::ColorsMergeManagerType::extend_forward_with_color(
+                                &mut self.colors_data.unitigs_temp_colors,
+                                color,
+                                read.read.bases_count() - global_data.k + 1,
+                            );
+                        }
+
                         Self::output_sequence(
                             &mut tmp_final_unitigs_buffer,
+                            None,
                             &mut self.unitigs_tmp,
                             &mut self.colors_data,
                             read.read.as_reference(&map_struct.superkmers_storage),
@@ -285,6 +342,15 @@ impl<
                                 None
                             },
                             global_data.k,
+                            #[cfg(feature = "support_kmer_counters")]
+                            io::concurrent::structured_sequences::SequenceAbundance {
+                                first: read.multiplicity as u64,
+                                sum: read.multiplicity as u64
+                                    * (read.read.bases_count() - global_data.k + 1) as u64,
+                                last: read.multiplicity as u64,
+                            },
+                            // Can't be circular because the minimizer is unique
+                            false,
                         );
 
                         return;
@@ -298,18 +364,23 @@ impl<
                         &map_struct.superkmers_storage,
                         global_data.k,
                         global_data.min_multiplicity,
-                        |colors_data, read, fw_linked, bw_linked| {
+                        |colors_data, read, fw_linked, bw_linked, _abundance| {
                             stats!(
                                 stat_output_kmers_count += 1;
                             );
                             Self::output_sequence(
                                 &mut tmp_final_unitigs_buffer,
+                                None,
                                 &mut self.unitigs_tmp,
                                 colors_data,
                                 read,
                                 fw_linked,
                                 bw_linked,
                                 global_data.k,
+                                #[cfg(feature = "support_kmer_counters")]
+                                _abundance,
+                                // Can't be circular
+                                false,
                             )
                         },
                     );
@@ -319,18 +390,22 @@ impl<
             map_struct.extender.compute_unitigs::<COMPUTE_SIMPLITIGS>(
                 &mut self.colors_data,
                 #[inline(always)]
-                |colors_data, out_seq, fw_hash, bw_hash| {
+                |colors_data, out_seq, fw_hash, bw_hash, is_circular, _abundance| {
                     stats!(
                         stat_output_kmers_count += 1;
                     );
                     Self::output_sequence(
                         &mut tmp_final_unitigs_buffer,
+                        tmp_final_unitigs_circular_buffer.as_mut(),
                         &mut self.unitigs_tmp,
                         colors_data,
                         out_seq,
                         fw_hash,
                         bw_hash,
                         global_data.k,
+                        #[cfg(feature = "support_kmer_counters")]
+                        _abundance,
+                        is_circular,
                     )
                 },
             );

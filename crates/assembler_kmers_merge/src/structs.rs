@@ -10,8 +10,6 @@ use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBi
 use parallel_processor::buckets::{LockFreeBucket, SingleBucket};
 use std::marker::PhantomData;
 use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
-#[cfg(feature = "support_kmer_counters")]
-use structs::unitigs_counters::UnitigsCounters;
 use utils::owned_drop::OwnedDrop;
 
 pub struct ResultsBucket<X: SequenceExtraDataConsecutiveCompression> {

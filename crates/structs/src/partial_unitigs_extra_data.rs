@@ -5,7 +5,7 @@ use io::concurrent::temp_reads::extra_data::{
 #[derive(Clone, Debug)]
 pub struct PartialUnitigExtraData<X: SequenceExtraDataConsecutiveCompression> {
     #[cfg(feature = "support_kmer_counters")]
-    pub counters: UnitigsCounters,
+    pub counters: io::concurrent::structured_sequences::SequenceAbundance,
     pub colors: X,
 }
 
@@ -46,8 +46,13 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
         last_data: Self::LastData,
     ) -> Option<Self> {
         let color = X::decode_extended(buffer, reader, last_data)?;
+
         #[cfg(feature = "support_kmer_counters")]
-        let counter = UnitigsCounters::decode_extended(&mut (), reader, ())?;
+        let counter = io::concurrent::structured_sequences::SequenceAbundance::decode_extended(
+            &mut (),
+            reader,
+            (),
+        )?;
         Some(Self {
             colors: color,
             #[cfg(feature = "support_kmer_counters")]

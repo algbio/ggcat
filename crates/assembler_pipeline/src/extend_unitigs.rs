@@ -14,7 +14,7 @@ use hashes::{ExtendableHashTraitType, HashFunctionFactory, HashableSequence};
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::structured_sequences::{
-    IdentSequenceWriter, StructuredSequenceBackend, StructuredSequenceWriter,
+    IdentSequenceWriter, SequenceAbundanceType, StructuredSequenceBackend, StructuredSequenceWriter,
 };
 use io::concurrent::temp_reads::creads_utils::{
     AlignToMinimizerByteBoundary, AssemblerMinimizerPosition, CompressedReadsBucketData,
@@ -48,9 +48,6 @@ use utils::fast_rand_bool::FastRandBool;
 use utils::fuzzy_buckets::FuzzyBuckets;
 use utils::fuzzy_hashmap::FuzzyHashmap;
 
-#[cfg(feature = "support_kmer_counters")]
-use io::concurrent::structured_sequences::SequenceAbundance;
-
 const HASH_ENDING_FLAG_MASK: u8 = 1;
 const OTHER_END_FLAG_MASK: u8 = 2;
 
@@ -58,6 +55,8 @@ struct JoinedRead<'a, H, E> {
     read: CompressedRead<'a>,
     extremity_hash: Option<H>,
     extra: E,
+    #[cfg(feature = "support_kmer_counters")]
+    counters: io::concurrent::structured_sequences::SequenceAbundance,
     flags: u8,
     should_rc: bool,
 }
@@ -67,10 +66,14 @@ fn try_join<'a, MH: HashFunctionFactory, CX: ColorsManager>(
     first_read: CompressedRead<'_>,
     first_buffer: &<PartialUnitigsColorStructure<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
     first_extra: &PartialUnitigsColorStructure<CX>,
+    #[cfg(feature = "support_kmer_counters")]
+    first_counters: io::concurrent::structured_sequences::SequenceAbundance,
     first_flags: u8,
     second_read: CompressedRead<'_>,
     second_buffer: &<PartialUnitigsColorStructure<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
     second_extra: &PartialUnitigsColorStructure<CX>,
+    #[cfg(feature = "support_kmer_counters")]
+    second_counters: io::concurrent::structured_sequences::SequenceAbundance,
     second_flags: u8,
     fast_random: &mut FastRandBool<1>,
     join_buffer: &'a mut Vec<u8>,
@@ -87,12 +90,61 @@ fn try_join<'a, MH: HashFunctionFactory, CX: ColorsManager>(
         return None;
     }
 
-    let ((first_read, first_flags), (second_read, second_flags)) = if first_glue_beginning {
-        ((second_read, second_flags), (first_read, first_flags))
-    } else {
-        ((first_read, first_flags), (second_read, second_flags))
-    };
+    let ((first_read, first_flags, _first_counters), (second_read, second_flags, _second_counters)) =
+        if first_glue_beginning {
+            (
+                (
+                    second_read,
+                    second_flags,
+                    match () {
+                        #[cfg(feature = "support_kmer_counters")]
+                        () => second_counters,
+                        #[cfg(not(feature = "support_kmer_counters"))]
+                        () => (),
+                    },
+                ),
+                (
+                    first_read,
+                    first_flags,
+                    match () {
+                        #[cfg(feature = "support_kmer_counters")]
+                        () => first_counters,
+                        #[cfg(not(feature = "support_kmer_counters"))]
+                        () => (),
+                    },
+                ),
+            )
+        } else {
+            (
+                (
+                    first_read,
+                    first_flags,
+                    match () {
+                        #[cfg(feature = "support_kmer_counters")]
+                        () => first_counters,
+                        #[cfg(not(feature = "support_kmer_counters"))]
+                        () => (),
+                    },
+                ),
+                (
+                    second_read,
+                    second_flags,
+                    match () {
+                        #[cfg(feature = "support_kmer_counters")]
+                        () => second_counters,
+                        #[cfg(not(feature = "support_kmer_counters"))]
+                        () => (),
+                    },
+                ),
+            )
+        };
 
+    #[cfg(feature = "support_kmer_counters")]
+    let counters = io::concurrent::structured_sequences::SequenceAbundance {
+        first: _first_counters.first,
+        sum: _first_counters.sum + _second_counters.sum - _second_counters.first,
+        last: _second_counters.last,
+    };
     // Check correctness
     // {
     //     let first_link =
@@ -169,6 +221,8 @@ fn try_join<'a, MH: HashFunctionFactory, CX: ColorsManager>(
     Some(JoinedRead {
         read,
         extremity_hash: hash,
+        #[cfg(feature = "support_kmer_counters")]
+        counters,
         flags,
         should_rc,
         extra: writable_color,
@@ -206,6 +260,8 @@ pub fn extend_unitigs<
     struct ReadsVecEntry<E> {
         read: CompressedReadIndipendent,
         extra: E,
+        #[cfg(feature = "support_kmer_counters")]
+        counters: io::concurrent::structured_sequences::SequenceAbundance,
         flags: u8,
     }
 
@@ -369,16 +425,19 @@ pub fn extend_unitigs<
                                     &mut reads_storage,
                                 );
 
-                                let extra = PartialUnitigsColorStructure::<CX>::copy_extra_from(
-                                    extra.colors,
-                                    color_extra_buffer,
-                                    &mut extra_buffer,
-                                );
+                                let copied_extra =
+                                    PartialUnitigsColorStructure::<CX>::copy_extra_from(
+                                        extra.colors,
+                                        color_extra_buffer,
+                                        &mut extra_buffer,
+                                    );
 
                                 entry.insert(reads_vec.len());
                                 reads_vec.push(ReadsVecEntry {
                                     read: saved_read,
-                                    extra,
+                                    extra: copied_extra,
+                                    #[cfg(feature = "support_kmer_counters")]
+                                    counters: extra.counters,
                                     flags,
                                 });
                             }
@@ -391,10 +450,14 @@ pub fn extend_unitigs<
                                     read,
                                     color_extra_buffer,
                                     &extra.colors,
+                                    #[cfg(feature = "support_kmer_counters")]
+                                    extra.counters,
                                     flags,
                                     other_read.read.as_reference(&reads_storage),
                                     &extra_buffer,
                                     &other_read.extra,
+                                    #[cfg(feature = "support_kmer_counters")]
+                                    other_read.counters,
                                     other_read.flags,
                                     &mut fast_random,
                                     &mut join_buffer,
@@ -442,7 +505,7 @@ pub fn extend_unitigs<
                                             &PartialUnitigExtraData {
                                                 colors: joined.extra,
                                                 #[cfg(feature = "support_kmer_counters")]
-                                                counters,
+                                                counters: joined.counters,
                                             },
                                             &join_extra_buffer,
                                             &CompressedReadsBucketData {
@@ -464,7 +527,7 @@ pub fn extend_unitigs<
                                             (),
                                             &(),
                                             #[cfg(feature = "support_kmer_counters")]
-                                            counters,
+                                            joined.counters,
                                         );
                                     }
                                 } else {
@@ -514,11 +577,7 @@ pub fn extend_unitigs<
                                     remaining_count += 1;
                                     joined_unitigs_buckets.add_element_extended(
                                         target_bucket,
-                                        &PartialUnitigExtraData {
-                                            colors: extra.colors,
-                                            #[cfg(feature = "support_kmer_counters")]
-                                            counters,
-                                        },
+                                        &extra,
                                         &color_extra_buffer,
                                         &CompressedReadsBucketData {
                                             read: ReadData::PackedRc(read),
@@ -610,7 +669,7 @@ pub fn extend_unitigs<
                             (),
                             &(),
                             #[cfg(feature = "support_kmer_counters")]
-                            counters,
+                            read_struct.counters,
                         );
 
                         // Write a circular unitig
@@ -630,7 +689,7 @@ pub fn extend_unitigs<
                             &PartialUnitigExtraData {
                                 colors: read_struct.extra,
                                 #[cfg(feature = "support_kmer_counters")]
-                                counters,
+                                counters: read_struct.counters,
                             },
                             &extra_buffer,
                             &CompressedReadsBucketData {

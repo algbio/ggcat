@@ -143,7 +143,10 @@ impl CompressedReadIndipendent {
         let other_slice = other_slice.replace("T", "2");
 
         if self_slice.starts_with(&other_slice) || other_slice.starts_with(&self_slice) {
-            return (usize::MAX, self_slice.len().cmp(&other_slice.len()));
+            return (
+                self_slice.len().min(other_slice.len()),
+                self_slice.len().cmp(&other_slice.len()),
+            );
         }
 
         let min_length = self_slice.len().min(other_slice.len());
@@ -813,7 +816,7 @@ impl<'a> CompressedRead<'a> {
     pub fn sub_slice(&self, range: Range<usize>) -> CompressedRead<'a> {
         assert!(range.start <= range.end);
 
-        let start = ((self.start + range.start as u8) % 4) as u8;
+        let start = ((self.start.wrapping_add(range.start as u8)) % 4) as u8;
         let sbyte = (self.start as usize + range.start) / 4;
 
         CompressedRead {

@@ -1,11 +1,20 @@
-use crate::concurrent::temp_reads::extra_data::SequenceExtraData;
-
 use super::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
+use crate::concurrent::temp_reads::extra_data::SequenceExtraData;
 use dynamic_dispatch::dynamic_dispatch;
 use parking_lot::{Condvar, Mutex};
+
 use std::io::Write;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+
+#[cfg(feature = "support_kmer_counters")]
+use {
+    crate::concurrent::temp_reads::extra_data::HasEmptyExtraBuffer,
+    crate::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint},
+    byteorder::ReadBytesExt,
+    serde::{Deserialize, Serialize},
+    std::io::Read,
+};
 
 pub mod binary;
 pub mod concurrent;
@@ -51,7 +60,7 @@ impl IdentSequenceWriter for () {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug, Default)]
 #[cfg(feature = "support_kmer_counters")]
 pub struct SequenceAbundance {
     pub first: u64,
@@ -60,10 +69,47 @@ pub struct SequenceAbundance {
 }
 
 #[cfg(feature = "support_kmer_counters")]
+impl HasEmptyExtraBuffer for SequenceAbundance {}
+
+#[cfg(feature = "support_kmer_counters")]
+impl SequenceExtraData for SequenceAbundance {
+    fn decode_extended(_: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
+        let first = decode_varint(|| reader.read_u8().ok())?;
+        let sum = decode_varint(|| reader.read_u8().ok())?;
+        let last = decode_varint(|| reader.read_u8().ok())?;
+        Some(Self { first, sum, last })
+    }
+
+    fn encode_extended(&self, _: &Self::TempBuffer, writer: &mut impl Write) {
+        encode_varint(|b| writer.write(b).ok(), self.first).unwrap();
+        encode_varint(|b| writer.write(b).ok(), self.sum).unwrap();
+        encode_varint(|b| writer.write(b).ok(), self.last).unwrap();
+    }
+
+    #[inline(always)]
+    fn max_size(&self) -> usize {
+        3 * VARINT_MAX_SIZE
+    }
+}
+
+#[cfg(feature = "support_kmer_counters")]
 pub type SequenceAbundanceType = SequenceAbundance;
 
 #[cfg(not(feature = "support_kmer_counters"))]
 pub type SequenceAbundanceType = ();
+
+pub fn new_sequence_abundance(_multiplicity: usize, _kmers: usize) -> SequenceAbundanceType {
+    match () {
+        #[cfg(feature = "support_kmer_counters")]
+        () => SequenceAbundance {
+            first: _multiplicity as u64,
+            sum: (_multiplicity * _kmers) as u64,
+            last: _multiplicity as u64,
+        },
+        #[cfg(not(feature = "support_kmer_counters"))]
+        () => {}
+    }
+}
 
 pub trait StructuredSequenceBackendInit: Sync + Send + Sized {
     fn new_compressed_gzip(_path: impl AsRef<Path>, _level: u32) -> Self {

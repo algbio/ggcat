@@ -35,6 +35,7 @@ rustc-hash = "2.1.1"
 bincode = "2.0.1"
 typenum = "1.18.0"
 bitbound = "0.1.0"
+serde = "1.0.228"
 
 [dev-dependencies]
 rand = "0.8.5"

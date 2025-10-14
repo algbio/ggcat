@@ -541,7 +541,12 @@ pub fn build_eulertigs<
                     &flat_unitigs_reader_parallel_chunks,
                     |DeserializedRead {
                          read,
-                         extra: SequenceDataWithAbundance::<_, ()> { color, .. },
+                         extra:
+                             SequenceDataWithAbundance::<_, ()> {
+                                 color,
+                                 abundance: mut _abundance,
+                                 ..
+                             },
                          ..
                      },
                      color_extra_buffer| {

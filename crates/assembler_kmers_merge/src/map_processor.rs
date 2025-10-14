@@ -375,7 +375,6 @@ impl<
 
         let stats = map_packet.extender.get_stats();
 
-        let sequences_sizes = stats.saved_read_bytes;
         let all_kmers = stats.unique_kmers;
 
         let kmers_total = global_data
