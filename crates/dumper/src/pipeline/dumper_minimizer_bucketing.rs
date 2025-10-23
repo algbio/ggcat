@@ -249,7 +249,6 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
         S: MinimizerInputSequence,
         F: FnMut(PushSequenceInfo<S, DumperMinimizerBucketingExecutorFactory<CX>>),
         const SEPARATE_DUPLICATES: bool,
-        const FORWARD_ONLY: bool,
     >(
         &mut self,
         preprocess_info: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -285,7 +284,6 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
                     minimizer_pos: 0,
                     flags: 0,
                     rc: false,
-                    is_window_duplicate: false,
                 });
                 last_index = index + 1;
                 last_color = kmer_color;
@@ -305,7 +303,6 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
             minimizer_pos: 0,
             flags: 0,
             rc: false,
-            is_window_duplicate: false,
         });
     }
 }

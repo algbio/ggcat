@@ -5,9 +5,10 @@ use colors::colors_manager::{ColorsMergeManager, MinimizerBucketingSeqColorData}
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::extremal::DelayedHashComputation;
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
-use io::concurrent::structured_sequences::{SequenceAbundanceType, new_sequence_abundance};
+use io::concurrent::structured_sequences::SequenceAbundanceType;
 use io::concurrent::temp_reads::creads_utils::DeserializedReadIndependent;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use nightly_quirks::branch_pred::unlikely;
 use std::{iter::repeat, mem::take, ops::Range};
 
 use crate::unitigs_extender::UnitigExtensionColorsData;
@@ -397,6 +398,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                         .push(self.supertigs_mapping[self.elements_mapping[element_target_index]]);
 
                     minimum_prefix_share = minimum_prefix_share.min(left_matching);
+
                     multiplicity += next_read.multiplicity as usize;
                     if CX::COLORS_ENABLED {
                         self.unitig_colors
@@ -406,26 +408,54 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                     element_target_index += 1;
                 }
 
-                // reference_index..target_index_start contains all the reads that match at least k characters.
+                // reference_index..element_target_index contains all the reads that match at least k characters.
 
-                let prefix_limited_suffix = k - minimum_prefix_share;
                 let suffix_limited_suffix = target_suffix_length + 1;
+                let prefix_limited_suffix = k - minimum_prefix_share;
                 let leftmost_allowed_suffix = prefix_limited_suffix.max(suffix_limited_suffix);
 
+                let mut forward_extra_base = (reference.flags & READ_FLAG_INCL_END == 0)
+                    && shared_suffix
+                        == (reference.read.bases_count() - reference.minimizer_pos as usize);
+                let mut backward_extra_base = (reference.flags & READ_FLAG_INCL_BEGIN == 0)
+                    && (reference.minimizer_pos as usize + leftmost_allowed_suffix) == k;
+
+                // Check if the current supertig has only one kmer and at least one extra base.
+                // In this case it could be a shared k-mer between two merged buckets, so this superkmer is counted twice
+                if unlikely(
+                    leftmost_allowed_suffix == shared_suffix
+                        && (forward_extra_base || backward_extra_base),
+                ) {
+                    for idx in reference_index..element_target_index {
+                        let read = &reads[self.elements_mapping[idx]];
+                        // Check if the simplitig has an extra base at the end
+                        forward_extra_base |= (read.flags & READ_FLAG_INCL_END == 0)
+                            && shared_suffix
+                                == (read.read.bases_count() - read.minimizer_pos as usize);
+
+                        // Check if the simplitig has only one kmer with a beginning extra base
+                        backward_extra_base |= (read.flags & READ_FLAG_INCL_BEGIN == 0)
+                            && read.minimizer_pos as usize + shared_suffix == k;
+                    }
+
+                    // Confirmed duplicate kmer
+                    if forward_extra_base && backward_extra_base {
+                        multiplicity /= 2;
+                        forward_extra_base = false;
+                        backward_extra_base = false;
+                    }
+                }
+
                 if multiplicity >= abundance_cutoff {
+                    let read = reference.read.sub_slice(
+                        (reference.minimizer_pos as usize + leftmost_allowed_suffix - k)
+                            ..(reference.minimizer_pos as usize + shared_suffix),
+                    );
+
                     let supertig_index = self.supertigs.len();
 
-                    let forward_extra_base = (reference.flags & READ_FLAG_INCL_END == 0)
-                        && shared_suffix
-                            == (reference.read.bases_count() - reference.minimizer_pos as usize);
-                    let backward_extra_base = (reference.flags & READ_FLAG_INCL_BEGIN == 0)
-                        && (reference.minimizer_pos as usize + leftmost_allowed_suffix - k) == 0;
-
                     self.supertigs.push(Supertig {
-                        read: reference.read.sub_slice(
-                            (reference.minimizer_pos as usize + leftmost_allowed_suffix - k)
-                                ..(reference.minimizer_pos as usize + shared_suffix),
-                        ),
+                        read,
                         color: if CX::COLORS_ENABLED {
                             CX::ColorsMergeManagerType::assign_color(
                                 &colors_data.colors_global_table,
@@ -787,7 +817,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
 
                 let mut _abundance = match () {
                     #[cfg(feature = "support_kmer_counters")]
-                    () => new_sequence_abundance(
+                    () => io::concurrent::structured_sequences::new_sequence_abundance(
                         supertig.multiplicity,
                         supertig.read.bases_count() - k + 1,
                     ),

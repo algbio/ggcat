@@ -80,29 +80,16 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
             if let Some(resplit_config) = &proc_info.resplit_config {
                 let total_size = splitted_bucket.total_size;
 
-                if global_context.forward_only {
-                    KmersTransformResplitter::<F>::do_resplit::<true>(
-                        global_context,
-                        reader_thread.clone(),
-                        ResplitterInitData {
-                            _resplit_stat_id: generate_stat_id!(),
-                            subsplit_buckets_count: resplit_config.subsplit_buckets_count,
-                            splitted_bucket,
-                            process_handle: proc_info.processor_handle.clone(),
-                        },
-                    );
-                } else {
-                    KmersTransformResplitter::<F>::do_resplit::<false>(
-                        global_context,
-                        reader_thread.clone(),
-                        ResplitterInitData {
-                            _resplit_stat_id: generate_stat_id!(),
-                            subsplit_buckets_count: resplit_config.subsplit_buckets_count,
-                            splitted_bucket,
-                            process_handle: proc_info.processor_handle.clone(),
-                        },
-                    );
-                }
+                KmersTransformResplitter::<F>::do_resplit(
+                    global_context,
+                    reader_thread.clone(),
+                    ResplitterInitData {
+                        _resplit_stat_id: generate_stat_id!(),
+                        subsplit_buckets_count: resplit_config.subsplit_buckets_count,
+                        splitted_bucket,
+                        process_handle: proc_info.processor_handle.clone(),
+                    },
+                );
 
                 global_context
                     .processed_subbuckets_count

@@ -75,7 +75,6 @@ pub struct CompressedReadsBucketData<'a> {
     pub minimizer_pos: u16,
     pub extra_bucket: u8,
     pub flags: u8,
-    pub is_window_duplicate: bool,
 }
 
 impl<'a> CompressedReadsBucketData<'a> {
@@ -85,7 +84,6 @@ impl<'a> CompressedReadsBucketData<'a> {
         flags: u8,
         extra_bucket: u8,
         minimizer_pos: u16,
-        is_window_duplicate: bool,
     ) -> Self {
         Self {
             read: read.to_read_data(),
@@ -93,7 +91,6 @@ impl<'a> CompressedReadsBucketData<'a> {
             multiplicity: 1,
             minimizer_pos,
             flags,
-            is_window_duplicate,
         }
     }
 
@@ -104,7 +101,6 @@ impl<'a> CompressedReadsBucketData<'a> {
         extra_bucket: u8,
         rc: bool,
         minimizer_pos: u16,
-        is_window_duplicate: bool,
     ) -> Self {
         Self {
             read: if rc {
@@ -116,7 +112,6 @@ impl<'a> CompressedReadsBucketData<'a> {
             flags,
             multiplicity: 1,
             minimizer_pos,
-            is_window_duplicate,
         }
     }
 
@@ -128,7 +123,6 @@ impl<'a> CompressedReadsBucketData<'a> {
         rc: bool,
         multiplicity: MultiplicityCounterType,
         minimizer_pos: u16,
-        is_window_duplicate: bool,
     ) -> Self {
         Self {
             read: if rc {
@@ -140,7 +134,6 @@ impl<'a> CompressedReadsBucketData<'a> {
             flags,
             multiplicity,
             minimizer_pos,
-            is_window_duplicate,
         }
     }
 
@@ -151,7 +144,6 @@ impl<'a> CompressedReadsBucketData<'a> {
         extra_bucket: u8,
         multiplicity: MultiplicityCounterType,
         minimizer_pos: u16,
-        is_window_duplicate: bool,
     ) -> Self {
         Self {
             read: ReadData::Plain(read),
@@ -159,7 +151,6 @@ impl<'a> CompressedReadsBucketData<'a> {
             flags,
             multiplicity,
             minimizer_pos,
-            is_window_duplicate,
         }
     }
 
@@ -169,7 +160,6 @@ impl<'a> CompressedReadsBucketData<'a> {
         flags: u8,
         extra_bucket: u8,
         minimizer_pos: u16,
-        is_window_duplicate: bool,
     ) -> Self {
         Self {
             read: ReadData::Packed(read),
@@ -177,7 +167,6 @@ impl<'a> CompressedReadsBucketData<'a> {
             extra_bucket,
             multiplicity: 1,
             minimizer_pos,
-            is_window_duplicate,
         }
     }
 
@@ -188,7 +177,6 @@ impl<'a> CompressedReadsBucketData<'a> {
         extra_bucket: u8,
         multiplicity: MultiplicityCounterType,
         minimizer_pos: u16,
-        is_window_duplicate: bool,
     ) -> Self {
         Self {
             read: ReadData::Packed(read),
@@ -196,7 +184,6 @@ impl<'a> CompressedReadsBucketData<'a> {
             extra_bucket,
             multiplicity,
             minimizer_pos,
-            is_window_duplicate,
         }
     }
 }
@@ -305,7 +292,6 @@ pub struct DeserializedRead<'a, E> {
     pub minimizer_pos: u16,
     pub flags: u8,
     pub second_bucket: u8,
-    pub is_window_duplicate: bool,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -316,7 +302,6 @@ pub struct DeserializedReadIndependent<E> {
     pub minimizer_pos: u16,
     pub flags: u8,
     pub second_bucket: u8,
-    pub is_window_duplicate: bool,
 }
 
 impl<
@@ -394,7 +379,6 @@ impl<
                     self.min_size_log,
                     element.flags,
                     is_rc,
-                    element.is_window_duplicate,
                 );
             }
             ReadData::Packed(read) | ReadData::PackedRc(read) => {
@@ -406,7 +390,6 @@ impl<
                     element.minimizer_pos,
                     self.min_size_log,
                     element.flags,
-                    element.is_window_duplicate,
                 );
 
                 if is_rc {
@@ -441,7 +424,7 @@ impl<
         self.last_data = extra.obtain_last_data(self.last_data);
 
         read_buffer.clear();
-        let (read, minimizer_pos, flags, is_window_duplicate) =
+        let (read, minimizer_pos, flags) =
             CompressedRead::read_from_stream::<_, MinimizerMode, FlagsCount, AlignMode>(
                 read_buffer,
                 &mut stream,
@@ -457,7 +440,6 @@ impl<
             second_bucket,
 
             minimizer_pos,
-            is_window_duplicate,
         })
     }
 

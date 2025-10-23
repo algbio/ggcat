@@ -36,7 +36,7 @@ impl<X: SequenceExtraDataConsecutiveCompression> ResultsBucket<X> {
     ) -> u64 {
         self.temp_buffer.clear();
         self.serializer.write_to(
-            &CompressedReadsBucketData::new(read, 0, 0, 0, false),
+            &CompressedReadsBucketData::new(read, 0, 0, 0),
             &mut self.temp_buffer,
             &el,
             extra_buffer,
@@ -56,7 +56,7 @@ impl<X: SequenceExtraDataConsecutiveCompression> ResultsBucket<X> {
     ) -> u64 {
         self.temp_buffer.clear();
         self.serializer.write_to(
-            &CompressedReadsBucketData::new_packed(read, 0, 0, 0, false),
+            &CompressedReadsBucketData::new_packed(read, 0, 0, 0),
             &mut self.temp_buffer,
             &el,
             extra_buffer,

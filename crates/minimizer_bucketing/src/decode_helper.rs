@@ -52,7 +52,6 @@ pub fn decode_sequences<
                 flags: item.flags,
                 second_bucket: item.second_bucket,
                 minimizer_pos: item.minimizer_pos,
-                is_window_duplicate: item.is_window_duplicate,
             };
             callback(item, extra_buffer);
         },

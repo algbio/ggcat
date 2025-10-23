@@ -51,7 +51,7 @@ impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> 
         true
     }
 
-    pub fn iter_sequences(&self) -> impl Iterator<Item = (DnaSequence, SequenceInfo)> {
+    pub fn iter_sequences(&self) -> impl Iterator<Item = (DnaSequence<'_>, SequenceInfo)> {
         self.sequences
             .iter()
             .map(move |&(start, id_len, seq_len, format, seq_info)| {

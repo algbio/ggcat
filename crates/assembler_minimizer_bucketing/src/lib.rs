@@ -39,6 +39,7 @@ pub struct AssemblerMinimizerBucketingExecutor<CD: MinimizerBucketingSeqColorDat
     global_data: Arc<MinimizerBucketingCommonData<()>>,
     pub duplicates_bucket: BucketIndexType,
     _phantom: PhantomData<CD>,
+    canonical: bool,
 }
 
 pub struct AssemblerPreprocessInfo<CD: MinimizerBucketingSeqColorData> {
@@ -62,6 +63,10 @@ impl<CD: MinimizerBucketingSeqColorData> Default for AssemblerPreprocessInfo<CD>
 #[derive(Clone, Default)]
 pub struct InputFileInfo {
     file_color: ColorIndexType,
+}
+
+pub trait CanonicalMode {
+    const CANONICAL: bool;
 }
 
 pub struct AssemblerMinimizerBucketingExecutorFactory<CD: MinimizerBucketingSeqColorData>(
@@ -89,6 +94,7 @@ impl<CD: MinimizerBucketingSeqColorData> MinimizerBucketingExecutorFactory
             minimizer_queue: BatchMinQueue::new(global_data.k - global_data.m),
             global_data: global_data.clone(),
             duplicates_bucket: global_data.buckets_count.normal_buckets_count as u16,
+            canonical: global_data.canonical,
             _phantom: PhantomData,
         }
     }
@@ -103,6 +109,7 @@ impl<CD: MinimizerBucketingSeqColorData> AssemblerMinimizerBucketingExecutorFact
             minimizer_queue: BatchMinQueue::new(global_data.k - global_data.m),
             global_data: global_data.clone(),
             duplicates_bucket,
+            canonical: global_data.canonical,
             _phantom: PhantomData,
         }
     }
@@ -165,7 +172,6 @@ impl<CD: MinimizerBucketingSeqColorData>
         S: MinimizerInputSequence,
         F: FnMut(PushSequenceInfo<S, AssemblerMinimizerBucketingExecutorFactory<CD>>),
         const SEPARATE_DUPLICATES: bool,
-        const FORWARD_ONLY: bool,
     >(
         &mut self,
         preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -205,11 +211,11 @@ impl<CD: MinimizerBucketingSeqColorData>
                 skip_before,
                 skip_after,
                 #[inline(always)]
-                |index, min_hash, is_last, is_dupl| {
+                |index, min_hash, is_last| {
                     let include_last = preprocess_info.include_last && is_last;
 
                     // HS2
-                    let (bucket, rc, minimizer_pos, is_window_duplicate) = if SEPARATE_DUPLICATES
+                    let (bucket, rc, minimizer_pos) = if SEPARATE_DUPLICATES
                         && (min_hash.0
                             & BatchMinQueue::<MinimizerExtraData>::unique_flag::<
                                 SEPARATE_DUPLICATES,
@@ -217,9 +223,9 @@ impl<CD: MinimizerBucketingSeqColorData>
                             == 0)
                     {
                         cold();
-                        (self.duplicates_bucket, false, 0, false)
+                        (self.duplicates_bucket, false, 0)
                     } else {
-                        let rc = !FORWARD_ONLY && SEPARATE_DUPLICATES && !min_hash.1.is_forward;
+                        let rc = self.canonical && SEPARATE_DUPLICATES && !min_hash.1.is_forward;
                         (
                             MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
                             rc,
@@ -228,7 +234,6 @@ impl<CD: MinimizerBucketingSeqColorData>
                             } else {
                                 (min_hash.1.index - (last_index as u32 - 1)) as u16
                             },
-                            is_dupl
                         )
                     };
 
@@ -244,7 +249,6 @@ impl<CD: MinimizerBucketingSeqColorData>
                             minimizer_pos,
                             flags: ((include_first as u8) << (rc as u8)) | ((include_last as u8) << (!rc as u8)),
                             rc,
-                            is_window_duplicate,
                         },
                     );
                     last_index = index;

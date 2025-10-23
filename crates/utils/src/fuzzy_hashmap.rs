@@ -53,7 +53,7 @@ impl<T: Copy, const LOCAL_FITTING: usize> FuzzyHashmap<T, LOCAL_FITTING> {
     }
 
     #[inline]
-    pub fn add_element(&mut self, hash: u64, element: T) {
+    pub fn add_element(&mut self, hash: u64, element: T) -> usize {
         let position = (hash as usize) & self.capacity_mask;
         // Safety: position is in and with capacity_mask
         let element_bucket = unsafe { self.hashmap.get_unchecked_mut(position) };
@@ -67,12 +67,16 @@ impl<T: Copy, const LOCAL_FITTING: usize> FuzzyHashmap<T, LOCAL_FITTING> {
         }
 
         self.allocator.push_vec(element_bucket, element);
+        element_bucket.len()
     }
 
     #[inline(always)]
     pub fn process_elements(&mut self, mut elements_cb: impl FnMut(&mut [T])) {
         for position in self.occupation.drain(..) {
             let elements = unsafe { self.hashmap.get_unchecked_mut(position) };
+            if elements.is_poisoned() {
+                continue;
+            }
             elements_cb(self.allocator.slice_vec_mut(elements));
             *elements = InlineVec::new();
         }

@@ -125,6 +125,7 @@ pub trait HashFunctionFactory: Sized + Clone + Debug + Send + Sync + 'static {
     ) -> Self::HashTypeExtendable;
 
     const INVERTIBLE: bool;
+    const CANONICAL: bool;
     type SeqType: AsRef<[u8]>;
     fn invert(hash: Self::HashTypeUnextendable) -> Self::SeqType;
 }

@@ -112,7 +112,6 @@ pub struct PushSequenceInfo<'a, S, F: MinimizerBucketingExecutorFactory> {
     pub minimizer_pos: u16,
     pub flags: u8,
     pub rc: bool,
-    pub is_window_duplicate: bool,
 }
 
 pub trait MinimizerBucketingExecutorFactory: Sync + Send + Sized + 'static {
@@ -155,7 +154,6 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
         S: MinimizerInputSequence,
         F: FnMut(PushSequenceInfo<S, Factory>),
         const SEPARATE_DUPLICATES: bool,
-        const FORWARD_ONLY: bool,
     >(
         &mut self,
         preprocess_info: &Factory::PreprocessInfo,
@@ -172,6 +170,7 @@ pub struct MinimizerBucketingCommonData<GlobalData> {
     pub k: usize,
     pub m: usize,
     pub ignored_length: usize,
+    pub canonical: bool,
     pub buckets_count: BucketsCount,
     pub second_buckets_count: BucketsCount,
     pub compaction_offsets: Vec<AtomicI64>,
@@ -186,6 +185,7 @@ impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
         ignored_length: usize,
         second_buckets_count: BucketsCount,
         global_data: GlobalData,
+        canonical: bool,
     ) -> Self {
         Self {
             k,
@@ -196,6 +196,7 @@ impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
             compaction_offsets: (0..buckets_count.total_buckets_count)
                 .map(|_| AtomicI64::new(0))
                 .collect(),
+            canonical,
             global_data,
         }
     }
@@ -252,7 +253,7 @@ impl<
     Executor: MinimizerBucketingExecutorFactory<ReadExtraData = SingleData> + Sync + Send + 'static,
 > MinimizerBucketingExecWriter<SingleData, MultipleData, Executor>
 {
-    fn execute<const FORWARD_ONLY: bool>(
+    fn execute(
         &self,
         context: &WriterContext<Executor>,
         ops: &ExecutorAddressOperations<Self>,
@@ -318,7 +319,7 @@ impl<
                 );
 
                 sequences_splitter.process_sequences(&x, &mut |sequence: &[u8], range| {
-                    buckets_processor.process_sequence::<_, _, true, FORWARD_ONLY>(
+                    buckets_processor.process_sequence::<_, _, true>(
                         &preprocess_info,
                         sequence,
                         range,
@@ -335,7 +336,6 @@ impl<
                                 extra_data,
                                 temp_buffer,
                                 rc,
-                                is_window_duplicate,
                             } = info;
 
                             let chunking_status = tmp_reads_buffer.add_element_extended(
@@ -348,7 +348,6 @@ impl<
                                     second_bucket as u8,
                                     rc,
                                     minimizer_pos,
-                                    is_window_duplicate,
                                 ),
                             );
 
@@ -506,11 +505,7 @@ impl<
         mut receiver: ExecutorReceiver<Self>,
     ) {
         if let Ok(address) = receiver.obtain_address() {
-            if params.global.forward_only {
-                self.execute::<true>(params, &address, &receiver);
-            } else {
-                self.execute::<false>(params, &address, &receiver);
-            }
+            self.execute(params, &address, &receiver);
         }
 
         // No more packets should arrive
@@ -650,6 +645,7 @@ impl GenericMinimizerBucketing {
                 ignored_length,
                 second_buckets_count,
                 global_data,
+                !forward_only,
             )),
             threads_count: compute_threads_count,
             output_path: output_path.to_path_buf(),

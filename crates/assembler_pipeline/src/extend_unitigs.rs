@@ -515,7 +515,6 @@ pub fn extend_unitigs<
                                                 minimizer_pos: last_align as u16,
                                                 extra_bucket: 0,
                                                 flags: joined.flags,
-                                                is_window_duplicate: false,
                                             },
                                         );
                                     } else {
@@ -585,7 +584,6 @@ pub fn extend_unitigs<
                                             minimizer_pos: last_align as u16,
                                             extra_bucket: 0,
                                             flags: flags ^ HASH_ENDING_FLAG_MASK,
-                                            is_window_duplicate: false,
                                         },
                                     );
                                 }
@@ -698,7 +696,6 @@ pub fn extend_unitigs<
                                 minimizer_pos: last_align as u16,
                                 extra_bucket: 0,
                                 flags: (!hash_beginning as u8) | ((both_ends as u8) << 1),
-                                is_window_duplicate: false,
                             },
                         );
                     }

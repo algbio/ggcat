@@ -1,6 +1,6 @@
 use crate::{
-    init_rmmult, ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
-    RMMULT_CACHE_SIZE,
+    ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
+    RMMULT_CACHE_SIZE, init_rmmult,
 };
 use config::BucketIndexType;
 use dynamic_dispatch::dynamic_dispatch;
@@ -115,7 +115,7 @@ impl<N: HashableSequence> HashFunction<CanonicalRabinKarpHashFactory>
     fn iter(
         mut self,
     ) -> impl ExactSizeIterator
-           + Iterator<
+    + Iterator<
         Item = <CanonicalRabinKarpHashFactory as HashFunctionFactory>::HashTypeExtendable,
     > {
         (self.k_minus1..self.seq.bases_count()).map(move |idx| self.roll_hash(idx))
@@ -124,7 +124,7 @@ impl<N: HashableSequence> HashFunction<CanonicalRabinKarpHashFactory>
     fn iter_enumerate(
         mut self,
     ) -> impl ExactSizeIterator
-           + Iterator<
+    + Iterator<
         Item = (
             usize,
             <CanonicalRabinKarpHashFactory as HashFunctionFactory>::HashTypeExtendable,
@@ -288,6 +288,7 @@ impl HashFunctionFactory for CanonicalRabinKarpHashFactory {
     }
 
     const INVERTIBLE: bool = false;
+    const CANONICAL: bool = true;
     type SeqType = [u8; 0];
     fn invert(_hash: Self::HashTypeUnextendable) -> Self::SeqType {
         unimplemented!()

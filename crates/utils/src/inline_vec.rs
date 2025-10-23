@@ -70,6 +70,14 @@ impl<T: Copy, const LOCAL_FITTING: usize> InlineVec<T, LOCAL_FITTING> {
     pub unsafe fn set_len(&mut self, size: usize) {
         self.size = size;
     }
+
+    pub fn is_poisoned(&self) -> bool {
+        self.size == usize::MAX
+    }
+
+    pub fn poison(&mut self) {
+        self.size = usize::MAX;
+    }
 }
 
 impl<T: Copy, const LOCAL_FITTING: usize> Default for InlineVec<T, LOCAL_FITTING> {

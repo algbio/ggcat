@@ -240,7 +240,7 @@ impl<
         #[cfg(feature = "support_kmer_counters")] abundance: SequenceAbundanceType,
     ) {
         buffer.1.write_to(
-            &CompressedReadsBucketData::new(sequence, 0, 0, 0, false),
+            &CompressedReadsBucketData::new(sequence, 0, 0, 0),
             &mut buffer.0,
             &SequenceDataWithAbundance {
                 index: sequence_index,

@@ -48,15 +48,14 @@ impl<N: HashableSequence> HashFunction<ForwardSeqHashFactory> for ForwardSeqHash
     fn iter(
         mut self,
     ) -> impl ExactSizeIterator
-           + Iterator<Item = <ForwardSeqHashFactory as HashFunctionFactory>::HashTypeExtendable>
-    {
+    + Iterator<Item = <ForwardSeqHashFactory as HashFunctionFactory>::HashTypeExtendable> {
         (self.k_minus1..self.seq.bases_count()).map(move |idx| self.roll_hash(idx))
     }
 
     fn iter_enumerate(
         mut self,
     ) -> impl ExactSizeIterator
-           + Iterator<
+    + Iterator<
         Item = (
             usize,
             <ForwardSeqHashFactory as HashFunctionFactory>::HashTypeExtendable,
@@ -188,6 +187,7 @@ impl HashFunctionFactory for ForwardSeqHashFactory {
     }
 
     const INVERTIBLE: bool = true;
+    const CANONICAL: bool = false;
     type SeqType = [u8; size_of::<Self::HashTypeUnextendable>()];
     fn invert(hash: Self::HashTypeUnextendable) -> Self::SeqType {
         hash.to_le_bytes()

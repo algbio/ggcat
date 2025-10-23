@@ -65,7 +65,7 @@ impl<N: HashableSequence> HashFunction<CanonicalNtHashIteratorFactory>
     fn iter(
         mut self,
     ) -> impl ExactSizeIterator
-           + Iterator<
+    + Iterator<
         Item = <CanonicalNtHashIteratorFactory as HashFunctionFactory>::HashTypeExtendable,
     > {
         (0..self.seq.bases_count() - self.k_minus1).map(move |idx| self.roll_hash(idx))
@@ -75,7 +75,7 @@ impl<N: HashableSequence> HashFunction<CanonicalNtHashIteratorFactory>
     fn iter_enumerate(
         mut self,
     ) -> impl ExactSizeIterator
-           + Iterator<
+    + Iterator<
         Item = (
             usize,
             <CanonicalNtHashIteratorFactory as HashFunctionFactory>::HashTypeExtendable,
@@ -199,6 +199,7 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
     }
 
     const INVERTIBLE: bool = false;
+    const CANONICAL: bool = false;
     type SeqType = [u8; 0];
     fn invert(_hash: Self::HashTypeUnextendable) -> Self::SeqType {
         unimplemented!()

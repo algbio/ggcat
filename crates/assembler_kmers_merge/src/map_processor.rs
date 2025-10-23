@@ -41,13 +41,11 @@ pub struct ParallelKmersMergeMapPacket<
     pub extender: HashMapUnitigsExtender<MH, CX>,
 
     pub superkmers_storage: Box<Vec<u8>>,
-    // pub minimizer_superkmers: FxHashMap<u64, InlineVec<DeserializedReadIndependent<<
-    // ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>>,
     pub minimizer_superkmers: FuzzyHashmap<DeserializedReadIndependent<<
         ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>,
+
     pub superkmers_extra_buffer:
         <<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
-
 
     pub is_duplicate: bool,
     pub m: usize,
@@ -78,8 +76,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, OM: StructuredSequenceBackendWr
         self.superkmers_storage.clear();
         <<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>
             ::clear_temp_buffer(&mut self.superkmers_extra_buffer);
-
-        // self.minimizer_superkmers.clear();
     }
 }
 
@@ -104,10 +100,9 @@ pub struct ParallelKmersMergeMapProcessor<
             >>::MapStruct,
         >,
     >,
-    k: usize,
 }
 
-fn hash_integer(value: u64) -> u64 {
+pub fn hash_integer(value: u64) -> u64 {
     let mut hasher = FxHasher::default();
     hasher.write_u64(value);
     hasher.finish()
@@ -120,11 +115,8 @@ impl<
     const COMPUTE_SIMPLITIGS: bool,
 > ParallelKmersMergeMapProcessor<MH, CX, OM, COMPUTE_SIMPLITIGS>
 {
-    pub fn new(context: &GlobalMergeData<CX, OM>) -> Self {
-        Self {
-            map_packet: None,
-            k: context.k,
-        }
+    pub fn new(_context: &GlobalMergeData<CX, OM>) -> Self {
+        Self { map_packet: None }
     }
 }
 
@@ -177,6 +169,7 @@ impl<
         let map_packet = self.map_packet.as_mut().unwrap().deref_mut();
 
         let map_size = sequences_count.next_power_of_two().max(4) as usize;
+
         map_packet.minimizer_superkmers.initialize(map_size);
 
         if map_packet.is_duplicate {
@@ -225,75 +218,17 @@ impl<
 
                     let hash = hash_integer(minimizer_hash);
 
-                    map_packet.minimizer_superkmers.add_element(
-                        hash,
-                        // map_packet
-                        //     .minimizer_superkmers
-                        //     .entry(minimizer_hash)
-                        //     .or_insert(InlineVec::default()),
-                        DeserializedReadIndependent {
-                            read: new_read,
-                            extra: <ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity
-                                ::copy_extra_from(read.extra, extra_buffer, &mut map_packet.superkmers_extra_buffer),
-                            multiplicity: read.multiplicity,
-                            minimizer_pos: read.minimizer_pos,
-                            flags: read.flags,
-                            second_bucket: read.second_bucket,
-                            is_window_duplicate: read.is_window_duplicate,
-                        },
-                    );
+                    let element = DeserializedReadIndependent {
+                        read: new_read,
+                        extra: <ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity
+                            ::copy_extra_from(read.extra, extra_buffer, &mut map_packet.superkmers_extra_buffer),
+                        multiplicity: read.multiplicity,
+                        minimizer_pos: read.minimizer_pos,
+                        flags: read.flags,
+                        second_bucket: read.second_bucket,
+                    };
 
-                    // assert!(
-                    //     map_packet.minimizer_superkmers
-                    //         [(minimizer_hash as usize) & map_size_mask]
-                    //         .len()
-                    //         != 1239,
-                    // );
-
-                    //     let mut dupl_count = 0;
-                    //     let read_slice = read.read.get_packed_slice();
-                    //     match map_packet.superkmers_hashmap.entry(
-                    //         unsafe { read.read.compute_hash_aligned_overflow16() },
-                    //         |a| {
-                    //             a.read.bases_count() == read.read.bases_count()
-                    //                 && a.read
-                    //                     .get_packed_slice_aligned(&map_packet.superkmers_storage)
-                    //                     == read_slice
-                    //         },
-                    //         |v| unsafe {
-                    //             v.read
-                    //                 .compute_hash_aligned_overflow16(&map_packet.superkmers_storage)
-                    //         },
-                    //     ) {
-                    //         Entry::Occupied(mut occupied_entry) => {
-                    //             occupied_entry.get_mut().multiplicity += read.multiplicity as u32;
-                    //             dupl_count += 1;
-                    //         }
-                    //         Entry::Vacant(vacant_entry) => {
-
-                    //             // Make room for possible overflow
-                    //             map_packet.superkmers_storage.reserve(16);
-
-                    //             vacant_entry.insert(DeserializedReadIndependent {
-                    //                 read: new_read,
-                    //                 extra: read.extra,
-                    //                 multiplicity: read.multiplicity,
-                    //                 minimizer_pos: read.minimizer_pos,
-                    //                 flags: read.flags,
-                    //                 second_bucket: read.second_bucket,
-                    //                 is_window_duplicate: read.is_window_duplicate,
-                    //             });
-
-                    //         }
-                    //     }
-
-                    //     if dupl_count > 10 {
-                    //         println!(
-                    //             "Dupl count: {} over unique: {}",
-                    //             dupl_count,
-                    //             map_packet.superkmers_hashmap.len()
-                    //         );
-                    //     }
+                    map_packet.minimizer_superkmers.add_element(hash, element);
                 },
             )
         }
@@ -314,64 +249,6 @@ impl<
             declare_avg_counter_i64!("correct_reads_avg", false);
 
         let mut map_packet = self.map_packet.take().unwrap();
-        // let map_packet_ref = map_packet.deref_mut();
-
-        // for read in map_packet_ref.superkmers_hashmap.drain() {
-        //     // assert!(!map_packet_ref.superkmers_hashmap.contains_key(read.get_borrowable()));
-        //     // assert!(!map_packet_ref.superkmers_hashmap.contains_key(&SuperKmerEntry::new(&kmers_storage, new_read)));
-
-        //     let minimizer_pos = read.minimizer_pos as usize;
-
-        //     let minimizer_hash = read
-        //         .read
-        //         .as_reference(&map_packet_ref.superkmers_storage)
-        //         .sub_slice(minimizer_pos..minimizer_pos + self.m)
-        //         .get_hash_aligned();
-
-        //     /*
-        //         TODO:
-        //         - If less than x (8?) sk, process inline
-        //         - Else split the kmers with rolling hashes of (k - 4) bases, ex for k=27 run up to (k - m + 1) / 4 distinct hash computations
-        //           and cluster the results
-        //         - For every sub-hash, dedup its skmers, and if there is only one skmer, mark it a partial unitig
-        //         - If there is more than one sub-hash, make 16-bit hashes that represent the 4 bases that make up the skmer, along with the offset position
-        //         - Extend the unitigs using the hashes and put the endings in an hashmap, flagging every kmer-part as hashmap joinable
-
-        //     */
-        //     // use hashes::ExtendableHashTraitType;
-        //     // let original_minimizer = MNHFactory::new(
-        //     //     read.read.sub_slice(minimizer_pos..minimizer_pos + self.m),
-        //     //     self.m,
-        //     // )
-        //     // .iter()
-        //     // .next()
-        //     // .unwrap()
-        //     // .to_unextendable();
-
-        //     // let computed_minimizer =
-        //     //     get_superkmer_minimizer(self.k, self.m, read.flags, &read.read).1;
-
-        //     // if original_minimizer != computed_minimizer && !read.is_window_duplicate {
-        //     //     panic!(
-        //     //         "Minimizers: {:?} Orig: {} Computed: {} orig_pos: {}",
-        //     //         MNHFactory::new(read.read, self.m)
-        //     //             .iter()
-        //     //             .map(|h| h.to_unextendable())
-        //     //             .collect::<Vec<_>>(),
-        //     //         original_minimizer,
-        //     //         computed_minimizer,
-        //     //         minimizer_pos
-        //     //     );
-        //     // }
-
-        //     map_packet_ref.allocator.push_vec(
-        //         map_packet_ref
-        //             .minimizer_superkmers
-        //             .entry(minimizer_hash)
-        //             .or_insert(InlineVec::default()),
-        //         read,
-        //     );
-        // }
 
         let stats = map_packet.extender.get_stats();
 
@@ -395,7 +272,7 @@ impl<
 
         stats!(
             map_packet.detailed_stats.end_processor_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();
-            map_packet.detailed_stats.sequences_sizes = sequences_sizes;
+            map_packet.detailed_stats.sequences_sizes = 0;
             map_packet.detailed_stats.all_kmers_count = all_kmers;
         );
 

@@ -206,6 +206,7 @@ impl HashFunctionFactory for CanonicalSeqHashFactory {
     }
 
     const INVERTIBLE: bool = true;
+    const CANONICAL: bool = true;
     type SeqType = [u8; size_of::<Self::HashTypeUnextendable>()];
 
     fn invert(hash: Self::HashTypeUnextendable) -> Self::SeqType {

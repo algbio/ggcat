@@ -70,7 +70,6 @@ struct SuperKmerEntry<E> {
     extra: E,
     minimizer_pos: u16,
     flags: u8,
-    is_window_duplicate: bool,
 }
 
 struct SuperKmerEntryRef<'a, E> {
@@ -79,7 +78,6 @@ struct SuperKmerEntryRef<'a, E> {
     extra: E,
     minimizer_pos: u16,
     flags: u8,
-    is_window_duplicate: bool,
 }
 
 pub struct BucketsCompactor<
@@ -156,7 +154,6 @@ impl<
             minimizer_pos,
             extra,
             flags,
-            is_window_duplicate,
         } = super_kmer;
 
         let read_hash = unsafe { read.compute_hash_aligned_overflow16() };
@@ -187,7 +184,6 @@ impl<
                 multiplicity,
                 minimizer_pos,
                 flags,
-                is_window_duplicate,
                 extra,
             },
         );
@@ -345,7 +341,6 @@ impl<
                             multiplicity: read.multiplicity,
                             minimizer_pos: read.minimizer_pos,
                             flags: read.flags,
-                            is_window_duplicate: read.is_window_duplicate,
                             extra: MultipleData::from_single_entry(
                                 &mut self.uncompacted_super_kmers_extra_buffer,
                                 read.extra,
@@ -469,7 +464,6 @@ impl<
                             flags,
                             second_bucket: _,
                             minimizer_pos,
-                            is_window_duplicate,
                         } = data;
 
                         Self::process_superkmer::<MultipleData>(
@@ -478,7 +472,6 @@ impl<
                                 multiplicity,
                                 minimizer_pos,
                                 flags,
-                                is_window_duplicate,
                                 extra,
                             },
                             &mut self.super_kmers_hashmap,
@@ -500,7 +493,6 @@ impl<
                         multiplicity: entry.multiplicity,
                         minimizer_pos: entry.minimizer_pos,
                         flags: entry.flags,
-                        is_window_duplicate: entry.is_window_duplicate,
                         extra: entry.extra,
                     },
                     &mut self.super_kmers_hashmap,
@@ -545,7 +537,6 @@ impl<
                 multiplicity: _,
                 minimizer_pos,
                 flags,
-                is_window_duplicate,
             } in super_kmers_temp[0].drain(..)
             {
                 let read = read.as_reference(&self.super_kmers_storage);
@@ -560,13 +551,7 @@ impl<
                 );
 
                 serializer_single.write_to(
-                    &CompressedReadsBucketData::new_packed(
-                        read,
-                        flags,
-                        0,
-                        minimizer_pos,
-                        is_window_duplicate,
-                    ),
+                    &CompressedReadsBucketData::new_packed(read, flags, 0, minimizer_pos),
                     &mut single_buffer,
                     &extra,
                     &multiple_to_single_extra_buffer,
@@ -585,7 +570,6 @@ impl<
                 multiplicity,
                 minimizer_pos,
                 flags,
-                is_window_duplicate,
             } in super_kmers_temp[1].drain(..)
             {
                 let read = read.as_reference(&self.super_kmers_storage);
@@ -598,7 +582,6 @@ impl<
                         0,
                         multiplicity,
                         minimizer_pos,
-                        is_window_duplicate,
                     ),
                     &mut multi_buffer,
                     &extra,

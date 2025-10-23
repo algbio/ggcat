@@ -41,7 +41,7 @@ impl RollingMinQueueOld {
                 self.queue.get_unchecked_mut(i).1 = min_by_key(
                     self.queue.get_unchecked_mut(i).1,
                     self.queue.get_unchecked_mut((i + 1) & self.capacity_mask).1,
-                    |x| (*x),
+                    |x| *x,
                 );
             }
             i = i.wrapping_sub(1) & self.capacity_mask;
@@ -68,7 +68,7 @@ impl RollingMinQueueOld {
             self.minimum = min_by_key(
                 self.minimum,
                 (x, (self.index + self.size) & self.capacity_mask),
-                |x| (x.0),
+                |x| x.0,
             );
             self.index = (self.index + 1) & self.capacity_mask;
 
@@ -81,7 +81,7 @@ impl RollingMinQueueOld {
                 self.queue
                     .get_unchecked_mut((self.index.wrapping_sub(self.size)) & self.capacity_mask)
                     .1,
-                |x| (*x),
+                |x| *x,
             )
         })
     }
@@ -147,7 +147,7 @@ impl<X: Default + Copy, const FIRST_BIT_UNIQUE_FLAG: bool>
                 let prev_value = *self.queue.get_unchecked(prev_index);
                 let crt_value = *self.queue.get_unchecked(i);
 
-                *self.queue.get_unchecked_mut(i) = min_by_key(crt_value, prev_value, |x| (x.0));
+                *self.queue.get_unchecked_mut(i) = min_by_key(crt_value, prev_value, |x| x.0);
 
                 // Equality works here because the only time this condition is useful
                 // is if both the prev_value and crt_value unique bit flags are unique, and thus
@@ -180,7 +180,7 @@ impl<X: Default + Copy, const FIRST_BIT_UNIQUE_FLAG: bool>
 
             let is_duplicated = FIRST_BIT_UNIQUE_FLAG && (self.minimum.0) == (x.0);
 
-            self.minimum = min_by_key(self.minimum, x, |x| (x.0));
+            self.minimum = min_by_key(self.minimum, x, |x| x.0);
             self.minimum.0 &= !(is_duplicated as u64);
 
             self.index = (self.index + 1) & self.capacity_mask;
@@ -193,7 +193,7 @@ impl<X: Default + Copy, const FIRST_BIT_UNIQUE_FLAG: bool>
             let queue_minimum = *self.queue.get_unchecked(queue_minimum_index);
 
             let is_duplicated = FIRST_BIT_UNIQUE_FLAG && (self.minimum.0) == (queue_minimum.0);
-            let (minimizer, extra) = min_by_key(self.minimum, queue_minimum, |x| (x.0));
+            let (minimizer, extra) = min_by_key(self.minimum, queue_minimum, |x| x.0);
 
             (minimizer & !(is_duplicated as u64), extra)
         })

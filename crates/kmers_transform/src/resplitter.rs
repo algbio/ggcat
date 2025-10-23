@@ -44,7 +44,7 @@ pub struct ResplitterInitData<F: KmersTransformExecutorFactory> {
 pub struct KmersTransformResplitter<F: KmersTransformExecutorFactory>(PhantomData<F>);
 
 impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
-    pub fn do_resplit<const FORWARD_ONLY: bool>(
+    pub fn do_resplit(
         global_context: &KmersTransformContext<F>,
         reader_thread: Arc<AsyncReaderThread>,
         mut resplit_data: ResplitterInitData<F>,
@@ -110,12 +110,11 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                     flags,
                     second_bucket: _,
                     minimizer_pos: _,
-                    is_window_duplicate: _,
                 } = read;
 
                 resplitter.reprocess_sequence(flags, &extra, &extra_buffer, &mut preprocess_info);
 
-                resplitter.process_sequence::<_, _, true, FORWARD_ONLY>(
+                resplitter.process_sequence::<_, _, true>(
                     &preprocess_info,
                     read,
                     0..read.bases_count(),
@@ -133,7 +132,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                             minimizer_pos,
                             flags,
                             rc,
-                            is_window_duplicate,
                         } = info;
 
                         sequences_count[bucket as usize] += 1;
@@ -148,7 +146,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                                 rc,
                                 multiplicity,
                                 minimizer_pos,
-                                is_window_duplicate,
                             ),
                         );
                     },

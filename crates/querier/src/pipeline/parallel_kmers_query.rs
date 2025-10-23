@@ -214,6 +214,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> KmersTransformExecutorFactory
 
     type FlagsCount = typenum::U0;
     const HAS_COLORS: bool = CX::COLORS_ENABLED;
+    const CANONICAL: bool = MH::CANONICAL;
 
     fn get_packets_init_data(
         _global_data: &Arc<Self::GlobalExtraData>,
@@ -413,7 +414,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
 
     fn process_map(
         &mut self,
-        _global_data: &GlobalQueryMergeData,
+        _global_data: &Arc<GlobalQueryMergeData>,
         map_struct: Packet<Self::MapStruct>,
     ) -> Packet<ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>> {
         let map_struct_ref = map_struct.deref();
@@ -493,6 +494,7 @@ pub fn parallel_kmers_counting<
             QuerierMinimizerBucketingGlobalData {
                 queries_count: Default::default(),
             },
+            !forward_only,
         )),
     });
 
@@ -507,7 +509,6 @@ pub fn parallel_kmers_counting<
         global_data.clone(),
         threads_count,
         k,
-        forward_only,
     )
     .parallel_kmers_transform();
 

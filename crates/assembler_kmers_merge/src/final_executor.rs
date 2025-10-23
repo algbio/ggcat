@@ -17,8 +17,8 @@ use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::temp_reads::creads_utils::{
     AlignToMinimizerByteBoundary, AssemblerMinimizerPosition, CompressedReadsBucketData,
-    CompressedReadsBucketDataSerializer, DeserializedRead, NoMultiplicity, NoSecondBucket,
-    ToReadData,
+    CompressedReadsBucketDataSerializer, DeserializedReadIndependent, NoMultiplicity,
+    NoSecondBucket, ToReadData,
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use kmers_transform::{KmersTransformExecutorFactory, KmersTransformFinalExecutor};
@@ -27,6 +27,7 @@ use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBi
 use parallel_processor::execution_manager::packet::Packet;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
+use std::sync::Arc;
 use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
 use typenum::U2;
 
@@ -189,7 +190,6 @@ impl<
                     minimizer_pos: last_align as u16,
                     extra_bucket: 0,
                     flags: (!hash_beginning ^ should_rc) as u8 | ((both_ends as u8) << 1),
-                    is_window_duplicate: false,
                 },
             );
         }
@@ -217,7 +217,7 @@ impl<
     #[instrumenter::track(fields(map_capacity = map_struct_packet.rhash_map.capacity(), map_size = map_struct_packet.rhash_map.len()))]
     fn process_map(
         &mut self,
-        global_data: &<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
+        global_data: &Arc<<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData>,
         mut map_struct_packet: Packet<Self::MapStruct>,
     ) -> Packet<Self::MapStruct> {
         stats!(
@@ -243,60 +243,13 @@ impl<
         let mut single_entry_colors = vec![];
 
         if !map_struct.is_duplicate {
-            map_struct.minimizer_superkmers.process_elements(
-                #[inline(always)]
-                |minimizer_elements| {
-                    let has_duplicate_kmers =
-                        minimizer_elements.iter().any(|m| m.is_window_duplicate);
-
-                    if has_duplicate_kmers {
-                        map_struct.extender.reset();
-
-                        for element in minimizer_elements {
-                            map_struct.extender.add_sequence(
-                                &DeserializedRead {
-                                    read: element.read.as_reference(&map_struct.superkmers_storage),
-                                    extra: element.extra,
-                                    multiplicity: element.multiplicity,
-                                    minimizer_pos: element.minimizer_pos,
-                                    flags: element.flags,
-                                    second_bucket: element.second_bucket,
-                                    is_window_duplicate: element.is_window_duplicate,
-                                },
-                                &map_struct.superkmers_extra_buffer,
-                            );
-                        }
-
-                        map_struct.extender.compute_unitigs::<COMPUTE_SIMPLITIGS>(
-                            &mut self.colors_data,
-                            #[inline(always)]
-                            |colors_data, out_seq, fw_hash, bw_hash, is_circular, _abundance| {
-                                stats!(
-                                    stat_output_kmers_count += 1;
-                                );
-                                Self::output_sequence(
-                                    &mut tmp_final_unitigs_buffer,
-                                    tmp_final_unitigs_circular_buffer.as_mut(),
-                                    &mut self.unitigs_tmp,
-                                    colors_data,
-                                    out_seq,
-                                    fw_hash,
-                                    bw_hash,
-                                    global_data.k,
-                                    #[cfg(feature = "support_kmer_counters")]
-                                    _abundance,
-                                    is_circular,
-                                )
-                            },
-                        );
-
-                        return;
-                    }
-
+            let mut process_fn = |minimizer_elements: &mut [DeserializedReadIndependent<<
+                ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>],
+                superkmers_storage: &Vec<u8>,
+                superkmers_extra_buffer: &<<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer| {
                     if minimizer_elements.len() <= 1
                         && minimizer_elements[0].multiplicity as usize
                             >= global_data.min_multiplicity
-                        && !minimizer_elements[0].is_window_duplicate
                     {
                         let read = &minimizer_elements[0];
                         stats!(
@@ -312,7 +265,7 @@ impl<
                             single_entry_colors.clear();
                             single_entry_colors.extend_from_slice(
                                 read.extra
-                                    .get_unique_color(&map_struct.superkmers_extra_buffer),
+                                    .get_unique_color(superkmers_extra_buffer),
                             );
                             let color = CX::ColorsMergeManagerType::assign_color(
                                 &self.colors_data.colors_global_table,
@@ -330,7 +283,7 @@ impl<
                             None,
                             &mut self.unitigs_tmp,
                             &mut self.colors_data,
-                            read.read.as_reference(&map_struct.superkmers_storage),
+                            read.read.as_reference(superkmers_storage),
                             if read.flags & READ_FLAG_INCL_END == 0 {
                                 Some(DelayedHashComputation)
                             } else {
@@ -360,8 +313,8 @@ impl<
                     sorting_extender.process_reads::<COMPUTE_SIMPLITIGS>(
                         &mut self.colors_data,
                         minimizer_elements,
-                        &map_struct.superkmers_extra_buffer,
-                        &map_struct.superkmers_storage,
+                        superkmers_extra_buffer,
+                        superkmers_storage,
                         global_data.k,
                         global_data.min_multiplicity,
                         |colors_data, read, fw_linked, bw_linked, _abundance| {
@@ -384,6 +337,16 @@ impl<
                             )
                         },
                     );
+                };
+
+            map_struct.minimizer_superkmers.process_elements(
+                #[inline(always)]
+                |minimizer_elements| {
+                    process_fn(
+                        minimizer_elements,
+                        &map_struct.superkmers_storage,
+                        &map_struct.superkmers_extra_buffer,
+                    )
                 },
             );
         } else {

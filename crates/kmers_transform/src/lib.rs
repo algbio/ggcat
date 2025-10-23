@@ -1,7 +1,8 @@
 use crate::processor::{KmersProcessorInitData, KmersTransformProcessor, ResplitConfig};
 use config::{
-    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAX_RESPLIT_BUCKETS_COUNT, MIN_AVERAGE_CAP,
-    MIN_RESPLIT_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME,
+    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAX_RESPLIT_BUCKETS_COUNT,
+    MAX_SUBBUCKET_AVERAGE_MULTIPLIER, MIN_AVERAGE_CAP, MIN_RESPLIT_BUCKETS_COUNT,
+    MINIMUM_LOG_DELTA_TIME,
 };
 use ggcat_logging::{generate_stat_id, info};
 use io::DUPLICATES_BUCKET_EXTRA;
@@ -60,6 +61,7 @@ pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
     type FlagsCount: typenum::uint::Unsigned;
 
     const HAS_COLORS: bool;
+    const CANONICAL: bool;
 
     fn get_packets_init_data(
         global_data: &Arc<Self::GlobalExtraData>,
@@ -120,7 +122,7 @@ pub trait KmersTransformFinalExecutor<F: KmersTransformExecutorFactory>:
 
     fn process_map(
         &mut self,
-        global_data: &F::GlobalExtraData,
+        global_data: &Arc<F::GlobalExtraData>,
         map_struct: Packet<Self::MapStruct>,
     ) -> Packet<Self::MapStruct>;
 
@@ -159,8 +161,6 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     total_sequences: AtomicU64,
     total_kmers: AtomicU64,
     unique_kmers: AtomicU64,
-
-    forward_only: bool,
 }
 
 impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
@@ -172,7 +172,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         global_extra_data: Arc<F::GlobalExtraData>,
         threads_count: usize,
         k: usize,
-        forward_only: bool,
     ) -> Self {
         let mut total_buckets_size = 0;
 
@@ -258,7 +257,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             total_sequences: AtomicU64::new(0),
             total_kmers: AtomicU64::new(0),
             unique_kmers: AtomicU64::new(0),
-            forward_only,
         });
 
         Self {
@@ -315,9 +313,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     continue;
                 };
 
-                let is_outlier = false;
-                // splitted_bucket.sequences_count
-                //     > bucket_sequences_average * MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
+                let is_outlier = splitted_bucket.sequences_count
+                    > bucket_sequences_average * MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
 
                 // Add the sub-bucket job
                 compute_thread_pool_handle.create_new_address_with_limit(

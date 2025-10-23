@@ -114,6 +114,7 @@ impl<
 
     type FlagsCount = typenum::U2;
     const HAS_COLORS: bool = CX::COLORS_ENABLED;
+    const CANONICAL: bool = MH::CANONICAL;
 
     fn get_packets_init_data(
         global_data: &Arc<Self::GlobalExtraData>,
@@ -243,6 +244,7 @@ pub fn kmers_merge<
             k,
             BucketsCount::ONE,
             (),
+            MH::CANONICAL,
         )),
         hasnmap_kmers_total: AtomicU64::new(0),
         kmer_batches_count: AtomicU64::new(0),
@@ -257,7 +259,6 @@ pub fn kmers_merge<
             global_data.clone(),
             threads_count,
             k,
-            forward_only,
         )
         .parallel_kmers_transform();
     } else {
@@ -269,7 +270,6 @@ pub fn kmers_merge<
             global_data.clone(),
             threads_count,
             k,
-            forward_only,
         )
         .parallel_kmers_transform();
     }

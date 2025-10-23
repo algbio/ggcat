@@ -1,5 +1,4 @@
 use crate::pipeline::parallel_kmers_query::QueryKmersReferenceData;
-use byteorder::ReadBytesExt;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
@@ -7,13 +6,10 @@ use hashes::HashFunction;
 use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
-use io::concurrent::temp_reads::extra_data::{
-    HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
-};
+use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::fasta::FastaFileSequencesStream;
-use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
@@ -21,7 +17,6 @@ use minimizer_bucketing::{
 };
 use parallel_processor::buckets::{BucketsCount, SingleBucket};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
 use std::ops::Range;
@@ -30,9 +25,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::parallel_kmers_query::RewriteBucketComputeQuery;
-
-#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-pub struct KmersQueryData(pub u64);
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub enum FileType {
@@ -66,24 +58,6 @@ impl<CX: ColorsManager> Default for ReadTypeBuffered<CX> {
                 QueryKmersReferenceData::<MinimizerBucketingSeqColorDataType<CX>>::new_temp_buffer(),
             read_type: ReadType::Query(NonZeroU64::new(1).unwrap()),
         }
-    }
-}
-
-impl HasEmptyExtraBuffer for KmersQueryData {}
-impl SequenceExtraData for KmersQueryData {
-    #[inline(always)]
-    fn decode_extended(_: &mut (), reader: &mut impl Read) -> Option<Self> {
-        Some(Self(decode_varint(|| reader.read_u8().ok())?))
-    }
-
-    #[inline(always)]
-    fn encode_extended(&self, _: &(), writer: &mut impl Write) {
-        encode_varint(|b| writer.write_all(b), self.0).unwrap();
-    }
-
-    #[inline(always)]
-    fn max_size(&self) -> usize {
-        VARINT_MAX_SIZE
     }
 }
 
@@ -209,7 +183,6 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
         S: MinimizerInputSequence,
         F: FnMut(PushSequenceInfo<S, QuerierMinimizerBucketingExecutorFactory<CX>>),
         const SEPARATE_DUPLICATES: bool,
-        const FORWARD_ONLY: bool,
     >(
         &mut self,
         preprocess_info: &<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -228,7 +201,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
             0,
             0,
             #[inline(always)]
-            |index, min_hash, _, _| {
+            |index, min_hash, _| {
                 push_sequence(PushSequenceInfo {
                     bucket: MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
                     second_bucket: MNHFactory::get_bucket(
@@ -248,7 +221,6 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
                     minimizer_pos: 0,
                     flags: 0,
                     rc: false,
-                    is_window_duplicate: false,
                 });
 
                 last_index = index;

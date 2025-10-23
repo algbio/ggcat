@@ -9,7 +9,6 @@ pub struct BatchMinQueue<X> {
     size: usize,
     backward: Vec<(u64, X)>,
     splits: Vec<((u64, X), ExtraInfo)>,
-    duplicates: Vec<bool>,
 }
 
 #[inline]
@@ -22,7 +21,6 @@ impl<X: Clone + Copy + Default + Debug + PartialEq> BatchMinQueue<X> {
             size,
             backward: vec![Default::default(); size - 1],
             splits: vec![Default::default(); size + 2],
-            duplicates: vec![false; size + 2],
         }
     }
 
@@ -134,7 +132,7 @@ impl<X: Clone + Copy + Default + Debug + PartialEq> BatchMinQueue<X> {
         mut iter: I,
         skip_beginning_count: usize,
         skip_ending_count: usize,
-        mut splits_callback: impl FnMut(usize, (u64, X), bool, bool),
+        mut splits_callback: impl FnMut(usize, (u64, X), bool),
     ) {
         let last_value: Cell<(u64, X)> = Cell::new(Default::default());
         let mut is_first = true;
@@ -149,42 +147,12 @@ impl<X: Clone + Copy + Default + Debug + PartialEq> BatchMinQueue<X> {
         let splits_ptr = Cell::new(self.splits.as_mut_ptr());
         let splits_start = self.splits.as_mut_ptr();
 
-        // Struct to pass data to the set_duplicates function, used to avoid passing many parameters and bloat calling code
-        struct DuplicatesData<X> {
-            window_duplicates: *mut bool,
-            splits_start: *mut ((u64, X), ExtraInfo),
-        }
-
-        let dupl_data = DuplicatesData {
-            window_duplicates: self.duplicates.as_mut_ptr(),
-            splits_start,
-        };
-
-        // This function is separated because it is called very rarely and inlining it slows down the hot path
-        #[inline(never)]
-        fn set_window_duplicates<X>(
-            data: &DuplicatesData<X>,
-            splits_ptr: *mut ((u64, X), ExtraInfo),
-        ) {
-            unsafe {
-                let index = splits_ptr.offset_from(data.splits_start) as usize;
-                *data.window_duplicates.add(index) = true;
-            }
-        }
-
-        let duplicates_ptr = self.duplicates.as_mut_ptr();
-
         self.get_minimizers::<_, { ENABLE_DUPLICATE_CHECKING }>(
             iter,
             skip_ending_count,
             #[inline(always)]
             |m, index| {
-                let has_different_value = !is_first && last_value.get().0 != m.0;
-                let has_different_position = !is_first && last_value.get().1 != m.1;
-
-                if !has_different_value && has_different_position {
-                    set_window_duplicates(&dupl_data, splits_ptr.get());
-                }
+                let has_different_value = !is_first && last_value.get() != m;
 
                 unsafe {
                     let splits_pos = &mut *splits_ptr.get();
@@ -204,22 +172,11 @@ impl<X: Clone + Copy + Default + Debug + PartialEq> BatchMinQueue<X> {
                 }
 
                 let mut cursor = splits_start;
-                let mut diff_cursor = duplicates_ptr;
                 while cursor != splits_ptr.get() {
                     let last = cursor.add(1) == splits_ptr.get();
-                    splits_callback(
-                        (*cursor).1.position,
-                        (*cursor).0,
-                        last && is_last,
-                        *diff_cursor,
-                    );
-                    *diff_cursor = false;
+                    splits_callback((*cursor).1.position, (*cursor).0, last && is_last);
                     cursor = cursor.add(1);
-                    diff_cursor = diff_cursor.add(1);
                 }
-                let last_is_dupl = *diff_cursor;
-                *diff_cursor = false;
-                *duplicates_ptr = last_is_dupl;
 
                 splits_ptr.set(splits_start);
             },

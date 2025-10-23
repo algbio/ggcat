@@ -1,5 +1,5 @@
 use crate::concurrent::temp_reads::creads_utils::{AlignModeOption, MinimizerModeOption};
-use crate::varint::{decode_varint, decode_varint_flags, encode_varint, encode_varint_flags};
+use crate::varint::{decode_varint_flags, encode_varint_flags};
 use byteorder::ReadBytesExt;
 use core::fmt::{Debug, Formatter};
 use hashes::HashableSequence;
@@ -44,7 +44,7 @@ pub struct BorrowableCompressedRead {
 }
 
 impl BorrowableCompressedRead {
-    pub fn get_compressed_read(&self) -> CompressedRead {
+    pub fn get_compressed_read(&self) -> CompressedRead<'_> {
         let data = self.data.as_ptr() as *const u8;
         let size = self.data.len();
         CompressedRead {
@@ -311,6 +311,32 @@ impl CompressedReadIndipendent {
         }
     }
 
+    pub fn from_read_with_alignment(
+        read: &CompressedRead,
+        storage: &mut Vec<u8>,
+        alignment: u8,
+    ) -> CompressedReadIndipendent {
+        let storage_start = storage.len();
+        let bytes_count = (read.bases_count() + alignment as usize + 3) / 4;
+        read.copy_to_buffer(storage);
+        storage.reserve(ALIGNMENT_WORD_SIZE);
+        unsafe {
+            storage.set_len(storage_start + bytes_count);
+        }
+        if alignment > 0 {
+            CompressedRead::offset_read(
+                alignment as usize,
+                &mut storage[storage_start..],
+                read.bases_count(),
+            );
+        }
+
+        CompressedReadIndipendent {
+            start: storage_start * 4 + alignment as usize,
+            size: read.size,
+        }
+    }
+
     #[inline(always)]
     pub unsafe fn compute_hash_aligned_overflow16(
         &self,
@@ -373,8 +399,6 @@ const ALIGNMENT_WORD_SIZE: usize = size_of::<AlignmentWordType>();
 const ALIGNMENT_WORD_BITS: usize = ALIGNMENT_WORD_SIZE * 8;
 
 impl<'a> CompressedRead<'a> {
-    const WINDOW_DUPLICATE_SENTINEL: u64 = u64::MAX >> 16;
-
     #[inline(always)]
     pub unsafe fn compute_hash_aligned_overflow16(&self) -> u64 {
         use std::hash::BuildHasher;
@@ -412,27 +436,11 @@ impl<'a> CompressedRead<'a> {
         buffer: &mut Vec<u8>,
         length: usize,
         min_size: usize,
-        mut minimizer_position: u16,
+        minimizer_position: u16,
         min_size_log: u8,
         flags: u8,
-        is_window_duplicate: bool,
     ) {
         let encoded_length = if MinimizerMode::ENABLED {
-            #[cold]
-            fn cold() {}
-
-            if is_window_duplicate {
-                cold();
-                encode_varint_flags::<_, _, FlagsCount>(
-                    |b| buffer.extend_from_slice(b),
-                    Self::WINDOW_DUPLICATE_SENTINEL,
-                    0,
-                );
-                // The minimizer position is encoded separately as it could be bigger than the maximum allowed in normal reads
-                encode_varint::<_>(|b| buffer.extend_from_slice(b), minimizer_position as u64);
-                minimizer_position = 0;
-            }
-
             debug_assert!(
                 (minimizer_position as usize) < min_size,
                 "Minimizer: {} >= {}",
@@ -470,7 +478,6 @@ impl<'a> CompressedRead<'a> {
         min_size_log: u8,
         flags: u8,
         rc: bool,
-        is_window_duplicate: bool,
     ) {
         Self::encode_length::<MinimizerMode, FlagsCount>(
             buffer,
@@ -479,7 +486,6 @@ impl<'a> CompressedRead<'a> {
             minimizer_position,
             min_size_log,
             flags,
-            is_window_duplicate,
         );
 
         if rc {
@@ -504,7 +510,7 @@ impl<'a> CompressedRead<'a> {
     }
 
     #[inline(always)]
-    fn offset_read(required_offset: usize, slice: &mut [u8], size: usize) {
+    pub fn offset_read(required_offset: usize, slice: &mut [u8], size: usize) {
         let bit_offset = required_offset * 2;
         let last_start =
             ((required_offset + size + 3) / 4 / ALIGNMENT_WORD_SIZE) * ALIGNMENT_WORD_SIZE;
@@ -541,31 +547,16 @@ impl<'a> CompressedRead<'a> {
         stream: &mut S,
         min_size: usize,
         min_size_log: u8,
-    ) -> Option<(Self, u16, u8, bool)> {
-        let (mut encoded_size, mut flags) =
-            decode_varint_flags::<_, FlagsCount>(|| stream.read_u8().ok())?;
+    ) -> Option<(Self, u16, u8)> {
+        let (encoded_size, flags) = decode_varint_flags::<_, FlagsCount>(|| stream.read_u8().ok())?;
 
-        let (size, minimizer_pos, is_window_duplicate, required_offset) = if MinimizerMode::ENABLED
-        {
-            #[cold]
-            fn cold() {}
-
-            let is_window_duplicate = encoded_size == Self::WINDOW_DUPLICATE_SENTINEL;
-            let minimizer_pos = if is_window_duplicate {
-                let extra_minimizer_pos = decode_varint(|| stream.read_u8().ok())?;
-                cold();
-                (encoded_size, flags) =
-                    decode_varint_flags::<_, FlagsCount>(|| stream.read_u8().ok())?;
-                extra_minimizer_pos
-            } else {
-                encoded_size & ((1 << min_size_log) - 1)
-            };
+        let (size, minimizer_pos, required_offset) = if MinimizerMode::ENABLED {
+            let minimizer_pos = encoded_size & ((1 << min_size_log) - 1);
 
             let size = encoded_size >> min_size_log;
             (
                 size as usize + min_size,
                 minimizer_pos as u16,
-                is_window_duplicate,
                 /*
                 0 => 0   |****| => |****|
                 1 => 3    |x***|* => |xxxx|****|
@@ -576,7 +567,7 @@ impl<'a> CompressedRead<'a> {
                 ((minimizer_pos ^ (minimizer_pos << 1)) % 4) as usize, // Offset required to align the minimizer start to byte boundaries
             )
         } else {
-            (encoded_size as usize + min_size, 0, false, 0)
+            (encoded_size as usize + min_size, 0, 0)
         };
 
         let bytes = (size + 3) / 4;
@@ -612,7 +603,6 @@ impl<'a> CompressedRead<'a> {
             },
             minimizer_pos,
             flags,
-            is_window_duplicate,
         ))
     }
 
@@ -1247,7 +1237,6 @@ mod tests {
             minimizer_pos: 80,
             extra_bucket: 0,
             flags: 3,
-            is_window_duplicate: false,
         };
         let mut tbuffer = vec![];
 
@@ -1260,7 +1249,6 @@ mod tests {
                 element.minimizer_pos,
                 5,
                 element.flags,
-                element.is_window_duplicate,
             );
 
             if is_rc {
