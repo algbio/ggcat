@@ -15,6 +15,11 @@
 #include <ranges>
 #endif
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdollar-in-identifier-extension"
+#endif // __clang__
+
 namespace rust {
 inline namespace cxxbridge1 {
 // #include "rust/cxx.h"
@@ -840,3 +845,7 @@ void ggcat_dump_unitigs(::GGCATInstanceFFI const &instance, ::rust::String graph
 // Queries specified color subsets of the colormap, returning
 // the color indices corresponding to the colors of each subset
 void ggcat_query_colormap(::GGCATInstanceFFI const &instance, ::rust::String colormap, ::rust::Vec<::std::uint32_t> subsets, bool single_thread_output_function, ::std::size_t output_function_context, ::std::size_t output_function_ptr) noexcept;
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif // __clang__

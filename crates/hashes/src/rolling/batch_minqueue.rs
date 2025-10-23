@@ -152,7 +152,11 @@ impl<X: Clone + Copy + Default + Debug + PartialEq> BatchMinQueue<X> {
             skip_ending_count,
             #[inline(always)]
             |m, index| {
-                let has_different_value = !is_first && last_value.get() != m;
+                let has_different_value = !is_first
+                    && (last_value.get().0 != m.0
+                        || (last_value.get().1 != m.1
+                            && m.0 & Self::unique_flag::<ENABLE_DUPLICATE_CHECKING>()
+                                == Self::unique_flag::<ENABLE_DUPLICATE_CHECKING>()));
 
                 unsafe {
                     let splits_pos = &mut *splits_ptr.get();

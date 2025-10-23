@@ -295,7 +295,6 @@ pub fn run_assembler<
                     m,
                     compute_tigs_mode.needs_simplitigs(),
                     threads_count,
-                    forward_only,
                 )
             }
             OutputFileMode::Intermediate {
@@ -321,7 +320,6 @@ pub fn run_assembler<
                 m,
                 compute_tigs_mode.needs_simplitigs(),
                 threads_count,
-                forward_only,
             ),
         }
     } else {

@@ -182,7 +182,6 @@ pub fn kmers_merge<
     m: usize,
     compute_simplitigs: bool,
     threads_count: usize,
-    forward_only: bool,
 ) -> RetType {
     let colors_global_table: Arc<GlobalColorsTableWriter<CX>> =
         Arc::downcast(colors_global_table).unwrap();
