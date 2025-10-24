@@ -193,9 +193,8 @@ impl<
             },
             |needed, reserved| {
                 // TODO: Manage reserved
-                let ptr = super_kmers_hashmap.allocate_elements(read_hash, needed);
                 super_kmers_hashmap.allocator_reserve_additional(reserved);
-                ptr
+                super_kmers_hashmap.allocate_elements(read_hash, needed)
             },
         );
         // super_kmers_storage.reserve(HASH_MAX_OVERREAD);
