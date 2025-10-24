@@ -17,7 +17,6 @@ lazy_static = "1.5.0"
 lz4 = "1.25.0"
 rayon = "1.10.0"
 serde = "1.0.203"
-structopt = "0.3.26"
 hashbrown = "0.14.5"
 rand = "0.8.5"
 libc = "0.2.155"
@@ -59,6 +58,7 @@ instrumenter = "0.1.3"
 querier = { package = "ggcat_querier", path = "../querier" }
 ggcat-api = { version = "2.0.0", path = "../api" }
 ggcat-logging = { version = "2.0.0", path = "../logging" }
+clap = { version = "4.5.50", features = ["derive"] }
 
 
 [features]

@@ -4,68 +4,68 @@ extern crate alloc;
 
 // mod benchmarks;
 
+use ::utils::compute_best_m;
 use ahash::HashMap;
+use clap::{ArgGroup, Parser, ValueEnum};
+use colors::DefaultColorsSerializer;
+use colors::colors_manager::ColorMapReader;
+use colors::storage::deserializer::ColorsDeserializer;
+use config::ColorIndexType;
 use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance, GfaVersion};
 use ggcat_logging::UnrecoverableErrorLogging;
+use io::sequences_stream::general::GeneralSequenceBlockData;
+use parallel_processor::memory_fs::MemoryFs;
 use std::fs::File;
+use std::io::BufRead;
 use std::io::{BufReader, BufWriter, Write};
 use std::panic;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use structopt::StructOpt;
 
-arg_enum! {
-    #[derive(Debug, PartialOrd, PartialEq)]
-    pub enum AssemblerStartingStep {
-        MinimizerBucketing = 0,
-        KmersMerge = 1,
-        UnitigsExtension = 2,
-        MaximalUnitigsLinks = 3,
-        FinalStep = 4
-    }
+#[derive(Debug, Clone, PartialOrd, PartialEq, ValueEnum)]
+pub enum AssemblerStartingStep {
+    MinimizerBucketing = 0,
+    KmersMerge = 1,
+    UnitigsExtension = 2,
+    MaximalUnitigsLinks = 3,
+    FinalStep = 4,
 }
 
-arg_enum! {
-    #[derive(Debug, PartialOrd, PartialEq)]
-    pub enum QuerierStartingStep {
-        MinimizerBucketing = 0,
-        KmersCounting = 1,
-        CountersSorting = 2,
-        ColorMapReading = 3,
-    }
+#[derive(Debug, Clone, PartialOrd, PartialEq, ValueEnum)]
+pub enum QuerierStartingStep {
+    MinimizerBucketing = 0,
+    KmersCounting = 1,
+    CountersSorting = 2,
+    ColorMapReading = 3,
 }
 
-arg_enum! {
-    #[derive(Copy, Clone, Debug, PartialOrd, PartialEq)]
-    pub enum HashType {
-        Auto = 0,
-        SeqHash = 1,
-        RabinKarp128 = 4
-    }
+#[derive(Copy, Clone, Debug, PartialOrd, PartialEq, ValueEnum)]
+pub enum HashType {
+    Auto = 0,
+    SeqHash = 1,
+    RabinKarp128 = 4,
 }
 
-use ::utils::compute_best_m;
-use colors::DefaultColorsSerializer;
-use colors::colors_manager::ColorMapReader;
-use colors::storage::deserializer::ColorsDeserializer;
-use config::ColorIndexType;
-use io::sequences_stream::general::GeneralSequenceBlockData;
-use parallel_processor::memory_fs::MemoryFs;
-use std::io::BufRead;
-use structopt::clap::{ArgGroup, arg_enum};
-
-#[derive(StructOpt, Debug)]
+#[derive(Parser, Debug)]
+#[command(
+    name = "ggcat",
+    version,
+    about = "Compacted and colored de Bruijn graph construction and querying"
+)]
 enum CliArgs {
+    /// Build a new compacted graph
     Build(AssemblerArgs),
+    /// Query a compacted graph
     Query(QueryArgs),
+    /// Dump all color names from a colormap
     DumpColors(DumpColorsArgs),
     Matches(MatchesArgs),
     // Utils(CmdUtilsArgs),
 }
 
-#[derive(StructOpt, Debug)]
+#[derive(Parser, Debug)]
 struct MatchesArgs {
     /// Input fasta file with associated colors file (in the same folder)
     input_file: PathBuf,
@@ -74,145 +74,180 @@ struct MatchesArgs {
     match_color: String,
 }
 
-#[derive(StructOpt, Debug)]
+#[derive(Parser, Debug)]
 struct CommonArgs {
-    /// Specifies the k-mers length
-    #[structopt(short, long = "kmer-length")]
+    /// The k-mers length
+    #[arg(short, long = "kmer-length")]
     pub kmer_length: usize,
 
     /// Overrides the default m-mers (minimizers) length
-    #[structopt(long = "minimizer-length")]
+    #[arg(long = "minimizer-length", help_heading = "Advanced Options")]
     pub minimizer_length: Option<usize>,
 
-    /// Directory for temporary files (default .temp_files)
-    #[structopt(short = "t", long = "temp-dir", default_value = ".temp_files")]
+    /// Directory for temporary files
+    #[arg(short = 't', long = "temp-dir", default_value = ".temp_files")]
     pub temp_dir: PathBuf,
 
     /// Keep intermediate temporary files for debugging purposes
-    #[structopt(long = "keep-temp-files")]
+    #[arg(long = "keep-temp-files", help_heading = "Advanced Options")]
     pub keep_temp_files: bool,
 
-    #[structopt(short = "j", long, default_value = "16")]
+    #[arg(short = 'j', long, default_value = "16")]
     pub threads_count: usize,
 
     /// Hash type used to identify kmers
-    #[structopt(short = "w", long, default_value = "Auto")]
+    #[arg(
+        short = 'w',
+        long,
+        default_value = "auto",
+        help_heading = "Advanced Options"
+    )]
     pub hash_type: HashType,
 
     /// Treats reverse complementary kmers as different
-    #[structopt(short = "f", long)]
+    #[arg(short = 'f', long)]
     pub forward_only: bool,
 
     /// Maximum suggested memory usage (GB)
     /// The tool will try use only up to this GB of memory to store temporary files
     /// without writing to disk. This usage does not include the needed memory for the processing steps.
     /// GGCAT can allocate extra memory for files if the current memory is not enough to complete the current operation
-    #[structopt(short = "m", long, default_value = "2")]
+    #[arg(short = 'm', long, default_value = "2")]
     pub memory: f64,
 
     /// Use all the given memory before writing to disk
-    #[structopt(short = "p", long = "prefer-memory")]
+    #[arg(short = 'p', long = "prefer-memory")]
     pub prefer_memory: bool,
 
     /// The log2 of the number of buckets
-    #[structopt(short = "b", long = "buckets-count-log")]
+    #[arg(
+        short = 'b',
+        long = "buckets-count-log",
+        help_heading = "Advanced Options"
+    )]
     pub buckets_count_log: Option<usize>,
 
     /// The level of lz4 compression to be used for the intermediate files
-    #[structopt(long = "intermediate-compression-level")]
+    #[arg(
+        long = "intermediate-compression-level",
+        help_heading = "Advanced Options"
+    )]
     pub intermediate_compression_level: Option<u32>,
 
-    #[structopt(long = "only-bstats", hidden = true)]
+    #[arg(hide = true, long = "only-bstats")]
     pub only_bstats: bool,
 }
 
-#[derive(StructOpt, Debug)]
-#[structopt(group = ArgGroup::with_name("output-mode").required(false))]
+#[derive(Parser, Debug)]
+#[command(group = ArgGroup::new("output-mode").required(false))]
 struct AssemblerArgs {
     /// The input files
     pub input: Vec<PathBuf>,
 
     /// The lists of input files
-    #[structopt(short = "l", long = "input-lists")]
+    #[arg(short = 'l', long = "input-lists")]
     pub input_lists: Vec<PathBuf>,
 
-    /// The lists of input files with colors in format <COLOR_NAME><TAB><FILE_PATH>
-    #[structopt(short = "d", long = "colored-input-lists")]
-    pub colored_input_lists: Vec<PathBuf>,
-
-    /// Enable colors
-    #[structopt(short, long)]
-    pub colors: bool,
-
-    /// Minimum multiplicity required to keep a kmer
-    #[structopt(short = "s", long = "min-multiplicity", default_value = "2")]
-    pub min_multiplicity: usize,
-
-    #[structopt(short = "o", long = "output-file", default_value = "output.fasta.lz4")]
+    #[arg(short = 'o', long = "output-file", default_value = "output.fasta.lz4")]
     pub output_file: PathBuf,
 
-    #[structopt(long, default_value = "MinimizerBucketing")]
-    pub step: AssemblerStartingStep,
+    /// Enable colors
+    #[arg(short, long)]
+    pub colors: bool,
 
-    #[structopt(long = "last-step", default_value = "FinalStep")]
-    pub last_step: AssemblerStartingStep,
+    /// The lists of input files with colors in format <COLOR_NAME><TAB><FILE_PATH>
+    #[arg(short = 'd', long = "colored-input-lists")]
+    pub colored_input_lists: Vec<PathBuf>,
+
+    /// Minimum multiplicity required to keep a kmer
+    #[arg(short = 's', long = "min-multiplicity", default_value = "2")]
+    pub min_multiplicity: usize,
 
     /// Generate maximal unitigs connections references, in BCALM2 format L:<+/->:<other id>:<+/->
-    #[structopt(
-        short = "e",
+    #[arg(
+        short = 'e',
         long = "generate-maximal-unitigs-links",
-        group = "output-mode"
+        group = "output-mode",
+        help_heading = "Output mode"
     )]
     pub generate_maximal_unitigs_links: bool,
 
-    /// Generate greedy matchtigs instead of maximal unitigs
-    #[structopt(short = "g", long = "greedy-matchtigs", group = "output-mode")]
-    pub greedy_matchtigs: bool,
-
-    /// Generate simplitigs instead of maximal unitigs, faster version
-    #[structopt(long = "fast-simplitigs", group = "output-mode")]
-    pub fast_simplitigs: bool,
-
-    /// Generate eulertigs instead of maximal unitigs, faster version
-    #[structopt(long = "fast-eulertigs", group = "output-mode")]
-    pub fast_eulertigs: bool,
+    /// Generate simplitigs instead of maximal unitigs
+    #[arg(
+        long = "simplitigs",
+        alias = "fast-simplitigs",
+        group = "output-mode",
+        help_heading = "Output mode"
+    )]
+    pub simplitigs: bool,
 
     /// Generate eulertigs instead of maximal unitigs
-    #[structopt(long = "eulertigs", group = "output-mode")]
+    #[arg(
+        long = "eulertigs",
+        alias = "fast-eulertigs",
+        group = "output-mode",
+        help_heading = "Output mode"
+    )]
     pub eulertigs: bool,
 
-    /// Generate pathtigs instead of maximal unitigs
-    #[structopt(long = "pathtigs", group = "output-mode")]
-    pub pathtigs: bool,
+    /// Generate greedy matchtigs instead of maximal unitigs
+    #[arg(
+        long = "greedy-matchtigs",
+        group = "output-mode",
+        help_heading = "Output mode"
+    )]
+    pub greedy_matchtigs: bool,
 
-    #[structopt(flatten)]
+    /// Generate eulertigs instead of maximal unitigs, old slower version
+    #[arg(
+        hide = true,
+        long = "old-eulertigs",
+        group = "output-mode",
+        help_heading = "Output mode"
+    )]
+    pub old_eulertigs: bool,
+
+    /// Generate old simplitigs instead of maximal unitigs, old slower version
+    #[arg(
+        hide = true,
+        long = "old-simplitigs",
+        group = "output-mode",
+        help_heading = "Output mode"
+    )]
+    pub old_simplitigs: bool,
+
+    #[command(flatten)]
     pub common_args: CommonArgs,
 
     /// Output the graph in GFA format v1
-    #[structopt(long = "gfa-v1")]
+    #[arg(long = "gfa-v1", help_heading = "Output mode")]
     pub gfa_output_v1: bool,
 
     /// Output the graph in GFA format v2
-    #[structopt(long = "gfa-v2")]
+    #[arg(long = "gfa-v2", help_heading = "Output mode")]
     pub gfa_output_v2: bool,
+
+    #[arg(hide = true, long, default_value = "minimizer-bucketing")]
+    pub step: AssemblerStartingStep,
+
+    #[arg(hide = true, long = "last-step", default_value = "final-step")]
+    pub last_step: AssemblerStartingStep,
 }
 
-#[derive(StructOpt, Debug)]
+#[derive(Parser, Debug)]
 struct DumpColorsArgs {
     input_colormap: PathBuf,
     output_file: PathBuf,
 }
 
-arg_enum! {
-    /// Format of the queries output
-    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-    pub enum ColoredQueryOutputFormat {
-        JsonLinesWithNumbers,
-        JsonLinesWithNames,
-    }
+/// Format of the queries output
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ColoredQueryOutputFormat {
+    JsonLinesWithNumbers,
+    JsonLinesWithNames,
 }
 
-#[derive(StructOpt, Debug)]
+#[derive(Parser, Debug)]
 struct QueryArgs {
     /// The input graph
     pub input_graph: PathBuf,
@@ -221,19 +256,19 @@ struct QueryArgs {
     pub input_query: PathBuf,
 
     /// Enable colors
-    #[structopt(short, long)]
+    #[arg(short, long)]
     pub colors: bool,
 
-    #[structopt(short = "o", long = "output-file-prefix", default_value = "output")]
+    #[arg(short = 'o', long = "output-file-prefix", default_value = "output")]
     pub output_file_prefix: PathBuf,
 
-    #[structopt(long = "colored-query-output-format")]
+    #[arg(long = "colored-query-output-format")]
     pub colored_query_output_format: Option<ColoredQueryOutputFormat>,
 
-    #[structopt(short = "x", long, default_value = "MinimizerBucketing")]
+    #[arg(short = 'x', long, default_value = "MinimizerBucketing")]
     pub step: QuerierStartingStep,
 
-    #[structopt(flatten)]
+    #[command(flatten)]
     pub common_args: CommonArgs,
 }
 
@@ -427,13 +462,13 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
                 ExtraElaboration::UnitigLinks
             } else if args.greedy_matchtigs {
                 ExtraElaboration::GreedyMatchtigs
-            } else if args.eulertigs {
+            } else if args.old_eulertigs {
                 ExtraElaboration::Eulertigs
-            } else if args.pathtigs {
+            } else if args.old_simplitigs {
                 ExtraElaboration::Pathtigs
-            } else if args.fast_simplitigs {
+            } else if args.simplitigs {
                 ExtraElaboration::FastSimplitigs
-            } else if args.fast_eulertigs {
+            } else if args.eulertigs {
                 ExtraElaboration::FastEulertigs
             } else {
                 ExtraElaboration::None
@@ -493,7 +528,7 @@ fn run_querier_from_args(instance: &GGCATInstance, args: QueryArgs) -> PathBuf {
 instrumenter::global_setup_instrumenter!();
 
 fn main() {
-    let args: CliArgs = CliArgs::from_args();
+    let args: CliArgs = CliArgs::parse();
 
     panic::set_hook(Box::new(move |panic_info| {
         let stdout = std::io::stdout();
