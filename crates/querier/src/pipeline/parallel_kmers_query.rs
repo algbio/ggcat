@@ -332,6 +332,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
         _global_data: &GlobalQueryMergeData,
         _extra_bucket_data: Option<ExtraBucketData>,
         _is_resplitted: bool,
+        _average_sequences: u64,
     ) {
         self.map_packet = Some(map_struct);
         self.kmers_count = 0;

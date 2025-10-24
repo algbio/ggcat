@@ -3,7 +3,7 @@ use crate::{
     GroupProcessStats, KmersTransformContext, KmersTransformExecutorFactory,
     KmersTransformFinalExecutor, KmersTransformMapProcessor,
 };
-use config::DEFAULT_PER_CPU_BUFFER_SIZE;
+use config::{DEFAULT_PER_CPU_BUFFER_SIZE, MIN_AVERAGE_CAP};
 use ggcat_logging::generate_stat_id;
 use ggcat_logging::stats::StatId;
 use io::concurrent::temp_reads::creads_utils::AlignToMinimizerByteBoundary;
@@ -104,11 +104,21 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
 
             let mut real_size = 0;
 
+            let total_subbucket_sequences = global_context
+                .total_subbucket_sequences
+                .load(Ordering::Relaxed);
+            let total_subbucket_count =
+                global_context.total_subbucket_count.load(Ordering::Relaxed);
+
+            let average_sequences =
+                (total_subbucket_sequences / total_subbucket_count).max(MIN_AVERAGE_CAP);
+
             map_processor.process_group_start(
                 packet,
                 &global_context.global_extra_data,
                 proc_info.extra_bucket_data,
                 proc_info.is_resplitted,
+                average_sequences,
             );
 
             map_processor.process_group_sequences(

@@ -242,7 +242,7 @@ impl<
         let mut sorting_extender = SortingExtender::<CX>::default();
         let mut single_entry_colors = vec![];
 
-        if !map_struct.is_duplicate && !map_struct.is_resplitted {
+        if !map_struct.is_duplicate && !map_struct.is_outlier {
             let mut process_fn = |minimizer_elements: &mut [DeserializedReadIndependent<<
                 ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>],
                 superkmers_storage: &Vec<u8>,

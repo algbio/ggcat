@@ -2,6 +2,7 @@ use crate::unitigs_extender::hashmap::HashMapUnitigsExtender;
 use crate::unitigs_extender::{GlobalExtenderParams, UnitigsExtenderTrait};
 use crate::{GlobalMergeData, ParallelKmersMergeFactory};
 use colors::colors_manager::{ColorsManager, color_types};
+use config::MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
 use ggcat_logging::stats;
 use ggcat_logging::stats::KmersMergeBucketReport;
 use hashes::HashFunctionFactory;
@@ -49,6 +50,8 @@ pub struct ParallelKmersMergeMapPacket<
 
     pub is_duplicate: bool,
     pub is_resplitted: bool,
+    pub is_outlier: bool,
+    pub average_sequences: u64,
     pub m: usize,
     pub k: usize,
 }
@@ -70,6 +73,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, OM: StructuredSequenceBackendWr
             k: sizes.k,
             is_duplicate: false,
             is_resplitted: false,
+            is_outlier: false,
+            average_sequences: 0,
         }
     }
 
@@ -180,6 +185,7 @@ impl<
         global_data: &<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
         extra_bucket_data: Option<ExtraBucketData>,
         is_resplitted: bool,
+        average_sequences: u64,
     ) {
         stats!(
             map_struct.detailed_stats = Default::default();
@@ -188,6 +194,9 @@ impl<
         );
         map_struct.is_duplicate = extra_bucket_data == Some(DUPLICATES_BUCKET_EXTRA);
         map_struct.is_resplitted = is_resplitted;
+
+        map_struct.average_sequences = average_sequences;
+        map_struct.is_outlier = false;
         if is_resplitted {
             map_struct.m = global_data.global_resplit_data.m;
         } else {
@@ -211,9 +220,12 @@ impl<
 
         let map_size = sequences_count.next_power_of_two().max(4) as usize;
 
+        map_packet.is_outlier =
+            sequences_count > MAX_SUBBUCKET_AVERAGE_MULTIPLIER * map_packet.average_sequences;
+
         map_packet.minimizer_superkmers.initialize(map_size);
 
-        if map_packet.is_duplicate || map_packet.is_resplitted {
+        if map_packet.is_duplicate || map_packet.is_outlier {
             process_reads_callback(
                 map_packet,
                 #[inline(always)]

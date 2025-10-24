@@ -97,6 +97,7 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
         global_data: &F::GlobalExtraData,
         extra_bucket_data: Option<ExtraBucketData>,
         is_resplitted: bool,
+        average_sequences: u64,
     );
     fn process_group_sequences(
         &mut self,
@@ -161,6 +162,9 @@ pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     total_sequences: AtomicU64,
     total_kmers: AtomicU64,
     unique_kmers: AtomicU64,
+
+    total_subbucket_sequences: AtomicU64,
+    total_subbucket_count: AtomicU64,
 }
 
 impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
@@ -257,6 +261,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             total_sequences: AtomicU64::new(0),
             total_kmers: AtomicU64::new(0),
             unique_kmers: AtomicU64::new(0),
+
+            total_subbucket_sequences: AtomicU64::new(0),
+            total_subbucket_count: AtomicU64::new(0),
         });
 
         Self {
@@ -298,6 +305,12 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 if let Some(bucket) = bucket {
                     total_subbuckets_sequences += bucket.sequences_count;
                     total_subbuckets_count += 1;
+                    self.global_context
+                        .total_subbucket_sequences
+                        .store(total_subbuckets_sequences, Ordering::Relaxed);
+                    self.global_context
+                        .total_subbucket_count
+                        .store(total_subbuckets_count, Ordering::Relaxed);
                 }
             }
 
@@ -313,9 +326,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     continue;
                 };
 
-                let is_outlier = bucket.extra_bucket_data.is_some() // Always resplit if this bucket is a duplicates bucket
-                ||
-                splitted_bucket.sequences_count
+                let is_outlier = splitted_bucket.sequences_count
                     > bucket_sequences_average * MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
 
                 // Add the sub-bucket job

@@ -51,7 +51,7 @@ pub const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(10);
 
 // The maximum size multiplier of a subbucket when compared to the sizes averages
 pub const MAX_SUBBUCKET_AVERAGE_MULTIPLIER: u64 = 8;
-pub const MIN_AVERAGE_CAP: u64 = 2000;
+pub const MIN_AVERAGE_CAP: u64 = 5000;
 pub const MIN_RESPLIT_BUCKETS_COUNT: u64 = 4;
 pub const MAX_RESPLIT_BUCKETS_COUNT: u64 = 1024;
 
