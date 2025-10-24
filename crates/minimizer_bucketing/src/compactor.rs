@@ -15,26 +15,29 @@ use crate::{
     split_buckets::SplittedBucket,
 };
 use config::{
-    BucketIndexType, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS,
-    DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE, DEFAULT_OUTPUT_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, DEFAULT_UNCOMPACTED_TEMP_STORAGE, HASH_MAX_OVERREAD, KEEP_FILES,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, MultiplicityCounterType, SwapPriority, get_memory_mode,
+    BucketIndexType, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS, DEFAULT_OUTPUT_BUFFER_SIZE,
+    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    MultiplicityCounterType, SwapPriority, get_memory_mode,
 };
 use ggcat_logging::stats;
 use hashes::HashableSequence;
 use io::{
-    compressed_read::{CompressedRead, CompressedReadIndipendent},
+    compressed_read::CompressedRead,
     concurrent::temp_reads::{
         creads_utils::{
             AssemblerMinimizerPosition, CompressedReadsBucketData,
             CompressedReadsBucketDataSerializer, DeserializedRead, NoAlignment,
             NoAlignmentWithOverflow, NoMultiplicity, NoSecondBucket, ReadsCheckpointData,
-            WithMultiplicity, WithSecondBucket, helpers::helper_read_bucket,
+            WithFixedMultiplicity, WithMultiplicity, WithSecondBucket, helpers::helper_read_bucket,
         },
         extra_data::{
             SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
             SequenceExtraDataTempBufferManagement,
         },
+    },
+    memstorage::{
+        ReadMemStorage, memstorage_decode_reads, memstorage_decode_reads_changing,
+        memstorage_encode_read,
     },
 };
 use nightly_quirks::branch_pred::likely;
@@ -63,15 +66,6 @@ pub struct MinimizerBucketingCompactor<
     _phantom: PhantomData<(Executor, SingleData, MultipleData)>, // mem_tracker: MemoryTracker<Self>,
 }
 
-#[derive(Copy, Clone)]
-struct SuperKmerEntry<E> {
-    read: CompressedReadIndipendent,
-    multiplicity: MultiplicityCounterType,
-    extra: E,
-    minimizer_pos: u16,
-    flags: u8,
-}
-
 struct SuperKmerEntryRef<'a, E> {
     read: CompressedRead<'a>,
     multiplicity: MultiplicityCounterType,
@@ -88,20 +82,20 @@ pub struct BucketsCompactor<
     read_thread: Arc<AsyncReaderThread>,
 
     // The single sub-bucket hashmap
-    super_kmers_hashmap: FuzzyHashmap<SuperKmerEntry<MultipleData>, 0>,
+    super_kmers_hashmap: FuzzyHashmap<u8, 0>,
 
     // The single sub-bucket extra buffer with multiplicity
     super_kmers_extra_buffer: <MultipleData as SequenceExtraDataTempBufferManagement>::TempBuffer,
 
-    // The single sub-bucket kmers storage
-    super_kmers_storage: ResizableVec<u8, DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE>,
-
     // The uncompacted sk buffer
-    uncompacted_super_kmers_buffer:
-        Vec<ResizableVec<SuperKmerEntry<MultipleData>, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS>>,
-
-    // The uncompacted sk storage
-    uncompacted_super_kmers_storage: ResizableVec<u8, DEFAULT_UNCOMPACTED_TEMP_STORAGE>,
+    uncompacted_super_kmers_buffer: Vec<
+        ReadMemStorage<
+            ResizableVec<u8, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS>,
+            MultipleData,
+            WithMultiplicity,
+            AssemblerMinimizerPosition,
+        >,
+    >,
 
     // The uncompacted extra buffer
     uncompacted_super_kmers_extra_buffer:
@@ -113,7 +107,7 @@ pub struct BucketsCompactor<
 }
 
 impl<
-    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
+    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + Copy + 'static,
     MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + Copy + 'static,
     FlagsCount: typenum::Unsigned,
 > BucketsCompactor<SingleData, MultipleData, FlagsCount>
@@ -124,11 +118,9 @@ impl<
             super_kmers_hashmap: FuzzyHashmap::new(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS),
             super_kmers_extra_buffer:
                 <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer(),
-            super_kmers_storage: ResizableVec::new(),
             uncompacted_super_kmers_buffer: (0..second_buckets.total_buckets_count)
-                .map(|_| ResizableVec::new())
+                .map(|_| ReadMemStorage::new(ResizableVec::new()))
                 .collect(),
-            uncompacted_super_kmers_storage: ResizableVec::new(),
             uncompacted_super_kmers_extra_buffer:
                 <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer(),
             k,
@@ -142,8 +134,7 @@ impl<
         E: SequenceExtraDataCombiner + SequenceExtraDataConsecutiveCompression + Copy,
     >(
         super_kmer: SuperKmerEntryRef<E>,
-        super_kmers_hashmap: &mut FuzzyHashmap<SuperKmerEntry<E>, 0>,
-        super_kmers_storage: &mut Vec<u8>,
+        super_kmers_hashmap: &mut FuzzyHashmap<u8, 0>,
         total_sequences: &mut usize,
         in_extra_buffer: &E::TempBuffer,
         out_extra_buffer: &mut E::TempBuffer,
@@ -161,33 +152,53 @@ impl<
 
         let elements = super_kmers_hashmap.get_elements_mut(read_hash);
 
-        for entry in elements {
-            if likely({
-                entry.read.bases_count() == read.bases_count()
-                    && entry.read.get_packed_slice_aligned(super_kmers_storage) == read_slice
-                    && entry.flags == flags
-            }) {
-                entry.multiplicity += multiplicity;
-                entry
-                    .extra
-                    .combine_entries(out_extra_buffer, extra, in_extra_buffer);
-                return;
-            }
+        let found = memstorage_decode_reads_changing::<E, AssemblerMinimizerPosition>(
+            elements.as_mut_ptr(),
+            elements.len(),
+            |entry, entry_extra, entry_multiplicity| {
+                if likely({
+                    entry.read.bases_count() == read.bases_count()
+                        && entry.read.get_packed_slice() == read_slice
+                        && entry.flags == flags
+                }) {
+                    unsafe {
+                        std::ptr::write_unaligned(
+                            entry_multiplicity,
+                            std::ptr::read_unaligned(entry_multiplicity) + multiplicity,
+                        );
+                        let mut new_extra = std::ptr::read_unaligned(entry_extra);
+                        new_extra.combine_entries(out_extra_buffer, extra, in_extra_buffer);
+                        std::ptr::write_unaligned(entry_extra, new_extra);
+                    }
+                    return true;
+                }
+                false
+            },
+        );
+
+        if found {
+            return;
         }
 
         let extra = E::copy_extra_from(extra, in_extra_buffer, out_extra_buffer);
 
-        super_kmers_hashmap.add_element(
-            read_hash,
-            SuperKmerEntry {
-                read: CompressedReadIndipendent::from_read::<true>(&read, super_kmers_storage),
+        memstorage_encode_read::<E, WithFixedMultiplicity, AssemblerMinimizerPosition>(
+            &DeserializedRead {
+                read,
                 multiplicity,
                 minimizer_pos,
                 flags,
                 extra,
+                second_bucket: 0,
+            },
+            |needed, reserved| {
+                // TODO: Manage reserved
+                let ptr = super_kmers_hashmap.allocate_elements(read_hash, needed);
+                super_kmers_hashmap.allocator_reserve_additional(reserved);
+                ptr
             },
         );
-        super_kmers_storage.reserve(HASH_MAX_OVERREAD);
+        // super_kmers_storage.reserve(HASH_MAX_OVERREAD);
         *total_sequences += 1;
     }
 
@@ -202,6 +213,7 @@ impl<
         static COMPACTED_INDEX: AtomicUsize = AtomicUsize::new(0);
 
         const COMPACTED_VS_UNCOMPACTED_RATIO: f64 = 0.5;
+        const COMPACTED_VS_UNCOMPACTED_RATIO_FORCED: f64 = 2.0;
 
         // Outline of the compaction algorithm:
         // OBJECTIVE: Compact the new buckets avoiding too much overhead in compaction
@@ -257,6 +269,9 @@ impl<
             let max_compacted =
                 (taken_uncompacted_size as f64 * COMPACTED_VS_UNCOMPACTED_RATIO) as u64;
 
+            let max_compacted_forced =
+                (taken_uncompacted_size as f64 * COMPACTED_VS_UNCOMPACTED_RATIO_FORCED) as u64;
+
             let mut compactable_chunks_size = 0;
 
             let compactable_buckets_threshold = 2 * taken_uncompacted_size as u64;
@@ -286,8 +301,9 @@ impl<
             while let Some(chunk) = bucket.chunks.last() {
                 let chunk_size = MemoryFs::get_file_size(&chunk).unwrap() as u64;
 
-                let force_compactable =
-                    force_advanced_compaction && chunk_size < compactable_buckets_threshold;
+                let force_compactable = force_advanced_compaction
+                    && chunk_size < compactable_buckets_threshold
+                    && taken_compacted_size + chunk_size < max_compacted_forced;
 
                 if !force_compactable && taken_compacted_size + chunk_size > max_compacted {
                     break;
@@ -330,14 +346,9 @@ impl<
                 bucket_file_index.into_chunks(),
                 None,
                 |read, extra_buffer| {
-                    let sequence = CompressedReadIndipendent::from_read::<true>(
-                        &read.read,
-                        &mut self.uncompacted_super_kmers_storage,
-                    );
-
-                    self.uncompacted_super_kmers_buffer[read.second_bucket as usize].push(
-                        SuperKmerEntry {
-                            read: sequence,
+                    self.uncompacted_super_kmers_buffer[read.second_bucket as usize].encode_read(
+                        &DeserializedRead {
+                            read: read.read,
                             multiplicity: read.multiplicity,
                             minimizer_pos: read.minimizer_pos,
                             flags: read.flags,
@@ -347,6 +358,7 @@ impl<
                                 extra_buffer,
                             )
                             .0,
+                            second_bucket: 0,
                         },
                     );
                 },
@@ -354,8 +366,8 @@ impl<
             );
         }
 
-        self.uncompacted_super_kmers_storage
-            .reserve(HASH_MAX_OVERREAD);
+        // self.uncompacted_super_kmers_storage
+        //     .reserve(HASH_MAX_OVERREAD);
 
         let compact_index = COMPACTED_INDEX.fetch_add(1, Ordering::Relaxed);
 
@@ -398,8 +410,6 @@ impl<
             FlagsCount,
         >::new(self.k);
 
-        let mut total_sequences = 0;
-
         let mut single_to_multiple_extra_buffer =
             <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer();
         let mut multiple_to_single_extra_buffer =
@@ -414,7 +424,7 @@ impl<
             self.uncompacted_super_kmers_buffer.len(),
         );
 
-        let mut super_kmers_temp = [vec![], vec![]];
+        let mut super_kmers_temp = [ReadMemStorage::<_, MultipleData, WithFixedMultiplicity, AssemblerMinimizerPosition>::new(vec![]), ReadMemStorage::new(vec![])];
         let mut multi_buffer = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
         let mut single_buffer = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
 
@@ -423,23 +433,24 @@ impl<
             .zip(&mut self.uncompacted_super_kmers_buffer)
             .enumerate()
         {
+            let mut total_sequences = 0;
+
             // stats!(
             //     let pop_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
             // );
 
-            if uncompacted_buffer.is_empty() && compacted_sub_bucket.is_none() {
+            if uncompacted_buffer.sequences_count() == 0 && compacted_sub_bucket.is_none() {
                 // Skip the sub-bucket if it has no data
                 continue;
             }
 
-            let total_sequences_count = uncompacted_buffer.len()
+            let total_sequences_count = uncompacted_buffer.sequences_count()
                 + compacted_sub_bucket
                     .as_ref()
                     .map(|c| c.sequences_count)
                     .unwrap_or(0) as usize;
 
             // Clear all temp data
-            self.super_kmers_storage.clear();
             MultipleData::clear_temp_buffer(&mut self.super_kmers_extra_buffer);
             serializer_single.reset();
             serializer_multi.reset();
@@ -475,7 +486,6 @@ impl<
                                 extra,
                             },
                             &mut self.super_kmers_hashmap,
-                            &mut self.super_kmers_storage,
                             &mut total_sequences,
                             &in_extra_buffer,
                             &mut self.super_kmers_extra_buffer,
@@ -484,40 +494,46 @@ impl<
                 );
             }
 
-            for entry in uncompacted_buffer.drain(..) {
+            uncompacted_buffer.decode_reads(|entry| {
                 Self::process_superkmer::<MultipleData>(
                     SuperKmerEntryRef {
-                        read: entry
-                            .read
-                            .as_reference(&self.uncompacted_super_kmers_storage),
+                        read: entry.read,
                         multiplicity: entry.multiplicity,
                         minimizer_pos: entry.minimizer_pos,
                         flags: entry.flags,
                         extra: entry.extra,
                     },
                     &mut self.super_kmers_hashmap,
-                    &mut self.super_kmers_storage,
                     &mut total_sequences,
                     &self.uncompacted_super_kmers_extra_buffer,
                     &mut self.super_kmers_extra_buffer,
                 );
-            }
+            });
+            uncompacted_buffer.clear();
+            // for entry in uncompacted_buffer.drain(..) {}
 
-            super_kmers_temp[0].reserve(total_sequences);
-            super_kmers_temp[1].reserve(total_sequences);
+            // super_kmers_temp[0].reserve(total_sequences);
+            // super_kmers_temp[1].reserve(total_sequences);
 
             // Split between single (multiplicity = 1) and multiple superkmers
-            self.super_kmers_hashmap.process_elements(|sks| {
-                for sk in sks {
-                    let mult_type = (sk.multiplicity > 1) as usize;
-                    super_kmers_temp[mult_type].push(*sk);
-                }
-            });
+            self.super_kmers_hashmap.process_elements(
+                |sks| {
+                    memstorage_decode_reads::<
+                        MultipleData,
+                        WithFixedMultiplicity,
+                        AssemblerMinimizerPosition,
+                    >(sks.as_ptr(), sks.len(), |sk| {
+                        let mult_type = (sk.multiplicity > 1) as usize;
+                        super_kmers_temp[mult_type].encode_read(&sk);
+                    })
+                },
+                false,
+            );
 
             new_bucket_multi.set_checkpoint_data(
                 Some(&ReadsCheckpointData {
                     target_subbucket: sub_bucket_index as BucketIndexType,
-                    sequences_count: super_kmers_temp[1].len(),
+                    sequences_count: super_kmers_temp[1].sequences_count(),
                 }),
                 None,
             );
@@ -525,76 +541,77 @@ impl<
             new_bucket_single.set_checkpoint_data(
                 Some(&ReadsCheckpointData {
                     target_subbucket: sub_bucket_index as BucketIndexType,
-                    sequences_count: super_kmers_temp[0].len(),
+                    sequences_count: super_kmers_temp[0].sequences_count(),
                 }),
                 None,
             );
 
             // Handle superkmers with multiplicity == 1
-            for SuperKmerEntry {
-                read,
-                extra,
-                multiplicity: _,
-                minimizer_pos,
-                flags,
-            } in super_kmers_temp[0].drain(..)
-            {
-                let read = read.as_reference(&self.super_kmers_storage);
+            super_kmers_temp[0].decode_reads(
+                |DeserializedRead {
+                     read,
+                     extra,
+                     minimizer_pos,
+                     flags,
+                     ..
+                 }| {
+                    // Not needed because the entry has a single value
+                    // extra.prepare_for_serialization(&mut self.super_kmers_extra_buffer);
 
-                // Not needed because the entry has a single value
-                // extra.prepare_for_serialization(&mut self.super_kmers_extra_buffer);
+                    SingleData::clear_temp_buffer(&mut multiple_to_single_extra_buffer);
+                    let extra = extra.to_single(
+                        &self.super_kmers_extra_buffer,
+                        &mut multiple_to_single_extra_buffer,
+                    );
 
-                SingleData::clear_temp_buffer(&mut multiple_to_single_extra_buffer);
-                let extra = extra.to_single(
-                    &self.super_kmers_extra_buffer,
-                    &mut multiple_to_single_extra_buffer,
-                );
+                    serializer_single.write_to(
+                        &CompressedReadsBucketData::new_packed(read, flags, 0, minimizer_pos),
+                        &mut single_buffer,
+                        &extra,
+                        &multiple_to_single_extra_buffer,
+                    );
 
-                serializer_single.write_to(
-                    &CompressedReadsBucketData::new_packed(read, flags, 0, minimizer_pos),
-                    &mut single_buffer,
-                    &extra,
-                    &multiple_to_single_extra_buffer,
-                );
-
-                if single_buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
-                    new_bucket_single.write_data(&single_buffer);
-                    single_buffer.clear();
-                }
-            }
+                    if single_buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
+                        new_bucket_single.write_data(&single_buffer);
+                        single_buffer.clear();
+                    }
+                },
+            );
 
             // Handle superkmers with multiplicity > 1
-            for SuperKmerEntry {
-                read,
-                mut extra,
-                multiplicity,
-                minimizer_pos,
-                flags,
-            } in super_kmers_temp[1].drain(..)
-            {
-                let read = read.as_reference(&self.super_kmers_storage);
-                extra.prepare_for_serialization(&mut self.super_kmers_extra_buffer);
+            super_kmers_temp[1].decode_reads(
+                |DeserializedRead {
+                     read,
+                     mut extra,
+                     multiplicity,
+                     minimizer_pos,
+                     flags,
+                     ..
+                 }| {
+                    extra.prepare_for_serialization(&mut self.super_kmers_extra_buffer);
 
-                serializer_multi.write_to(
-                    &CompressedReadsBucketData::new_packed_with_multiplicity(
-                        read,
-                        flags,
-                        0,
-                        multiplicity,
-                        minimizer_pos,
-                    ),
-                    &mut multi_buffer,
-                    &extra,
-                    &self.super_kmers_extra_buffer,
-                );
-                if multi_buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
-                    new_bucket_multi.write_data(&multi_buffer);
-                    multi_buffer.clear();
-                }
-            }
+                    serializer_multi.write_to(
+                        &CompressedReadsBucketData::new_packed_with_multiplicity(
+                            read,
+                            flags,
+                            0,
+                            multiplicity,
+                            minimizer_pos,
+                        ),
+                        &mut multi_buffer,
+                        &extra,
+                        &self.super_kmers_extra_buffer,
+                    );
+                    if multi_buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
+                        new_bucket_multi.write_data(&multi_buffer);
+                        multi_buffer.clear();
+                    }
+                },
+            );
 
             super_kmers_temp[0].clear();
             super_kmers_temp[1].clear();
+            self.super_kmers_hashmap.reset_allocator();
 
             if multi_buffer.len() > 0 {
                 new_bucket_multi.write_data(&multi_buffer);
@@ -609,11 +626,6 @@ impl<
         // Final clearing of all buffers
         {
             MultipleData::clear_temp_buffer(&mut self.super_kmers_extra_buffer);
-            self.super_kmers_storage.clear();
-            self.uncompacted_super_kmers_buffer
-                .iter_mut()
-                .for_each(|b| b.clear());
-            self.uncompacted_super_kmers_storage.clear();
             MultipleData::clear_temp_buffer(&mut self.uncompacted_super_kmers_extra_buffer);
         }
 
@@ -622,21 +634,6 @@ impl<
 
         let new_path_single = new_bucket_single.get_path();
         new_bucket_single.finalize();
-
-        // {
-        //     let new_compacted_size = MemoryFs::get_file_size(&new_path).unwrap();
-        //     let new_compacted_single_size = MemoryFs::get_file_size(&new_path_single).unwrap();
-
-        //     println!(
-        //         "Input size: C: {} U: {} output size: C: {} S: {} compr ratio: {} force: {}",
-        //         taken_compacted_size,
-        //         taken_uncompacted_size,
-        //         new_compacted_size,
-        //         new_compacted_single_size,
-        //         input_files_size as f64 / (new_compacted_size + new_compacted_single_size) as f64,
-        //         force_advanced_compaction
-        //     )
-        // }
 
         // Update the final buckets with new info
         let mut bucket = compacted_bucket.lock();
@@ -660,16 +657,6 @@ impl<
         //     COMPACTED_TIME.fetch_add(compacted_time.as_micros() as u64, Ordering::Relaxed);
         // let uncompacted_micros =
         //     UNCOMPACTED_TIME.fetch_add(uncompacted_time.as_micros() as u64, Ordering::Relaxed);
-
-        // println!(
-        //     "Uncompacted: {:?} Compacted: {:?} ratio: {:.2} TOTAL: Uncompacted: {:.2}s Compacted: {:.2}s ratio: {:.2}",
-        //     uncompacted_time,
-        //     compacted_time,
-        //     uncompacted_time.as_secs_f64() / compacted_time.as_secs_f64(),
-        //     (uncompacted_micros + uncompacted_time.as_micros() as u64) as f64 / 1_000_000.0,
-        //     (compacted_micros + compacted_time.as_micros() as u64) as f64 / 1_000_000.0,
-        //     uncompacted_micros as f64 / compacted_micros as f64
-        // );
 
         stats!(
             stats

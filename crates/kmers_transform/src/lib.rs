@@ -313,7 +313,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     continue;
                 };
 
-                let is_outlier = splitted_bucket.sequences_count
+                let is_outlier = bucket.extra_bucket_data.is_some() // Always resplit if this bucket is a duplicates bucket
+                ||
+                splitted_bucket.sequences_count
                     > bucket_sequences_average * MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
 
                 // Add the sub-bucket job

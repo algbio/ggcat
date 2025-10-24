@@ -123,6 +123,10 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
         self.data.capacity()
     }
 
+    pub fn reserve_additional(&mut self, additional: usize) {
+        self.data.reserve(additional);
+    }
+
     #[inline]
     pub fn new_vec(&mut self, size: usize) -> InlineVec<T, LOCAL_FITTING> {
         if size <= LOCAL_FITTING {
@@ -139,13 +143,13 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
     }
 
     #[inline]
-    pub fn extend_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>, values: &[T]) {
-        let mut ptr = if !Self::SUPPORTS_LOCAL || (vec.size + values.len() > LOCAL_FITTING) {
+    pub fn reserve_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>, count: usize) -> *mut T {
+        let ptr = if !Self::SUPPORTS_LOCAL || (vec.size + count > LOCAL_FITTING) {
             let npt = vec.size.next_power_of_two();
-            if vec.size + values.len() > npt {
+            if vec.size + count > npt {
                 let mut old_data = vec.data.clone();
 
-                let new_size = (vec.size + values.len()).next_power_of_two();
+                let new_size = (vec.size + count).next_power_of_two();
                 vec.data = self.alloc(new_size);
                 unsafe {
                     std::ptr::copy_nonoverlapping(
@@ -161,13 +165,19 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
             unsafe { vec.data.data.as_mut_ptr().add(vec.size) }
         };
 
+        vec.size += count;
+        ptr
+    }
+
+    #[inline]
+    pub fn extend_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>, values: &[T]) {
+        let mut ptr = self.reserve_vec(vec, values.len());
         unsafe {
             for value in values {
                 std::ptr::write(ptr, *value);
                 ptr = ptr.add(1);
             }
         }
-        vec.size += values.len();
     }
 
     #[inline]

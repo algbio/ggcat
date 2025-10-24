@@ -48,6 +48,7 @@ pub struct ParallelKmersMergeMapPacket<
         <<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
 
     pub is_duplicate: bool,
+    pub is_resplitted: bool,
     pub m: usize,
     pub k: usize,
 }
@@ -68,6 +69,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, OM: StructuredSequenceBackendWr
             m: sizes.m,
             k: sizes.k,
             is_duplicate: false,
+            is_resplitted: false,
         }
     }
 
@@ -120,6 +122,44 @@ impl<
     }
 }
 
+fn add_read<
+    MH: HashFunctionFactory,
+    CX: ColorsManager,
+    OM: StructuredSequenceBackendWrapper,
+    const COMPUTE_SIMPLITIGS: bool,
+>(
+    map_packet: &mut ParallelKmersMergeMapPacket<MH, CX, OM>,
+    read: &DeserializedRead<'_, <ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>,
+    extra_buffer: &<<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
+) {
+    let minimizer_pos = read.minimizer_pos as usize;
+
+    let minimizer_hash = unsafe {
+        read.read
+            .sub_slice(minimizer_pos..minimizer_pos + map_packet.m)
+            .compute_hash_aligned_overflow16()
+    };
+
+    let new_read = CompressedReadIndipendent::from_read::<false>(
+        &read.read,
+        &mut map_packet.superkmers_storage,
+    );
+
+    let hash = hash_integer(minimizer_hash);
+
+    let element = DeserializedReadIndependent {
+                            read: new_read,
+                            extra: <ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity
+                                ::copy_extra_from(read.extra, extra_buffer, &mut map_packet.superkmers_extra_buffer),
+                            multiplicity: read.multiplicity,
+                            minimizer_pos: read.minimizer_pos,
+                            flags: read.flags,
+                            second_bucket: read.second_bucket,
+                        };
+
+    map_packet.minimizer_superkmers.add_element(hash, element);
+}
+
 impl<
     MH: HashFunctionFactory,
     CX: ColorsManager,
@@ -147,6 +187,7 @@ impl<
             map_struct.detailed_stats.start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed().into();
         );
         map_struct.is_duplicate = extra_bucket_data == Some(DUPLICATES_BUCKET_EXTRA);
+        map_struct.is_resplitted = is_resplitted;
         if is_resplitted {
             map_struct.m = global_data.global_resplit_data.m;
         } else {
@@ -172,7 +213,7 @@ impl<
 
         map_packet.minimizer_superkmers.initialize(map_size);
 
-        if map_packet.is_duplicate {
+        if map_packet.is_duplicate || map_packet.is_resplitted {
             process_reads_callback(
                 map_packet,
                 #[inline(always)]
@@ -185,52 +226,9 @@ impl<
                 map_packet,
                 #[inline(always)]
                 |map_packet, read, extra_buffer| {
-                    // TODO:
-                    // Save the start offset of the minimizer in the bucket
-
-                    // first pass: collapse unique super-kmers
-                    // index k-mers based on (loe 32-bit) 2-fold minimizer values + distance between minimizers
-                    // Betore adding a new super-kmer, check if there are k-mers already present in the current dataset
-                    // In case, define a plan to increase that k-mer counter in the end, and mask out the current k-mer.
-                    // Iterate each super-kmer, cnecking for duplicate/branching k-mers by using the minimizer pair hashtable
-
-                    // TODO:
-                    // 0) Track unicity of minimizers & improve first hash computation (x4 speed improvement)
-                    // 1) Add a flag to each read to determine if the minimizer is unique or not
-                    // 2) Find the one (or multiple) minimizers in each super-kmer and compute the left and/or right extended minimizer of size m+(k-m+1?)/2
-                    // 3) Dedup and group the super-kmers by their extended minimizers (common storage + specialized vec based hashmap)
-                    // 4) For each super-kmer extended minimizer group build the maximal unitigs and join them using an hashmap
-                    // 5) Improve the kmers hashmap storage, reducing accesses from 1 to 4
-                    // 5) Optionally increase the threshold for resplitting
-
-                    let minimizer_pos = read.minimizer_pos as usize;
-
-                    let minimizer_hash = unsafe {
-                        read.read
-                            .sub_slice(minimizer_pos..minimizer_pos + map_packet.m)
-                            .compute_hash_aligned_overflow16()
-                    };
-
-                    let new_read = CompressedReadIndipendent::from_read::<false>(
-                        &read.read,
-                        &mut map_packet.superkmers_storage,
-                    );
-
-                    let hash = hash_integer(minimizer_hash);
-
-                    let element = DeserializedReadIndependent {
-                        read: new_read,
-                        extra: <ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity
-                            ::copy_extra_from(read.extra, extra_buffer, &mut map_packet.superkmers_extra_buffer),
-                        multiplicity: read.multiplicity,
-                        minimizer_pos: read.minimizer_pos,
-                        flags: read.flags,
-                        second_bucket: read.second_bucket,
-                    };
-
-                    map_packet.minimizer_superkmers.add_element(hash, element);
+                    add_read::<_, _, _, COMPUTE_SIMPLITIGS>(map_packet, read, extra_buffer)
                 },
-            )
+            );
         }
     }
 

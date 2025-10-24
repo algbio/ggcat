@@ -70,8 +70,33 @@ impl<T: Copy, const LOCAL_FITTING: usize> FuzzyHashmap<T, LOCAL_FITTING> {
         element_bucket.len()
     }
 
+    #[inline]
+    pub fn allocate_elements(&mut self, hash: u64, count: usize) -> *mut T {
+        let position = (hash as usize) & self.capacity_mask;
+        // Safety: position is in and with capacity_mask
+        let element_bucket = unsafe { self.hashmap.get_unchecked_mut(position) };
+
+        unsafe {
+            // Branchless push
+            self.occupation.reserve(1);
+            *self.occupation.as_mut_ptr().add(self.occupation.len()) = position;
+            self.occupation
+                .set_len(self.occupation.len() + (element_bucket.len() == 0) as usize);
+        }
+
+        self.allocator.reserve_vec(element_bucket, count)
+    }
+
+    pub fn allocator_reserve_additional(&mut self, additional: usize) {
+        self.allocator.reserve_additional(additional)
+    }
+
     #[inline(always)]
-    pub fn process_elements(&mut self, mut elements_cb: impl FnMut(&mut [T])) {
+    pub fn process_elements(
+        &mut self,
+        mut elements_cb: impl FnMut(&mut [T]),
+        reset_allocator: bool,
+    ) {
         for position in self.occupation.drain(..) {
             let elements = unsafe { self.hashmap.get_unchecked_mut(position) };
             if elements.is_poisoned() {
@@ -81,6 +106,12 @@ impl<T: Copy, const LOCAL_FITTING: usize> FuzzyHashmap<T, LOCAL_FITTING> {
             *elements = InlineVec::new();
         }
 
-        self.allocator.reset();
+        if reset_allocator {
+            self.allocator.reset();
+        }
+    }
+
+    pub fn reset_allocator(&mut self) {
+        self.allocator.reset()
     }
 }

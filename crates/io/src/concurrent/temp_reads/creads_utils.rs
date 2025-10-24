@@ -209,14 +209,24 @@ impl<const ENABLED: bool> BucketModeOption for BucketModeFromBoolean<ENABLED> {
 pub struct NoMultiplicity;
 pub struct WithMultiplicity;
 
+pub struct WithFixedMultiplicity;
+
 pub trait MultiplicityModeOption {
     const ENABLED: bool;
+    const FIXED_SIZE: bool;
 }
 impl MultiplicityModeOption for NoMultiplicity {
     const ENABLED: bool = false;
+    const FIXED_SIZE: bool = true;
 }
 impl MultiplicityModeOption for WithMultiplicity {
     const ENABLED: bool = true;
+    const FIXED_SIZE: bool = false;
+}
+
+impl MultiplicityModeOption for WithFixedMultiplicity {
+    const ENABLED: bool = true;
+    const FIXED_SIZE: bool = true;
 }
 
 pub struct NoMinimizerPosition;
@@ -257,6 +267,7 @@ impl AlignModeOption for AlignToMinimizerByteBoundary {
 pub struct MultiplicityModeFromBoolean<const ENABLED: bool>;
 impl<const ENABLED: bool> MultiplicityModeOption for MultiplicityModeFromBoolean<ENABLED> {
     const ENABLED: bool = ENABLED;
+    const FIXED_SIZE: bool = false;
 }
 
 pub struct CompressedReadsBucketDataSerializer<

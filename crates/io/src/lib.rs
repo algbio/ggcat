@@ -17,6 +17,7 @@ use parallel_processor::{
 pub mod compressed_read;
 pub mod concurrent;
 pub mod lines_reader;
+pub mod memstorage;
 pub mod sequences_reader;
 pub mod sequences_stream;
 pub mod structs;
