@@ -284,7 +284,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
         colors_data: &mut UnitigExtensionColorsData<CX>,
         reads: &[DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>],
         extra_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        superkmers_storage: &'a Vec<u8>,
+        superkmers_storage: &'a [u8],
         range: Range<usize>,
         k: usize,
         suffix_length: usize,
@@ -523,7 +523,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
         colors_data: &mut UnitigExtensionColorsData<CX>,
         reads: &mut [DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>],
         extra_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        superkmers_storage: &Vec<u8>,
+        superkmers_storage: &[u8],
         k: usize,
         abundance_cutoff: usize,
         mut output_unitig: impl FnMut(

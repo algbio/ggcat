@@ -2,15 +2,17 @@ use crate::unitigs_extender::hashmap::HashMapUnitigsExtender;
 use crate::unitigs_extender::{GlobalExtenderParams, UnitigsExtenderTrait};
 use crate::{GlobalMergeData, ParallelKmersMergeFactory};
 use colors::colors_manager::{ColorsManager, color_types};
-use config::MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
+use config::{MAX_RESPLIT_SUBBUCKET_AVERAGE_MULTIPLIER, MAX_SUBBUCKET_AVERAGE_MULTIPLIER};
 use ggcat_logging::stats;
 use ggcat_logging::stats::KmersMergeBucketReport;
 use hashes::HashFunctionFactory;
 use io::DUPLICATES_BUCKET_EXTRA;
-use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
-use io::concurrent::temp_reads::creads_utils::{DeserializedRead, DeserializedReadIndependent};
+use io::concurrent::temp_reads::creads_utils::{
+    AssemblerMinimizerPosition, DeserializedRead, WithMultiplicity,
+};
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use io::memstorage::memstorage_encode_read;
 use kmers_transform::{
     GroupProcessStats, KmersTransformExecutorFactory, KmersTransformMapProcessor,
 };
@@ -41,10 +43,7 @@ pub struct ParallelKmersMergeMapPacket<
     pub detailed_stats: KmersMergeBucketReport,
     pub extender: HashMapUnitigsExtender<MH, CX>,
 
-    pub superkmers_storage: Box<Vec<u8>>,
-    pub minimizer_superkmers: FuzzyHashmap<DeserializedReadIndependent<<
-        ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>, 0>,
-
+    pub minimizer_superkmers: FuzzyHashmap<u8, 0>,
     pub superkmers_extra_buffer:
         <<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
 
@@ -66,7 +65,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, OM: StructuredSequenceBackendWr
         Self {
             detailed_stats: Default::default(),
             extender: HashMapUnitigsExtender::new(sizes),
-            superkmers_storage: Box::new(vec![]),
             minimizer_superkmers: FuzzyHashmap::new(MINIMIZER_MAP_DEFAULT_SIZE),
             superkmers_extra_buffer: Default::default(),
             m: sizes.m,
@@ -80,7 +78,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, OM: StructuredSequenceBackendWr
 
     fn reset(&mut self) {
         self.extender.reset();
-        self.superkmers_storage.clear();
         <<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>
             ::clear_temp_buffer(&mut self.superkmers_extra_buffer);
     }
@@ -145,24 +142,27 @@ fn add_read<
             .compute_hash_aligned_overflow16()
     };
 
-    let new_read = CompressedReadIndipendent::from_read::<false>(
-        &read.read,
-        &mut map_packet.superkmers_storage,
-    );
-
     let hash = hash_integer(minimizer_hash);
 
-    let element = DeserializedReadIndependent {
-                            read: new_read,
-                            extra: <ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity
-                                ::copy_extra_from(read.extra, extra_buffer, &mut map_packet.superkmers_extra_buffer),
-                            multiplicity: read.multiplicity,
-                            minimizer_pos: read.minimizer_pos,
-                            flags: read.flags,
-                            second_bucket: read.second_bucket,
-                        };
-
-    map_packet.minimizer_superkmers.add_element(hash, element);
+    memstorage_encode_read::<
+        <ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity, WithMultiplicity,
+        AssemblerMinimizerPosition,
+        false>(
+        &DeserializedRead {
+            read: read.read,
+            extra: <ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity
+                ::copy_extra_from(read.extra, extra_buffer, &mut map_packet.superkmers_extra_buffer),
+            multiplicity: read.multiplicity,
+            minimizer_pos: read.minimizer_pos,
+            flags: read.flags,
+            second_bucket: read.second_bucket,
+        },
+        |needed, reserved| {
+            // TODO: Manage reserved
+            map_packet.minimizer_superkmers.allocator_reserve_additional(reserved);
+            map_packet.minimizer_superkmers.allocate_elements(hash, needed)
+        },
+    );
 }
 
 impl<
@@ -218,12 +218,12 @@ impl<
     ) {
         let map_packet = self.map_packet.as_mut().unwrap().deref_mut();
 
-        let map_size = sequences_count.next_power_of_two().max(4) as usize;
-
-        map_packet.is_outlier =
-            sequences_count > MAX_SUBBUCKET_AVERAGE_MULTIPLIER * map_packet.average_sequences;
-
-        map_packet.minimizer_superkmers.initialize(map_size);
+        map_packet.is_outlier = if map_packet.is_resplitted {
+            sequences_count
+                > MAX_RESPLIT_SUBBUCKET_AVERAGE_MULTIPLIER * map_packet.average_sequences
+        } else {
+            sequences_count > MAX_SUBBUCKET_AVERAGE_MULTIPLIER * map_packet.average_sequences
+        };
 
         if map_packet.is_duplicate || map_packet.is_outlier {
             process_reads_callback(
@@ -234,6 +234,9 @@ impl<
                 },
             )
         } else {
+            let map_size = sequences_count.next_power_of_two().max(4) as usize;
+            map_packet.minimizer_superkmers.initialize(map_size);
+
             process_reads_callback(
                 map_packet,
                 #[inline(always)]

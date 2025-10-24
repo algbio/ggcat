@@ -94,6 +94,7 @@ pub struct BucketsCompactor<
             MultipleData,
             WithMultiplicity,
             AssemblerMinimizerPosition,
+            true,
         >,
     >,
 
@@ -152,7 +153,7 @@ impl<
 
         let elements = super_kmers_hashmap.get_elements_mut(read_hash);
 
-        let found = memstorage_decode_reads_changing::<E, AssemblerMinimizerPosition>(
+        let found = memstorage_decode_reads_changing::<E, AssemblerMinimizerPosition, true>(
             elements.as_mut_ptr(),
             elements.len(),
             |entry, entry_extra, entry_multiplicity| {
@@ -182,7 +183,7 @@ impl<
 
         let extra = E::copy_extra_from(extra, in_extra_buffer, out_extra_buffer);
 
-        memstorage_encode_read::<E, WithFixedMultiplicity, AssemblerMinimizerPosition>(
+        memstorage_encode_read::<E, WithFixedMultiplicity, AssemblerMinimizerPosition, true>(
             &DeserializedRead {
                 read,
                 multiplicity,
@@ -423,7 +424,16 @@ impl<
             self.uncompacted_super_kmers_buffer.len(),
         );
 
-        let mut super_kmers_temp = [ReadMemStorage::<_, MultipleData, WithFixedMultiplicity, AssemblerMinimizerPosition>::new(vec![]), ReadMemStorage::new(vec![])];
+        let mut super_kmers_temp = [
+            ReadMemStorage::<
+                _,
+                MultipleData,
+                WithFixedMultiplicity,
+                AssemblerMinimizerPosition,
+                true,
+            >::new(vec![]),
+            ReadMemStorage::new(vec![]),
+        ];
         let mut multi_buffer = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
         let mut single_buffer = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
 
@@ -521,6 +531,7 @@ impl<
                         MultipleData,
                         WithFixedMultiplicity,
                         AssemblerMinimizerPosition,
+                        true,
                     >(sks.as_ptr(), sks.len(), |sk| {
                         let mult_type = (sk.multiplicity > 1) as usize;
                         super_kmers_temp[mult_type].encode_read(&sk);

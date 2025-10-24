@@ -1,3 +1,5 @@
+use std::slice::from_raw_parts_mut;
+
 use crate::inline_vec::{Allocator, InlineVec};
 
 pub struct FuzzyHashmap<T: Copy, const LOCAL_FITTING: usize> {
@@ -91,10 +93,17 @@ impl<T: Copy, const LOCAL_FITTING: usize> FuzzyHashmap<T, LOCAL_FITTING> {
         self.allocator.reserve_additional(additional)
     }
 
+    pub fn get_allocator_storage_ptr(&self) -> (*const T, usize) {
+        (
+            self.allocator.get_heap_ptr(),
+            self.allocator.used_capacity(),
+        )
+    }
+
     #[inline(always)]
-    pub fn process_elements(
-        &mut self,
-        mut elements_cb: impl FnMut(&mut [T]),
+    pub fn process_elements<'a>(
+        &'a mut self,
+        mut elements_cb: impl FnMut(&'a mut [T]),
         reset_allocator: bool,
     ) {
         for position in self.occupation.drain(..) {
@@ -102,7 +111,8 @@ impl<T: Copy, const LOCAL_FITTING: usize> FuzzyHashmap<T, LOCAL_FITTING> {
             if elements.is_poisoned() {
                 continue;
             }
-            elements_cb(self.allocator.slice_vec_mut(elements));
+            let slice = self.allocator.slice_vec_mut(elements);
+            elements_cb(unsafe { from_raw_parts_mut(slice.as_mut_ptr(), slice.len()) });
             *elements = InlineVec::new();
         }
 

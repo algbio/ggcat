@@ -13,20 +13,23 @@ use ggcat_logging::stats;
 use hashes::extremal::{DelayedHashComputation, HashGenerator};
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use instrumenter::local_setup_instrumenter;
+use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::temp_reads::creads_utils::{
     AlignToMinimizerByteBoundary, AssemblerMinimizerPosition, CompressedReadsBucketData,
     CompressedReadsBucketDataSerializer, DeserializedReadIndependent, NoMultiplicity,
-    NoSecondBucket, ToReadData,
+    NoSecondBucket, ToReadData, WithMultiplicity,
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use io::memstorage::memstorage_decode_reads;
 use kmers_transform::{KmersTransformExecutorFactory, KmersTransformFinalExecutor};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::execution_manager::packet::Packet;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
+use std::slice::from_raw_parts;
 use std::sync::Arc;
 use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
 use typenum::U2;
@@ -245,7 +248,7 @@ impl<
         if !map_struct.is_duplicate && !map_struct.is_outlier {
             let mut process_fn = |minimizer_elements: &mut [DeserializedReadIndependent<<
                 ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>],
-                superkmers_storage: &Vec<u8>,
+                superkmers_storage: &[u8],
                 superkmers_extra_buffer: &<<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer| {
                     if minimizer_elements.len() <= 1
                         && minimizer_elements[0].multiplicity as usize
@@ -339,14 +342,35 @@ impl<
                     );
                 };
 
+            let mut minimizer_elements = vec![];
+
+            let (storage_ptr, storage_size) =
+                map_struct.minimizer_superkmers.get_allocator_storage_ptr();
             map_struct.minimizer_superkmers.process_elements(
                 #[inline(always)]
-                |minimizer_elements| {
-                    process_fn(
-                        minimizer_elements,
-                        &map_struct.superkmers_storage,
-                        &map_struct.superkmers_extra_buffer,
-                    )
+                |minimizer_elements_data| {
+                    minimizer_elements.clear();
+                    let storage = unsafe {
+                        from_raw_parts(storage_ptr, storage_size)
+                    };
+
+                    memstorage_decode_reads::<
+                        <ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
+                        WithMultiplicity,
+                        AssemblerMinimizerPosition,
+                        false,
+                    >(minimizer_elements_data.as_ptr(), minimizer_elements_data.len(), |element| {
+                        minimizer_elements.push(DeserializedReadIndependent { read: CompressedReadIndipendent::from_read_inplace(&element.read, storage),
+                            extra: element.extra,
+                            multiplicity: element.multiplicity,
+                            minimizer_pos: element.minimizer_pos,
+                            flags: element.flags,
+                            second_bucket: element.second_bucket });
+                    });
+
+                    process_fn(&mut minimizer_elements,
+                        storage,
+                        &map_struct.superkmers_extra_buffer);
                 },
                 true,
             );

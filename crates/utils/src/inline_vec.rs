@@ -123,6 +123,10 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
         self.data.capacity()
     }
 
+    pub fn get_heap_ptr(&self) -> *const T {
+        self.data.as_ptr() as *const T
+    }
+
     pub fn reserve_additional(&mut self, additional: usize) {
         self.data.reserve(additional);
     }
