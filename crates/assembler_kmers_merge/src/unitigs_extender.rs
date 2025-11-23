@@ -60,7 +60,6 @@ pub trait UnitigsExtenderTrait<MH: HashFunctionFactory, CX: ColorsManager> {
             &[u8],
             Option<PrecomputedHash<MH>>,
             Option<PrecomputedHash<MH>>,
-            bool,
             SequenceAbundanceType,
         ),
     );

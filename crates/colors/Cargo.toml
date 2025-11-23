@@ -12,7 +12,7 @@ dynamic-dispatch = "0.5.4"
 
 # Common libraries
 parallel-processor = "0.2.1"
-streaming-libdeflate-rs = "0.2.2"
+streaming-libdeflate-rs = "0.2.3"
 nightly-quirks = "0.1.4"
 
 # Common pipeline libraries

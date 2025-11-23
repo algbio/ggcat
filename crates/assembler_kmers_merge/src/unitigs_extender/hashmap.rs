@@ -184,7 +184,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> HashMapUnitigsExtender<MH, CX> 
             ts: &mut color_types::TempUnitigColorStructure<CX>,
             entry_color: color_types::HashMapTempColorIndex<CX>,
         ),
-        is_circular: &mut bool,
         #[cfg(feature = "support_kmer_counters")] is_forward: bool,
         #[cfg(feature = "support_kmer_counters")]
         counters: &mut io::concurrent::structured_sequences::SequenceAbundance,
@@ -260,9 +259,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> HashMapUnitigsExtender<MH, CX> 
 
                 let already_used = entryref.is_used();
 
-                // Found a cycle unitig
+                // Found a cycle unitig or a node completely used by other simplitigs
                 if already_used {
-                    *is_circular = true;
                     break None;
                 }
 
@@ -450,7 +448,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             &[u8],
             Option<PrecomputedHash<MH>>,
             Option<PrecomputedHash<MH>>,
-            bool,
             SequenceAbundanceType,
         ),
     ) {
@@ -514,8 +511,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                 last: first_count,
             };
 
-            let mut is_circular = false;
-
             let fw_hash = {
                 if end_ignored {
                     Some(hash)
@@ -527,7 +522,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                         MH::manual_roll_forward,
                         MH::manual_roll_reverse,
                         CX::ColorsMergeManagerType::extend_forward,
-                        &mut is_circular,
                         #[cfg(feature = "support_kmer_counters")]
                         true,
                         #[cfg(feature = "support_kmer_counters")]
@@ -547,7 +541,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                         MH::manual_roll_reverse,
                         MH::manual_roll_forward,
                         CX::ColorsMergeManagerType::extend_backward,
-                        &mut is_circular,
                         #[cfg(feature = "support_kmer_counters")]
                         false,
                         #[cfg(feature = "support_kmer_counters")]
@@ -567,7 +560,6 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                 out_seq,
                 fw_hash.map(PrecomputedHash),
                 bw_hash.map(PrecomputedHash),
-                is_circular,
                 match () {
                     #[cfg(feature = "support_kmer_counters")]
                     () => counters,

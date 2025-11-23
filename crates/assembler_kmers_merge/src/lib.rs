@@ -56,15 +56,6 @@ pub struct GlobalMergeData<CX: ColorsManager, O: StructuredSequenceBackendWrappe
             O::Backend<PartialUnitigsColorStructure<CX>, ()>,
         >,
     >,
-    final_circular_unitigs_file: Option<
-        Arc<
-            StructuredSequenceWriter<
-                PartialUnitigsColorStructure<CX>,
-                (),
-                O::Backend<PartialUnitigsColorStructure<CX>, ()>,
-            >,
-        >,
-    >,
     global_resplit_data: Arc<MinimizerBucketingCommonData<()>>,
     hasnmap_kmers_total: AtomicU64,
     kmer_batches_count: AtomicU64,
@@ -172,7 +163,6 @@ pub fn kmers_merge<
 >(
     file_inputs: Vec<MultiChunkBucket>,
     final_unitigs_file: Arc<dyn Any + Send + Sync>,
-    final_circular_unitigs_file: Option<Arc<dyn Any + Send + Sync>>,
     colors_global_table: Arc<dyn Any + Send + Sync>,
     buckets_count: BucketsCount,
     second_buckets_count: BucketsCount,
@@ -193,15 +183,6 @@ pub fn kmers_merge<
             OM::Backend<PartialUnitigsColorStructure<CX>, ()>,
         >,
     > = Arc::downcast(final_unitigs_file).unwrap();
-    let final_circular_unitigs_file: Option<
-        Arc<
-            StructuredSequenceWriter<
-                PartialUnitigsColorStructure<CX>,
-                (),
-                OM::Backend<PartialUnitigsColorStructure<CX>, ()>,
-            >,
-        >,
-    > = final_circular_unitigs_file.map(|f| Arc::downcast(f).unwrap());
 
     PHASES_TIMES_MONITOR
         .write()
@@ -231,7 +212,6 @@ pub fn kmers_merge<
         colors_global_table,
         output_results_buckets: Arc::new(reads_buckets),
         final_unitigs_file,
-        final_circular_unitigs_file,
         global_resplit_data: Arc::new(MinimizerBucketingCommonData::new(
             k,
             if k > RESPLITTING_MAX_K_M_DIFFERENCE + 1 {

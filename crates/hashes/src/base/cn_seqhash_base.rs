@@ -3,6 +3,7 @@ use config::BucketIndexType;
 use dynamic_dispatch::dynamic_dispatch;
 use std::cmp::min;
 use std::mem::size_of;
+use utils::Utils;
 
 pub struct CanonicalSeqHashIterator<N: HashableSequence> {
     seq: N,
@@ -26,8 +27,16 @@ impl<N: HashableSequence> CanonicalSeqHashIterator<N> {
         let mut fh = 0;
         let mut bw = 0;
         for i in 0..(k - 1) {
-            fh |= unsafe { seq.get_unchecked_cbase(i) as HashIntegerType } << (i * 2);
-            bw = (bw << 2) | unsafe { xrc(seq.get_unchecked_cbase(i) as HashIntegerType) };
+            let base = unsafe {
+                if N::IS_COMPRESSED {
+                    seq.get_unchecked_cbase(i)
+                } else {
+                    Utils::compress_base(seq.get_unchecked_cbase(i))
+                }
+            };
+
+            fh |= (base as HashIntegerType) << (i * 2);
+            bw = (bw << 2) | xrc(base as HashIntegerType);
         }
 
         let mask = get_mask(k);
@@ -43,15 +52,18 @@ impl<N: HashableSequence> CanonicalSeqHashIterator<N> {
 
     #[inline(always)]
     fn roll_hash(&mut self, index: usize) -> ExtCanonicalSeqHash {
-        debug_assert!(unsafe { self.seq.get_unchecked_cbase(index) } < 4);
+        let base = unsafe {
+            if N::IS_COMPRESSED {
+                self.seq.get_unchecked_cbase(index)
+            } else {
+                Utils::compress_base(self.seq.get_unchecked_cbase(index))
+            }
+        };
 
-        self.fh = (self.fh >> 2)
-            | ((unsafe { self.seq.get_unchecked_cbase(index) as HashIntegerType })
-                << (self.k_minus1 * 2));
+        debug_assert!(base < 4);
 
-        self.rc = ((self.rc << 2)
-            | unsafe { xrc(self.seq.get_unchecked_cbase(index) as HashIntegerType) })
-            & self.mask;
+        self.fh = (self.fh >> 2) | ((base as HashIntegerType) << (self.k_minus1 * 2));
+        self.rc = ((self.rc << 2) | xrc(base as HashIntegerType)) & self.mask;
 
         ExtCanonicalSeqHash(self.fh, self.rc)
     }

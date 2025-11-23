@@ -26,6 +26,7 @@ use parking_lot::Mutex;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::{ParallelSlice, ParallelSliceMut};
 use std::cmp::Reverse;
+use std::mem::swap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -39,7 +40,6 @@ struct CircularUnitigPart {
 
 struct CircularUnitig {
     base_children: Vec<CircularUnitigPart>,
-    rc: bool,
     used: AtomicBool,
 }
 
@@ -47,7 +47,6 @@ impl Clone for CircularUnitig {
     fn clone(&self) -> Self {
         Self {
             base_children: self.base_children.clone(),
-            rc: self.rc,
             used: AtomicBool::new(false),
         }
     }
@@ -57,14 +56,11 @@ impl CircularUnitig {
     pub fn new() -> Self {
         Self {
             base_children: vec![],
-            rc: false,
             used: AtomicBool::new(false),
         }
     }
 
-    pub fn rotate(&mut self, child: usize, position: usize, rc: bool) {
-        self.rc ^= rc;
-
+    pub fn rotate_with_rc(&mut self, child: usize, position: usize, needed_rc: bool) {
         let split_index = self
             .base_children
             .iter()
@@ -82,26 +78,39 @@ impl CircularUnitig {
         // Now the unitig part we want to split is at the beginning, so we should split it in two parts
         let target_child = &self.base_children[0];
 
-        let first_part = CircularUnitigPart {
+        let mut first_part = CircularUnitigPart {
             orig_index: target_child.orig_index,
             start_pos: target_child.start_pos,
             length: position - target_child.start_pos,
             rc: target_child.rc,
         };
 
-        let second_part = CircularUnitigPart {
+        let mut second_part = CircularUnitigPart {
             orig_index: target_child.orig_index,
             start_pos: position,
             length: target_child.length - (position - target_child.start_pos),
             rc: target_child.rc,
         };
 
+        if target_child.rc {
+            swap(&mut first_part, &mut second_part);
+        }
+
+        let wrong_orientation = target_child.rc != needed_rc;
+
         self.base_children[0] = second_part;
         self.base_children.push(first_part);
+
+        if wrong_orientation {
+            self.base_children.reverse();
+            for child in &mut self.base_children {
+                child.rc = !child.rc;
+            }
+        }
     }
 
     pub fn write_unpacked<MH: HashFunctionFactory, CX: ColorsManager>(
-        &mut self,
+        &self,
         unitigs_kmers: &Vec<u8>,
         unitigs: &DashMap<
             usize,
@@ -118,10 +127,6 @@ impl CircularUnitig {
         write_full: bool,
         #[allow(dead_code)] _out_abundance: &mut SequenceAbundanceType,
     ) {
-        if self.rc {
-            self.base_children.reverse();
-        }
-
         let children_count = self.base_children.len();
 
         #[cfg(feature = "support_kmer_counters")]
@@ -130,7 +135,7 @@ impl CircularUnitig {
             _out_abundance.first = first_unitig_entry.2.first;
         }
 
-        for child in self.base_children.iter_mut().take(children_count - 1) {
+        for child in self.base_children.iter().take(children_count - 1) {
             let unitig_entry = unitigs.get(&child.orig_index).unwrap();
             let (unitig, src_color, _abundance) = unitig_entry.value();
             let unitig = unitig.as_reference(unitigs_kmers);
@@ -140,7 +145,6 @@ impl CircularUnitig {
                 _out_abundance.sum += _abundance.sum;
             }
 
-            child.rc ^= self.rc;
             let should_rc = child.rc;
             let rc_offset = if should_rc { k - 1 } else { 0 };
             // Skip the first k-1 bases as if they're already written when merging
@@ -160,8 +164,7 @@ impl CircularUnitig {
         }
 
         // Add the last part, adding k-1 prefix or suffix depending on the rc status
-        let last = self.base_children.last_mut().unwrap();
-        last.rc ^= self.rc;
+        let last = self.base_children.last().unwrap();
 
         let end_offset = if !last.rc && !write_full { 0 } else { k - 1 };
         let start_offset = if last.rc && !write_full { k - 1 } else { 0 };
@@ -195,8 +198,52 @@ impl CircularUnitig {
             last_part_slice,
             last.rc,
         );
+    }
 
-        self.rc = false;
+    #[allow(dead_code)]
+    pub fn debug_check_integrity<MH: HashFunctionFactory, CX: ColorsManager>(
+        &mut self,
+        k: usize,
+        unitigs_kmers: &Vec<u8>,
+        unitigs: &DashMap<
+            usize,
+            (
+                CompressedReadIndipendent,
+                PartialUnitigsColorStructure<CX>,
+                SequenceAbundanceType,
+            ),
+        >,
+        message: String,
+    ) {
+        let mut parts = vec![];
+        for child in &self.base_children {
+            let bases = unitigs
+                .get(&child.orig_index)
+                .unwrap()
+                .0
+                .as_reference(unitigs_kmers)
+                .sub_slice(child.start_pos..(child.start_pos + child.length + k - 1));
+            parts.push(if child.rc {
+                bases.as_reverse_complement_bases_iter().collect()
+            } else {
+                bases.as_bases_iter().collect::<Vec<_>>()
+            });
+        }
+
+        parts.push(parts[0].clone());
+        for (i, pair) in parts.windows(2).enumerate() {
+            let suffix = &pair[0][pair[0].len() - (k - 1)..];
+            let prefix = &pair[1][..k - 1];
+            if suffix != prefix {
+                panic!(
+                    "{} not contiguous to {} =>\nMESSAGE:{} at index: {}",
+                    std::str::from_utf8(&pair[0]).unwrap(),
+                    std::str::from_utf8(&pair[1]).unwrap(),
+                    message,
+                    i,
+                );
+            }
+        }
     }
 
     #[allow(dead_code)]
@@ -285,7 +332,14 @@ impl CircularUnionFind {
     }
 
     // Join two circular unitigs placinga rotation of b inside a at a specific position
-    pub fn union(&mut self, a: usize, b: usize, a_pos: usize, b_rot: usize, b_rc: bool) -> usize {
+    pub fn union(
+        &mut self,
+        a: usize,
+        b: usize,
+        a_pos: usize,
+        b_rot: usize,
+        opposite_orientations: bool,
+    ) -> usize {
         let a_parent = self.find(a);
         let b_parent = self.find(b);
 
@@ -295,22 +349,11 @@ impl CircularUnionFind {
 
         // Align the rotations such that the circular unitigs can be concatenated
 
-        let a_rc = self.mappings[a_parent].rc;
-
         // Adjust rotation in case of reverse complement
+        self.mappings[a_parent].rotate_with_rc(a, a_pos, false);
+        self.mappings[b_parent].rotate_with_rc(b, b_rot, opposite_orientations);
 
-        self.mappings[a_parent].rotate(a, a_pos, false);
-        self.mappings[b_parent].rotate(b, b_rot, a_rc ^ b_rc);
-
-        let mut b_children = std::mem::take(&mut self.mappings[b_parent].base_children);
-
-        if self.mappings[b_parent].rc != a_rc {
-            b_children.reverse();
-            for child in &mut b_children {
-                child.rc = !child.rc;
-            }
-        }
-
+        let b_children = std::mem::take(&mut self.mappings[b_parent].base_children);
         self.mappings[a_parent]
             .base_children
             .extend(b_children.into_iter());
@@ -516,6 +559,52 @@ pub fn build_eulertigs<
 
     let flat_unitigs_reader_parallel_chunks = flat_unitigs_reader_index.into_parallel_chunks();
 
+    // struct DebugKmerSet<MH: HashFunctionFactory> {
+    //     set: HashSet<MH::HashTypeUnextendable>,
+    //     sequences: Vec<String>,
+    // }
+
+    // impl<MH: HashFunctionFactory> DebugKmerSet<MH> {
+    //     fn new() -> Self {
+    //         Self {
+    //             set: Default::default(),
+    //             sequences: vec![],
+    //         }
+    //     }
+
+    //     fn add_kmers<'a, S: ToReadData<'a> + Copy>(&mut self, k: usize, values: S) {
+    //         self.set
+    //             .extend(MH::new(values, k).iter().map(|h| h.to_unextendable()));
+    //         self.sequences.push(values.debug_to_string());
+    //     }
+
+    //     fn compare_with(&self, other_set: DebugKmerSet<MH>, amount: usize, message: String) {
+    //         let mut own: Vec<_> = self.set.iter().map(|h| MH::get_u64(*h)).collect();
+    //         let mut other: Vec<_> = other_set.set.iter().map(|h| MH::get_u64(*h)).collect();
+
+    //         own.sort();
+    //         other.sort();
+
+    //         if own != other {
+    //             println!(
+    //                 "Kmersets differ: {} / {} rot amount: {}",
+    //                 own.len(),
+    //                 other.len(),
+    //                 amount
+    //             );
+    //             println!("Original: ");
+    //             for seq in self.sequences.iter() {
+    //                 println!("SEQ: {}", seq);
+    //             }
+    //             println!("Other: ");
+    //             for seq in other_set.sequences.iter() {
+    //                 println!("SEQ: {}", seq);
+    //             }
+    //             println!("MESSAGE: {}", message);
+    //         }
+    //     }
+    // }
+
     rayon::scope(|_s| {
         (0..rayon::current_num_threads())
             .into_par_iter()
@@ -562,7 +651,7 @@ pub fn build_eulertigs<
                             if let Some(kmer) =
                                 circular_unitigs_kmers_map.get(&hash.to_unextendable())
                             {
-                                let should_rc = kmer.1.is_rc() ^ !hash.is_forward();
+                                let should_rc_target_kmer = kmer.1.is_rc() ^ !hash.is_forward();
                                 let (index, rotation) = *kmer;
 
                                 let parent = joined.find_flatten(index);
@@ -586,7 +675,11 @@ pub fn build_eulertigs<
                                 // Dump the current circular unitig
                                 let mut circular_unitig = joined.mappings[parent].clone();
 
-                                circular_unitig.rotate(index, rotation.get_offset(), should_rc);
+                                circular_unitig.rotate_with_rc(
+                                    index,
+                                    rotation.get_offset(),
+                                    should_rc_target_kmer,
+                                );
 
                                 let mut circular_abundance = SequenceAbundanceType::default();
                                 circular_unitig.write_unpacked::<MH, CX>(

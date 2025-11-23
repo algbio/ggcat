@@ -183,7 +183,7 @@ pub fn run_assembler<
         buckets.iter().map(|x| x.chunks.len()).sum::<usize>()
     );
 
-    if KEEP_FILES.load(Ordering::Relaxed) {
+    if KEEP_FILES.load(Ordering::Relaxed) || last_step < AssemblerPhase::FinalStep {
         debug_save_buckets(&temp_dir, "minimizer-bucketing.debug", &buckets);
     }
 
@@ -285,7 +285,6 @@ pub fn run_assembler<
                     ),
                     buckets,
                     output_file.clone(),
-                    None,
                     global_colors_table.clone(),
                     buckets_count,
                     second_buckets_count,
@@ -299,7 +298,7 @@ pub fn run_assembler<
             }
             OutputFileMode::Intermediate {
                 flat_unitigs,
-                circular_unitigs,
+                circular_unitigs: _,
             } => assembler_kmers_merge::dynamic_dispatch::kmers_merge(
                 (
                     MergingHash::dynamic_dispatch_id(),
@@ -308,9 +307,6 @@ pub fn run_assembler<
                 ),
                 buckets,
                 flat_unitigs.clone(),
-                circular_unitigs
-                    .as_ref()
-                    .map(|a| a.clone() as Arc<dyn Any + Sync + Send + 'static>),
                 global_colors_table.clone(),
                 buckets_count,
                 second_buckets_count,
@@ -328,7 +324,7 @@ pub fn run_assembler<
         }
     };
 
-    if KEEP_FILES.load(Ordering::Relaxed) {
+    if KEEP_FILES.load(Ordering::Relaxed) || last_step < AssemblerPhase::FinalStep {
         debug_save_single_buckets(&temp_dir, "sequences-buckets.debug", &sequences);
     }
 

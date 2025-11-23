@@ -11,6 +11,9 @@ ahash = "0.8.11"
 # Config
 config = { package = "ggcat_config", path = "../config" }
 
+# Utils
+utils = { package = "ggcat_utils", path = "../utils" }
+
 # Static dispatch
 dynamic-dispatch = "0.5.4"
 bincode = "2.0.1"

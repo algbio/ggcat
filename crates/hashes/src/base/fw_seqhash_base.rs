@@ -2,6 +2,7 @@ use crate::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, Hashable
 use config::BucketIndexType;
 use dynamic_dispatch::dynamic_dispatch;
 use std::mem::size_of;
+use utils::Utils;
 
 pub struct ForwardSeqHashIterator<N: HashableSequence> {
     seq: N,
@@ -22,7 +23,15 @@ impl<N: HashableSequence> ForwardSeqHashIterator<N> {
 
         let mut fh = 0;
         for i in 0..(k - 1) {
-            fh |= unsafe { seq.get_unchecked_cbase(i) as HashIntegerType } << (i * 2);
+            let base = unsafe {
+                if N::IS_COMPRESSED {
+                    seq.get_unchecked_cbase(i)
+                } else {
+                    Utils::compress_base(seq.get_unchecked_cbase(i))
+                }
+            };
+
+            fh |= (base as HashIntegerType) << (i * 2);
         }
 
         Ok(ForwardSeqHashIterator {
@@ -34,11 +43,17 @@ impl<N: HashableSequence> ForwardSeqHashIterator<N> {
 
     #[inline(always)]
     fn roll_hash(&mut self, index: usize) -> ExtForwardSeqHash {
-        assert!(unsafe { self.seq.get_unchecked_cbase(index) } < 4);
+        let base = unsafe {
+            if N::IS_COMPRESSED {
+                self.seq.get_unchecked_cbase(index)
+            } else {
+                Utils::compress_base(self.seq.get_unchecked_cbase(index))
+            }
+        };
 
-        self.fh = (self.fh >> 2)
-            | ((unsafe { self.seq.get_unchecked_cbase(index) as HashIntegerType })
-                << (self.k_minus1 * 2));
+        debug_assert!(base < 4);
+
+        self.fh = (self.fh >> 2) | ((base as HashIntegerType) << (self.k_minus1 * 2));
 
         ExtForwardSeqHash(self.fh)
     }

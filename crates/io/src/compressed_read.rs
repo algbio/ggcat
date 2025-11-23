@@ -733,7 +733,8 @@ impl<'a> CompressedRead<'a> {
         } else {
             let bytes_count = (self.size + 3) / 4;
 
-            buffer.reserve(bytes_count);
+            // Allocate an extra byte to account for possible overflow in last write (branchless for speed)
+            buffer.reserve(bytes_count + 1);
             unsafe {
                 let mut dest_ptr = buffer.as_mut_ptr().add(buffer.len());
                 buffer.set_len(buffer.len() + bytes_count);
@@ -748,6 +749,7 @@ impl<'a> CompressedRead<'a> {
                     *dest_ptr = (current >> right_offset) | (next << left_offset);
                     dest_ptr = dest_ptr.add(1);
                 }
+
                 // Handle the last one separately
                 *dest_ptr = *self.data.add(bytes_count - 1) >> right_offset;
             }
@@ -771,7 +773,8 @@ impl<'a> CompressedRead<'a> {
         } else {
             let bytes_count = (self.size + 3) / 4;
 
-            buffer.reserve(bytes_count);
+            // Allocate an extra byte to account for possible overflow in last write (branchless for speed)
+            buffer.reserve(bytes_count + 1);
             unsafe {
                 let mut dest_ptr = buffer.as_mut_ptr().add(buffer.len());
                 buffer.set_len(buffer.len() + bytes_count);
@@ -796,6 +799,7 @@ impl<'a> CompressedRead<'a> {
                 b = b ^ 0xAA;
                 b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
                 b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+
                 *dest_ptr = b;
             }
         }
