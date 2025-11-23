@@ -1,7 +1,12 @@
 #[macro_use]
 pub mod debug_functions;
+pub mod assembler_phases;
 pub mod fast_rand_bool;
+pub mod fuzzy_buckets;
+pub mod fuzzy_hashmap;
+pub mod inline_vec;
 pub mod owned_drop;
+pub mod resize_containers;
 pub mod resource_counter;
 pub mod vec_slice;
 
@@ -38,6 +43,11 @@ impl Utils {
     #[inline(always)]
     pub fn compress_base(base: u8) -> u8 {
         (base >> 1) & 0x3
+    }
+
+    #[inline(always)]
+    pub fn compress_base_complement(base: u8) -> u8 {
+        (base >> 1) & 0x3 ^ 2
     }
 
     #[inline(always)]

@@ -1,22 +1,23 @@
 use byteorder::ReadBytesExt;
-use colors::colors_manager::color_types::SingleKmerColorDataType;
 use colors::colors_manager::ColorsManager;
+use colors::colors_manager::color_types::SingleKmerColorDataType;
 use config::{
-    get_compression_level_info, get_memory_mode, SwapPriority, DEFAULT_PER_CPU_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, SwapPriority, get_compression_level_info,
+    get_memory_mode,
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataOwned,
 };
-use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::lock_free_binary_reader::LockFreeBinaryReader;
-use parallel_processor::buckets::readers::BucketReader;
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
-use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::buckets::{BucketsCount, ExtraBuckets, MultiThreadBuckets, SingleBucket};
+use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
@@ -25,8 +26,8 @@ use rayon::iter::ParallelIterator;
 use std::io::Read;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone)]
 pub struct CounterEntry<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> {
@@ -47,11 +48,12 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> BucketItemSer
     type ExtraDataBuffer = ();
     type ReadBuffer = ();
     type ReadType<'a> = (CounterEntry<CX>, CX);
+    type InitData = ();
 
     type CheckpointData = ();
 
     #[inline(always)]
-    fn new() -> Self {
+    fn new(_: ()) -> Self {
         Self(Default::default())
     }
 
@@ -112,7 +114,8 @@ pub fn counters_sorting<CX: ColorsManager>(
         .write()
         .start_phase("phase: counters sorting".to_string());
 
-    let buckets_count = file_counters_inputs.len();
+    let buckets_count =
+        BucketsCount::from_power_of_two(file_counters_inputs.len(), ExtraBuckets::None);
 
     let final_counters = if CX::COLORS_ENABLED {
         vec![]
@@ -129,7 +132,7 @@ pub fn counters_sorting<CX: ColorsManager>(
             None,
             &(
                 get_memory_mode(SwapPriority::MinimizerBuckets),
-                MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+                MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
                 get_compression_level_info(),
             ),
             &(),
@@ -140,35 +143,35 @@ pub fn counters_sorting<CX: ColorsManager>(
 
     let thread_buffers = ScopedThreadLocal::new(move || {
         if CX::COLORS_ENABLED {
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
+            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
         } else {
             BucketsThreadBuffer::EMPTY
         }
     });
-
-    let buckets_count_log = buckets_count.ilog2();
 
     file_counters_inputs.par_iter().for_each(|input| {
         let mut thread_buffer = thread_buffers.get();
         let mut colored_buckets_writer = BucketsThreadDispatcher::<
             _,
             CounterEntrySerializer<SingleKmerColorDataType<CX>>,
-        >::new(&color_buckets, thread_buffer.take());
+        >::new(&color_buckets, thread_buffer.take(), ());
 
         let mut counters_vec: Vec<(
             CounterEntry<SingleKmerColorDataType<CX>>,
             SingleKmerColorDataType<CX>,
         )> = Vec::new();
-        LockFreeBinaryReader::new(
+        let file_index = ChunkedBinaryReaderIndex::from_file(
             &input.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
             DEFAULT_PREFETCH_AMOUNT,
-        )
-        .decode_all_bucket_items::<CounterEntrySerializer<SingleKmerColorDataType<CX>>, _>(
+        );
+
+        TypedStreamReader::get_items::<CounterEntrySerializer<SingleKmerColorDataType<CX>>>(
+            None,
             (),
-            &mut (),
+            file_index.into_chunks(),
             |h, _| {
                 counters_vec.push(h);
             },
@@ -204,7 +207,11 @@ pub fn counters_sorting<CX: ColorsManager>(
                 for entry in query_results.nq_group_by(|a, b| a.1 == b.1) {
                     let color = entry[0].1.clone();
                     colored_buckets_writer.add_element(
-                        CX::get_bucket_from_color(&color, colors_count, buckets_count_log),
+                        CX::get_bucket_from_color(
+                            &color,
+                            colors_count,
+                            buckets_count.normal_buckets_count_log,
+                        ),
                         &color,
                         &CounterEntry {
                             query_index,

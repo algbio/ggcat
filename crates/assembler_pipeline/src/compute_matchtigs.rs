@@ -1,6 +1,6 @@
-use crate::pipeline::maximal_unitig_links::maximal_unitig_index::DoubleMaximalUnitigLinks;
+use crate::maximal_unitig_links::maximal_unitig_index::DoubleMaximalUnitigLinks;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
-use colors::colors_manager::{color_types, ColorsManager, ColorsMergeManager};
+use colors::colors_manager::{ColorsManager, ColorsMergeManager, color_types};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use crossbeam::channel::{Receiver, Sender};
 use genome_graph::bigraph::implementation::node_bigraph_wrapper::NodeBigraphWrapper;
@@ -112,7 +112,6 @@ impl<ColorInfo: IdentSequenceWriter> BidirectedData for UnitigEdgeData<ColorInfo
 impl<ColorInfo: IdentSequenceWriter> DijkstraWeightedEdgeData<usize> for UnitigEdgeData<ColorInfo> {
 
 }*/
-
 // SequenceHandle is the type that points to a sequence, e.g. just an integer.
 impl<ColorInfo: IdentSequenceWriter> MatchtigEdgeData<SequenceHandle<ColorInfo>>
     for UnitigEdgeData<ColorInfo>
@@ -197,7 +196,7 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
 {
     type SequenceTempBuffer = StructuredUnitigsStorage<ColorInfo>;
 
-    fn alloc_temp_buffer() -> Self::SequenceTempBuffer {
+    fn alloc_temp_buffer(_: usize) -> Self::SequenceTempBuffer {
         StructuredUnitigsStorage::new()
     }
 
@@ -271,7 +270,7 @@ impl<ColorInfo: IdentSequenceWriter + 'static> GenericNode for UnitigEdgeData<Co
     fn is_self_complemental(&self) -> bool {
         self.sequence_handle
             .get_sequence_handle()
-            .map(|s| s.0 .3.is_self_complemental)
+            .map(|s| s.0.3.is_self_complemental)
             .unwrap_or(false)
     }
 
@@ -279,7 +278,7 @@ impl<ColorInfo: IdentSequenceWriter + 'static> GenericNode for UnitigEdgeData<Co
         let links = self
             .sequence_handle
             .get_sequence_handle()
-            .map(|h| h.0 .3.clone())
+            .map(|h| h.0.3.clone())
             .unwrap_or(DoubleMaximalUnitigLinks::EMPTY);
         let storage = self.sequence_handle.0.clone();
 
@@ -445,7 +444,7 @@ pub fn compute_matchtigs_thread<
         .start_phase(format!("phase: {} building [step2]", phase_name));
 
     let mut output_buffer =
-        FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true);
+        FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
 
     let mut read_buffer = Vec::new();
 
@@ -578,7 +577,7 @@ pub fn compute_matchtigs_thread<
         );
 
         output_buffer.add_read(
-            &read_buffer,
+            read_buffer.iter().copied(),
             None,
             writable_color,
             &final_color_extra_buffer,

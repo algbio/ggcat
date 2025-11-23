@@ -1,7 +1,7 @@
 [package]
 name = "ggcat_assembler_kmerge"
 version = "2.0.0"
-edition = "2021"
+edition = "2024"
 [dependencies]
 
 # Config
@@ -9,8 +9,8 @@ config = { package = "ggcat_config", path = "../config" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Common libraries
-parallel-processor = "0.1.24"
-streaming-libdeflate-rs = "0.1.5"
+parallel-processor = "0.2.3"
+streaming-libdeflate-rs = "0.2.3"
 nightly-quirks = "0.1.4"
 
 # Common pipeline libraries
@@ -27,7 +27,6 @@ assembler_minimizer_bucketing = { package = "ggcat_assembler_minibuck", path = "
 
 # Other crates
 hashbrown = "0.14.5"
-typenum = "1.17.0"
 crossbeam = "0.8.4"
 
 # Profiler
@@ -35,6 +34,10 @@ instrumenter = "0.1.3"
 parking_lot = "0.12.3"
 ggcat-logging = { version = "2.0.0", path = "../logging" }
 rustc-hash = "2.1.0"
+typenum = "1.18.0"
+dynamic-dispatch = "0.5.4"
+binary-heap-plus = "0.5.0"
+bitbound = "0.1.1"
 
 [dev-dependencies]
 fdlimit = "0.3.0"
@@ -46,3 +49,23 @@ support_kmer_counters = [
     "colors/support_kmer_counters",
     "structs/support_kmer_counters",
 ]
+
+# Features used to filter ggcat capabilites
+full = [
+    "hash-16bit",
+    "hash-32bit",
+    "hash-64bit",
+    "hash-128bit",
+    "hash-rkarp",
+    "hash-forward",
+    "enable-colors",
+    "enable-gfa",
+]
+hash-16bit = []    # Support 16bit hashing (optimization for k <= 8)
+hash-32bit = []    # Support 32bit hashing (optimization for k <= 16)
+hash-64bit = []    # Support 64bit hashing (optimization for k <= 32)
+hash-128bit = []   # Support 128bit hashing (k <= 64)
+hash-rkarp = []    # Support 128bit rabin-karp hashing (k > 64)
+hash-forward = []  # Support non-canonical hashing
+enable-colors = [] # Support colors
+enable-gfa = []    # Support gfa output

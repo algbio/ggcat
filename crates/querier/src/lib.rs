@@ -4,14 +4,15 @@ use crate::pipeline::counters_sorting::counters_sorting;
 use crate::pipeline::parallel_kmers_query::parallel_kmers_counting;
 use crate::pipeline::querier_minimizer_bucketing::minimizer_bucketing;
 use ::dynamic_dispatch::dynamic_dispatch;
-use colors::colors_manager::{ColorMapReader, ColorsManager, ColorsMergeManager};
 use colors::DefaultColorsSerializer;
+use colors::colors_manager::{ColorMapReader, ColorsManager, ColorsMergeManager};
 use config::{INTERMEDIATE_COMPRESSION_LEVEL_FAST, INTERMEDIATE_COMPRESSION_LEVEL_SLOW};
-use hashes::default::MNHFactory;
 use hashes::HashFunctionFactory;
+use hashes::default::MNHFactory;
 use io::sequences_reader::SequencesReader;
 use io::sequences_stream::general::GeneralSequenceBlockData;
-use io::{compute_stats_from_input_blocks, generate_bucket_names};
+use io::{compute_stats_from_input_blocks, debug_load_single_buckets};
+use parallel_processor::buckets::{BucketsCount, ExtraBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -36,22 +37,18 @@ pub enum ColoredQueryOutputFormat {
 }
 
 #[dynamic_dispatch(MergingHash = [
-    #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u16::ForwardSeqHashFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u32::ForwardSeqHashFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u64::ForwardSeqHashFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::fw_seqhash::u128::ForwardSeqHashFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::fw_rkhash::u32::ForwardRabinKarpHashFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::fw_rkhash::u64::ForwardRabinKarpHashFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::fw_rkhash::u128::ForwardRabinKarpHashFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::cn_seqhash::u16::CanonicalSeqHashFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::cn_seqhash::u32::CanonicalSeqHashFactory,
-    hashes::cn_seqhash::u64::CanonicalSeqHashFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::cn_seqhash::u128::CanonicalSeqHashFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::cn_rkhash::u32::CanonicalRabinKarpHashFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::cn_rkhash::u64::CanonicalRabinKarpHashFactory,
-    #[cfg(not(feature = "devel-build"))] hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-16bit"))] hashes::fw_seqhash::u16::ForwardSeqHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-32bit"))] hashes::fw_seqhash::u32::ForwardSeqHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-64bit"))] hashes::fw_seqhash::u64::ForwardSeqHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-128bit"))] hashes::fw_seqhash::u128::ForwardSeqHashFactory,
+    #[cfg(feature = "hash-16bit")] hashes::cn_seqhash::u16::CanonicalSeqHashFactory,
+    #[cfg(feature = "hash-32bit")] hashes::cn_seqhash::u32::CanonicalSeqHashFactory,
+    #[cfg(feature = "hash-64bit")] hashes::cn_seqhash::u64::CanonicalSeqHashFactory,
+    #[cfg(feature = "hash-128bit")] hashes::cn_seqhash::u128::CanonicalSeqHashFactory,
+    #[cfg(feature = "hash-rkarp")] hashes::cn_rkhash::u128::CanonicalRabinKarpHashFactory,
+    #[cfg(all(feature = "hash-forward", feature = "hash-rkarp"))] hashes::fw_rkhash::u128::ForwardRabinKarpHashFactory,
 ], QuerierColorsManager = [
-    #[cfg(not(feature = "devel-build"))] colors::bundles::graph_querying::ColorBundleGraphQuerying,
+    #[cfg(feature = "enable-colors")] colors::bundles::graph_querying::ColorBundleGraphQuerying,
     colors::non_colored::NonColoredManager,
 ])]
 pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsManager>(
@@ -85,30 +82,30 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
     ])?;
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
+    let second_buckets_count_log = file_stats.best_second_buckets_count_log;
 
     if let Some(default_compression_level) = default_compression_level {
         INTERMEDIATE_COMPRESSION_LEVEL_SLOW.store(default_compression_level, Ordering::Relaxed);
         INTERMEDIATE_COMPRESSION_LEVEL_FAST.store(default_compression_level, Ordering::Relaxed);
     }
 
-    let buckets_count = 1 << buckets_count_log;
+    let buckets_count = BucketsCount::new(buckets_count_log, ExtraBuckets::None);
+    let second_buckets_count = BucketsCount::new(second_buckets_count_log, ExtraBuckets::None);
 
-    let ((buckets, counters), queries_count) = if step <= QuerierStartingStep::MinimizerBucketing {
+    let (buckets, queries_count) = if step <= QuerierStartingStep::MinimizerBucketing {
         minimizer_bucketing::<QuerierColorsManager>(
             graph_input.clone(),
             query_input.clone(),
             temp_dir.as_path(),
             buckets_count,
+            second_buckets_count,
             threads_count,
             k,
             m,
         )
     } else {
         (
-            (
-                generate_bucket_names(temp_dir.join("bucket"), buckets_count, None),
-                temp_dir.join("buckets-counters.dat"),
-            ),
+            debug_load_single_buckets(&temp_dir, "query-buckets.debug").unwrap(),
             {
                 let queries_count = BufReader::new(File::open(&query_input).unwrap())
                     .lines()
@@ -122,15 +119,16 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
     let counters_buckets = if step <= QuerierStartingStep::KmersCounting {
         parallel_kmers_counting::<MergingHash, QuerierColorsManager, _>(
             buckets,
-            counters,
             buckets_count,
+            second_buckets_count,
             temp_dir.as_path(),
             k,
             m,
             threads_count,
+            false,
         )
     } else {
-        generate_bucket_names(temp_dir.join("counters"), buckets_count, None)
+        debug_load_single_buckets(&temp_dir, "counter-buckets.debug").unwrap()
     };
 
     let colored_buckets_prefix = temp_dir.join("color_counters");
@@ -159,7 +157,7 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
             &query_kmers_count,
         )
     } else {
-        generate_bucket_names(colored_buckets_prefix, buckets_count, None)
+        debug_load_single_buckets(&temp_dir, "colored-buckets.debug").unwrap()
     };
 
     if QuerierColorsManager::COLORS_ENABLED {

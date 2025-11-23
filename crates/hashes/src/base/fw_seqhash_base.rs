@@ -2,6 +2,7 @@ use crate::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, Hashable
 use config::BucketIndexType;
 use dynamic_dispatch::dynamic_dispatch;
 use std::mem::size_of;
+use utils::Utils;
 
 pub struct ForwardSeqHashIterator<N: HashableSequence> {
     seq: N,
@@ -22,7 +23,15 @@ impl<N: HashableSequence> ForwardSeqHashIterator<N> {
 
         let mut fh = 0;
         for i in 0..(k - 1) {
-            fh |= unsafe { seq.get_unchecked_cbase(i) as HashIntegerType } << (i * 2);
+            let base = unsafe {
+                if N::IS_COMPRESSED {
+                    seq.get_unchecked_cbase(i)
+                } else {
+                    Utils::compress_base(seq.get_unchecked_cbase(i))
+                }
+            };
+
+            fh |= (base as HashIntegerType) << (i * 2);
         }
 
         Ok(ForwardSeqHashIterator {
@@ -34,11 +43,17 @@ impl<N: HashableSequence> ForwardSeqHashIterator<N> {
 
     #[inline(always)]
     fn roll_hash(&mut self, index: usize) -> ExtForwardSeqHash {
-        assert!(unsafe { self.seq.get_unchecked_cbase(index) } < 4);
+        let base = unsafe {
+            if N::IS_COMPRESSED {
+                self.seq.get_unchecked_cbase(index)
+            } else {
+                Utils::compress_base(self.seq.get_unchecked_cbase(index))
+            }
+        };
 
-        self.fh = (self.fh >> 2)
-            | ((unsafe { self.seq.get_unchecked_cbase(index) as HashIntegerType })
-                << (self.k_minus1 * 2));
+        debug_assert!(base < 4);
+
+        self.fh = (self.fh >> 2) | ((base as HashIntegerType) << (self.k_minus1 * 2));
 
         ExtForwardSeqHash(self.fh)
     }
@@ -47,14 +62,15 @@ impl<N: HashableSequence> ForwardSeqHashIterator<N> {
 impl<N: HashableSequence> HashFunction<ForwardSeqHashFactory> for ForwardSeqHashIterator<N> {
     fn iter(
         mut self,
-    ) -> impl Iterator<Item = <ForwardSeqHashFactory as HashFunctionFactory>::HashTypeExtendable>
-    {
+    ) -> impl ExactSizeIterator
+    + Iterator<Item = <ForwardSeqHashFactory as HashFunctionFactory>::HashTypeExtendable> {
         (self.k_minus1..self.seq.bases_count()).map(move |idx| self.roll_hash(idx))
     }
 
     fn iter_enumerate(
         mut self,
-    ) -> impl Iterator<
+    ) -> impl ExactSizeIterator
+    + Iterator<
         Item = (
             usize,
             <ForwardSeqHashFactory as HashFunctionFactory>::HashTypeExtendable,
@@ -186,6 +202,7 @@ impl HashFunctionFactory for ForwardSeqHashFactory {
     }
 
     const INVERTIBLE: bool = true;
+    const CANONICAL: bool = false;
     type SeqType = [u8; size_of::<Self::HashTypeUnextendable>()];
     fn invert(hash: Self::HashTypeUnextendable) -> Self::SeqType {
         hash.to_le_bytes()

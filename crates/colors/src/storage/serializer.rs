@@ -1,19 +1,20 @@
 use crate::storage::ColorsSerializerTrait;
-use config::DEFAULT_OUTPUT_BUFFER_SIZE;
-use config::{ColorIndexType, COLORS_SINGLE_BATCH_SIZE};
+use config::{COLORS_SINGLE_BATCH_SIZE, ColorIndexType};
+use crossbeam::channel::Sender;
 use desse::{Desse, DesseSized};
 use ggcat_logging::UnrecoverableErrorLogging;
-use io::chunks_writer::ChunksWriter;
+use parallel_processor::execution_manager::objects_pool::{ObjectsPool, PoolObject};
+
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::{BufWriter, Seek, SeekFrom, Write};
-use std::mem::ManuallyDrop;
-use std::ops::{Deref, DerefMut};
+use std::io::{BufWriter, Seek, Write};
+use std::marker::PhantomData;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::thread::JoinHandle;
 
-const STORAGE_VERSION: u64 = 1;
+pub const COLORMAP_STORAGE_VERSION: u64 = 1;
 
 #[derive(Debug, Desse, DesseSized, Default)]
 pub(crate) struct ColorsFileHeader {
@@ -39,12 +40,25 @@ pub(crate) struct ColorsIndexMap {
 }
 
 pub struct ColorsSerializer<SI: ColorsSerializerTrait> {
-    colors_count: u64,
-    serializer_impl: ManuallyDrop<SI>,
+    colors_subset_count: Mutex<ColorIndexType>,
+    buffers_pool: ObjectsPool<SI::PreSerializer>,
+    colors_sender: Sender<PoolObject<SI::PreSerializer>>,
+
+    checkpoint_tracker: Arc<Mutex<SI::CheckpointTracker>>,
+    serializer: Arc<SI>,
+
+    writing_threads: Vec<JoinHandle<()>>,
+    print_stats: bool,
+    _phantom: PhantomData<SI>,
 }
 
 impl<SI: ColorsSerializerTrait> ColorsSerializer<SI> {
-    pub fn new(file: impl AsRef<Path>, color_names: &[String]) -> anyhow::Result<Self> {
+    pub fn new(
+        file: impl AsRef<Path>,
+        color_names: &[String],
+        threads_count: usize,
+        print_stats: bool,
+    ) -> anyhow::Result<Self> {
         let mut colormap_file = File::create(file.as_ref()).log_unrecoverable_error_with_data(
             "Cannot create colormap file",
             file.as_ref().display(),
@@ -84,146 +98,142 @@ impl<SI: ColorsSerializerTrait> ColorsSerializer<SI> {
             )?;
 
         let color_processor = ColorsFlushProcessing {
-            colormap_file: Mutex::new((
-                BufWriter::new(colormap_file),
-                ColorsIndexMap {
-                    pairs: vec![],
-                    subsets_count: 0,
-                },
-            )),
-            offset: AtomicU64::new(file_offset),
-            uncompressed_size: AtomicU64::new(0),
+            colormap_file: BufWriter::new(colormap_file),
+            colormap_index: ColorsIndexMap {
+                pairs: vec![],
+                subsets_count: 0,
+            },
+            offset: file_offset,
+            uncompressed_size: 0,
         };
 
         let colors_count = color_names.len() as u64;
 
-        Ok(Self {
+        let (colors_sender, receiver) =
+            crossbeam::channel::bounded::<PoolObject<SI::PreSerializer>>(128);
+        let buffers_pool = ObjectsPool::new(128, ());
+
+        let (serializer, checkpoint_tracker) = SI::new(
+            color_processor,
+            COLORS_SINGLE_BATCH_SIZE as usize,
             colors_count,
-            serializer_impl: ManuallyDrop::new(SI::new(
-                color_processor,
-                COLORS_SINGLE_BATCH_SIZE as usize,
-                colors_count,
-            )),
+        );
+
+        let checkpoint_tracker = Arc::new(Mutex::new(checkpoint_tracker));
+        let serializer = Arc::new(serializer);
+
+        let mut writing_threads = Vec::with_capacity(threads_count);
+        for thread in 0..threads_count {
+            let checkpoint_tracker = checkpoint_tracker.clone();
+            let serializer = serializer.clone();
+            let receiver = receiver.clone();
+
+            writing_threads.push(
+                std::thread::Builder::new()
+                    .name(format!("cmap-write-{}", thread))
+                    .spawn(move || {
+                        let mut checkpoint_tracker_guard = checkpoint_tracker.lock();
+                        let mut checkpoint_buffer = SI::CheckpointBuffer::default();
+                        let mut compressed_checkpoint_buffer =
+                            SI::CompressedCheckpointBuffer::default();
+
+                        while let Ok(colors) = receiver.recv() {
+                            if let Some(flush_checkpoint) = SI::write_color_subset(
+                                &mut checkpoint_tracker_guard,
+                                &mut checkpoint_buffer,
+                                &colors,
+                            ) {
+                                drop(checkpoint_tracker_guard);
+                                serializer.flush_checkpoint(
+                                    flush_checkpoint,
+                                    &mut compressed_checkpoint_buffer,
+                                );
+                                checkpoint_tracker_guard = checkpoint_tracker.lock();
+                            }
+                        }
+
+                        serializer.final_flush_buffer(
+                            &mut checkpoint_tracker_guard,
+                            checkpoint_buffer,
+                            compressed_checkpoint_buffer,
+                        );
+                    })
+                    .unwrap(),
+            );
+        }
+
+        Ok(Self {
+            colors_subset_count: Mutex::new(0),
+            buffers_pool,
+            colors_sender,
+            checkpoint_tracker,
+            serializer,
+            writing_threads,
+            print_stats,
+            _phantom: PhantomData,
         })
     }
 
     #[inline(always)]
     pub fn serialize_colors(&self, colors: &[ColorIndexType]) -> ColorIndexType {
-        self.serializer_impl.serialize_colors(colors)
+        let mut colors_buffer = self.buffers_pool.alloc_object();
+        SI::preserialize_colors(&mut colors_buffer, colors);
+        let mut colors_subset_count = self.colors_subset_count.lock();
+        let new_color = *colors_subset_count;
+        *colors_subset_count += 1;
+        self.colors_sender.send(colors_buffer).unwrap();
+        new_color
     }
 
-    pub fn print_stats(&self) {
-        self.serializer_impl.print_stats()
-    }
-}
+    pub fn finalize(self) {
+        // Drop the sender to free the writing threads
+        drop(self.colors_sender);
 
-fn bincode_serialize_ref<S: Write, D: Serialize>(ser: &mut S, data: &D) {
-    bincode::serialize_into(ser, data).unwrap();
-}
+        for thread in self.writing_threads {
+            thread.join().unwrap();
+        }
 
-impl<SI: ColorsSerializerTrait> Drop for ColorsSerializer<SI> {
-    fn drop(&mut self) {
-        let subsets_count = self.serializer_impl.get_subsets_count();
+        let tracker = Arc::try_unwrap(self.checkpoint_tracker)
+            .unwrap_or_else(|_| unreachable!())
+            .into_inner();
+        let serializer = Arc::try_unwrap(self.serializer).unwrap_or_else(|_| unreachable!());
 
-        let chunks_writer =
-            unsafe { std::ptr::read(self.serializer_impl.deref() as *const SI).finalize() };
+        if self.print_stats {
+            SI::print_stats(&tracker);
+        }
 
-        let mut colors_lock = chunks_writer.colormap_file.lock();
-        let (colors_file, index_map) = colors_lock.deref_mut();
-        index_map.pairs.sort();
-        index_map.subsets_count = subsets_count;
-
-        colors_file.flush().unwrap();
-
-        let index_position = colors_file.stream_position().unwrap();
-
-        bincode_serialize_ref(colors_file, index_map);
-        colors_file.flush().unwrap();
-
-        let total_size = colors_file.stream_position().unwrap();
-        colors_file.seek(SeekFrom::Start(0)).unwrap();
-
-        colors_file
-            .write_all(
-                &ColorsFileHeader {
-                    magic: SI::MAGIC,
-                    version: STORAGE_VERSION,
-                    index_offset: index_position,
-                    colors_count: self.colors_count,
-                    subsets_count,
-                    total_size,
-                    total_uncompressed_size: chunks_writer
-                        .uncompressed_size
-                        .load(Ordering::Relaxed),
-                }
-                .serialize()[..],
-            )
-            .unwrap();
-
-        colors_file.flush().unwrap();
+        serializer.finalize(tracker);
     }
 }
 
 pub struct ColorsFlushProcessing {
-    colormap_file: Mutex<(BufWriter<File>, ColorsIndexMap)>,
-    offset: AtomicU64,
-    uncompressed_size: AtomicU64,
+    pub(crate) colormap_file: BufWriter<File>,
+    pub(crate) colormap_index: ColorsIndexMap,
+    pub(crate) offset: u64,
+    pub(crate) uncompressed_size: u64,
 }
 
-pub struct StreamWrapper<'a> {
-    serializer: &'a ColorsFlushProcessing,
-    tmp_data: &'a mut (lz4::Encoder<Vec<u8>>, u64),
-}
-impl<'a> Write for StreamWrapper<'a> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.serializer.flush_data(&mut self.tmp_data, buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
+impl ColorsFlushProcessing {
+    pub fn compress_chunk(data: &[u8], out_data: &mut Vec<u8>) {
+        let mut encoder = lz4::EncoderBuilder::new().level(4).build(out_data).unwrap();
+        encoder.write_all(data).unwrap();
 
-impl ChunksWriter for ColorsFlushProcessing {
-    type ProcessingData = (lz4::Encoder<Vec<u8>>, u64);
-    type TargetData = u8;
-    type StreamType<'a> = StreamWrapper<'a>;
-
-    fn start_processing(&self) -> Self::ProcessingData {
-        (
-            lz4::EncoderBuilder::new()
-                .level(4)
-                .build(Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE))
-                .unwrap(),
-            0,
-        )
-    }
-
-    fn flush_data(&self, tmp_data: &mut Self::ProcessingData, data: &[Self::TargetData]) {
-        tmp_data.0.write_all(data).unwrap();
-        tmp_data.1 += data.len() as u64;
-    }
-
-    fn get_stream<'a>(&'a self, tmp_data: &'a mut Self::ProcessingData) -> Self::StreamType<'a> {
-        StreamWrapper {
-            serializer: self,
-            tmp_data,
-        }
-    }
-
-    fn end_processing(&self, tmp_data: Self::ProcessingData, start_index: ColorIndexType) {
-        let mut file_lock = self.colormap_file.lock();
-
-        self.uncompressed_size
-            .fetch_add(tmp_data.1, Ordering::Relaxed);
-
-        let (data, res) = tmp_data.0.finish();
+        let (_, res) = encoder.finish();
         res.unwrap();
+    }
 
-        let file_offset = self.offset.fetch_add(data.len() as u64, Ordering::Relaxed);
+    pub fn write_compressed_chunk(
+        &mut self,
+        start_index: ColorIndexType,
+        uncompressed_size: usize,
+        compressed_data: &[u8],
+    ) {
+        self.uncompressed_size += uncompressed_size as u64;
+        let file_offset = self.offset;
+        self.colormap_file.write_all(compressed_data).unwrap();
+        self.offset += compressed_data.len() as u64;
 
-        file_lock.0.write_all(data.as_slice()).unwrap();
-        file_lock.1.pairs.push(ColorsIndexEntry {
+        self.colormap_index.pairs.push(ColorsIndexEntry {
             start_index,
             file_offset,
         });

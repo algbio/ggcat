@@ -32,7 +32,7 @@ impl<T> VecSlice<T> {
         self.len
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = usize> {
+    pub fn iter(&self) -> impl Iterator<Item = usize> + use<T> {
         (self.pos..self.pos + self.len).into_iter()
     }
 
@@ -45,12 +45,13 @@ impl<T> VecSlice<T> {
 }
 
 impl<T: Clone> VecSlice<T> {
-    pub fn new_extend(ref_vec: &mut Vec<T>, slice: &[T]) -> Self {
+    pub fn new_extend<E: ExactSizeIterator<Item = T>>(ref_vec: &mut Vec<T>, elements: E) -> Self {
         let pos = ref_vec.len();
-        ref_vec.extend_from_slice(slice);
+        let len = elements.len();
+        ref_vec.extend(elements);
         Self {
             pos,
-            len: slice.len(),
+            len,
             _phantom: Default::default(),
         }
     }

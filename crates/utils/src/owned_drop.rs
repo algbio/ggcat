@@ -17,7 +17,7 @@ impl<X> OwnedDrop<X> {
 
     pub unsafe fn take(&mut self) -> X {
         self.was_taken = true;
-        std::ptr::read(self.val.assume_init_mut() as *const X)
+        unsafe { std::ptr::read(self.val.assume_init_mut() as *const X) }
     }
 }
 

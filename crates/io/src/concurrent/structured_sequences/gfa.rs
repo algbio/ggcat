@@ -1,33 +1,40 @@
 use crate::concurrent::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
+use crate::concurrent::temp_reads::extra_data::{
+    SequenceExtraData, SequenceExtraDataConsecutiveCompression,
+};
 use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE};
 use dynamic_dispatch::dynamic_dispatch;
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
-use super::stream_finish::SequencesWriterWrapper;
 #[cfg(feature = "support_kmer_counters")]
 use super::SequenceAbundance;
+use super::stream_finish::SequencesWriterWrapper;
 use super::{StructuredSequenceBackendInit, StructuredSequenceBackendWrapper};
 
 pub struct GFAWriterWrapperV1;
 
 #[dynamic_dispatch]
 impl StructuredSequenceBackendWrapper for GFAWriterWrapperV1 {
-    type Backend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> =
-        GFAWriter<ColorInfo, LinksInfo, 1>;
+    type Backend<
+        ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
+        LinksInfo: IdentSequenceWriter + SequenceExtraData,
+    > = GFAWriter<ColorInfo, LinksInfo, 1>;
 }
 
 pub struct GFAWriterWrapperV2;
 
 #[dynamic_dispatch]
 impl StructuredSequenceBackendWrapper for GFAWriterWrapperV2 {
-    type Backend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> =
-        GFAWriter<ColorInfo, LinksInfo, 2>;
+    type Backend<
+        ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
+        LinksInfo: IdentSequenceWriter + SequenceExtraData,
+    > = GFAWriter<ColorInfo, LinksInfo, 2>;
 }
 
 pub struct GFAWriter<
@@ -108,7 +115,7 @@ impl<const VERSION: u32, ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenc
 {
     type SequenceTempBuffer = Vec<u8>;
 
-    fn alloc_temp_buffer() -> Self::SequenceTempBuffer {
+    fn alloc_temp_buffer(_: usize) -> Self::SequenceTempBuffer {
         Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes())
     }
 

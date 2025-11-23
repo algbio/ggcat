@@ -2,22 +2,43 @@ use crate::colors_manager::{ColorsParser, MinimizerBucketingSeqColorData};
 use crate::managers::multiple::{
     KmerSerializedColor, UnitigColorData, UnitigsSerializerTempBuffer,
 };
+use crate::non_colored::NonColoredMultipleColors;
 use crate::parsers::{SequenceIdent, SingleSequenceInfo};
 use byteorder::ReadBytesExt;
 use config::{ColorCounterType, ColorIndexType};
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+    SequenceExtraData, SequenceExtraDataCombiner, SequenceExtraDataTempBufferManagement,
 };
-use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use std::cmp::min;
 use std::io::{Read, Write};
 use std::ops::Range;
 
-#[derive(Clone, Default, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Default, Debug, Eq, PartialEq)]
+struct ColorRange {
+    start: usize,
+    end: usize,
+}
+
+impl ColorRange {
+    fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+
+    fn as_range(&self) -> Range<usize> {
+        self.start..self.end
+    }
+
+    fn len(&self) -> usize {
+        self.end - self.start
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug, Eq, PartialEq)]
 pub struct MinBkMultipleColors {
-    buffer_slice: Range<usize>,
-    colors_subslice: Range<usize>,
+    buffer_slice: ColorRange,
+    colors_subslice: ColorRange,
 }
 
 impl MinBkMultipleColors {
@@ -81,8 +102,8 @@ fn decode_minbk_color(
         colors_count += counter;
     }
     Some(MinBkMultipleColors {
-        buffer_slice: buffer_start..buffer.colors.len(),
-        colors_subslice: 0..colors_count,
+        buffer_slice: ColorRange::new(buffer_start, buffer.colors.len()),
+        colors_subslice: ColorRange::new(0, colors_count),
     })
 }
 
@@ -137,8 +158,8 @@ impl SequenceExtraDataTempBufferManagement for MinBkMultipleColors {
         }
 
         Self {
-            buffer_slice: buffer_start..dst.colors.len(),
-            colors_subslice: 0..extra.colors_subslice.len(),
+            buffer_slice: ColorRange::new(buffer_start, dst.colors.len()),
+            colors_subslice: ColorRange::new(0, extra.colors_subslice.len()),
         }
     }
 }
@@ -157,7 +178,7 @@ impl SequenceExtraData for MinBkMultipleColors {
         buffer: &mut Self::TempBuffer,
         mut ptr: *const u8,
     ) -> Option<Self> {
-        decode_minbk_color(buffer, || {
+        decode_minbk_color(buffer, || unsafe {
             let data = *ptr;
             ptr = ptr.add(1);
             Some(data)
@@ -223,7 +244,7 @@ impl SequenceExtraData for MinBkMultipleColors {
 // }
 
 impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
-    type KmerColor = ColorIndexType;
+    type KmerColor<'a> = ColorIndexType;
     type KmerColorIterator<'a> = MinBkColorsIterator<'a>;
 
     fn create(sequence_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self {
@@ -234,8 +255,11 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
         };
 
         Self {
-            buffer_slice: buffer_start..buffer.colors.len(),
-            colors_subslice: colors_subslice.slice,
+            buffer_slice: ColorRange::new(buffer_start, buffer.colors.len()),
+            colors_subslice: ColorRange::new(
+                colors_subslice.slice_start,
+                colors_subslice.slice_end,
+            ),
         }
     }
 
@@ -246,7 +270,7 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
         self_.optimize_buffer_start(&buffer.colors);
 
         MinBkColorsIterator {
-            colors_slice: &buffer.colors[self_.buffer_slice.clone()],
+            colors_slice: &buffer.colors[self_.buffer_slice.as_range()],
             slice_idx: 0,
             colors_left: buffer.colors[self_.buffer_slice.start].counter
                 - self_.colors_subslice.start,
@@ -254,23 +278,60 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
         }
     }
 
-    fn get_subslice(&self, range: Range<usize>) -> Self {
-        assert!(
+    fn get_subslice(&self, range: Range<usize>, reverse: bool) -> Self {
+        debug_assert!(
             self.colors_subslice.len() >= range.end,
             "{} >= {}",
             self.colors_subslice.len(),
             range.end
         );
+        debug_assert!(!reverse);
         let start = self.colors_subslice.start + range.start;
         let end = self.colors_subslice.start + range.end;
         Self {
             buffer_slice: self.buffer_slice.clone(),
-            colors_subslice: start..end,
+            colors_subslice: ColorRange::new(start, end),
         }
+    }
+
+    fn get_unique_color<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
+        unimplemented!()
     }
 
     fn debug_count(&self) -> usize {
         self.colors_subslice.len()
+    }
+}
+
+impl SequenceExtraDataCombiner for MinBkMultipleColors {
+    type SingleDataType = Self;
+
+    fn combine_entries(
+        &mut self,
+        _out_buffer: &mut Self::TempBuffer,
+        _color: Self,
+        _in_buffer: &Self::TempBuffer,
+    ) {
+        unimplemented!()
+    }
+
+    fn to_single(
+        &self,
+        _in_buffer: &Self::TempBuffer,
+        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> Self::SingleDataType {
+        unimplemented!()
+    }
+
+    fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
+
+    #[inline(always)]
+    fn from_single_entry<'a>(
+        out_buffer: &'a mut Self::TempBuffer,
+        single: Self::SingleDataType,
+        _in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> (Self, &'a mut Self::TempBuffer) {
+        (single, out_buffer)
     }
 }
 
@@ -279,6 +340,8 @@ pub struct GraphColorsParser;
 impl ColorsParser for GraphColorsParser {
     type SingleKmerColorDataType = ColorIndexType;
     type MinimizerBucketingSeqColorDataType = MinBkMultipleColors;
+    // This kind of structure is not supported on graph based data as compaction does not support it
+    type MinimizerBucketingMultipleSeqColorDataType = NonColoredMultipleColors<MinBkMultipleColors>;
 }
 
 #[cfg(test)]

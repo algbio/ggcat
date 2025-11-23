@@ -1,18 +1,19 @@
 use crate::pipeline::dumper_minimizer_bucketing::DumperKmersReferenceData;
-use colors::colors_manager::color_types::SingleKmerColorDataType;
 use colors::colors_manager::ColorsManager;
-use colors::storage::deserializer::ColorsDeserializer;
+use colors::colors_manager::color_types::SingleKmerColorDataType;
 use colors::storage::ColorsSerializerTrait;
+use colors::storage::deserializer::ColorsDeserializer;
 use config::{ColorIndexType, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketDataSerializer, NoMultiplicity, NoSecondBucket,
+    CompressedReadsBucketDataSerializer, DeserializedRead, NoMinimizerPosition, NoMultiplicity,
+    NoSecondBucket,
 };
 use nightly_quirks::slice_group_by::SliceGroupBy;
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
-use parallel_processor::buckets::readers::BucketReader;
 use parallel_processor::buckets::SingleBucket;
-use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, FastSortable, SortKey};
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
+use parallel_processor::fast_smart_bucket_sort::{FastSortable, SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
@@ -26,6 +27,7 @@ pub fn colormap_reading<
     CX: ColorsManager<SingleKmerColorDataType = ColorIndexType>,
     CD: ColorsSerializerTrait,
 >(
+    k: usize,
     colormap_file: PathBuf,
     colored_unitigs_buckets: Vec<SingleBucket>,
     single_thread_output_function: bool,
@@ -52,22 +54,36 @@ pub fn colormap_reading<
         let mut temp_bases = Vec::new();
         let mut temp_sequences = Vec::new();
 
-        CompressedBinaryReader::new(
+        let file_index = ChunkedBinaryReaderIndex::from_file(
             &input.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
             DEFAULT_PREFETCH_AMOUNT,
-        )
-        .decode_all_bucket_items::<CompressedReadsBucketDataSerializer<
-            DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
-            typenum::consts::U0,
-            NoSecondBucket,
-            NoMultiplicity,
-        >, _>(vec![], &mut (), |(_, _, color_extra, read, _), _| {
-            let new_read = CompressedReadIndipendent::from_read(&read, &mut temp_bases);
-            temp_sequences.push((new_read, color_extra));
-        });
+        );
+
+        TypedStreamReader::get_items::<
+            CompressedReadsBucketDataSerializer<
+                DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
+                NoSecondBucket,
+                NoMultiplicity,
+                NoMinimizerPosition,
+                typenum::consts::U0,
+            >,
+        >(
+            None,
+            k,
+            file_index.into_chunks(),
+            |DeserializedRead {
+                 extra: color_extra,
+                 read,
+                 ..
+             },
+             _| {
+                let new_read = CompressedReadIndipendent::from_read::<true>(&read, &mut temp_bases);
+                temp_sequences.push((new_read, color_extra));
+            },
+        );
 
         struct ColoredUnitigsCompare<CX: ColorsManager>(PhantomData<&'static CX>);
         impl<CX: ColorsManager>

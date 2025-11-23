@@ -1,17 +1,24 @@
-use crate::reads_buffer::ReadsBuffer;
+use crate::resplitter::{KmersTransformResplitter, ResplitterInitData};
 use crate::{
-    KmersTransformContext, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
-    KmersTransformMapProcessor,
+    GroupProcessStats, KmersTransformContext, KmersTransformExecutorFactory,
+    KmersTransformFinalExecutor, KmersTransformMapProcessor,
 };
-use config::{PRIORITY_SCHEDULING_HIGH, WORKERS_PRIORITY_BASE};
+use config::{DEFAULT_PER_CPU_BUFFER_SIZE, MIN_AVERAGE_CAP};
+use ggcat_logging::generate_stat_id;
+use ggcat_logging::stats::StatId;
+use io::concurrent::temp_reads::creads_utils::AlignToMinimizerByteBoundary;
+use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use minimizer_bucketing::decode_helper::decode_sequences;
+use minimizer_bucketing::split_buckets::SplittedBucket;
+use parallel_processor::buckets::readers::typed_binary_reader::AsyncReaderThread;
+use parallel_processor::buckets::{BucketsCount, ExtraBucketData};
 use parallel_processor::execution_manager::executor::{AsyncExecutor, ExecutorReceiver};
-use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
-use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
+use parallel_processor::execution_manager::packet::Packet;
+use parallel_processor::execution_manager::thread_pool::ExecutorsHandle;
 use parallel_processor::mt_debug_counters::counter::{AtomicCounter, SumMode};
 use parallel_processor::mt_debug_counters::declare_counter_i64;
-use parallel_processor::scheduler::PriorityScheduler;
-use std::future::Future;
+use parking_lot::Mutex;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -22,115 +29,169 @@ pub struct KmersTransformProcessor<F: KmersTransformExecutorFactory>(PhantomData
 static ADDR_WAITING_COUNTER: AtomicCounter<SumMode> =
     declare_counter_i64!("kt_addr_wait_processor", SumMode, false);
 
-static PACKET_WAITING_COUNTER: AtomicCounter<SumMode> =
-    declare_counter_i64!("kt_packet_wait_processor", SumMode, false);
+pub struct ResplitConfig {
+    pub subsplit_buckets_count: BucketsCount,
+}
 
-#[derive(Clone)]
-pub struct KmersProcessorInitData {
-    pub sequences_count: usize,
-    pub sub_bucket: usize,
+pub struct KmersProcessorInitData<F: KmersTransformExecutorFactory> {
+    pub process_stat_id: StatId,
     pub is_resplitted: bool,
-    pub bucket_paths: Vec<PathBuf>,
+    pub resplit_config: Option<ResplitConfig>,
+    pub splitted_bucket: Mutex<Option<SplittedBucket>>,
+    pub debug_bucket_first_path: Option<PathBuf>,
+    pub extra_bucket_data: Option<ExtraBucketData>,
+    pub processor_handle: ExecutorsHandle<KmersTransformProcessor<F>>,
 }
 
 impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor<F> {
-    type InputPacket = ReadsBuffer<F::AssociatedExtraData>;
+    type InputPacket = ();
     type OutputPacket = ();
     type GlobalParams = KmersTransformContext<F>;
-    type InitData = KmersProcessorInitData;
+    type InitData = KmersProcessorInitData<F>;
+    const ALLOW_PARALLEL_ADDRESS_EXECUTION: bool = false;
 
     fn new() -> Self {
         Self(PhantomData)
     }
 
-    fn async_executor_main<'a>(
+    fn executor_main<'a>(
         &'a mut self,
         global_context: &'a Self::GlobalParams,
         mut receiver: ExecutorReceiver<Self>,
-        memory_tracker: MemoryTracker<Self>,
-    ) -> impl Future<Output = ()> + 'a {
-        async move {
-            let mut map_processor =
-                F::new_map_processor(&global_context.global_extra_data, memory_tracker.clone());
-            let mut final_executor = F::new_final_executor(&global_context.global_extra_data);
+    ) {
+        let mut map_processor = F::new_map_processor(&global_context.global_extra_data);
+        let mut final_executor = F::new_final_executor(&global_context.global_extra_data);
 
-            let mut packet = Packet::new_simple(
-                <F::MapProcessorType as KmersTransformMapProcessor<F>>::MapStruct::allocate_new(&()),
+        let reader_thread = AsyncReaderThread::new(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes(), 8);
+
+        let mut packet = Packet::new_simple(<F::MapProcessorType as KmersTransformMapProcessor<
+            F,
+        >>::MapStruct::allocate_new(
+            &F::get_packets_init_data(&global_context.global_extra_data),
+        ));
+
+        let mut tmp_mult_buffer = <F::AssociatedExtraDataWithMultiplicity>::new_temp_buffer();
+
+        while let Ok(address) = track!(receiver.obtain_address(), ADDR_WAITING_COUNTER) {
+            let proc_info = address.get_init_data();
+
+            let mut splitted_bucket = proc_info.splitted_bucket.lock().take().unwrap();
+
+            if let Some(resplit_config) = &proc_info.resplit_config {
+                let total_size = splitted_bucket.total_size;
+
+                KmersTransformResplitter::<F>::do_resplit(
+                    global_context,
+                    reader_thread.clone(),
+                    ResplitterInitData {
+                        _resplit_stat_id: generate_stat_id!(),
+                        subsplit_buckets_count: resplit_config.subsplit_buckets_count,
+                        splitted_bucket,
+                        process_handle: proc_info.processor_handle.clone(),
+                    },
+                );
+
+                global_context
+                    .processed_subbuckets_count
+                    .fetch_add(1, Ordering::Relaxed);
+
+                global_context
+                    .processed_buckets_size
+                    .fetch_add(total_size as usize, Ordering::Relaxed);
+
+                continue;
+            }
+
+            let mut real_size = 0;
+
+            let total_subbucket_sequences = global_context
+                .total_subbucket_sequences
+                .load(Ordering::Relaxed);
+            let total_subbucket_count =
+                global_context.total_subbucket_count.load(Ordering::Relaxed);
+
+            let average_sequences =
+                (total_subbucket_sequences / total_subbucket_count).max(MIN_AVERAGE_CAP);
+
+            map_processor.process_group_start(
+                packet,
+                &global_context.global_extra_data,
+                proc_info.extra_bucket_data,
+                proc_info.is_resplitted,
+                average_sequences,
             );
 
-            let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_HIGH);
-
-            while let Ok((address, proc_info)) = track!(
-                receiver
-                    .obtain_address_with_priority(WORKERS_PRIORITY_BASE, &thread_handle)
-                    .await,
-                ADDR_WAITING_COUNTER
-            ) {
-                map_processor.process_group_start(packet, &global_context.global_extra_data);
-
-                let mut real_size = 0;
-                let mut total_kmers = 0;
-                let mut unique_kmers = 0;
-
-                while let Some(input_packet) = track!(
-                    address.receive_packet(&thread_handle).await,
-                    PACKET_WAITING_COUNTER
-                ) {
-                    real_size += input_packet.reads.len() as usize;
-                    let stats = map_processor.process_group_batch_sequences(
-                        &global_context.global_extra_data,
-                        &input_packet.reads,
-                        &input_packet.extra_buffer,
-                        &input_packet.reads_buffer,
+            map_processor.process_group_sequences(
+                splitted_bucket.sequences_count,
+                |ctx, process_sequence| {
+                    decode_sequences::<
+                        F::AssociatedExtraData,
+                        F::AssociatedExtraDataWithMultiplicity,
+                        F::FlagsCount,
+                        AlignToMinimizerByteBoundary,
+                    >(
+                        reader_thread.clone(),
+                        &mut tmp_mult_buffer,
+                        &mut splitted_bucket,
+                        global_context.k,
+                        |read, extra_buffer| {
+                            real_size += 1;
+                            process_sequence(ctx, &read, extra_buffer);
+                            F::AssociatedExtraDataWithMultiplicity::clear_temp_buffer(extra_buffer);
+                        },
                     );
-                    total_kmers += stats.total_kmers;
-                    unique_kmers += stats.unique_kmers;
-                }
+                },
+            );
 
-                if !proc_info.is_resplitted {
-                    global_context
-                        .total_sequences
-                        .fetch_add(real_size as u64, Ordering::Relaxed);
-                    global_context
-                        .total_kmers
-                        .fetch_add(total_kmers, Ordering::Relaxed);
-                    global_context
-                        .unique_kmers
-                        .fetch_add(unique_kmers, Ordering::Relaxed);
-                }
+            let GroupProcessStats {
+                total_kmers,
+                unique_kmers,
+                ..
+            } = map_processor.get_stats();
 
-                packet = map_processor.process_group_finalize(&global_context.global_extra_data);
+            packet = map_processor.process_group_finalize(&global_context.global_extra_data);
 
-                // static MAX_PACKET_SIZE: AtomicUsize = AtomicUsize::new(0);
-                let current_size = packet.get_size();
-
-                if real_size != proc_info.sequences_count {
-                    //MAX_PACKET_SIZE.fetch_max(current_size, Ordering::Relaxed) < current_size {
-                    ggcat_logging::info!(
-                        "Found bucket with max size {} ==> {} // EXPECTED_SIZE: {} REAL_SIZE: {} SUB: {}",
-                        current_size,
-                        proc_info.bucket_paths[0].display(),
-                        proc_info.sequences_count,
-                        real_size,
-                        proc_info.sub_bucket
-                    );
-                }
-
-                packet = final_executor.process_map(&global_context.global_extra_data, packet);
-                packet.reset();
-                // address.packet_send(
-                //     global_context
-                //         .finalizer_address
-                //         .read()
-                //         .as_ref()
-                //         .unwrap()
-                //         .clone(),
-                //     packet,
-                // );
+            if real_size != splitted_bucket.sequences_count {
+                ggcat_logging::info!(
+                    "Found bucket ==> {:?} // EXPECTED_SIZE: {} REAL_SIZE: {} SUB: {}",
+                    proc_info
+                        .debug_bucket_first_path
+                        .as_ref()
+                        .map(|p| p.display()),
+                    splitted_bucket.sequences_count,
+                    real_size,
+                    splitted_bucket.sub_bucket
+                );
             }
-            final_executor.finalize(&global_context.global_extra_data);
+
+            packet = final_executor.process_map(&global_context.global_extra_data, packet);
+
+            global_context
+                .total_sequences
+                .fetch_add(real_size as u64, Ordering::Relaxed);
+            global_context
+                .total_kmers
+                .fetch_add(total_kmers, Ordering::Relaxed);
+            global_context
+                .unique_kmers
+                .fetch_add(unique_kmers, Ordering::Relaxed);
+
+            if proc_info.is_resplitted {
+                global_context
+                    .extra_buckets_count
+                    .fetch_add(1, Ordering::Relaxed);
+            } else {
+                global_context
+                    .processed_subbuckets_count
+                    .fetch_add(1, Ordering::Relaxed);
+
+                global_context
+                    .processed_buckets_size
+                    .fetch_add(splitted_bucket.total_size as usize, Ordering::Relaxed);
+            }
+
+            packet.reset();
         }
+        final_executor.finalize(&global_context.global_extra_data);
     }
 }
-//     const MEMORY_FIELDS_COUNT: usize = 2;
-//     const MEMORY_FIELDS: &'static [&'static str] = &["MAP_SIZE", "CORRECT_READS"];

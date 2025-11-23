@@ -1,7 +1,7 @@
 [package]
 name = "ggcat_dumper"
 version = "0.1.1"
-edition = "2021"
+edition = "2024"
 [dependencies]
 
 # Config
@@ -11,8 +11,8 @@ config = { package = "ggcat_config", path = "../config" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Common libraries
-parallel-processor = "0.1.24"
-streaming-libdeflate-rs = "0.1.5"
+parallel-processor = "0.2.3"
+streaming-libdeflate-rs = "0.2.3"
 nightly-quirks = "0.1.4"
 
 # Common pipeline libraries
@@ -22,7 +22,6 @@ colors = { package = "ggcat_colors", path = "../colors" }
 structs = { package = "ggcat_structs", path = "../structs" }
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
 kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
-typenum = "1.17.0"
 rayon = "1.10.0"
 byteorder = "1.5.0"
 hashbrown = "0.14.5"
@@ -32,6 +31,26 @@ lz4 = "1.25.0"
 flate2 = "1.0.30"
 ggcat-logging = { version = "2.0.0", path = "../logging" }
 anyhow = "1.0.89"
+typenum = "1.18.0"
 
 [features]
-devel-build = []
+
+# Features used to filter ggcat capabilites
+full = [
+    "hash-16bit",
+    "hash-32bit",
+    "hash-64bit",
+    "hash-128bit",
+    "hash-rkarp",
+    "hash-forward",
+    "enable-colors",
+    "enable-gfa",
+]
+hash-16bit = []    # Support 16bit hashing (optimization for k <= 8)
+hash-32bit = []    # Support 32bit hashing (optimization for k <= 16)
+hash-64bit = []    # Support 64bit hashing (optimization for k <= 32)
+hash-128bit = []   # Support 128bit hashing (k <= 64)
+hash-rkarp = []    # Support 128bit rabin-karp hashing (k > 64)
+hash-forward = []  # Support non-canonical hashing
+enable-colors = [] # Support colors
+enable-gfa = []    # Support gfa output

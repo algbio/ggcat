@@ -1,8 +1,8 @@
-# [patch.crates-io]
+[patch.crates-io]
 # dynamic-dispatch-proc-macro = { path = "libs-crates/dynamic-dispatch-rs/dynamic-dispatch-proc-macro" }
 # dynamic-dispatch = { path = "libs-crates/dynamic-dispatch-rs" }
 # mt-debug-counters = { path = "libs-crates/mt-debug-counters-rs" }
-# streaming-libdeflate-rs = { path = "libs-crates/streaming-libdeflate-rs" }
+streaming-libdeflate-rs = { path = "libs-crates/streaming-libdeflate-rs" }
 # papi-bindings = { path = "libs-crates/papi-bindings-rs" }
 # nightly-quirks = { path = "libs-crates/nightly-quirks-rs" }
 # instrumenter-proc-macro = { path = "libs-crates/instrumenter-rs/instrumenter-proc-macro-rs" }
@@ -18,7 +18,8 @@ members = [
     # "libs-crates/dynamic-dispatch-rs/dynamic-dispatch-proc-macro",
     # "libs-crates/dynamic-dispatch-rs",
     # "libs-crates/mt-debug-counters-rs",
-    # "libs-crates/streaming-libdeflate-rs",
+    "libs-crates/streaming-libdeflate-rs",
+    # "libs-crates/bitbound-rs",
     # "libs-crates/papi-bindings-rs",
     # "libs-crates/nightly-quirks-rs",
     # "libs-crates/instrumenter-rs/instrumenter-proc-macro-rs",
@@ -52,6 +53,7 @@ members = [
     # Assembler pipeline
     "crates/assembler_minimizer_bucketing",
     "crates/assembler_kmers_merge",
+    "crates/assembler_pipeline",
     "crates/assembler",
 
     # Querier pipeline
@@ -73,15 +75,18 @@ opt-level = 2
 lto = "off"
 
 [profile.release]
+codegen-units = 16
 debug = false
+opt-level = 1
 strip = true
-lto = "thin"
+lto = "off"
 
 
 [profile.with_debug]
+# codegen-units = 1
 inherits = "release"
 debug = true
 strip = false
-lto = "thin"
+# lto = "thin"
 
 # split-debuginfo = "packed"

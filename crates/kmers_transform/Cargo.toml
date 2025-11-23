@@ -1,7 +1,7 @@
 [package]
 name = "ggcat_kmers_transform"
 version = "2.0.0"
-edition = "2021"
+edition = "2024"
 [dependencies]
 
 # Config
@@ -9,8 +9,8 @@ config = { package = "ggcat_config", path = "../config" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Common libraries
-parallel-processor = "0.1.24"
-streaming-libdeflate-rs = "0.1.5"
+parallel-processor = "0.2.3"
+streaming-libdeflate-rs = "0.2.3"
 nightly-quirks = "0.1.4"
 hashes = { package = "ggcat_hashes", path = "../hashes" }
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
@@ -18,7 +18,6 @@ minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimi
 # Other libraries
 io = { package = "ggcat_io", path = "../io" }
 parking_lot = "0.12.3"
-typenum = "1.17.0"
 replace_with = "0.1.7"
 tokio = "1.38.0"
 
@@ -26,3 +25,4 @@ tokio = "1.38.0"
 # Tracing
 instrumenter = "0.1.3"
 ggcat-logging = { version = "2.0.0", path = "../logging" }
+typenum = "1.18.0"

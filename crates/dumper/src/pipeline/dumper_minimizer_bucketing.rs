@@ -5,18 +5,19 @@ use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
 use io::concurrent::temp_reads::extra_data::{
-    HasEmptyExtraBuffer, SequenceExtraDataConsecutiveCompression,
+    HasEmptyExtraBuffer, SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement,
 };
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
-use io::sequences_stream::fasta::FastaFileSequencesStream;
 use io::sequences_stream::SequenceInfo;
+use io::sequences_stream::fasta::FastaFileSequencesStream;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
+    MinimzerBucketingFilesReaderInputPacket, PushSequenceInfo,
 };
-use parallel_processor::buckets::SingleBucket;
+use parallel_processor::buckets::{BucketsCount, SingleBucket};
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::io::{Read, Write};
@@ -73,6 +74,39 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
     }
 }
 
+impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + FastSortable>
+    SequenceExtraDataCombiner for DumperKmersReferenceData<CX>
+{
+    type SingleDataType = Self;
+
+    fn combine_entries(
+        &mut self,
+        _out_buffer: &mut Self::TempBuffer,
+        _color: Self,
+        _in_buffer: &Self::TempBuffer,
+    ) {
+        unimplemented!()
+    }
+
+    fn to_single(
+        &self,
+        _in_buffer: &Self::TempBuffer,
+        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> Self::SingleDataType {
+        unimplemented!()
+    }
+
+    fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
+
+    fn from_single_entry<'a>(
+        _out_buffer: &'a mut Self::TempBuffer,
+        single: Self::SingleDataType,
+        in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> (Self, &'a mut Self::TempBuffer) {
+        (single, in_buffer)
+    }
+}
+
 pub struct ReadTypeBuffered<CX: ColorsManager> {
     colors_buffer: (<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,),
     read_data: Option<ReadData<CX>>,
@@ -94,7 +128,7 @@ impl<CX: ColorsManager> Default for ReadTypeBuffered<CX> {
 
 pub struct DumperMinimizerBucketingGlobalData {
     colors_count: u64,
-    buckets_count_log: u32,
+    buckets_count_log: usize,
 }
 
 pub struct DumperMinimizerBucketingExecutor<CX: ColorsManager> {
@@ -128,15 +162,13 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
     for DumperMinimizerBucketingExecutorFactory<CX>
 {
     type GlobalData = DumperMinimizerBucketingGlobalData;
-    type ExtraData = DumperKmersReferenceData<SingleKmerColorDataType<CX>>;
+    type ReadExtraData = DumperKmersReferenceData<SingleKmerColorDataType<CX>>;
     type PreprocessInfo = ReadTypeBuffered<CX>;
     type StreamInfo = ();
 
-    type ColorsManager = CX;
     type RewriteBucketCompute = RewriteBucketComputeDumper;
 
-    #[allow(non_camel_case_types)]
-    type FLAGS_COUNT = typenum::U0;
+    type FlagsCount = typenum::U0;
 
     type ExecutorType = DumperMinimizerBucketingExecutor<CX>;
 
@@ -206,8 +238,8 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
     fn reprocess_sequence(
         &mut self,
         _flags: u8,
-        _extra_data: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData,
-        _extra_data_buffer: &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _extra_data: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ReadExtraData,
+        _extra_data_buffer: &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ReadExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
         _preprocess_info: &mut <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         unimplemented!()
@@ -215,7 +247,8 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
 
     fn process_sequence<
         S: MinimizerInputSequence,
-        F: FnMut(BucketIndexType, BucketIndexType, S, u8, <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData, &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer),
+        F: FnMut(PushSequenceInfo<S, DumperMinimizerBucketingExecutorFactory<CX>>),
+        const SEPARATE_DUPLICATES: bool,
     >(
         &mut self,
         preprocess_info: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
@@ -225,7 +258,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
         _first_bits: usize,
         _second_bits: usize,
         mut push_sequence: F,
-    ){
+    ) {
         let mut rolling_iter = preprocess_info
             .read_data
             .as_ref()
@@ -238,70 +271,81 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
 
         for (index, kmer_color) in rolling_iter.enumerate() {
             if kmer_color != last_color {
-                push_sequence(
-                    CX::get_bucket_from_color(
+                push_sequence(PushSequenceInfo {
+                    bucket: CX::get_bucket_from_color(
                         &last_color,
                         self.global_data.global_data.colors_count,
                         self.global_data.global_data.buckets_count_log,
                     ),
-                    0,
-                    sequence.get_subslice(last_index..(index + self.global_data.k)),
-                    0,
-                    DumperKmersReferenceData { color: last_color },
-                    &(),
-                );
-
+                    second_bucket: 0,
+                    sequence: sequence.get_subslice(last_index..(index + self.global_data.k)),
+                    extra_data: DumperKmersReferenceData { color: last_color },
+                    temp_buffer: &(),
+                    minimizer_pos: 0,
+                    flags: 0,
+                    rc: false,
+                });
                 last_index = index + 1;
                 last_color = kmer_color;
             }
         }
 
-        push_sequence(
-            CX::get_bucket_from_color(
+        push_sequence(PushSequenceInfo {
+            bucket: CX::get_bucket_from_color(
                 &last_color,
                 self.global_data.global_data.colors_count,
                 self.global_data.global_data.buckets_count_log,
             ),
-            0,
-            sequence.get_subslice(last_index..sequence.seq_len()),
-            0,
-            DumperKmersReferenceData { color: last_color },
-            &(),
-        );
+            second_bucket: 0,
+            sequence: sequence.get_subslice(last_index..sequence.seq_len()),
+            extra_data: DumperKmersReferenceData { color: last_color },
+            temp_buffer: &(),
+            minimizer_pos: 0,
+            flags: 0,
+            rc: false,
+        });
     }
 }
 
 pub fn minimizer_bucketing<CX: ColorsManager>(
     graph_file: PathBuf,
-    buckets_count: usize,
+    buckets_count: BucketsCount,
+    second_buckets_count: BucketsCount,
     threads_count: usize,
     temp_dir: &Path,
     k: usize,
     m: usize,
     colors_count: u64,
-) -> (Vec<SingleBucket>, PathBuf) {
+) -> Vec<SingleBucket> {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: unitigs reorganization".to_string());
 
-    let input_files = vec![((graph_file, None), ())];
+    let input_files = vec![MinimzerBucketingFilesReaderInputPacket {
+        sequences: (graph_file, None),
+        stream_info: (),
+    }];
 
     GenericMinimizerBucketing::do_bucketing_no_max_usage::<
+        DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
+        DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
         DumperMinimizerBucketingExecutorFactory<CX>,
         FastaFileSequencesStream,
     >(
         input_files.into_iter(),
         temp_dir,
         buckets_count,
+        second_buckets_count,
         threads_count,
         k,
         m,
         DumperMinimizerBucketingGlobalData {
             colors_count,
-            buckets_count_log: buckets_count.ilog2(),
+            buckets_count_log: buckets_count.normal_buckets_count_log,
         },
         None,
         CX::COLORS_ENABLED,
         k,
+        false,
     )
 }

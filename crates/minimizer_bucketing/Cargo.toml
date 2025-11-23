@@ -1,15 +1,15 @@
 [package]
 name = "ggcat_minimizer_bucketing"
 version = "2.0.0"
-edition = "2021"
+edition = "2024"
 [dependencies]
 
 # Config
 config = { package = "ggcat_config", path = "../config" }
 
 # Common libraries
-parallel-processor = "0.1.24"
-streaming-libdeflate-rs = "0.1.5"
+parallel-processor = "0.2.3"
+streaming-libdeflate-rs = "0.2.3"
 nightly-quirks = "0.1.4"
 
 # Pipeline libraries
@@ -18,9 +18,6 @@ io = { package = "ggcat_io", path = "../io" }
 
 # Other libraries
 replace_with = "0.1.7"
-serde = "1.0.203"
-bincode = "1.3.3"
-typenum = "1.17.0"
 parking_lot = "0.12.3"
 ggcat-logging = { version = "2.0.0", path = "../logging" }
 tokio = "1.38.0"
@@ -30,3 +27,6 @@ utils = { package = "ggcat_utils", path = "../utils" }
 colors = { package = "ggcat_colors", path = "../colors" }
 byteorder = "1.5.0"
 rustc-hash = "2.1.0"
+hashbrown = "0.15.3"
+bincode = "2.0.1"
+typenum = "1.18.0"

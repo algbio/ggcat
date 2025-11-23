@@ -6,20 +6,24 @@ use config::{BucketIndexType, ColorCounterType};
 use dynamic_dispatch::dynamic_dispatch;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
-use io::compressed_read::CompressedRead;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
-    HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
+    HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataCombiner,
+    SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
 };
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
-use rustc_hash::FxHashMap;
+use std::fmt::Debug;
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::MapEntry;
 
 #[derive(Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Copy, Clone, Default)]
 pub struct NonColoredManager;
+
+#[derive(Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Copy, Clone, Default)]
+pub struct NonColoredMultipleColors<T>(PhantomData<T>);
 
 /// Dummy colors manager
 #[dynamic_dispatch]
@@ -30,7 +34,7 @@ impl ColorsManager for NonColoredManager {
     fn get_bucket_from_color(
         _color: &Self::SingleKmerColorDataType,
         _colors_count: u64,
-        _buckets_count_log: u32,
+        _buckets_count_log: usize,
     ) -> BucketIndexType {
         panic!("Cannot get color bucket for non colored manager!");
     }
@@ -40,10 +44,27 @@ impl ColorsManager for NonColoredManager {
 }
 
 impl HasEmptyExtraBuffer for NonColoredManager {}
+impl<T: Sync + Send + Debug + Clone> HasEmptyExtraBuffer for NonColoredMultipleColors<T> {}
+
 impl SequenceExtraData for NonColoredManager {
     #[inline(always)]
     fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl Read) -> Option<Self> {
         Some(NonColoredManager)
+    }
+
+    #[inline(always)]
+    fn encode_extended(&self, _buffer: &Self::TempBuffer, _writer: &mut impl Write) {}
+
+    #[inline(always)]
+    fn max_size(&self) -> usize {
+        0
+    }
+}
+
+impl<T: Sync + Send + Debug + Clone> SequenceExtraData for NonColoredMultipleColors<T> {
+    #[inline(always)]
+    fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl Read) -> Option<Self> {
+        Some(Self(PhantomData))
     }
 
     #[inline(always)]
@@ -65,7 +86,7 @@ impl Iterator for NonColoredManager {
 }
 
 impl MinimizerBucketingSeqColorData for NonColoredManager {
-    type KmerColor = NonColoredManager;
+    type KmerColor<'a> = NonColoredManager;
     type KmerColorIterator<'a> = std::iter::Repeat<NonColoredManager>;
 
     #[inline(always)]
@@ -78,8 +99,69 @@ impl MinimizerBucketingSeqColorData for NonColoredManager {
         std::iter::repeat(NonColoredManager)
     }
 
-    fn get_subslice(&self, _range: Range<usize>) -> Self {
+    fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
         Self
+    }
+
+    fn get_unique_color<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
+        NonColoredManager
+    }
+}
+
+impl<T: Sync + Send + Debug + Copy + Default + MinimizerBucketingSeqColorData + 'static>
+    MinimizerBucketingSeqColorData for NonColoredMultipleColors<T>
+{
+    type KmerColor<'a> = &'a [T::KmerColor<'a>];
+
+    type KmerColorIterator<'a> = std::iter::Repeat<&'a [T::KmerColor<'a>]>;
+
+    fn create(_stream_info: SingleSequenceInfo, _buffer: &mut Self::TempBuffer) -> Self {
+        Self(PhantomData)
+    }
+
+    fn get_iterator<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator<'a> {
+        std::iter::repeat(&[])
+    }
+
+    fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
+        Self(PhantomData)
+    }
+
+    fn get_unique_color<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
+        &[]
+    }
+}
+
+impl<T: Sync + Send + Debug + Clone + SequenceExtraDataConsecutiveCompression + Default>
+    SequenceExtraDataCombiner for NonColoredMultipleColors<T>
+{
+    type SingleDataType = T;
+
+    fn combine_entries(
+        &mut self,
+        _out_buffer: &mut Self::TempBuffer,
+        _color: Self,
+        _in_buffer: &Self::TempBuffer,
+    ) {
+    }
+
+    fn to_single(
+        &self,
+        _in_buffer: &Self::TempBuffer,
+        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> Self::SingleDataType {
+        T::default()
+    }
+
+    fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
+
+    #[inline(always)]
+    fn from_single_entry<'a>(
+        out_buffer: &'a mut Self::TempBuffer,
+        _color: Self::SingleDataType,
+        _in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> (Self, &'a mut Self::TempBuffer) {
+        (Self(PhantomData), out_buffer)
     }
 }
 
@@ -92,6 +174,7 @@ impl FastSortable for NonColoredManager {
 impl ColorsParser for NonColoredManager {
     type SingleKmerColorDataType = NonColoredManager;
     type MinimizerBucketingSeqColorDataType = NonColoredManager;
+    type MinimizerBucketingMultipleSeqColorDataType = NonColoredMultipleColors<NonColoredManager>;
 }
 
 impl IdentSequenceWriter for NonColoredManager {
@@ -120,12 +203,15 @@ impl IdentSequenceWriter for NonColoredManager {
 
 impl ColorsMergeManager for NonColoredManager {
     type SingleKmerColorDataType = NonColoredManager;
+    type TableColorEntry = NonColoredManager;
     type GlobalColorsTableWriter = ();
     type GlobalColorsTableReader = ();
 
     fn create_colors_table(
         _path: impl AsRef<Path>,
         _color_names: &[String],
+        _threads_count: usize,
+        _print_stats: bool,
     ) -> anyhow::Result<Self::GlobalColorsTableWriter> {
         Ok(())
     }
@@ -134,12 +220,10 @@ impl ColorsMergeManager for NonColoredManager {
         Ok(())
     }
 
-    fn print_color_stats(_global_colors_table: &Self::GlobalColorsTableWriter) {}
-
     type ColorsBufferTempStructure = NonColoredManager;
 
     #[inline(always)]
-    fn allocate_temp_buffer_structure(_init_data: &Path) -> Self::ColorsBufferTempStructure {
+    fn allocate_temp_buffer_structure() -> Self::ColorsBufferTempStructure {
         NonColoredManager
     }
 
@@ -149,19 +233,10 @@ impl ColorsMergeManager for NonColoredManager {
     #[inline(always)]
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         _data: &mut Self::ColorsBufferTempStructure,
-        _kmer_color: &Self::SingleKmerColorDataType,
-        _el: (usize, <MH as HashFunctionFactory>::HashTypeUnextendable),
-        _entry: &mut MapEntry<Self::HashMapTempColorIndex>,
-    ) {
-    }
-
-    #[inline(always)]
-    fn add_temp_buffer_sequence(
-        _data: &mut Self::ColorsBufferTempStructure,
-        _sequence: CompressedRead,
-        _k: usize,
-        _m: usize,
-        _flags: u8,
+        _kmer_colors: &[Self::SingleKmerColorDataType],
+        _color_entry: &mut Self::HashMapTempColorIndex,
+        _same_color: bool,
+        _reached_threshold: bool,
     ) {
     }
 
@@ -176,14 +251,15 @@ impl ColorsMergeManager for NonColoredManager {
     fn process_colors<MH: HashFunctionFactory>(
         _global_colors_table: &Self::GlobalColorsTableWriter,
         _data: &mut Self::ColorsBufferTempStructure,
-        _map: &mut FxHashMap<
-            <MH as HashFunctionFactory>::HashTypeUnextendable,
-            MapEntry<Self::HashMapTempColorIndex>,
-        >,
-        _k: usize,
-        _min_multiplicity: usize,
     ) {
         unreachable!()
+    }
+
+    fn assign_color(
+        _global_colors_table: &Self::GlobalColorsTableWriter,
+        _data: &mut [Self::SingleKmerColorDataType],
+    ) -> Self::HashMapTempColorIndex {
+        Self
     }
 
     type PartialUnitigsColorStructure = NonColoredManager;
@@ -199,15 +275,24 @@ impl ColorsMergeManager for NonColoredManager {
 
     #[inline(always)]
     fn extend_forward(
+        _data: &Self::ColorsBufferTempStructure,
         _ts: &mut Self::TempUnitigColorStructure,
-        _entry: &MapEntry<Self::HashMapTempColorIndex>,
+        _entry: Self::HashMapTempColorIndex,
     ) {
     }
 
     #[inline(always)]
     fn extend_backward(
+        _data: &Self::ColorsBufferTempStructure,
         _ts: &mut Self::TempUnitigColorStructure,
-        _entry: &MapEntry<Self::HashMapTempColorIndex>,
+        _entry: Self::HashMapTempColorIndex,
+    ) {
+    }
+
+    fn extend_forward_with_color(
+        _ts: &mut Self::TempUnitigColorStructure,
+        _entry_color: Self::TableColorEntry,
+        _count: usize,
     ) {
     }
 
@@ -234,6 +319,7 @@ impl ColorsMergeManager for NonColoredManager {
 
     fn debug_tucs(_str: &Self::TempUnitigColorStructure, _seq: &[u8]) {}
     fn debug_colors<MH: HashFunctionFactory>(
+        _data: &Self::ColorsBufferTempStructure,
         _color: &Self::PartialUnitigsColorStructure,
         _colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
         _seq: &[u8],

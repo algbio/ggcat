@@ -1,6 +1,6 @@
 [package]
 authors = ["Andrea Cracco <guilucand@gmail.com>"]
-edition = "2021"
+edition = "2024"
 name = "ggcat-api"
 version = "2.0.0"
 
@@ -24,10 +24,34 @@ colors = { package = "ggcat_colors", path = "../colors" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 fdlimit = "0.3.0"
-parallel-processor = "0.1.24"
+parallel-processor = "0.2.3"
 rayon = "1.10.0"
 dynamic-dispatch = "0.5.4"
 parking_lot = "0.12.3"
 uuid = { version = "1.9.1", features = ["v4"] }
 ggcat-logging = { version = "2.0.0", path = "../logging" }
 anyhow = "1.0.89"
+
+[features]
+detailed-stats = ["ggcat-logging/detailed-stats"]
+
+# Features used to filter ggcat capabilites
+default = ["full"]
+full = [
+    "hash-16bit",
+    "hash-32bit",
+    "hash-64bit",
+    "hash-128bit",
+    "hash-rkarp",
+    "hash-forward",
+    "enable-colors",
+    "enable-gfa",
+]
+hash-16bit = ["assembler/hash-16bit", "querier/hash-16bit", "dumper/hash-16bit"]    # Support 16bit hashing (optimization for k <= 8)
+hash-32bit = ["assembler/hash-32bit", "querier/hash-32bit", "dumper/hash-32bit"]    # Support 32bit hashing (optimization for k <= 16)
+hash-64bit = ["assembler/hash-64bit", "querier/hash-64bit", "dumper/hash-64bit"]    # Support 64bit hashing (optimization for k <= 32)
+hash-128bit = ["assembler/hash-128bit", "querier/hash-128bit", "dumper/hash-128bit"]   # Support 128bit hashing (k <= 64)
+hash-rkarp = ["assembler/hash-rkarp", "querier/hash-rkarp", "dumper/hash-rkarp"]    # Support 128bit rabin-karp hashing (k > 64)
+hash-forward = ["assembler/hash-forward", "querier/hash-forward", "dumper/hash-forward"]  # Support non-canonical hashing
+enable-colors = ["assembler/enable-colors", "querier/enable-colors", "dumper/enable-colors"] # Support colors
+enable-gfa = ["assembler/enable-gfa", "querier/enable-gfa", "dumper/enable-gfa"]    # Support gfa output

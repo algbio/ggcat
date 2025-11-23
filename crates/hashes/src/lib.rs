@@ -1,23 +1,21 @@
+use bincode::{Decode, Encode};
 use dynamic_dispatch::dynamic_dispatch;
 
 pub mod cn_nthash;
 pub mod cn_seqhash;
-pub mod fw_nthash;
 pub mod fw_seqhash;
 mod nthash_base;
 
 pub mod cn_rkhash;
 pub mod dummy_hasher;
+pub mod extremal;
 pub mod fw_rkhash;
 pub mod rolling;
 
 use std::fmt::{Debug, Display};
 use std::hash::{BuildHasher, Hash};
 
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-
-use config::{BucketIndexType, MinimizerType};
+use config::BucketIndexType;
 
 pub mod default {
     pub type MNHFactory = super::cn_nthash::CanonicalNtHashIteratorFactory;
@@ -36,27 +34,27 @@ pub trait UnextendableHashTraitType:
     + Hash
     + Send
     + Sync
-    + Serialize
-    + DeserializeOwned
+    + Encode
+    + Decode<()>
     + 'static
 {
 }
 
 impl<
-        T: Copy
-            + Clone
-            + Debug
-            + Default
-            + Display
-            + Eq
-            + Ord
-            + Hash
-            + Send
-            + Sync
-            + Serialize
-            + DeserializeOwned
-            + 'static,
-    > UnextendableHashTraitType for T
+    T: Copy
+        + Clone
+        + Debug
+        + Default
+        + Display
+        + Eq
+        + Ord
+        + Hash
+        + Send
+        + Sync
+        + Encode
+        + Decode<()>
+        + 'static,
+> UnextendableHashTraitType for T
 {
 }
 
@@ -127,32 +125,37 @@ pub trait HashFunctionFactory: Sized + Clone + Debug + Send + Sync + 'static {
     ) -> Self::HashTypeExtendable;
 
     const INVERTIBLE: bool;
+    const CANONICAL: bool;
     type SeqType: AsRef<[u8]>;
     fn invert(hash: Self::HashTypeUnextendable) -> Self::SeqType;
 }
 
-#[dynamic_dispatch]
-pub trait MinimizerHashFunctionFactory: HashFunctionFactory {
-    /// Gets the full minimizer
-    fn get_full_minimizer(
-        hash: <Self as HashFunctionFactory>::HashTypeUnextendable,
-    ) -> MinimizerType;
-}
-
 pub trait HashFunction<HF: HashFunctionFactory> {
-    fn iter(self) -> impl Iterator<Item = HF::HashTypeExtendable>;
-    fn iter_enumerate(self) -> impl Iterator<Item = (usize, HF::HashTypeExtendable)>;
+    fn iter(self) -> impl ExactSizeIterator + Iterator<Item = HF::HashTypeExtendable>;
+    fn iter_enumerate(
+        self,
+    ) -> impl ExactSizeIterator + Iterator<Item = (usize, HF::HashTypeExtendable)>;
 }
 
 pub trait HashableSequence: Clone {
+    // If true the base is in the classical compressed form ((chr >> 1) & 0x3)
+    const IS_COMPRESSED: bool;
+    fn subslice(&self, start: usize, end: usize) -> Self;
     unsafe fn get_unchecked_cbase(&self, index: usize) -> u8;
     fn bases_count(&self) -> usize;
 }
 
 impl HashableSequence for &[u8] {
+    const IS_COMPRESSED: bool = false;
+
+    #[inline(always)]
+    fn subslice(&self, start: usize, end: usize) -> Self {
+        &self[start..end]
+    }
+
     #[inline(always)]
     unsafe fn get_unchecked_cbase(&self, index: usize) -> u8 {
-        *self.get_unchecked(index)
+        unsafe { *self.get_unchecked(index) }
     }
 
     #[inline(always)]
@@ -242,9 +245,15 @@ pub mod tests {
     }
 
     impl<'a> HashableSequence for CompressedRead<'a> {
+        const IS_COMPRESSED: bool = true;
+        #[inline(always)]
+        fn subslice(&self, start: usize, end: usize) -> Self {
+            unimplemented!()
+        }
+
         #[inline(always)]
         unsafe fn get_unchecked_cbase(&self, index: usize) -> u8 {
-            self.get_base_unchecked(index)
+            unsafe { self.get_base_unchecked(index) }
         }
 
         #[inline(always)]

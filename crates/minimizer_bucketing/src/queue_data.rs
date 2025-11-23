@@ -1,3 +1,4 @@
+use ggcat_logging::stats::StatId;
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
@@ -11,6 +12,7 @@ pub struct MinimizerBucketingQueueData<F: Clone + Sync + Send + Default + 'stati
     pub sequences: Vec<SequencesType>,
     pub stream_info: F,
     pub start_read_index: u64,
+    pub stats_block_id: StatId,
 }
 
 impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> {
@@ -20,7 +22,13 @@ impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> 
             sequences: Vec::with_capacity(capacity / 512),
             stream_info,
             start_read_index: 0,
+            stats_block_id: StatId::default(),
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn get_total_size(&self) -> usize {
+        self.data.len()
     }
 
     pub fn push_sequences(&mut self, seq: DnaSequence, seq_info: SequenceInfo) -> bool {
@@ -43,7 +51,7 @@ impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> 
         true
     }
 
-    pub fn iter_sequences(&self) -> impl Iterator<Item = (DnaSequence, SequenceInfo)> {
+    pub fn iter_sequences(&self) -> impl Iterator<Item = (DnaSequence<'_>, SequenceInfo)> {
         self.sequences
             .iter()
             .map(move |&(start, id_len, seq_len, format, seq_info)| {

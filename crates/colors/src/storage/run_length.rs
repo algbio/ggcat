@@ -1,12 +1,25 @@
-use crate::async_slice_queue::AsyncSliceQueue;
-use crate::storage::serializer::ColorsFlushProcessing;
 use crate::storage::ColorsSerializerTrait;
+use crate::storage::serializer::COLORMAP_STORAGE_VERSION;
+use crate::storage::serializer::ColorsFileHeader;
+use crate::storage::serializer::ColorsFlushProcessing;
 use byteorder::ReadBytesExt;
+use config::COLORS_SINGLE_INDEX_DEFAULT_COLORS;
 use config::ColorIndexType;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
+use desse::Desse;
 use io::varint::{decode_varint, encode_varint};
-use std::cell::UnsafeCell;
+use parking_lot::Condvar;
+use parking_lot::Mutex;
+use serde::Serialize;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::io::{Read, Write};
+use std::ops::DerefMut;
+use utils::resize_containers::ResizableVec;
+
+fn bincode_serialize_ref<S: Write, D: Serialize>(ser: &mut S, data: &D) {
+    bincode::serialize_into(ser, data).unwrap();
+}
 
 pub struct ColorIndexSerializer;
 impl ColorIndexSerializer {
@@ -99,15 +112,32 @@ impl ColorIndexSerializer {
 }
 
 pub struct RunLengthColorsSerializer {
-    async_buffer: AsyncSliceQueue<u8, ColorsFlushProcessing>,
+    writer: Mutex<(u64, ColorsFlushProcessing)>,
+    condvar: Condvar,
+    colors_count: u64,
 }
 
-thread_local! {
-    static TEMP_COLOR_BUFFER: UnsafeCell<Vec<u8>> = const { UnsafeCell::new(Vec::new()) };
+pub struct RunLengthCheckpointTracker {
+    checkpoint_distance: u64,
+    chunk_written_subsets: u64,
+    total_flushed_subsets: u64,
+    total_checkpoints: u64,
+}
+
+pub struct RunLengthCheckpointWriter<'a> {
+    checkpoint_index: u64,
+    checkpoint_subset_start: u64,
+    checkpoint_buffer: &'a mut ResizableVec<u8, DEFAULT_OUTPUT_BUFFER_SIZE>,
 }
 
 impl ColorsSerializerTrait for RunLengthColorsSerializer {
     const MAGIC: [u8; 16] = *b"GGCAT_CMAP_RNLEN";
+
+    type PreSerializer = ResizableVec<u8, COLORS_SINGLE_INDEX_DEFAULT_COLORS>;
+    type CheckpointTracker = RunLengthCheckpointTracker;
+    type CheckpointBuffer = ResizableVec<u8, DEFAULT_OUTPUT_BUFFER_SIZE>;
+    type CompressedCheckpointBuffer = ResizableVec<u8, DEFAULT_OUTPUT_BUFFER_SIZE>;
+    type CheckpointWriter<'a> = RunLengthCheckpointWriter<'a>;
 
     fn decode_color(mut reader: impl Read, out_vec: Option<&mut Vec<u32>>) {
         match out_vec {
@@ -120,37 +150,146 @@ impl ColorsSerializerTrait for RunLengthColorsSerializer {
         }
     }
 
-    fn new(writer: ColorsFlushProcessing, checkpoint_distance: usize, _colors_count: u64) -> Self {
-        Self {
-            async_buffer: AsyncSliceQueue::new(
-                DEFAULT_OUTPUT_BUFFER_SIZE,
-                rayon::current_num_threads(),
-                checkpoint_distance,
-                writer,
-            ),
-        }
+    fn new(
+        writer: ColorsFlushProcessing,
+        checkpoint_distance: usize,
+        colors_count: u64,
+    ) -> (Self, Self::CheckpointTracker) {
+        (
+            Self {
+                writer: Mutex::new((0, writer)),
+                condvar: Condvar::new(),
+                colors_count,
+            },
+            RunLengthCheckpointTracker {
+                checkpoint_distance: checkpoint_distance as u64,
+                chunk_written_subsets: 0,
+                total_flushed_subsets: 0,
+                total_checkpoints: 0,
+            },
+        )
     }
 
     #[inline(always)]
-    fn serialize_colors(&self, colors: &[u32]) -> u32 {
-        TEMP_COLOR_BUFFER.with(|buffer| {
-            let buffer = unsafe { &mut *buffer.get() };
-            buffer.clear();
-            ColorIndexSerializer::serialize_colors(buffer, colors);
-            self.async_buffer.add_data(buffer.as_slice()) as ColorIndexType
-        })
+    fn preserialize_colors(pre_serializer: &mut Self::PreSerializer, colors: &[ColorIndexType]) {
+        ColorIndexSerializer::serialize_colors(pre_serializer.deref_mut(), colors);
     }
 
-    fn get_subsets_count(&self) -> u64 {
-        self.async_buffer.get_counter()
+    #[inline(always)]
+    fn write_color_subset<'a>(
+        tracker: &mut Self::CheckpointTracker,
+        buffer: &'a mut Self::CheckpointBuffer,
+        pre_serializer: &Self::PreSerializer,
+    ) -> Option<Self::CheckpointWriter<'a>> {
+        buffer.extend_from_slice(&pre_serializer);
+        tracker.chunk_written_subsets += 1;
+        if tracker.chunk_written_subsets == tracker.checkpoint_distance {
+            let checkpoint_subset_start = tracker.total_flushed_subsets;
+            let checkpoint_index = tracker.total_checkpoints;
+
+            tracker.total_checkpoints += 1;
+            tracker.total_flushed_subsets += tracker.chunk_written_subsets;
+            tracker.chunk_written_subsets = 0;
+
+            Some(RunLengthCheckpointWriter {
+                checkpoint_index,
+                checkpoint_subset_start,
+                checkpoint_buffer: buffer,
+            })
+        } else {
+            None
+        }
     }
 
-    fn print_stats(&self) {
-        ggcat_logging::info!("Total color subsets: {}", self.async_buffer.get_counter())
+    fn flush_checkpoint(
+        &self,
+        checkpoint: Self::CheckpointWriter<'_>,
+        compressed_buffer: &mut Self::CheckpointBuffer,
+    ) {
+        ColorsFlushProcessing::compress_chunk(&checkpoint.checkpoint_buffer, compressed_buffer);
+
+        let mut writer = self.writer.lock();
+        while writer.0 != checkpoint.checkpoint_index {
+            self.condvar.wait(&mut writer);
+        }
+
+        writer.1.write_compressed_chunk(
+            checkpoint.checkpoint_subset_start as ColorIndexType,
+            checkpoint.checkpoint_buffer.len(),
+            &compressed_buffer,
+        );
+        checkpoint.checkpoint_buffer.clear();
+        compressed_buffer.clear();
+
+        writer.0 += 1;
+        self.condvar.notify_all();
     }
 
-    fn finalize(self) -> ColorsFlushProcessing {
-        self.async_buffer.finish()
+    fn final_flush_buffer(
+        &self,
+        tracker: &mut Self::CheckpointTracker,
+        mut buffer: Self::CheckpointBuffer,
+        mut compressed_buffer: Self::CheckpointBuffer,
+    ) {
+        if buffer.len() == 0 {
+            return;
+        }
+        self.flush_checkpoint(
+            RunLengthCheckpointWriter {
+                checkpoint_index: tracker.total_checkpoints,
+                checkpoint_subset_start: tracker.total_flushed_subsets,
+                checkpoint_buffer: &mut buffer,
+            },
+            &mut compressed_buffer,
+        );
+    }
+
+    fn get_subsets_count(tracker: &mut Self::CheckpointTracker) -> u64 {
+        tracker.total_flushed_subsets + tracker.chunk_written_subsets
+    }
+    fn print_stats(tracker: &Self::CheckpointTracker) {
+        ggcat_logging::info!(
+            "Total color subsets: {}",
+            tracker.total_flushed_subsets + tracker.chunk_written_subsets
+        )
+    }
+
+    fn finalize(self, tracker: Self::CheckpointTracker) {
+        let mut colormap_writer = self.writer.into_inner().1;
+
+        let colors_file = &mut colormap_writer.colormap_file;
+        let index_map = &mut colormap_writer.colormap_index;
+        let subsets_count = tracker.total_flushed_subsets + tracker.chunk_written_subsets;
+
+        index_map.pairs.sort();
+        index_map.subsets_count = subsets_count;
+
+        colors_file.flush().unwrap();
+
+        let index_position = colors_file.stream_position().unwrap();
+
+        bincode_serialize_ref(colors_file, index_map);
+        colors_file.flush().unwrap();
+
+        let total_size = colors_file.stream_position().unwrap();
+        colors_file.seek(SeekFrom::Start(0)).unwrap();
+
+        colors_file
+            .write_all(
+                &ColorsFileHeader {
+                    magic: Self::MAGIC,
+                    version: COLORMAP_STORAGE_VERSION,
+                    index_offset: index_position,
+                    colors_count: self.colors_count,
+                    subsets_count,
+                    total_size,
+                    total_uncompressed_size: colormap_writer.uncompressed_size,
+                }
+                .serialize()[..],
+            )
+            .unwrap();
+
+        colors_file.flush().unwrap();
     }
 }
 

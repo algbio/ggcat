@@ -1,21 +1,26 @@
-use crate::concurrent::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
+use crate::concurrent::structured_sequences::{
+    IdentSequenceWriter, StructuredSequenceBackend, StructuredSequenceBackendInit,
+    StructuredSequenceBackendWrapper,
+};
 use crate::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMultiplicity, NoSecondBucket,
+    CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMinimizerPosition,
+    NoMultiplicity, NoSecondBucket,
 };
 use crate::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement,
 };
-use crate::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use crate::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
+use bincode::Encode;
 use byteorder::ReadBytesExt;
 use config::DEFAULT_PER_CPU_BUFFER_SIZE;
+use dynamic_dispatch::dynamic_dispatch;
+use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::writers::compressed_binary_writer::{
     CompressedBinaryWriter, CompressedCheckpointSize, CompressionLevelInfo,
 };
-use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use serde::Serialize;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -30,26 +35,36 @@ pub struct StructSeqBinaryWriter<
     _phantom: PhantomData<(ColorInfo, LinksInfo)>,
 }
 
-unsafe impl<
+pub struct StructSeqBinaryWriterWrapper;
+
+#[dynamic_dispatch]
+impl StructuredSequenceBackendWrapper for StructSeqBinaryWriterWrapper {
+    type Backend<
         ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
         LinksInfo: IdentSequenceWriter + SequenceExtraData,
-    > Send for StructSeqBinaryWriter<ColorInfo, LinksInfo>
+    > = StructSeqBinaryWriter<ColorInfo, LinksInfo>;
+}
+
+unsafe impl<
+    ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
+    LinksInfo: IdentSequenceWriter + SequenceExtraData,
+> Send for StructSeqBinaryWriter<ColorInfo, LinksInfo>
 {
 }
 
 unsafe impl<
-        ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
-        LinksInfo: IdentSequenceWriter + SequenceExtraData,
-    > Sync for StructSeqBinaryWriter<ColorInfo, LinksInfo>
+    ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
+    LinksInfo: IdentSequenceWriter + SequenceExtraData,
+> Sync for StructSeqBinaryWriter<ColorInfo, LinksInfo>
 {
 }
 
 impl<
-        ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
-        LinksInfo: IdentSequenceWriter + SequenceExtraData,
-    > StructSeqBinaryWriter<ColorInfo, LinksInfo>
+    ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
+    LinksInfo: IdentSequenceWriter + SequenceExtraData,
+> StructSeqBinaryWriter<ColorInfo, LinksInfo>
 {
-    pub fn new<T: Serialize>(
+    pub fn new<T: Encode>(
         path: impl AsRef<Path>,
         file_mode: &(
             MemoryFileMode,
@@ -65,8 +80,34 @@ impl<
     }
 }
 
+impl<
+    ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
+    LinksInfo: IdentSequenceWriter + SequenceExtraData,
+> StructuredSequenceBackendInit for StructSeqBinaryWriter<ColorInfo, LinksInfo>
+{
+    fn new_compressed_gzip(_path: impl AsRef<Path>, _level: u32) -> Self {
+        unimplemented!()
+    }
+
+    fn new_compressed_lz4(_path: impl AsRef<Path>, _level: u32) -> Self {
+        unimplemented!()
+    }
+
+    fn new_plain(_path: impl AsRef<Path>) -> Self {
+        unimplemented!()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SequenceDataWithAbundance<CX, LX> {
+    pub index: u64,
+    pub color: CX,
+    pub link: LX,
+    pub abundance: SequenceAbundanceType,
+}
+
 impl<CX: SequenceExtraDataTempBufferManagement, LX: SequenceExtraDataTempBufferManagement>
-    SequenceExtraDataTempBufferManagement for (u64, CX, LX, SequenceAbundanceType)
+    SequenceExtraDataTempBufferManagement for SequenceDataWithAbundance<CX, LX>
 {
     type TempBuffer = (CX::TempBuffer, LX::TempBuffer);
 
@@ -89,15 +130,19 @@ impl<CX: SequenceExtraDataTempBufferManagement, LX: SequenceExtraDataTempBufferM
         src: &(CX::TempBuffer, LX::TempBuffer),
         dst: &mut Self::TempBuffer,
     ) -> Self {
-        let (index, cx, lx, abundance) = extra;
-        let cx = CX::copy_extra_from(cx, &src.0, &mut dst.0);
-        let lx = LX::copy_extra_from(lx, &src.1, &mut dst.1);
-        (index, cx, lx, abundance)
+        let color = CX::copy_extra_from(extra.color, &src.0, &mut dst.0);
+        let link = LX::copy_extra_from(extra.link, &src.1, &mut dst.1);
+        Self {
+            index: extra.index,
+            color,
+            link,
+            abundance: extra.abundance,
+        }
     }
 }
 
 impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
-    SequenceExtraDataConsecutiveCompression for (u64, CX, LX, SequenceAbundanceType)
+    SequenceExtraDataConsecutiveCompression for SequenceDataWithAbundance<CX, LX>
 {
     type LastData = CX::LastData;
 
@@ -116,11 +161,11 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
             )
         };
 
-        Some((
+        Some(Self {
             index,
-            CX::decode_extended(&mut buffer.0, reader, last_data)?,
-            LX::decode_extended(&mut buffer.1, reader)?,
-            match () {
+            color: CX::decode_extended(&mut buffer.0, reader, last_data)?,
+            link: LX::decode_extended(&mut buffer.1, reader)?,
+            abundance: match () {
                 #[cfg(feature = "support_kmer_counters")]
                 () => SequenceAbundanceType {
                     first: abundance_first,
@@ -130,7 +175,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
                 #[cfg(not(feature = "support_kmer_counters"))]
                 () => (),
             },
-        ))
+        })
     }
 
     fn encode_extended(
@@ -139,47 +184,47 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
         writer: &mut impl Write,
         last_data: Self::LastData,
     ) {
-        encode_varint(|b| writer.write_all(b).ok(), self.0).unwrap();
+        encode_varint(|b| writer.write_all(b).ok(), self.index).unwrap();
         #[cfg(feature = "support_kmer_counters")]
         {
-            encode_varint(|b| writer.write_all(b).ok(), self.3.first).unwrap();
-            encode_varint(|b| writer.write_all(b).ok(), self.3.sum).unwrap();
-            encode_varint(|b| writer.write_all(b).ok(), self.3.last).unwrap();
+            encode_varint(|b| writer.write_all(b).ok(), self.abundance.first).unwrap();
+            encode_varint(|b| writer.write_all(b).ok(), self.abundance.sum).unwrap();
+            encode_varint(|b| writer.write_all(b).ok(), self.abundance.last).unwrap();
         }
 
-        self.1.encode_extended(&buffer.0, writer, last_data);
-        self.2.encode_extended(&buffer.1, writer);
+        self.color.encode_extended(&buffer.0, writer, last_data);
+        self.link.encode_extended(&buffer.1, writer);
     }
 
     fn max_size(&self) -> usize {
-        VARINT_MAX_SIZE * 4 + self.1.max_size() + self.2.max_size()
+        VARINT_MAX_SIZE * 4 + self.color.max_size() + self.link.max_size()
     }
 
     fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
-        self.1.obtain_last_data(last_data)
+        self.color.obtain_last_data(last_data)
     }
 }
 
 impl<
-        ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
-        LinksInfo: IdentSequenceWriter + SequenceExtraData,
-    > StructuredSequenceBackend<ColorInfo, LinksInfo>
-    for StructSeqBinaryWriter<ColorInfo, LinksInfo>
+    ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
+    LinksInfo: IdentSequenceWriter + SequenceExtraData,
+> StructuredSequenceBackend<ColorInfo, LinksInfo> for StructSeqBinaryWriter<ColorInfo, LinksInfo>
 {
     type SequenceTempBuffer = (
         Vec<u8>,
         CompressedReadsBucketDataSerializer<
-            (u64, ColorInfo, LinksInfo, SequenceAbundanceType),
-            typenum::consts::U0,
+            SequenceDataWithAbundance<ColorInfo, LinksInfo>,
             NoSecondBucket,
             NoMultiplicity,
+            NoMinimizerPosition,
+            typenum::U0,
         >,
     );
 
-    fn alloc_temp_buffer() -> Self::SequenceTempBuffer {
+    fn alloc_temp_buffer(k: usize) -> Self::SequenceTempBuffer {
         (
             Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes()),
-            CompressedReadsBucketDataSerializer::new(),
+            CompressedReadsBucketDataSerializer::new(k),
         )
     }
 
@@ -195,19 +240,19 @@ impl<
         #[cfg(feature = "support_kmer_counters")] abundance: SequenceAbundanceType,
     ) {
         buffer.1.write_to(
-            &CompressedReadsBucketData::new(sequence, 0, 0),
+            &CompressedReadsBucketData::new(sequence, 0, 0, 0),
             &mut buffer.0,
-            &(
-                sequence_index,
-                color_info,
-                links_info,
-                match () {
+            &SequenceDataWithAbundance {
+                index: sequence_index,
+                color: color_info,
+                link: links_info,
+                abundance: match () {
                     #[cfg(feature = "support_kmer_counters")]
                     () => abundance,
                     #[cfg(not(feature = "support_kmer_counters"))]
                     () => (),
                 },
-            ),
+            },
             &extra_buffers,
         );
     }

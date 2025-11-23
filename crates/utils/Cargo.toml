@@ -1,9 +1,11 @@
 [package]
 name = "ggcat_utils"
 version = "2.0.0"
-edition = "2021"
+edition = "2024"
 [dependencies]
 parking_lot = "0.12.3"
 rand = "0.8.5"
 
-parallel-processor = "0.1.24"
+parallel-processor = "0.2.3"
+rustc-hash = "2.1.1"
+hashbrown = "0.15.4"

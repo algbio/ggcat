@@ -9,7 +9,7 @@ pub struct SequenceInfo {
     pub color: Option<ColorIndexType>,
 }
 
-pub trait GenericSequencesStream: 'static {
+pub trait GenericSequencesStream: Sync + Send + 'static {
     type SequenceBlockData: Sync + Send + 'static;
 
     fn new() -> Self;

@@ -1,22 +1,23 @@
-use bincode::{deserialize_from, serialize_into};
+use bincode::{Decode, Encode};
 use config::BucketIndexType;
 use hashes::HashFunctionFactory;
+use parallel_processor::DEFAULT_BINCODE_CONFIG;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::fast_smart_bucket_sort::SortKey;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::marker::PhantomData;
 use std::mem::size_of;
 
-#[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize, Debug)]
+use crate::structs::VecWriterMut;
+
+#[derive(Copy, Clone, Eq, PartialEq, Encode, Decode, Debug)]
 #[repr(u8)]
 pub enum Direction {
     Backward,
     Forward,
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(Copy, Clone, Encode, Decode, Debug)]
 pub struct HashEntry<H: Copy> {
     pub hash: H,
     encoded: u64,
@@ -61,17 +62,18 @@ impl<H: Copy> HashEntry<H> {
 
 pub struct HashEntrySerializer<H: Copy>(PhantomData<H>);
 
-impl<H: Serialize + DeserializeOwned + Copy> BucketItemSerializer for HashEntrySerializer<H> {
+impl<H: Encode + Decode<()> + Copy> BucketItemSerializer for HashEntrySerializer<H> {
     type InputElementType<'a> = HashEntry<H>;
     type ExtraData = ();
     type ReadBuffer = ();
     type ExtraDataBuffer = ();
     type ReadType<'a> = HashEntry<H>;
+    type InitData = ();
 
     type CheckpointData = ();
 
     #[inline(always)]
-    fn new() -> Self {
+    fn new(_: ()) -> Self {
         Self(PhantomData)
     }
 
@@ -86,16 +88,16 @@ impl<H: Serialize + DeserializeOwned + Copy> BucketItemSerializer for HashEntryS
         _extra_data: &Self::ExtraData,
         _: &(),
     ) {
-        serialize_into(bucket, element).unwrap();
+        bincode::encode_into_writer(element, VecWriterMut(bucket), DEFAULT_BINCODE_CONFIG).unwrap();
     }
 
     fn read_from<'a, S: Read>(
         &mut self,
-        stream: S,
+        mut stream: S,
         _read_buffer: &'a mut Self::ReadBuffer,
         _: &mut (),
     ) -> Option<Self::ReadType<'a>> {
-        deserialize_from(stream).ok()
+        bincode::decode_from_std_read(&mut stream, DEFAULT_BINCODE_CONFIG).ok()
     }
 
     #[inline(always)]

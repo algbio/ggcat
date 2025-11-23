@@ -2,28 +2,28 @@ use crate::pipeline::counters_sorting::{CounterEntry, CounterEntrySerializer};
 use crate::structs::query_colored_counters::{
     ColorsRange, QueryColorDesc, QueryColoredCounters, QueryColoredCountersSerializer,
 };
-use colors::storage::deserializer::ColorsDeserializer;
 use colors::storage::ColorsSerializerTrait;
+use colors::storage::deserializer::ColorsDeserializer;
 use config::{
-    get_compression_level_info, get_memory_mode, BucketIndexType, ColorIndexType, SwapPriority,
-    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, QUERIES_COUNT_MIN_BATCH,
+    BucketIndexType, ColorIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
+    KEEP_FILES, MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, QUERIES_COUNT_MIN_BATCH, SwapPriority,
+    get_compression_level_info, get_memory_mode,
 };
 use nightly_quirks::prelude::*;
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
-use parallel_processor::buckets::readers::compressed_binary_reader::CompressedBinaryReader;
-use parallel_processor::buckets::readers::BucketReader;
+use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
+use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::{MultiThreadBuckets, SingleBucket};
-use parallel_processor::fast_smart_bucket_sort::{fast_smart_radix_sort, SortKey};
+use parallel_processor::buckets::{BucketsCount, ExtraBuckets, MultiThreadBuckets, SingleBucket};
+use parallel_processor::fast_smart_bucket_sort::{SortKey, fast_smart_radix_sort};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::prelude::*;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 pub fn colormap_reading<CD: ColorsSerializerTrait>(
     colormap_file: PathBuf,
@@ -35,7 +35,8 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
         .write()
         .start_phase("phase: colormap reading".to_string());
 
-    let buckets_count = colored_query_buckets.len();
+    let buckets_count =
+        BucketsCount::from_power_of_two(colored_query_buckets.len(), ExtraBuckets::None);
     let buckets_prefix_path = temp_dir.join("query_colors");
 
     let correct_color_buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
@@ -44,14 +45,14 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
         None,
         &(
             get_memory_mode(SwapPriority::MinimizerBuckets),
-            MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+            MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
             get_compression_level_info(),
         ),
         &(),
     ));
 
     let thread_buffers = ScopedThreadLocal::new(move || {
-        BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, buckets_count)
+        BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &buckets_count)
     });
 
     // Try to build a color deserializer to check colormap correctness
@@ -72,19 +73,22 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             BucketsThreadDispatcher::<_, QueryColoredCountersSerializer>::new(
                 &correct_color_buckets,
                 thread_buffer.take(),
+                (),
             );
 
         let mut counters_vec: Vec<(CounterEntry<ColorIndexType>, ColorIndexType)> = Vec::new();
-        CompressedBinaryReader::new(
+        let file_index = ChunkedBinaryReaderIndex::from_file(
             &input.path,
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
             DEFAULT_PREFETCH_AMOUNT,
-        )
-        .decode_all_bucket_items::<CounterEntrySerializer<ColorIndexType>, _>(
+        );
+
+        TypedStreamReader::get_items::<CounterEntrySerializer<ColorIndexType>>(
+            None,
             (),
-            &mut (),
+            file_index.into_chunks(),
             |h, _| {
                 counters_vec.push(h);
             },
@@ -154,8 +158,8 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
                 (queries_count + 1).nq_div_ceil(QUERIES_COUNT_MIN_BATCH) * QUERIES_COUNT_MIN_BATCH;
 
             let get_query_bucket = |query_index: u64| {
-                ((query_index - 1) * (buckets_count as u64) / rounded_queries_count)
-                    as BucketIndexType
+                ((query_index - 1) * (buckets_count.total_buckets_count as u64)
+                    / rounded_queries_count) as BucketIndexType
             };
 
             for entries in temp_queries_buffer.nq_group_by(|a, b| {

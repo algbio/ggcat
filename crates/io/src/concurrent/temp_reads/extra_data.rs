@@ -1,4 +1,4 @@
-use crate::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use crate::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use byteorder::ReadBytesExt;
 use config::ColorIndexType;
 use core::fmt::Debug;
@@ -29,7 +29,7 @@ impl Read for PointerDecoder {
 }
 
 pub trait SequenceExtraDataTempBufferManagement: Sized + Sync + Send + Debug + Clone {
-    type TempBuffer: Sync + Send;
+    type TempBuffer: Sync + Send + Default;
 
     fn new_temp_buffer() -> Self::TempBuffer;
     fn clear_temp_buffer(buffer: &mut Self::TempBuffer);
@@ -98,6 +98,30 @@ pub trait SequenceExtraDataConsecutiveCompression: SequenceExtraDataTempBufferMa
     fn max_size(&self) -> usize;
 }
 
+pub trait SequenceExtraDataCombiner: SequenceExtraDataConsecutiveCompression {
+    type SingleDataType: SequenceExtraDataConsecutiveCompression;
+    fn combine_entries(
+        &mut self,
+        out_buffer: &mut Self::TempBuffer,
+        color: Self,
+        in_buffer: &Self::TempBuffer,
+    );
+
+    fn to_single(
+        &self,
+        in_buffer: &Self::TempBuffer,
+        out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> Self::SingleDataType;
+
+    fn prepare_for_serialization(&mut self, buffer: &mut Self::TempBuffer);
+
+    fn from_single_entry<'a>(
+        out_buffer: &'a mut Self::TempBuffer,
+        single: Self::SingleDataType,
+        in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) -> (Self, &'a mut Self::TempBuffer);
+}
+
 pub trait SequenceExtraData: SequenceExtraDataTempBufferManagement {
     #[inline(always)]
     fn decode_from_slice_extended(buffer: &mut Self::TempBuffer, slice: &[u8]) -> Option<Self> {
@@ -136,7 +160,7 @@ impl<T: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> SequenceExtraD
 
     #[inline(always)]
     unsafe fn decode_from_pointer(ptr: *const u8, last_data: Self::LastData) -> Option<Self> {
-        Self::decode_from_pointer_extended(&mut (), ptr, last_data)
+        unsafe { Self::decode_from_pointer_extended(&mut (), ptr, last_data) }
     }
 
     fn decode(reader: &mut impl Read, last_data: Self::LastData) -> Option<Self> {

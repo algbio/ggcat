@@ -1,98 +1,115 @@
-mod reader;
-
-use crate::processor::KmersTransformProcessor;
-use crate::reader::{InputBucketDesc, KmersTransformReader};
-use crate::resplitter::KmersTransformResplitter;
+use crate::processor::{KmersProcessorInitData, KmersTransformProcessor, ResplitConfig};
 use config::{
-    BucketIndexType, KEEP_FILES, KMERS_TRANSFORM_READS_CHUNKS_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS,
-    MAXIMUM_SECOND_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME, PACKETS_PRIORITY_FILES,
+    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAX_RESPLIT_BUCKETS_COUNT,
+    MAX_SUBBUCKET_AVERAGE_MULTIPLIER, MIN_AVERAGE_CAP, MIN_RESPLIT_BUCKETS_COUNT,
+    MINIMUM_LOG_DELTA_TIME,
 };
+use ggcat_logging::{generate_stat_id, info};
+use io::DUPLICATES_BUCKET_EXTRA;
+use io::concurrent::temp_reads::creads_utils::DeserializedRead;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
+    SequenceExtraDataTempBufferManagement,
 };
-use minimizer_bucketing::counters_analyzer::CountersAnalyzer;
+use minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
-use minimizer_bucketing::{MinimizerBucketMode, MinimizerBucketingExecutorFactory};
-use parallel_processor::buckets::MultiChunkBucket;
-use parallel_processor::execution_manager::execution_context::{ExecutionContext, PoolAllocMode};
-use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
+use minimizer_bucketing::split_buckets::SplittedBucket;
+
+use parallel_processor::buckets::{BucketsCount, ExtraBucketData, ExtraBuckets, MultiChunkBucket};
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
+use parallel_processor::execution_manager::scheduler::Scheduler;
 use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
-use parallel_processor::execution_manager::units_io::{ExecutorInput, ExecutorInputAddressMode};
-use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
-use reads_buffer::ReadsVector;
 use std::cmp::{max, min};
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 pub mod debug_bucket_stats;
 pub mod processor;
-pub mod reads_buffer;
 mod resplitter;
 
 pub trait KmersTransformGlobalExtraData: Sync + Send {
     fn get_k(&self) -> usize;
     fn get_m(&self) -> usize;
+    fn get_m_resplit(&self) -> usize;
 }
 
 pub trait KmersTransformExecutorFactory: Sized + 'static + Sync + Send {
+    type KmersTransformPacketInitData: Clone + Send + Sync;
     type SequencesResplitterFactory: MinimizerBucketingExecutorFactory<
-        ExtraData = Self::AssociatedExtraData,
+        ReadExtraData = Self::AssociatedExtraDataWithMultiplicity,
     >;
     type GlobalExtraData: KmersTransformGlobalExtraData;
-    type AssociatedExtraData: SequenceExtraDataConsecutiveCompression;
+    type AssociatedExtraData: SequenceExtraDataConsecutiveCompression + Copy;
+    type AssociatedExtraDataWithMultiplicity: SequenceExtraDataConsecutiveCompression
+        + SequenceExtraDataCombiner<SingleDataType = Self::AssociatedExtraData>
+        + Copy;
     type PreprocessorType: RewriteBucketCompute;
     type MapProcessorType: KmersTransformMapProcessor<
-        Self,
-        MapStruct = <Self::FinalExecutorType as KmersTransformFinalExecutor<Self>>::MapStruct,
-    >;
+            Self,
+            MapStruct = <Self::FinalExecutorType as KmersTransformFinalExecutor<Self>>::MapStruct,
+        >;
     type FinalExecutorType: KmersTransformFinalExecutor<Self>;
 
-    #[allow(non_camel_case_types)]
-    type FLAGS_COUNT: typenum::uint::Unsigned;
+    type FlagsCount: typenum::uint::Unsigned;
 
     const HAS_COLORS: bool;
+    const CANONICAL: bool;
+
+    fn get_packets_init_data(
+        global_data: &Arc<Self::GlobalExtraData>,
+    ) -> Self::KmersTransformPacketInitData;
 
     fn new_resplitter(
         global_data: &Arc<Self::GlobalExtraData>,
+        buckets_count: &BucketsCount,
     ) -> <Self::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::ExecutorType;
 
-    fn new_map_processor(
-        global_data: &Arc<Self::GlobalExtraData>,
-        mem_tracker: MemoryTracker<KmersTransformProcessor<Self>>,
-    ) -> Self::MapProcessorType;
+    fn new_map_processor(global_data: &Arc<Self::GlobalExtraData>) -> Self::MapProcessorType;
     fn new_final_executor(global_data: &Arc<Self::GlobalExtraData>) -> Self::FinalExecutorType;
 }
 
 pub struct GroupProcessStats {
     pub total_kmers: u64,
     pub unique_kmers: u64,
+    pub duplicated_kmers: u64,
+    pub saved_read_bytes: u64,
 }
 
 pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
     Sized + 'static + Send
 {
-    type MapStruct: PacketTrait + PoolObjectTrait<InitData = ()>;
+    type MapStruct: PacketTrait + PoolObjectTrait<InitData = F::KmersTransformPacketInitData>;
     const MAP_SIZE: usize;
+
+    type ProcessSequencesContext;
 
     fn process_group_start(
         &mut self,
         map_struct: Packet<Self::MapStruct>,
         global_data: &F::GlobalExtraData,
+        extra_bucket_data: Option<ExtraBucketData>,
+        is_resplitted: bool,
+        average_sequences: u64,
     );
-    fn process_group_batch_sequences(
+    fn process_group_sequences(
         &mut self,
-        global_data: &F::GlobalExtraData,
-        batch: &ReadsVector<F::AssociatedExtraData>,
-        extra_data_buffer: &<F::AssociatedExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        ref_sequences: &Vec<u8>,
-    ) -> GroupProcessStats;
+        sequences_count: u64,
+        process_reads_callback: impl FnOnce(&mut Self::ProcessSequencesContext, fn(
+                context: &mut Self::ProcessSequencesContext,
+                read: &DeserializedRead<'_, F::AssociatedExtraDataWithMultiplicity>,
+                extra_buffer: &<F::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer
+            )
+        ),
+    );
+    fn get_stats(&self) -> GroupProcessStats;
     fn process_group_finalize(
         &mut self,
         global_data: &F::GlobalExtraData,
@@ -102,70 +119,64 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
 pub trait KmersTransformFinalExecutor<F: KmersTransformExecutorFactory>:
     Sized + 'static + Sync + Send
 {
-    type MapStruct: PacketTrait + PoolObjectTrait<InitData = ()>;
+    type MapStruct: PacketTrait + PoolObjectTrait<InitData = F::KmersTransformPacketInitData>;
 
     fn process_map(
         &mut self,
-        global_data: &F::GlobalExtraData,
+        global_data: &Arc<F::GlobalExtraData>,
         map_struct: Packet<Self::MapStruct>,
     ) -> Packet<Self::MapStruct>;
 
     fn finalize(self, global_data: &F::GlobalExtraData);
 }
 
+pub struct InputBucketDesc {
+    pub(crate) paths: Vec<PathBuf>,
+    pub(crate) extra_bucket_data: Option<ExtraBucketData>,
+}
+
 pub struct KmersTransform<F: KmersTransformExecutorFactory> {
     global_context: Arc<KmersTransformContext<F>>,
     normal_buckets_list: Vec<InputBucketDesc>,
-    // oversized_buckets_list: Vec<InputBucketDesc>,
     last_info_log: Mutex<Instant>,
     _phantom: PhantomData<F>,
 }
 
 pub struct KmersTransformContext<F: KmersTransformExecutorFactory> {
     k: usize,
-    min_bucket_size: u64,
-    buckets_count: usize,
-    max_buckets: usize,
+    buckets_count: BucketsCount,
+    second_buckets_count: BucketsCount,
     extra_buckets_count: AtomicUsize,
-    rewritten_buckets_count: AtomicUsize,
-    processed_buckets_count: AtomicUsize,
+    processed_subbuckets_count: AtomicUsize,
     processed_extra_buckets_count: AtomicUsize,
 
     total_buckets_size: usize,
     processed_buckets_size: AtomicUsize,
     processed_extra_buckets_size: AtomicUsize,
 
-    // finalizer_address: Arc<RwLock<Option<ExecutorAddress>>>,
     global_extra_data: Arc<F::GlobalExtraData>,
-    // async_readers: ScopedThreadLocal<Arc<AsyncReaderThread>>,
     compute_threads_count: usize,
-    read_threads_count: usize,
-    max_second_buckets_count_log2: usize,
+    total_threads_count: usize,
     temp_dir: PathBuf,
 
     total_sequences: AtomicU64,
     total_kmers: AtomicU64,
     unique_kmers: AtomicU64,
 
-    reader_init_lock: tokio::sync::Mutex<()>,
+    total_subbucket_sequences: AtomicU64,
+    total_subbucket_count: AtomicU64,
 }
 
 impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
     pub fn new(
         file_inputs: Vec<MultiChunkBucket>,
         temp_dir: &Path,
-        buckets_counters_path: PathBuf,
-        buckets_count: usize,
+        buckets_count: BucketsCount,
+        second_buckets_count: BucketsCount,
         global_extra_data: Arc<F::GlobalExtraData>,
         threads_count: usize,
         k: usize,
-        min_bucket_size: u64,
     ) -> Self {
-        let counters = CountersAnalyzer::load_from_file(
-            buckets_counters_path,
-            !KEEP_FILES.load(Ordering::Relaxed),
-        );
-
         let mut total_buckets_size = 0;
 
         let mut file_batches_with_sizes: Vec<_> = file_inputs
@@ -184,6 +195,9 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         file_batches_with_sizes.sort_by_key(|x| x.1);
         file_batches_with_sizes.reverse();
 
+        // Reorder the buckets so that large buckets are alternated with each large bucket followed some small ones that match it in size
+        // Don't do that with the first batch of processing (up to unique_estimator_buckets_count)
+
         let normal_buckets_list = {
             let mut buckets_list = Vec::with_capacity(file_batches_with_sizes.len());
             let mut start_idx = 0;
@@ -191,7 +205,8 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
             let mut matched_size = 0i64;
 
-            let mut unique_estimator_buckets_count = min(buckets_count / 8, threads_count * 2);
+            let mut unique_estimator_buckets_count =
+                min(buckets_count.normal_buckets_count / 8, threads_count * 2);
 
             while start_idx != end_idx && unique_estimator_buckets_count > 0 {
                 end_idx -= 1;
@@ -200,19 +215,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
                 buckets_list.push(InputBucketDesc {
                     paths: bucket_entries.chunks,
-                    sub_bucket_counters: counters
-                        .get_counters_for_bucket(bucket_entries.index as BucketIndexType)
-                        .clone(),
-                    compaction_delta: counters
-                        .get_compaction_offset(bucket_entries.index as BucketIndexType),
-                    resplitted: false,
-                    rewritten: false,
-                    used_hash_bits: buckets_count.ilog2() as usize,
-                    out_data_format: if bucket_entries.was_compacted {
-                        MinimizerBucketMode::Compacted
-                    } else {
-                        MinimizerBucketMode::Single
-                    },
+                    extra_bucket_data: bucket_entries.extra_bucket_data,
                 });
             }
 
@@ -233,157 +236,161 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
                 buckets_list.push(InputBucketDesc {
                     paths: bucket_entry.chunks,
-                    sub_bucket_counters: counters
-                        .get_counters_for_bucket(bucket_entry.index as BucketIndexType)
-                        .clone(),
-                    compaction_delta: counters
-                        .get_compaction_offset(bucket_entry.index as BucketIndexType),
-                    resplitted: false,
-                    rewritten: false,
-                    used_hash_bits: buckets_count.ilog2() as usize,
-                    out_data_format: if bucket_entry.was_compacted {
-                        MinimizerBucketMode::Compacted
-                    } else {
-                        MinimizerBucketMode::Single
-                    },
+                    extra_bucket_data: bucket_entry.extra_bucket_data,
                 })
             }
             buckets_list
         };
 
         let compute_threads_count = max(1, threads_count);
-        let read_threads_count = max(1, threads_count / 4 * 3);
-
-        let max_buckets = max(MAXIMUM_SECOND_BUCKETS_COUNT, compute_threads_count);
 
         let execution_context = Arc::new(KmersTransformContext {
             k,
-            min_bucket_size,
             buckets_count,
-            max_buckets,
+            second_buckets_count,
             extra_buckets_count: AtomicUsize::new(0),
-            rewritten_buckets_count: AtomicUsize::new(0),
-            processed_buckets_count: AtomicUsize::new(0),
+            processed_subbuckets_count: AtomicUsize::new(0),
             processed_extra_buckets_count: AtomicUsize::new(0),
             total_buckets_size,
             processed_buckets_size: AtomicUsize::new(0),
             processed_extra_buckets_size: AtomicUsize::new(0),
             global_extra_data,
             compute_threads_count,
-            read_threads_count,
-            max_second_buckets_count_log2: MAXIMUM_SECOND_BUCKETS_COUNT.ilog2() as usize,
+            total_threads_count: threads_count,
             temp_dir: temp_dir.to_path_buf(),
             total_sequences: AtomicU64::new(0),
             total_kmers: AtomicU64::new(0),
             unique_kmers: AtomicU64::new(0),
-            reader_init_lock: tokio::sync::Mutex::new(()),
+
+            total_subbucket_sequences: AtomicU64::new(0),
+            total_subbucket_count: AtomicU64::new(0),
         });
 
         Self {
             global_context: execution_context,
             normal_buckets_list,
-            // oversized_buckets_list,
             last_info_log: Mutex::new(Instant::now()),
             _phantom: Default::default(),
         }
     }
 
-    pub fn parallel_kmers_transform(mut self) {
+    pub fn parallel_kmers_transform(self) {
         let compute_threads_count = self.global_context.compute_threads_count;
-        let read_threads_count = self.global_context.read_threads_count;
 
-        let execution_context = ExecutionContext::new();
+        let scheduler = Scheduler::new(self.global_context.total_threads_count);
 
-        let disk_thread_pool =
-            ExecThreadPool::new(&execution_context, read_threads_count, "km_disk");
-        let compute_thread_pool =
-            ExecThreadPool::new(&execution_context, compute_threads_count, "km_comp");
-
-        let mut normal_input_buckets = ExecutorInput::from_iter(
-            std::mem::take(&mut self.normal_buckets_list).into_iter(),
-            ExecutorInputAddressMode::Multiple,
+        let mut compute_thread_pool = ExecThreadPool::<KmersTransformProcessor<F>>::new(
+            compute_threads_count,
+            "km_comp",
+            false,
         );
 
-        // let mut oversized_input_buckets = ExecutorInput::from_iter(
-        //     std::mem::take(&mut self.oversized_buckets_list).into_iter(),
-        //     ExecutorInputAddressMode::Multiple,
-        // );
+        let compute_thread_pool_handle =
+            compute_thread_pool.start(scheduler.clone(), &self.global_context);
 
-        let bucket_readers = disk_thread_pool.register_executors::<KmersTransformReader<F>>(
-            read_threads_count,
-            PoolAllocMode::Distinct {
-                capacity: self.global_context.max_buckets,
-            },
-            max(
-                16,
-                KMERS_TRANSFORM_READS_CHUNKS_SIZE / self.global_context.k,
-            ),
-            &self.global_context,
-        );
+        let mut total_subbuckets_sequences = 0;
+        let mut total_subbuckets_count = 0;
 
-        let min_maps_count = max(MAXIMUM_JIT_PROCESSED_BUCKETS, compute_threads_count);
-
-        let bucket_sequences_processors = compute_thread_pool
-            .register_executors::<KmersTransformProcessor<F>>(
-                min_maps_count + 2,
-                PoolAllocMode::Shared {
-                    capacity: min_maps_count + 2,
+        for bucket in self.normal_buckets_list.iter() {
+            let splitted_buckets = SplittedBucket::generate(
+                bucket.paths.iter(),
+                RemoveFileMode::Remove {
+                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
-                (),
-                &self.global_context,
+                DEFAULT_PREFETCH_AMOUNT,
+                self.global_context.second_buckets_count.total_buckets_count,
             );
 
-        let bucket_resplitters = compute_thread_pool
-            .register_executors::<KmersTransformResplitter<F>>(
-                compute_threads_count,
-                PoolAllocMode::None,
-                (),
-                &self.global_context,
-            );
+            for bucket in &splitted_buckets {
+                if let Some(bucket) = bucket {
+                    total_subbuckets_sequences += bucket.sequences_count;
+                    total_subbuckets_count += 1;
+                    self.global_context
+                        .total_subbucket_sequences
+                        .store(total_subbuckets_sequences, Ordering::Relaxed);
+                    self.global_context
+                        .total_subbucket_count
+                        .store(total_subbuckets_count, Ordering::Relaxed);
+                }
+            }
 
-        normal_input_buckets.set_output_executor::<KmersTransformReader<F>>(
-            &execution_context,
-            (),
-            PACKETS_PRIORITY_FILES,
-        );
-        // oversized_input_buckets.set_output_executor::<KmersTransformReader<F>>(
-        //     &execution_context,
-        //     (),
-        //     PACKETS_PRIORITY_PENDING_RESPLIT,
-        // );
+            let bucket_sequences_average =
+                (total_subbuckets_sequences / total_subbuckets_count.max(1)).max(MIN_AVERAGE_CAP);
 
-        execution_context.start();
+            for splitted_bucket in splitted_buckets.into_iter() {
+                let Some(splitted_bucket) = splitted_bucket else {
+                    // Add the sub-bucket to the global counter
+                    self.global_context
+                        .processed_subbuckets_count
+                        .fetch_add(1, Ordering::Relaxed);
+                    continue;
+                };
+
+                let is_outlier = splitted_bucket.sequences_count
+                    > bucket_sequences_average * MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
+
+                // Add the sub-bucket job
+                compute_thread_pool_handle.create_new_address_with_limit(
+                    Arc::new(KmersProcessorInitData {
+                        process_stat_id: generate_stat_id!(),
+                        is_resplitted: false,
+                        resplit_config: if is_outlier {
+                            let subbuckets_count = (splitted_bucket.sequences_count
+                                / bucket_sequences_average)
+                                .next_power_of_two()
+                                .max(MIN_RESPLIT_BUCKETS_COUNT)
+                                .min(MAX_RESPLIT_BUCKETS_COUNT);
+
+                            info!(
+                                "Resplitted bucket in {} sub-buckets (average sequences per bucket: {})!",
+                                subbuckets_count, bucket_sequences_average
+                            );
+                            self.global_context
+                                .extra_buckets_count
+                                .fetch_add(subbuckets_count as usize, Ordering::Relaxed);
+
+                            Some(ResplitConfig {
+                                subsplit_buckets_count: BucketsCount::new(
+                                    subbuckets_count.ilog2() as usize,
+                                    ExtraBuckets::Extra {
+                                        count: 1,
+                                        data: DUPLICATES_BUCKET_EXTRA,
+                                    },
+                                ),
+                            })
+                        } else {
+                            None
+                        },
+                        splitted_bucket: Mutex::new(Some(splitted_bucket)),
+                        debug_bucket_first_path: Some(bucket.paths[0].clone()),
+                        extra_bucket_data: bucket.extra_bucket_data,
+                        processor_handle: compute_thread_pool_handle.clone(),
+                    }),
+                    false,
+                    self.global_context.total_threads_count * 8,
+                );
+            }
+
+            self.maybe_log_completed_buckets(|| {}, &scheduler);
+        }
 
         // Log progress info while waiting for completion
-        let mut bucket_readers_count;
-        while {
-            bucket_readers_count = execution_context.get_pending_executors_count(bucket_readers);
-            bucket_readers_count > 0
-        } {
-            self.maybe_log_completed_buckets(|| {});
+        while compute_thread_pool_handle.get_pending_executors_count() > 0 {
+            self.maybe_log_completed_buckets(|| {}, &scheduler);
             std::thread::sleep(Duration::from_millis(300));
         }
 
-        // Wait for the main buckets to be processed
-        execution_context.wait_for_completion(bucket_readers);
-
-        // Wait for the resplitting to be complete
-        execution_context.wait_for_completion(bucket_resplitters);
-        // Wait for the new buckets reading
-        execution_context.wait_for_completion(bucket_readers);
+        drop(compute_thread_pool_handle);
 
         // Wait for the maps to be complete
-        execution_context.wait_for_completion(bucket_sequences_processors);
-
-        // // Remove the finalize address, as all maps have finished working
-        // self.global_context.finalizer_address.write().take();
-
-        // // Wait for the final writer to finish
-        // execution_context.wait_for_completion(bucket_writers);
-        execution_context.join_all();
+        compute_thread_pool.join();
     }
 
-    fn maybe_log_completed_buckets(&self, extra_debug: impl FnOnce()) -> bool {
+    fn maybe_log_completed_buckets(
+        &self,
+        extra_debug: impl FnOnce(),
+        scheduler: &Scheduler,
+    ) -> bool {
         let mut last_info_log = match self.last_info_log.try_lock() {
             None => return false,
             Some(x) => x,
@@ -402,16 +409,12 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 .extra_buckets_count
                 .load(Ordering::Relaxed);
 
-            let rewritten_buckets_count = self
-                .global_context
-                .rewritten_buckets_count
-                .load(Ordering::Relaxed);
-
             let processed_count = max(
                 1,
                 self.global_context
-                    .processed_buckets_count
-                    .load(Ordering::Relaxed),
+                    .processed_subbuckets_count
+                    .load(Ordering::Relaxed)
+                    / self.global_context.second_buckets_count.total_buckets_count,
             );
 
             let extra_processed_buckets_count = self
@@ -447,23 +450,27 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
             );
 
             ggcat_logging::info!(
-                "Processing bucket {}{} of [{}{}[R:{}]] {} phase eta: {:.0?} est. tot: {:.0?}",
+                "Processing bucket {}{} of [{}{}] {} phase eta: {:.0?} est. tot: {:.0?} running: {}",
                 processed_count,
                 if extra_processed_buckets_count > 0 {
                     format!("(+{})", extra_processed_buckets_count)
                 } else {
                     String::new()
                 },
-                buckets_count,
+                buckets_count.total_buckets_count,
                 if extra_buckets_count > 0 {
                     format!("(+{})", extra_buckets_count)
                 } else {
                     String::new()
                 },
-                rewritten_buckets_count,
                 monitor.get_formatted_counter_without_memory(),
-                eta,
-                est_tot
+                if eta_processed_size > 0 {
+                    &eta as &dyn Debug
+                } else {
+                    &"N/A" as &dyn Debug
+                },
+                est_tot,
+                scheduler.current_running()
             );
             true
         } else {

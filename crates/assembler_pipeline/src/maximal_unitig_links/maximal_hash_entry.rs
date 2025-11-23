@@ -1,21 +1,21 @@
-use bincode::{deserialize_from, serialize_into};
+use bincode::{Decode, Encode};
 use hashes::HashFunctionFactory;
+use io::structs::VecWriterMut;
+use parallel_processor::DEFAULT_BINCODE_CONFIG;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::fast_smart_bucket_sort::SortKey;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::marker::PhantomData;
 use std::mem::size_of;
 
-#[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Encode, Decode, Debug)]
 #[repr(u8)]
 pub enum MaximalUnitigPosition {
     Beginning,
     Ending,
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(Copy, Clone, Encode, Decode, Debug)]
 pub struct MaximalHashEntry<H: Copy> {
     pub hash: H,
     encoded: u64,
@@ -67,20 +67,19 @@ impl<H: Copy> MaximalHashEntry<H> {
     }
 }
 
-pub struct MaximalHashEntrySerializer<H: Serialize + DeserializeOwned + Copy>(PhantomData<H>);
-impl<H: Serialize + DeserializeOwned + Copy> BucketItemSerializer
-    for MaximalHashEntrySerializer<H>
-{
+pub struct MaximalHashEntrySerializer<H: Encode + Decode<()> + Copy>(PhantomData<H>);
+impl<H: Encode + Decode<()> + Copy> BucketItemSerializer for MaximalHashEntrySerializer<H> {
     type InputElementType<'a> = MaximalHashEntry<H>;
     type ExtraData = ();
     type ReadBuffer = ();
     type ExtraDataBuffer = ();
     type ReadType<'a> = MaximalHashEntry<H>;
+    type InitData = ();
 
     type CheckpointData = ();
 
     #[inline(always)]
-    fn new() -> Self {
+    fn new(_: ()) -> Self {
         Self(PhantomData)
     }
 
@@ -95,16 +94,16 @@ impl<H: Serialize + DeserializeOwned + Copy> BucketItemSerializer
         _extra_data: &Self::ExtraData,
         _: &(),
     ) {
-        serialize_into(bucket, element).unwrap();
+        bincode::encode_into_writer(element, VecWriterMut(bucket), DEFAULT_BINCODE_CONFIG).unwrap();
     }
 
     fn read_from<'a, S: Read>(
         &mut self,
-        stream: S,
+        mut stream: S,
         _read_buffer: &'a mut Self::ReadBuffer,
         _: &mut (),
     ) -> Option<Self::ReadType<'a>> {
-        deserialize_from(stream).ok()
+        bincode::decode_from_std_read(&mut stream, DEFAULT_BINCODE_CONFIG).ok()
     }
 
     #[inline(always)]

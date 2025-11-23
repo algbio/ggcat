@@ -21,23 +21,24 @@ pub struct FastaWriterConcurrentBuffer<
 }
 
 impl<
-        'a,
-        ColorInfo: IdentSequenceWriter,
-        LinksInfo: IdentSequenceWriter,
-        Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
-    > FastaWriterConcurrentBuffer<'a, ColorInfo, LinksInfo, Backend>
+    'a,
+    ColorInfo: IdentSequenceWriter,
+    LinksInfo: IdentSequenceWriter,
+    Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
+> FastaWriterConcurrentBuffer<'a, ColorInfo, LinksInfo, Backend>
 {
     pub fn new(
         target: &'a StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>,
         max_size: usize,
         auto_flush: bool,
+        k: usize,
     ) -> Self {
         Self {
             target,
             sequences: Vec::with_capacity(max_size / 128),
             seq_buf: Vec::with_capacity(max_size),
             extra_buffers: (ColorInfo::new_temp_buffer(), LinksInfo::new_temp_buffer()),
-            temp_buffer: Backend::alloc_temp_buffer(),
+            temp_buffer: Backend::alloc_temp_buffer(k),
             current_index: None,
             auto_flush,
         }
@@ -71,9 +72,9 @@ impl<
         vec.len() > 0 && (vec.len() + len > vec.capacity())
     }
 
-    pub fn add_read(
+    pub fn add_read<S: ExactSizeIterator<Item = u8>>(
         &mut self,
-        sequence: &[u8],
+        sequence: S,
         sequence_index: Option<u64>,
         color: ColorInfo,
         color_extra_buffer: &ColorInfo::TempBuffer,
@@ -127,11 +128,11 @@ impl<
 }
 
 impl<
-        'a,
-        ColorInfo: IdentSequenceWriter,
-        LinksInfo: IdentSequenceWriter,
-        Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
-    > Drop for FastaWriterConcurrentBuffer<'a, ColorInfo, LinksInfo, Backend>
+    'a,
+    ColorInfo: IdentSequenceWriter,
+    LinksInfo: IdentSequenceWriter,
+    Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
+> Drop for FastaWriterConcurrentBuffer<'a, ColorInfo, LinksInfo, Backend>
 {
     fn drop(&mut self) {
         self.flush();

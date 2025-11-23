@@ -1,37 +1,139 @@
-use crate::compressed_read::CompressedRead;
-use crate::varint::{
-    decode_varint, decode_varint_flags, encode_varint, encode_varint_flags, VARINT_FLAGS_MAX_SIZE,
-    VARINT_MAX_SIZE,
-};
+use crate::compressed_read::{CompressedRead, CompressedReadIndipendent};
+use crate::varint::{VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, decode_varint, encode_varint};
+use bincode::{Decode, Encode};
 use byteorder::ReadBytesExt;
-use config::{BucketIndexType, MultiplicityCounterType};
+use config::{BucketIndexType, HASH_MAX_OVERREAD, MultiplicityCounterType};
+use hashes::HashableSequence;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
-use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::marker::PhantomData;
 
 use super::extra_data::SequenceExtraDataConsecutiveCompression;
 
-enum ReadData<'a> {
+pub enum ReadData<'a> {
     Plain(&'a [u8]),
     Packed(CompressedRead<'a>),
+    PlainRc(&'a [u8]),
+    #[allow(dead_code)]
+    PackedRc(CompressedRead<'a>),
+}
+
+impl<'a> ReadData<'a> {
+    #[inline(always)]
+    pub fn reverse_complement(self, complement: bool) -> Self {
+        if complement {
+            match self {
+                ReadData::Plain(items) => ReadData::PlainRc(items),
+                ReadData::Packed(compressed_read) => ReadData::PackedRc(compressed_read),
+                ReadData::PlainRc(items) => ReadData::Plain(items),
+                ReadData::PackedRc(compressed_read) => ReadData::Packed(compressed_read),
+            }
+        } else {
+            self
+        }
+    }
+}
+
+pub trait ToReadData<'a>: HashableSequence {
+    fn to_read_data(self) -> ReadData<'a>;
+    fn debug_to_string(&self) -> String;
+    fn into_bases_iter(&self) -> impl ExactSizeIterator<Item = u8>;
+}
+
+impl<'a> ToReadData<'a> for &'a [u8] {
+    #[inline(always)]
+    fn to_read_data(self) -> ReadData<'a> {
+        ReadData::Plain(self)
+    }
+    fn debug_to_string(&self) -> String {
+        std::str::from_utf8(self).unwrap().to_string()
+    }
+
+    fn into_bases_iter(&self) -> impl ExactSizeIterator<Item = u8> {
+        self.iter().copied()
+    }
+}
+
+impl<'a> ToReadData<'a> for CompressedRead<'a> {
+    #[inline(always)]
+    fn to_read_data(self) -> ReadData<'a> {
+        ReadData::Packed(self)
+    }
+
+    fn debug_to_string(&self) -> String {
+        self.to_string()
+    }
+
+    fn into_bases_iter(&self) -> impl ExactSizeIterator<Item = u8> {
+        self.as_bases_iter()
+    }
 }
 
 pub struct CompressedReadsBucketData<'a> {
-    read: ReadData<'a>,
-    multiplicity: MultiplicityCounterType,
-    extra_bucket: u8,
-    flags: u8,
+    pub read: ReadData<'a>,
+    pub multiplicity: MultiplicityCounterType,
+    pub minimizer_pos: u16,
+    pub extra_bucket: u8,
+    pub flags: u8,
 }
 
 impl<'a> CompressedReadsBucketData<'a> {
     #[inline(always)]
-    pub fn new(read: &'a [u8], flags: u8, extra_bucket: u8) -> Self {
+    pub fn new<R: ToReadData<'a>>(
+        read: R,
+        flags: u8,
+        extra_bucket: u8,
+        minimizer_pos: u16,
+    ) -> Self {
         Self {
-            read: ReadData::Plain(read),
+            read: read.to_read_data(),
+            extra_bucket,
+            multiplicity: 1,
+            minimizer_pos,
+            flags,
+        }
+    }
+
+    #[inline(always)]
+    pub fn new_plain_opt_rc(
+        read: &'a [u8],
+        flags: u8,
+        extra_bucket: u8,
+        rc: bool,
+        minimizer_pos: u16,
+    ) -> Self {
+        Self {
+            read: if rc {
+                ReadData::PlainRc(read)
+            } else {
+                ReadData::Plain(read)
+            },
             extra_bucket,
             flags,
             multiplicity: 1,
+            minimizer_pos,
+        }
+    }
+
+    #[inline(always)]
+    pub fn new_packed_with_multiplicity_opt_rc(
+        read: CompressedRead<'a>,
+        flags: u8,
+        extra_bucket: u8,
+        rc: bool,
+        multiplicity: MultiplicityCounterType,
+        minimizer_pos: u16,
+    ) -> Self {
+        Self {
+            read: if rc {
+                ReadData::PackedRc(read)
+            } else {
+                ReadData::Packed(read)
+            },
+            extra_bucket,
+            flags,
+            multiplicity,
+            minimizer_pos,
         }
     }
 
@@ -41,22 +143,30 @@ impl<'a> CompressedReadsBucketData<'a> {
         flags: u8,
         extra_bucket: u8,
         multiplicity: MultiplicityCounterType,
+        minimizer_pos: u16,
     ) -> Self {
         Self {
             read: ReadData::Plain(read),
             extra_bucket,
             flags,
             multiplicity,
+            minimizer_pos,
         }
     }
 
     #[inline(always)]
-    pub fn new_packed(read: CompressedRead<'a>, flags: u8, extra_bucket: u8) -> Self {
+    pub fn new_packed(
+        read: CompressedRead<'a>,
+        flags: u8,
+        extra_bucket: u8,
+        minimizer_pos: u16,
+    ) -> Self {
         Self {
             read: ReadData::Packed(read),
             flags,
             extra_bucket,
             multiplicity: 1,
+            minimizer_pos,
         }
     }
 
@@ -66,12 +176,14 @@ impl<'a> CompressedReadsBucketData<'a> {
         flags: u8,
         extra_bucket: u8,
         multiplicity: MultiplicityCounterType,
+        minimizer_pos: u16,
     ) -> Self {
         Self {
             read: ReadData::Packed(read),
             flags,
             extra_bucket,
             multiplicity,
+            minimizer_pos,
         }
     }
 }
@@ -97,57 +209,144 @@ impl<const ENABLED: bool> BucketModeOption for BucketModeFromBoolean<ENABLED> {
 pub struct NoMultiplicity;
 pub struct WithMultiplicity;
 
+pub struct WithFixedMultiplicity;
+
 pub trait MultiplicityModeOption {
     const ENABLED: bool;
+    const FIXED_SIZE: bool;
 }
 impl MultiplicityModeOption for NoMultiplicity {
     const ENABLED: bool = false;
+    const FIXED_SIZE: bool = true;
 }
 impl MultiplicityModeOption for WithMultiplicity {
     const ENABLED: bool = true;
+    const FIXED_SIZE: bool = false;
+}
+
+impl MultiplicityModeOption for WithFixedMultiplicity {
+    const ENABLED: bool = true;
+    const FIXED_SIZE: bool = true;
+}
+
+pub struct NoMinimizerPosition;
+pub struct AssemblerMinimizerPosition;
+
+pub trait MinimizerModeOption {
+    const ENABLED: bool;
+}
+impl MinimizerModeOption for NoMinimizerPosition {
+    const ENABLED: bool = false;
+}
+impl MinimizerModeOption for AssemblerMinimizerPosition {
+    const ENABLED: bool = true;
+}
+
+pub trait AlignModeOption {
+    const ENABLED: bool;
+    // Minimum space required for overflow
+    const OVERREAD_MIN: usize;
+}
+
+pub struct NoAlignment;
+pub struct NoAlignmentWithOverflow;
+pub struct AlignToMinimizerByteBoundary;
+impl AlignModeOption for NoAlignment {
+    const ENABLED: bool = false;
+    const OVERREAD_MIN: usize = 0;
+}
+impl AlignModeOption for NoAlignmentWithOverflow {
+    const ENABLED: bool = false;
+    const OVERREAD_MIN: usize = HASH_MAX_OVERREAD;
+}
+impl AlignModeOption for AlignToMinimizerByteBoundary {
+    const ENABLED: bool = true;
+    const OVERREAD_MIN: usize = HASH_MAX_OVERREAD;
 }
 
 pub struct MultiplicityModeFromBoolean<const ENABLED: bool>;
 impl<const ENABLED: bool> MultiplicityModeOption for MultiplicityModeFromBoolean<ENABLED> {
     const ENABLED: bool = ENABLED;
+    const FIXED_SIZE: bool = false;
 }
 
 pub struct CompressedReadsBucketDataSerializer<
     E: SequenceExtraDataConsecutiveCompression,
-    FlagsCount: typenum::Unsigned,
     BucketMode: BucketModeOption,
     MultiplicityMode: MultiplicityModeOption,
+    MinimizerMode: MinimizerModeOption,
+    FlagsCount: typenum::Unsigned,
+    AlignMode: AlignModeOption = NoAlignment,
 > {
+    min_size: usize,
     last_data: E::LastData,
-    _phantom: PhantomData<(FlagsCount, BucketMode, MultiplicityMode)>,
+    min_size_log: u8,
+    _phantom: PhantomData<(
+        BucketMode,
+        MultiplicityMode,
+        MinimizerMode,
+        FlagsCount,
+        AlignMode,
+    )>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Encode, Decode, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReadsCheckpointData {
     pub target_subbucket: BucketIndexType,
     pub sequences_count: usize,
 }
 
+pub struct DeserializedRead<'a, E> {
+    pub read: CompressedRead<'a>,
+    pub extra: E,
+    pub multiplicity: MultiplicityCounterType,
+    pub minimizer_pos: u16,
+    pub flags: u8,
+    pub second_bucket: u8,
+}
+
+#[derive(Copy, Clone, Default)]
+pub struct DeserializedReadIndependent<E> {
+    pub read: CompressedReadIndipendent,
+    pub extra: E,
+    pub multiplicity: MultiplicityCounterType,
+    pub minimizer_pos: u16,
+    pub flags: u8,
+    pub second_bucket: u8,
+}
+
 impl<
-        'a,
-        E: SequenceExtraDataConsecutiveCompression,
-        FlagsCount: typenum::Unsigned,
-        BucketMode: BucketModeOption,
-        MultiplicityMode: MultiplicityModeOption,
-    > BucketItemSerializer
-    for CompressedReadsBucketDataSerializer<E, FlagsCount, BucketMode, MultiplicityMode>
+    'a,
+    E: SequenceExtraDataConsecutiveCompression,
+    BucketMode: BucketModeOption,
+    MultiplicityMode: MultiplicityModeOption,
+    MinimizerMode: MinimizerModeOption,
+    FlagsCount: typenum::Unsigned,
+    AlignMode: AlignModeOption,
+> BucketItemSerializer
+    for CompressedReadsBucketDataSerializer<
+        E,
+        BucketMode,
+        MultiplicityMode,
+        MinimizerMode,
+        FlagsCount,
+        AlignMode,
+    >
 {
     type InputElementType<'b> = CompressedReadsBucketData<'b>;
     type ExtraData = E;
     type ReadBuffer = Vec<u8>;
     type ExtraDataBuffer = E::TempBuffer;
-    type ReadType<'b> = (u8, u8, E, CompressedRead<'b>, MultiplicityCounterType);
+    type ReadType<'b> = DeserializedRead<'b, E>;
+    type InitData = usize;
 
     type CheckpointData = ReadsCheckpointData;
 
     #[inline(always)]
-    fn new() -> Self {
+    fn new(min_size: Self::InitData) -> Self {
         Self {
+            min_size,
+            min_size_log: min_size.next_power_of_two().ilog2() as u8,
             last_data: Default::default(),
             _phantom: PhantomData,
         }
@@ -178,20 +377,37 @@ impl<
         self.last_data = extra_data.obtain_last_data(self.last_data);
 
         match element.read {
-            ReadData::Plain(read) => {
-                CompressedRead::from_plain_write_directly_to_buffer_with_flags::<FlagsCount>(
+            ReadData::Plain(read) | ReadData::PlainRc(read) => {
+                let is_rc = matches!(element.read, ReadData::PlainRc(_));
+                CompressedRead::from_plain_write_directly_to_buffer_with_flags::<
+                    MinimizerMode,
+                    FlagsCount,
+                >(
                     read,
                     bucket,
+                    self.min_size,
+                    element.minimizer_pos,
+                    self.min_size_log,
                     element.flags,
+                    is_rc,
                 );
             }
-            ReadData::Packed(read) => {
-                encode_varint_flags::<_, _, FlagsCount>(
-                    |b| bucket.extend_from_slice(b),
-                    read.size as u64,
+            ReadData::Packed(read) | ReadData::PackedRc(read) => {
+                let is_rc = matches!(element.read, ReadData::PackedRc(_));
+                CompressedRead::encode_length::<MinimizerMode, FlagsCount>(
+                    bucket,
+                    read.size,
+                    self.min_size,
+                    element.minimizer_pos,
+                    self.min_size_log,
                     element.flags,
                 );
-                read.copy_to_buffer(bucket);
+
+                if is_rc {
+                    read.copy_to_buffer_rc(bucket);
+                } else {
+                    read.copy_to_buffer(bucket);
+                }
             }
         }
     }
@@ -218,43 +434,42 @@ impl<
         let extra = E::decode_extended(extra_read_buffer, &mut stream, self.last_data)?;
         self.last_data = extra.obtain_last_data(self.last_data);
 
-        let (size, flags) = decode_varint_flags::<_, FlagsCount>(|| stream.read_u8().ok())?;
-
-        if size == 0 {
-            return None;
-        }
-
         read_buffer.clear();
+        let (read, minimizer_pos, flags) =
+            CompressedRead::read_from_stream::<_, MinimizerMode, FlagsCount, AlignMode>(
+                read_buffer,
+                &mut stream,
+                self.min_size,
+                self.min_size_log,
+            )?;
 
-        let bytes = ((size + 3) / 4) as usize;
-        read_buffer.reserve(bytes);
-        let buffer_start = read_buffer.len();
-        unsafe {
-            read_buffer.set_len(buffer_start + bytes);
-        }
-
-        stream.read_exact(&mut read_buffer[buffer_start..]).unwrap();
-
-        Some((
+        Some(DeserializedRead {
+            read,
+            extra,
+            multiplicity: multiplicity as MultiplicityCounterType,
             flags,
             second_bucket,
-            extra,
-            CompressedRead::new_from_compressed(&read_buffer[buffer_start..], size as usize),
-            multiplicity as MultiplicityCounterType,
-        ))
+
+            minimizer_pos,
+        })
     }
 
     #[inline(always)]
     fn get_size(&self, element: &Self::InputElementType<'_>, extra: &Self::ExtraData) -> usize {
         let bases_count = match element.read {
-            ReadData::Plain(read) => read.len(),
-            ReadData::Packed(read) => read.size,
+            ReadData::Plain(read) | ReadData::PlainRc(read) => read.len(),
+            ReadData::Packed(read) | ReadData::PackedRc(read) => read.size,
         };
 
         ((bases_count + 3) / 4)
             + extra.max_size()
             + VARINT_FLAGS_MAX_SIZE
             + if BucketMode::ENABLED { 1 } else { 0 }
+            + if MinimizerMode::ENABLED {
+                VARINT_FLAGS_MAX_SIZE * 2
+            } else {
+                0
+            }
             + if MultiplicityMode::ENABLED {
                 VARINT_MAX_SIZE
             } else {
@@ -264,112 +479,52 @@ impl<
 }
 pub mod helpers {
 
-    // use crate::concurrent::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
+    use std::sync::Arc;
 
-    #[macro_export]
-    macro_rules! creads_helper {
-        (
-            helper_read_bucket_with_opt_multiplicity::<$E:ty, $FlagsCount:ty, $BucketMode:ty>(
-                $reader:expr,
-                $read_thread:expr,
-                $with_multiplicity:expr,
-                $allowed_passtrough:expr,
-                |$passtrough_info:ident| $p:expr,
-                |$checkpoint_data:ident| $c:expr,
-                |$data: ident, $extra_buffer: ident| $f:expr,
-                $thread_handle:ident
-            );
+    use parallel_processor::buckets::readers::{
+        binary_reader::BinaryReaderChunk,
+        typed_binary_reader::{AsyncReaderThread, TypedStreamReader},
+    };
 
-        ) => {
-            use $crate::concurrent::temp_reads::creads_utils::{
-                BucketModeOption, CompressedReadsBucketDataSerializer, NoMultiplicity,
-                WithMultiplicity,
-            };
-            use parallel_processor::buckets::readers::async_binary_reader::AsyncBinaryReaderIteratorData;
+    use crate::concurrent::temp_reads::{
+        creads_utils::{AlignModeOption, MultiplicityModeOption},
+        extra_data::SequenceExtraDataConsecutiveCompression,
+    };
 
-            let reader = $reader;
-            let read_thread = $read_thread;
-            let with_multiplicity = $with_multiplicity;
+    use super::{
+        BucketModeOption, CompressedReadsBucketDataSerializer, DeserializedRead,
+        MinimizerModeOption,
+    };
 
-            if $with_multiplicity {
-                let mut items =
-                    reader.get_items_stream::<CompressedReadsBucketDataSerializer<
-                        $E,
-                        $FlagsCount,
-                        $BucketMode,
-                        WithMultiplicity,
-                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle);
-                while let Some(checkpoint) = items.get_next_checkpoint_extended() {
-                    match checkpoint {
-                        AsyncBinaryReaderIteratorData::Stream(items, $checkpoint_data) => {
-                            $c
-                            while let Some(($data, $extra_buffer)) = items.next() {
-                                $f
-                            }
-                        },
-                        AsyncBinaryReaderIteratorData::Passtrough {
-                            file_range: $passtrough_info,
-                            checkpoint_data: $checkpoint_data,
-                        } => {
-                            #[allow(unused_assignments)]
-                            $c
-                            $p
-                        }
-                    }
+    pub fn helper_read_bucket<
+        E: SequenceExtraDataConsecutiveCompression,
+        BucketMode: BucketModeOption,
+        MultiplicityMode: MultiplicityModeOption,
+        MinimizerMode: MinimizerModeOption,
+        FlagsCount: typenum::Unsigned,
+        AlignMode: AlignModeOption,
+    >(
+        chunks: Vec<BinaryReaderChunk>,
+        reader_thread: Option<Arc<AsyncReaderThread>>,
+        mut data_callback: impl FnMut(DeserializedRead<E>, &mut E::TempBuffer),
+        k: usize,
+    ) {
+        if chunks.len() == 0 {
+            return;
+        }
 
-                }
-            } else {
-                let mut items =
-                    reader.get_items_stream::<CompressedReadsBucketDataSerializer<
-                        $E,
-                        $FlagsCount,
-                        $BucketMode,
-                        NoMultiplicity,
-                    >>(read_thread, Vec::new(), <$E>::new_temp_buffer(), $allowed_passtrough, &$thread_handle);
-                while let Some(checkpoint) = items.get_next_checkpoint_extended() {
-                    match checkpoint {
-                        AsyncBinaryReaderIteratorData::Stream(items, $checkpoint_data) => {
-                            $c
-                            while let Some(($data, $extra_buffer)) = items.next() {
-                                $f
-                            }
-                        },
-                        AsyncBinaryReaderIteratorData::Passtrough {
-                            file_range: $passtrough_info,
-                            checkpoint_data: $checkpoint_data,
-                        } => {
-                            #[allow(unused_assignments)]
-                            $c
-                            $p
-                        }
-                    }
-
-                }
-            }
-        };
+        TypedStreamReader::get_items::<
+            CompressedReadsBucketDataSerializer<
+                E,
+                BucketMode,
+                MultiplicityMode,
+                MinimizerMode,
+                FlagsCount,
+                AlignMode,
+            >,
+        >(reader_thread, k, chunks, |item, extra_buffer| {
+            data_callback(item, extra_buffer);
+            E::clear_temp_buffer(extra_buffer);
+        });
     }
-
-    // TODO: Restore this function when async closures are stable!
-    // pub async fn helper_read_bucket_with_opt_multiplicity<
-    //     E: SequenceExtraDataConsecutiveCompression,
-    //     FlagsCount: typenum::Unsigned,
-    //     BucketMode: BucketModeOption,
-    //     F: Future<Output = ()>,
-    // >(
-    //     reader: &AsyncBinaryReader,
-    //     read_thread: Arc<AsyncReaderThread>,
-    //     with_multiplicity: bool,
-    //     mut f: impl FnMut(
-    //         (
-    //             u8,
-    //             u8,
-    //             E,
-    //             crate::compressed_read::CompressedRead,
-    //             MultiplicityCounterType,
-    //         ),
-    //         &mut E::TempBuffer,
-    //     ) -> F,
-    // ) {
-
-    // }
 }

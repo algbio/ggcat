@@ -1,358 +1,184 @@
-use crate::reader::{InputBucketDesc, KmersTransformReader};
-use crate::reads_buffer::ReadsBuffer;
+use crate::processor::{KmersProcessorInitData, KmersTransformProcessor};
 use crate::{KmersTransformContext, KmersTransformExecutorFactory};
 use config::{
-    get_compression_level_info, get_memory_mode, BucketIndexType, SwapPriority,
-    DEFAULT_PER_CPU_BUFFER_SIZE, MAXIMUM_JIT_PROCESSED_BUCKETS, MAX_RESPLIT_BUCKETS_COUNT_LOG,
-    MINIMIZER_BUCKETS_CHECKPOINT_SIZE, PACKETS_PRIORITY_DONE_RESPLIT, PRIORITY_SCHEDULING_HIGH,
-    WORKERS_PRIORITY_HIGH,
+    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, SwapPriority, get_compression_level_info,
+    get_memory_mode,
 };
+use ggcat_logging::generate_stat_id;
+use ggcat_logging::stats::StatId;
 use hashes::HashableSequence;
 use instrumenter::local_setup_instrumenter;
 use io::concurrent::temp_reads::creads_utils::{
-    CompressedReadsBucketData, CompressedReadsBucketDataSerializer, NoMultiplicity,
-    WithMultiplicity,
+    AssemblerMinimizerPosition, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
+    NoAlignment, WithMultiplicity,
 };
-use io::concurrent::temp_reads::creads_utils::{MultiplicityModeOption, NoSecondBucket};
-use minimizer_bucketing::counters_analyzer::BucketCounter;
+use io::concurrent::temp_reads::creads_utils::{DeserializedRead, NoSecondBucket};
+use minimizer_bucketing::decode_helper::decode_sequences;
+use minimizer_bucketing::split_buckets::SplittedBucket;
 use minimizer_bucketing::{
     MinimizerBucketMode, MinimizerBucketingExecutor, MinimizerBucketingExecutorFactory,
+    PushSequenceInfo,
 };
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
+
+use parallel_processor::buckets::readers::typed_binary_reader::AsyncReaderThread;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::MultiThreadBuckets;
-use parallel_processor::execution_manager::executor::{
-    AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
-};
-use parallel_processor::execution_manager::executor_address::ExecutorAddress;
-use parallel_processor::execution_manager::memory_tracker::MemoryTracker;
-use parallel_processor::execution_manager::packet::Packet;
-use parallel_processor::mt_debug_counters::counter::{AtomicCounter, SumMode};
-use parallel_processor::mt_debug_counters::declare_counter_i64;
-use parallel_processor::scheduler::{PriorityScheduler, ThreadPriorityHandle};
-use std::cmp::{max, min};
-use std::future::Future;
+use parallel_processor::buckets::{BucketsCount, MultiThreadBuckets};
+use parallel_processor::execution_manager::thread_pool::ExecutorsHandle;
+use parallel_processor::memory_fs::RemoveFileMode;
+use parking_lot::Mutex;
 use std::marker::PhantomData;
-use std::ops::Deref;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use utils::track;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 local_setup_instrumenter!();
 
-pub struct KmersTransformResplitter<F: KmersTransformExecutorFactory>(PhantomData<F>);
-
-static BUCKET_RESPLIT_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-struct BucketsResplitInfo {
-    buckets: Arc<MultiThreadBuckets<CompressedBinaryWriter>>,
-    subsplit_buckets_count_log: usize,
-    output_addresses: Vec<ExecutorAddress>,
-    executors_count: usize,
-    global_counters: Vec<AtomicU64>,
-    data_format: MinimizerBucketMode,
+pub struct ResplitterInitData<F: KmersTransformExecutorFactory> {
+    pub _resplit_stat_id: StatId,
+    pub subsplit_buckets_count: BucketsCount,
+    pub splitted_bucket: SplittedBucket,
+    pub process_handle: ExecutorsHandle<KmersTransformProcessor<F>>,
 }
 
-static ADDR_WAITING_COUNTER: AtomicCounter<SumMode> =
-    declare_counter_i64!("kt_addr_wait_resplitter", SumMode, false);
-
-static PACKET_WAITING_COUNTER: AtomicCounter<SumMode> =
-    declare_counter_i64!("kt_packet_wait_resplitter", SumMode, false);
+pub struct KmersTransformResplitter<F: KmersTransformExecutorFactory>(PhantomData<F>);
 
 impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
-    fn init_processing(
+    pub fn do_resplit(
         global_context: &KmersTransformContext<F>,
-        init_data: &ResplitterInitData,
-    ) -> BucketsResplitInfo {
-        let total_sequences = global_context.total_sequences.load(Ordering::Relaxed);
-        let unique_kmers = global_context.unique_kmers.load(Ordering::Relaxed);
-
-        let unique_estimator_factor = if total_sequences > 0 {
-            unique_kmers as f64 / total_sequences as f64
-        } else {
-            global_context.k as f64 / 2.0
-        };
-
-        let subsplit_buckets_count_log = min(
-            MAX_RESPLIT_BUCKETS_COUNT_LOG,
-            max(
-                MAXIMUM_JIT_PROCESSED_BUCKETS,
-                init_data.bucket_size / (global_context.min_bucket_size as usize)
-                    * unique_estimator_factor as usize,
-            )
-            .next_power_of_two()
-            .ilog2() as usize,
+        reader_thread: Arc<AsyncReaderThread>,
+        mut resplit_data: ResplitterInitData<F>,
+    ) {
+        let mut resplitter = F::new_resplitter(
+            &global_context.global_extra_data,
+            &resplit_data.subsplit_buckets_count,
         );
 
-        let buckets = Arc::new(MultiThreadBuckets::new(
-            1 << subsplit_buckets_count_log,
+        static RESPLIT_INDEX: AtomicUsize = AtomicUsize::new(0);
+
+        let buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
+            resplit_data.subsplit_buckets_count,
             global_context.temp_dir.join(format!(
-                "resplit-bucket{}",
-                BUCKET_RESPLIT_COUNTER.fetch_add(1, Ordering::Relaxed)
+                "resplit-{}",
+                RESPLIT_INDEX.fetch_add(1, Ordering::Relaxed)
             )),
             None,
             &(
-                get_memory_mode(SwapPriority::MinimizerBuckets),
-                MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+                get_memory_mode(SwapPriority::ResplitBuckets as usize),
+                MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
                 get_compression_level_info(),
             ),
-            &init_data.data_format,
+            &MinimizerBucketMode::Compacted,
         ));
 
-        let output_addresses: Vec<_> = (0..(1 << subsplit_buckets_count_log))
-            .map(|_| KmersTransformReader::<F>::generate_new_address(()))
-            .collect();
-
-        // TODO: Find best count of writing threads
-        let executors_count = 4; //global_context.read_threads_count;
-        BucketsResplitInfo {
-            // (
-            //     (
-            buckets,
-            subsplit_buckets_count_log,
-            output_addresses,
-            global_counters: (0..(1 << subsplit_buckets_count_log))
-                .map(|_| AtomicU64::new(0))
-                .collect(),
-            executors_count,
-            data_format: init_data.data_format,
-            // )
-        }
-    }
-
-    #[instrumenter::track]
-    async fn do_resplit(
-        global_context: &KmersTransformContext<F>,
-        resplit_info: &BucketsResplitInfo,
-        ops: &ExecutorAddressOperations<'_, Self>,
-        thread_handle: &ThreadPriorityHandle,
-    ) {
-        match resplit_info.data_format {
-            MinimizerBucketMode::Single => {
-                Self::do_resplit_internal::<NoMultiplicity>(
-                    global_context,
-                    resplit_info,
-                    ops,
-                    thread_handle,
-                )
-                .await
-            }
-            MinimizerBucketMode::Compacted => {
-                Self::do_resplit_internal::<WithMultiplicity>(
-                    global_context,
-                    resplit_info,
-                    ops,
-                    thread_handle,
-                )
-                .await
-            }
-        }
-    }
-
-    async fn do_resplit_internal<MultiplicityMode: MultiplicityModeOption>(
-        global_context: &KmersTransformContext<F>,
-        resplit_info: &BucketsResplitInfo,
-        ops: &ExecutorAddressOperations<'_, Self>,
-        thread_handle: &ThreadPriorityHandle,
-    ) {
-        let mut resplitter = F::new_resplitter(&global_context.global_extra_data);
         let mut thread_local_buffers = BucketsThreadDispatcher::<
             _,
             CompressedReadsBucketDataSerializer<
                 _,
-                <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FLAGS_COUNT,
-                NoSecondBucket,
-                MultiplicityMode,
+                NoSecondBucket, // This is always zero but it is needed to preserve consistency
+                WithMultiplicity,
+                AssemblerMinimizerPosition,
+                <F::SequencesResplitterFactory as MinimizerBucketingExecutorFactory>::FlagsCount,
             >,
         >::new(
-            &resplit_info.buckets,
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, resplit_info.buckets.count()),
+            &buckets,
+            BucketsThreadBuffer::new(
+                DEFAULT_PER_CPU_BUFFER_SIZE,
+                &resplit_data.subsplit_buckets_count,
+            ),
+            global_context.k,
         );
 
-        let mut local_counters = vec![0u8; resplit_info.global_counters.len()];
+        let mut preprocess_info = Default::default();
+        let mut sequences_count = vec![0; resplit_data.subsplit_buckets_count.total_buckets_count];
 
-        // mem_tracker.update_memory_usage(&[
-        //     DEFAULT_PER_CPU_BUFFER_SIZE.octets as usize * mt_buckets.count()
-        // ]);
-
-        while let Some(input_packet) = track!(
-            ops.receive_packet(thread_handle).await,
-            PACKET_WAITING_COUNTER
-        ) {
-            let input_packet = input_packet.deref();
-
-            let mut preprocess_info = Default::default();
-
-            for (flags, extra, bases, multiplicity) in input_packet.reads.iter() {
-                let sequence = bases.as_reference(&input_packet.reads_buffer);
-                resplitter.reprocess_sequence(
-                    flags,
+        decode_sequences::<
+            F::AssociatedExtraData,
+            F::AssociatedExtraDataWithMultiplicity,
+            F::FlagsCount,
+            NoAlignment,
+        >(
+            reader_thread,
+            &mut Default::default(),
+            &mut resplit_data.splitted_bucket,
+            global_context.k,
+            |read, extra_buffer| {
+                let DeserializedRead {
+                    read,
                     extra,
-                    &input_packet.extra_buffer,
-                    &mut preprocess_info,
-                );
+                    multiplicity,
+                    flags,
+                    second_bucket: _,
+                    minimizer_pos: _,
+                } = read;
 
-                resplitter.process_sequence::<_, _>(
+                resplitter.reprocess_sequence(flags, &extra, &extra_buffer, &mut preprocess_info);
+
+                resplitter.process_sequence::<_, _, true>(
                     &preprocess_info,
-                    sequence,
-                    0..sequence.bases_count(),
+                    read,
+                    0..read.bases_count(),
                     0,
-                    resplit_info.subsplit_buckets_count_log,
+                    resplit_data.subsplit_buckets_count.normal_buckets_count_log,
                     0,
-                    |bucket, _next_bucket, seq, flags, extra, extra_buffer| {
-                        let bucket = bucket as usize;
+                    #[inline(always)]
+                    |info| {
+                        let PushSequenceInfo {
+                            bucket,
+                            second_bucket: _,
+                            sequence,
+                            extra_data,
+                            temp_buffer,
+                            minimizer_pos,
+                            flags,
+                            rc,
+                        } = info;
 
-                        let counter = &mut local_counters[bucket];
-
-                        *counter = counter.wrapping_add(1);
-                        if *counter == 0 {
-                            resplit_info.global_counters[bucket as usize]
-                                .fetch_add(256, Ordering::Relaxed);
-                        }
-
+                        sequences_count[bucket as usize] += 1;
                         thread_local_buffers.add_element_extended(
                             bucket as BucketIndexType,
-                            &extra,
-                            extra_buffer,
-                            &CompressedReadsBucketData::new_packed_with_multiplicity(
-                                seq,
+                            &extra_data,
+                            temp_buffer,
+                            &CompressedReadsBucketData::new_packed_with_multiplicity_opt_rc(
+                                sequence,
                                 flags,
                                 0,
+                                rc,
                                 multiplicity,
+                                minimizer_pos,
                             ),
                         );
                     },
                 );
-            }
-        }
-
-        for (bucket, counter) in local_counters.into_iter().enumerate() {
-            resplit_info.global_counters[bucket].fetch_add(counter as u64, Ordering::Relaxed);
-        }
+            },
+        );
 
         thread_local_buffers.finalize();
-    }
-}
 
-#[derive(Clone)]
-pub struct ResplitterInitData {
-    pub bucket_size: usize,
-    pub data_format: MinimizerBucketMode,
-}
+        let buckets = buckets.finalize();
 
-impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformResplitter<F> {
-    type InputPacket = ReadsBuffer<F::AssociatedExtraData>;
-    type OutputPacket = InputBucketDesc;
-    type GlobalParams = KmersTransformContext<F>;
-    type InitData = ResplitterInitData;
+        for (bucket, sequences_count) in buckets.into_iter().zip(sequences_count) {
+            let debug_bucket_first_path = bucket.chunks[0].clone();
 
-    fn new() -> Self {
-        Self(PhantomData)
-    }
-
-    fn async_executor_main<'a>(
-        &'a mut self,
-        global_context: &'a Self::GlobalParams,
-        mut receiver: ExecutorReceiver<Self>,
-        _memory_tracker: MemoryTracker<Self>,
-    ) -> impl Future<Output = ()> + 'a {
-        async move {
-            let thread_handle = PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_HIGH);
-
-            while let Ok((address, init_data)) = track!(
-                receiver
-                    .obtain_address_with_priority(WORKERS_PRIORITY_HIGH, &thread_handle)
-                    .await,
-                ADDR_WAITING_COUNTER
-            ) {
-                let resplit_info = Self::init_processing(global_context, &init_data);
-
-                let mut spawner = address.make_spawner();
-
-                for _ in 0..resplit_info.executors_count {
-                    spawner.spawn_executor(async {
-                        let thread_handle =
-                            PriorityScheduler::declare_thread(PRIORITY_SCHEDULING_HIGH);
-
-                        Self::do_resplit(global_context, &resplit_info, &address, &thread_handle)
-                            .await
-                    });
-                }
-                spawner.executors_await().await;
-                drop(spawner);
-
-                global_context.extra_buckets_count.fetch_add(
-                    1 << resplit_info.subsplit_buckets_count_log,
-                    Ordering::Relaxed,
-                );
-                address.declare_addresses(
-                    resplit_info.output_addresses.clone(),
-                    PACKETS_PRIORITY_DONE_RESPLIT,
-                );
-
-                for ((i, bucket), sub_bucket_count) in resplit_info
-                    .buckets
-                    .finalize_single()
-                    .into_iter()
-                    .enumerate()
-                    .zip(
-                        resplit_info
-                            .global_counters
-                            .into_iter()
-                            .map(|x| BucketCounter {
-                                count: x.into_inner(),
-                            }),
-                    )
-                {
-                    address.packet_send(
-                        resplit_info.output_addresses[i].clone(),
-                        Packet::new_simple(InputBucketDesc {
-                            paths: vec![bucket.path],
-                            sub_bucket_counters: vec![sub_bucket_count],
-                            compaction_delta: 0,
-                            resplitted: true,
-                            rewritten: false,
-                            used_hash_bits: 0,
-                            out_data_format: resplit_info.data_format,
-                        }),
-                        &thread_handle,
-                    );
-                }
-            }
+            resplit_data.process_handle.create_new_address(
+                Arc::new(KmersProcessorInitData {
+                    process_stat_id: generate_stat_id!(),
+                    splitted_bucket: Mutex::new(Some(SplittedBucket::from_multi_chunks(
+                        bucket.chunks.into_iter(),
+                        RemoveFileMode::Remove {
+                            remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+                        },
+                        DEFAULT_PREFETCH_AMOUNT,
+                        sequences_count,
+                    ))),
+                    is_resplitted: true,
+                    resplit_config: None,
+                    debug_bucket_first_path: Some(debug_bucket_first_path),
+                    extra_bucket_data: bucket.extra_bucket_data,
+                    processor_handle: resplit_data.process_handle.clone(),
+                }),
+                true,
+            );
         }
     }
 }
-
-//
-//     const MEMORY_FIELDS_COUNT: usize = 1;
-//     const MEMORY_FIELDS: &'static [&'static str] = &["TEMP_BUFFER"];
-//
-//     const BASE_PRIORITY: u64 = 1;
-//     const PACKET_PRIORITY_MULTIPLIER: u64 = 1;
-//     const STRICT_POOL_ALLOC: bool = false;
-//
-//     fn pre_execute<E: ExecutorOperations<Self>>(
-//         &mut self,
-//         (mt_buckets, buckets_count_log, out_addresses, counters): Self::BuildParams,
-//         _ops: E,
-//     ) {
-//     }
-//
-//     fn execute<E: ExecutorOperations<Self>>(
-//         &mut self,
-//         input_packet: Packet<Self::InputPacket>,
-//         _ops: E,
-//     ) {
-//     }
-//
-//     fn finalize<E: ExecutorOperations<Self>>(&mut self, mut ops: E) {
-//     }
-//
-//     fn is_finished(&self) -> bool {
-//         false
-//     }
-//
-//     fn get_current_memory_params(&self) -> Self::MemoryParams {
-//         ()
-//     }
-// }
