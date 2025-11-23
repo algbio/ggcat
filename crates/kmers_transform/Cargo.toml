@@ -9,7 +9,7 @@ config = { package = "ggcat_config", path = "../config" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Common libraries
-parallel-processor = "0.2.1"
+parallel-processor = "0.2.3"
 streaming-libdeflate-rs = "0.2.3"
 nightly-quirks = "0.1.4"
 hashes = { package = "ggcat_hashes", path = "../hashes" }

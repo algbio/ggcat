@@ -6,7 +6,7 @@ use colors::colors_manager::ColorsManager;
 use colors::{
     bundles::multifile_building::ColorBundleMultifileBuilding, non_colored::NonColoredManager,
 };
-use config::KEEP_FILES;
+use config::{KEEP_FILES, MEMORY_THRESHOLD_CLEAR_START_OFFSET, MINIMUM_GLOBAL_MEMORY};
 pub use ggcat_logging::MessageLevel;
 use ggcat_logging::{UnrecoverableErrorLogging, info, warn};
 use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
@@ -17,6 +17,7 @@ use io::sequences_stream::fasta::FastaFileSequencesStream;
 use parallel_processor::enable_counters_logging;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::MemoryFs;
+use parallel_processor::memory_fs::allocator::MemoryAllocationLimits;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
 use std::cmp::max;
@@ -190,13 +191,23 @@ impl GGCATInstance {
             });
         }
 
+        let requested_memory = MemoryDataSize::from_bytes(
+            (config.memory * (MemoryDataSize::OCTET_GIBIOCTET_FACTOR as f64)) as usize,
+        );
+
         MemoryFs::init(
-            MemoryDataSize::from_bytes(
-                (config.memory * (MemoryDataSize::OCTET_GIBIOCTET_FACTOR as f64)) as usize,
-            ),
+            requested_memory,
             config::FLUSH_QUEUE_FACTOR * config.total_threads_count,
             max(1, config.total_threads_count / 4),
             8192,
+            if requested_memory.as_bytes() > MINIMUM_GLOBAL_MEMORY.as_bytes() {
+                Some(MemoryAllocationLimits {
+                    max_usage: requested_memory - MEMORY_THRESHOLD_CLEAR_START_OFFSET,
+                    min_fs_usage: MINIMUM_GLOBAL_MEMORY,
+                })
+            } else {
+                None
+            },
         );
         *instance = Some(Box::leak(Box::new(GGCATInstance(config))));
         return Ok(instance.unwrap());

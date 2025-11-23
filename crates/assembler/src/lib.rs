@@ -193,7 +193,7 @@ pub fn run_assembler<
             .print_stats("Completed minimizer bucketing.".to_string());
         return Ok(PathBuf::new());
     } else {
-        MemoryFs::flush_to_disk(true);
+        MemoryFs::flush_to_disk(KEEP_FILES.load(Ordering::Relaxed));
         MemoryFs::free_memory();
     }
 
@@ -334,7 +334,7 @@ pub fn run_assembler<
             .print_stats("Completed kmers merge.".to_string());
         return Ok(PathBuf::new());
     } else {
-        MemoryFs::flush_to_disk(true);
+        MemoryFs::flush_to_disk(KEEP_FILES.load(Ordering::Relaxed));
         MemoryFs::free_memory();
     }
 

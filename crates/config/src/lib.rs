@@ -47,6 +47,10 @@ pub const MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE: CompressedCheckpointSize 
 pub const DEFAULT_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024 * 4;
 pub const DEFAULT_PER_CPU_BUFFER_SIZE: MemoryDataSize = MemoryDataSize::from_kibioctets(4);
 
+pub const MINIMUM_GLOBAL_MEMORY: MemoryDataSize = MemoryDataSize::from_gibioctets(2);
+pub const MEMORY_THRESHOLD_CLEAR_START_OFFSET: MemoryDataSize =
+    MemoryDataSize::from_mebioctets(512);
+
 pub const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(10);
 
 // The maximum size multiplier of a subbucket when compared to the sizes averages
