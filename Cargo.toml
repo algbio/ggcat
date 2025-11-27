@@ -2,7 +2,7 @@
 # dynamic-dispatch-proc-macro = { path = "libs-crates/dynamic-dispatch-rs/dynamic-dispatch-proc-macro" }
 # dynamic-dispatch = { path = "libs-crates/dynamic-dispatch-rs" }
 # mt-debug-counters = { path = "libs-crates/mt-debug-counters-rs" }
-streaming-libdeflate-rs = { path = "libs-crates/streaming-libdeflate-rs" }
+# streaming-libdeflate-rs = { path = "libs-crates/streaming-libdeflate-rs" }
 # papi-bindings = { path = "libs-crates/papi-bindings-rs" }
 # nightly-quirks = { path = "libs-crates/nightly-quirks-rs" }
 # instrumenter-proc-macro = { path = "libs-crates/instrumenter-rs/instrumenter-proc-macro-rs" }
