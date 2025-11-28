@@ -244,22 +244,19 @@ Check crates/capi/ggcat-cpp-api/example for usage examples.
 
 If you use GGCAT in your research, please cite the following article:
 
-### [GGCAT](https://doi.org/10.1101/2022.10.24.513174)
+### [GGCAT](https://doi.org/10.1101/gr.277615.122)
+> _Extremely-fast construction and querying of compacted and colored de Bruijn graphs with GGCAT_   
+> Andrea Cracco, Alexandru I. Tomescu  
+> **Genome Research** 33, 1198--1207 (2023), DOI: [10.1101/gr.277615.122](https://doi.org/10.1101/gr.277615.122)  
 
-> Extremely-fast construction and querying of compacted and colored de Bruijn graphs with GGCAT
-> Andrea Cracco, Alexandru I. Tomescu
-> Genome Research gr.277615.122; doi: https://doi.org/10.1101/gr.277615.122
-
-If you use a matchtigs/eulertigs output, please also cite the following articles:
+If you use a matchtigs/eulertigs output, please also cite the following articles:  
 
 #### [Matchtigs](https://doi.org/10.1101/2021.12.15.472871)
+> _Matchtigs: minimum plain text representation of kmer sets_  
+> Sebastian Schmidt, Shahbaz Khan, Jarno N. Alanko, Giulio E. Pibiri & Alexandru I. Tomescu  
+> **Genome Biology**, Volume 24, article number 136 (2023), DOI: [10.1101/2021.12.15.472871](https://doi.org/10.1101/2021.12.15.472871)  
 
-> Matchtigs: minimum plain text representation of kmer sets
-> Sebastian Schmidt, Shahbaz Khan, Jarno Alanko, Alexandru I. Tomescu
-> bioRxiv 2021.12.15.472871; doi: https://doi.org/10.1101/2021.12.15.472871
-
-#### [Eulertigs](https://doi.org/10.4230/LIPIcs.WABI.2022.2)
-
-> Eulertigs: minimum plain text representation of k-mer sets without repetitions in linear time
-> Sebastian Schmidt and Jarno N. Alanko
-> WABI 2022. [10.4230/LIPIcs.WABI.2022.2](https://doi.org/10.4230/LIPIcs.WABI.2022.2).
+#### [Eulertigs](https://doi.org/10.1186/s13015-023-00227-1)  
+> _Eulertigs: minimum plain text representation of k-mer sets without repetitions in linear time_  
+> Sebastian Schmidt and Jarno N. Alanko  
+> **Algorithms for Molecular Biology**, Volume 18, article number 5 (2023), DOI: [10.1186/s13015-023-00227-1](https://doi.org/10.1186/s13015-023-00227-1).  
