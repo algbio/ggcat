@@ -19,7 +19,7 @@ impl FastaFileSequencesStream {
 
         let file_bases_count = if file
             .extension()
-            .map(|x| x == "gz" || x == "lz4")
+            .map(|x| x == "gz" || x == "lz4" || x == "bz2" || x == "xz" || x == "zst" || x == "zstd")
             .unwrap_or(false)
         {
             (length as f64 * COMPRESSED_READS_RATIO) as u64

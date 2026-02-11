@@ -26,6 +26,9 @@ hashes = { package = "ggcat_hashes", path = "../hashes" }
 parking_lot = "0.12.3"
 byteorder = "1.5.0"
 lz4 = "1.25.0"
+bzip2 = "0.4.4"
+xz2 = "0.1.7"
+zstd = "0.13.2"
 flate2 = "1.0.30"
 bstr = "1.9.1"
 ggcat-logging = { version = "2.0.0", path = "../logging" }
