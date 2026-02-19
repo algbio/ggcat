@@ -85,6 +85,23 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> StructuredS
         }
     }
 
+    fn new_compressed_zstd(path: impl AsRef<Path>, level: u32) -> Self {
+        let compress_stream = zstd::stream::write::Encoder::new(
+            BufWriter::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE, File::create(&path).unwrap()),
+            level as i32,
+        )
+        .unwrap();
+
+        FastaWriter {
+            writer: Box::new(SequencesWriterWrapper::new(BufWriter::with_capacity(
+                DEFAULT_OUTPUT_BUFFER_SIZE,
+                compress_stream,
+            ))),
+            path: path.as_ref().to_path_buf(),
+            _phantom: PhantomData,
+        }
+    }
+
     fn new_plain(path: impl AsRef<Path>) -> Self {
         FastaWriter {
             writer: Box::new(SequencesWriterWrapper::new(BufWriter::with_capacity(

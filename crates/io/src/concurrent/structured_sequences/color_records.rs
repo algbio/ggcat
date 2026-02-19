@@ -82,6 +82,10 @@ impl<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> StructuredS
         Self::new_plain(path)
     }
 
+    fn new_compressed_zstd(path: impl AsRef<Path>, _level: u32) -> Self {
+        Self::new_plain(path)
+    }
+
     fn new_plain(path: impl AsRef<Path>) -> Self {
         Self {
             writer: BufWriter::with_capacity(

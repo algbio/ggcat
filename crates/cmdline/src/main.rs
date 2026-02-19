@@ -11,6 +11,7 @@ use colors::DefaultColorsSerializer;
 use colors::colors_manager::ColorMapReader;
 use colors::storage::deserializer::ColorsDeserializer;
 use config::ColorIndexType;
+use config::OUTPUT_COMPRESSION_LEVEL;
 use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance, GfaVersion};
 use ggcat_logging::UnrecoverableErrorLogging;
 use io::sequences_stream::GenericSequencesStream;
@@ -143,6 +144,10 @@ struct CommonArgs {
     )]
     pub intermediate_compression_level: Option<u32>,
 
+    /// Compression level for final output files (applies to .lz4/.gz/.zst/.zstd outputs)
+    #[arg(long = "output-compression-level", default_value = "2")]
+    pub output_compression_level: u32,
+
     #[arg(hide = true, long = "only-bstats")]
     pub only_bstats: bool,
 }
@@ -272,6 +277,10 @@ struct DumpColoredFastaArgs {
 
     #[arg(short = 'j', long, default_value = "16")]
     pub threads_count: usize,
+
+    /// Compression level for the output file when using .zst/.zstd extension
+    #[arg(long = "output-compression-level", default_value = "2")]
+    pub output_compression_level: u32,
 }
 
 /// Format of the queries output
@@ -327,6 +336,7 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
     ggcat_api::debug::DEBUG_KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
     *ggcat_api::debug::BUCKETS_COUNT_LOG_FORCE.lock() = args.buckets_count_log;
     ggcat_api::debug::DEBUG_ONLY_BSTATS.store(args.only_bstats, Ordering::Relaxed);
+    OUTPUT_COMPRESSION_LEVEL.store(args.output_compression_level, Ordering::Relaxed);
     *ggcat_api::debug::DEBUG_HASH_TYPE.lock() = match args.hash_type {
         HashType::Auto => ggcat_api::HashType::Auto,
         HashType::SeqHash => ggcat_api::HashType::SeqHash,
@@ -672,6 +682,7 @@ fn run_build_colored_fasta_from_args(instance: &GGCATInstance, args: AssemblerAr
         &args.common_args.temp_dir,
         args.common_args.keep_temp_files,
         args.common_args.threads_count,
+        args.common_args.output_compression_level,
     );
 
     if !args.common_args.keep_temp_files {
@@ -824,6 +835,25 @@ fn read_color_record(reader: &mut BufReader<File>) -> Option<(Vec<ColorIndexType
     Some((subsets, seq))
 }
 
+fn make_output_writer(
+    output_file: impl AsRef<Path>,
+    output_compression_level: u32,
+) -> BufWriter<Box<dyn Write + Send>> {
+    let output_file = output_file.as_ref();
+    let file = File::create(output_file).unwrap();
+
+    match output_file.extension().and_then(|e| e.to_str()) {
+        Some("zst") | Some("zstd") => {
+            let level = output_compression_level.min(22) as i32;
+            let encoder = zstd::stream::write::Encoder::new(file, level)
+                .unwrap()
+                .auto_finish();
+            BufWriter::with_capacity(8 * 1024 * 1024, Box::new(encoder))
+        }
+        _ => BufWriter::with_capacity(8 * 1024 * 1024, Box::new(file)),
+    }
+}
+
 fn flush_sorted_chunk(
     records: &mut Vec<SortedRecord>,
     chunk_files: &mut Vec<PathBuf>,
@@ -857,6 +887,7 @@ fn convert_color_records_to_bitset_fasta(
     temp_dir: impl AsRef<Path>,
     keep_temp_files: bool,
     threads_count: usize,
+    output_compression_level: u32,
 ) {
     const CHUNK_TARGET_BYTES: usize = 128 * 1024 * 1024;
 
@@ -930,8 +961,7 @@ fn convert_color_records_to_bitset_fasta(
 
     flush_sorted_chunk(&mut records, &mut chunk_files, &temp_chunks_dir);
 
-    let mut output_writer =
-        BufWriter::with_capacity(8 * 1024 * 1024, File::create(output_file.as_ref()).unwrap());
+    let mut output_writer = make_output_writer(output_file.as_ref(), output_compression_level);
 
     let mut chunk_readers: Vec<_> = chunk_files
         .iter()
@@ -1063,8 +1093,7 @@ fn run_dump_colored_fasta_from_args(args: DumpColoredFastaArgs) -> PathBuf {
 
     flush_sorted_chunk(&mut records, &mut chunk_files, &temp_chunks_dir);
 
-    let mut output_writer =
-        BufWriter::with_capacity(8 * 1024 * 1024, File::create(&args.output_file).unwrap());
+    let mut output_writer = make_output_writer(&args.output_file, args.output_compression_level);
 
     let mut chunk_readers: Vec<_> = chunk_files
         .iter()
