@@ -29,6 +29,7 @@ use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
 use io::concurrent::structured_sequences::StructuredSequenceWriter;
 use io::concurrent::structured_sequences::binary::StructSeqBinaryWriter;
 use io::concurrent::structured_sequences::binary::StructSeqBinaryWriterWrapper;
+use io::concurrent::structured_sequences::color_records::ColorRecordsWriterWrapper;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
 use io::concurrent::structured_sequences::gfa::GFAWriterWrapperV1;
 use io::concurrent::structured_sequences::gfa::GFAWriterWrapperV2;
@@ -76,6 +77,7 @@ pub use assembler_pipeline::compute_matchtigs::MatchtigMode;
     colors::non_colored::NonColoredManager,
 ], OutputMode = [
     FastaWriterWrapper,
+    ColorRecordsWriterWrapper,
     #[cfg(feature = "enable-gfa")] GFAWriterWrapperV1,
     #[cfg(feature = "enable-gfa")] GFAWriterWrapperV2
 ])]

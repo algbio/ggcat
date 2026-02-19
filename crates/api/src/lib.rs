@@ -10,6 +10,7 @@ use config::{KEEP_FILES, MEMORY_THRESHOLD_CLEAR_START_OFFSET, MINIMUM_GLOBAL_MEM
 pub use ggcat_logging::MessageLevel;
 use ggcat_logging::{UnrecoverableErrorLogging, info, warn};
 use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
+use io::concurrent::structured_sequences::color_records::ColorRecordsWriterWrapper;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
 use io::concurrent::structured_sequences::gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2};
 use io::sequences_stream::GenericSequencesStream;
@@ -265,6 +266,85 @@ impl GGCATInstance {
             Some(GfaVersion::V1) => GFAWriterWrapperV1::dynamic_dispatch_id(),
             Some(GfaVersion::V2) => GFAWriterWrapperV2::dynamic_dispatch_id(),
         };
+
+        let first_step = debug::DEBUG_ASSEMBLER_FIRST_STEP.lock().clone();
+        let last_step = debug::DEBUG_ASSEMBLER_LAST_STEP.lock().clone();
+        let temp_dir = if first_step == AssemblerPhase::default() {
+            create_tempdir(self.0.temp_dir.clone())
+        } else {
+            Some(
+                self.0
+                    .temp_dir
+                    .clone()
+                    .expect("while testing successive phases the temp dir must be specified"),
+            )
+        };
+
+        if let Some(temp_dir) = &temp_dir {
+            info!("Temporary directory: {}", temp_dir.display());
+        } else {
+            warn!("No temporary directory specified, writing to cwd!");
+        }
+
+        let output_file = assembler::dynamic_dispatch::run_assembler(
+            (merging_hash_dispatch, colors_hash, output_mode),
+            kmer_length,
+            minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
+            first_step,
+            last_step,
+            input_streams,
+            color_names.unwrap_or(&[]),
+            output_file,
+            temp_dir.clone(),
+            threads_count,
+            min_multiplicity,
+            *debug::BUCKETS_COUNT_LOG_FORCE.lock(),
+            self.0.intermediate_compression_level,
+            extra_elab == ExtraElaboration::UnitigLinks,
+            match extra_elab {
+                ExtraElaboration::GreedyMatchtigs => Some(assembler::MatchtigMode::GreedyTigs),
+                ExtraElaboration::Eulertigs => Some(assembler::MatchtigMode::EulerTigs),
+                ExtraElaboration::Pathtigs => Some(assembler::MatchtigMode::PathTigs),
+                ExtraElaboration::FastSimplitigs => Some(assembler::MatchtigMode::FastSimpliTigs),
+                ExtraElaboration::FastEulertigs => Some(assembler::MatchtigMode::FastEulerTigs),
+                _ => None,
+            },
+            debug::DEBUG_ONLY_BSTATS.load(Ordering::Relaxed),
+            forward_only,
+        )?;
+
+        if last_step == AssemblerPhase::FinalStep && !KEEP_FILES.load(Ordering::Relaxed) {
+            remove_tempdir(temp_dir);
+        } else {
+            info!("Keeping temp dir at {:?}", temp_dir);
+        }
+
+        Ok(output_file)
+    }
+
+    /// Builds a colored graph writing raw color-records as output.
+    /// This is intended as an internal fast path for post-processing into
+    /// custom colored FASTA exports.
+    pub fn build_graph_color_records(
+        &self,
+        input_streams: Vec<GeneralSequenceBlockData>,
+        output_file: PathBuf,
+        color_names: Option<&[String]>,
+        kmer_length: usize,
+        threads_count: usize,
+        forward_only: bool,
+        minimizer_length: Option<usize>,
+        min_multiplicity: usize,
+        extra_elab: ExtraElaboration,
+    ) -> anyhow::Result<PathBuf> {
+        let merging_hash_dispatch = utils::get_hash_static_id(
+            debug::DEBUG_HASH_TYPE.lock().clone(),
+            kmer_length,
+            forward_only,
+        );
+
+        let colors_hash = ColorBundleMultifileBuilding::dynamic_dispatch_id();
+        let output_mode = ColorRecordsWriterWrapper::dynamic_dispatch_id();
 
         let first_step = debug::DEBUG_ASSEMBLER_FIRST_STEP.lock().clone();
         let last_step = debug::DEBUG_ASSEMBLER_LAST_STEP.lock().clone();
