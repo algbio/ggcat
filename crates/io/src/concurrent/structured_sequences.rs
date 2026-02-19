@@ -17,6 +17,7 @@ use {
 };
 
 pub mod binary;
+pub mod color_records;
 pub mod concurrent;
 pub mod fasta;
 pub mod gfa;
@@ -117,6 +118,10 @@ pub trait StructuredSequenceBackendInit: Sync + Send + Sized {
     }
 
     fn new_compressed_lz4(_path: impl AsRef<Path>, _level: u32) -> Self {
+        unimplemented!()
+    }
+
+    fn new_compressed_zstd(_path: impl AsRef<Path>, _level: u32) -> Self {
         unimplemented!()
     }
 

@@ -16,6 +16,7 @@ use config::{
 use hashes::HashFunctionFactory;
 use hashes::default::MNHFactory;
 use io::concurrent::structured_sequences::binary::StructSeqBinaryWriterWrapper;
+use io::concurrent::structured_sequences::color_records::ColorRecordsWriterWrapper;
 use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
 use io::concurrent::structured_sequences::gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2};
 use io::concurrent::structured_sequences::{
@@ -153,6 +154,7 @@ impl<
 ], OM = [
     StructSeqBinaryWriterWrapper,
     FastaWriterWrapper,
+    ColorRecordsWriterWrapper,
     #[cfg(feature = "enable-gfa")] GFAWriterWrapperV1,
     #[cfg(feature = "enable-gfa")] GFAWriterWrapperV2,
 ])]

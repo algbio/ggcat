@@ -3,8 +3,8 @@ use crate::structs::query_colored_counters::{ColorsRange, QueryColoredCountersSe
 use colors::colors_manager::ColorMapReader;
 use colors::colors_manager::{ColorsManager, ColorsMergeManager};
 use config::{
-    ColorIndexType, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, QUERIES_COUNT_MIN_BATCH, SwapPriority,
-    get_compression_level_info, get_memory_mode,
+    ColorIndexType, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, OUTPUT_COMPRESSION_LEVEL,
+    QUERIES_COUNT_MIN_BATCH, SwapPriority, get_compression_level_info, get_memory_mode,
 };
 use flate2::Compression;
 use ggcat_logging::UnrecoverableErrorLogging;
@@ -32,6 +32,7 @@ enum QueryOutputFileWriter {
     Plain(File),
     LZ4Compressed(lz4::Encoder<File>),
     GzipCompressed(flate2::write::GzEncoder<File>),
+    ZstdCompressed(zstd::stream::write::Encoder<'static, File>),
 }
 
 impl Write for QueryOutputFileWriter {
@@ -40,6 +41,7 @@ impl Write for QueryOutputFileWriter {
             QueryOutputFileWriter::Plain(w) => w.write(buf),
             QueryOutputFileWriter::LZ4Compressed(w) => w.write(buf),
             QueryOutputFileWriter::GzipCompressed(w) => w.write(buf),
+            QueryOutputFileWriter::ZstdCompressed(w) => w.write(buf),
         }
     }
 
@@ -48,6 +50,7 @@ impl Write for QueryOutputFileWriter {
             QueryOutputFileWriter::Plain(w) => w.flush(),
             QueryOutputFileWriter::LZ4Compressed(w) => w.flush(),
             QueryOutputFileWriter::GzipCompressed(w) => w.flush(),
+            QueryOutputFileWriter::ZstdCompressed(w) => w.flush(),
         }
     }
 }
@@ -85,17 +88,29 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
     let query_output_file = File::create(&output_file)
         .log_unrecoverable_error_with_data("Cannot create output file", output_file.display())?;
 
+    let output_compression_level = OUTPUT_COMPRESSION_LEVEL.load(Ordering::Relaxed);
+
     let query_output = Mutex::new((
         BufWriter::new(
             match output_file.extension().map(|e| e.to_str()).flatten() {
                 Some("lz4") => QueryOutputFileWriter::LZ4Compressed(
                     lz4::EncoderBuilder::new()
-                        .level(4)
+                        .level(output_compression_level.min(16))
                         .build(query_output_file)
                         .unwrap(),
                 ),
                 Some("gz") => QueryOutputFileWriter::GzipCompressed(
-                    flate2::GzBuilder::new().write(query_output_file, Compression::default()),
+                    flate2::GzBuilder::new().write(
+                        query_output_file,
+                        Compression::new(output_compression_level.min(9)),
+                    ),
+                ),
+                Some("zst") | Some("zstd") => QueryOutputFileWriter::ZstdCompressed(
+                    zstd::stream::write::Encoder::new(
+                        query_output_file,
+                        output_compression_level.min(22) as i32,
+                    )
+                    .unwrap(),
                 ),
                 _ => QueryOutputFileWriter::Plain(query_output_file),
             },
