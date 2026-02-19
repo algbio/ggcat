@@ -17,6 +17,12 @@ conda install  -c conda-forge -c bioconda ggcat
 
 ## Tool usage
 
+Top-level commands:
+
+```
+ggcat --help
+```
+
 ### Build a new graph
 
 To build a new graph with a specified k of some input files, run:
@@ -30,6 +36,13 @@ Or if you have a file with a list of input files:
 ```
 ggcat build -k <k_value> -j <threads_count> -l <input_files_list> -o <output_file>
 ```
+
+Output compression is inferred from the output extension:
+- `.lz4` (default)
+- `.gz`
+- `.zst` / `.zstd`
+
+Use `--output-compression-level <level>` to tune the final output compression level.
 
 #### Building a colored graph
 
@@ -53,6 +66,28 @@ Then the graph can be built with the command:
 ```
 ggcat build -k <k_value> -j <threads_count> -c -d color_mapping.in -o <output_file>
 ```
+
+### Direct colored FASTA export (sorted by color bitsets)
+
+GGCAT can export a sorted colored FASTA directly from input reads/genomes in one command (without first writing/re-reading a graph FASTA):
+
+```
+ggcat build-colored-fasta -k <k_value> -j <threads_count> -c <input_files> -o <output_file>
+```
+
+It can also post-process an existing colored graph FASTA:
+
+```
+ggcat dump-colored-fasta <input_graph> -o <output_file>
+```
+
+The output headers contain explicit bitsets:
+
+```
+>0 BS:Z:00101
+```
+
+Both commands support `.zst/.zstd` output and `--output-compression-level`.
 
 #### Building links
 
@@ -94,6 +129,8 @@ Options:
           Maximum suggested memory usage (GB) The tool will try use only up to this GB of memory to store temporary files without writing to disk. This usage does not include the needed memory for the processing steps. GGCAT can allocate extra memory for files if the current memory is not enough to complete the current operation [default: 2]
   -p, --prefer-memory
           Use all the given memory before writing to disk
+      --output-compression-level <OUTPUT_COMPRESSION_LEVEL>
+          Compression level for final output files (applies to .lz4/.gz/.zst/.zstd) [default: 2]
   -h, --help
           Print help
 
@@ -173,6 +210,8 @@ Options:
           Maximum suggested memory usage (GB) The tool will try use only up to this GB of memory to store temporary files without writing to disk. This usage does not include the needed memory for the processing steps. GGCAT can allocate extra memory for files if the current memory is not enough to complete the current operation [default: 2]
   -p, --prefer-memory
           Use all the given memory before writing to disk
+      --output-compression-level <OUTPUT_COMPRESSION_LEVEL>
+          Compression level for final output files (applies to .lz4/.gz/.zst/.zstd) [default: 2]
   -h, --help
           Print help
 

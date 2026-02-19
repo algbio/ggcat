@@ -63,11 +63,11 @@ pub enum HashType {
 enum CliArgs {
     /// Build a new compacted graph
     Build(AssemblerArgs),
-    /// Build and directly export sorted colored FASTA with explicit bitsets
+    /// Build and directly export sorted colored FASTA with explicit BS:Z bitsets (single command, no dump/reparse step)
     BuildColoredFasta(AssemblerArgs),
     /// Query a compacted graph
     Query(QueryArgs),
-    /// Dump graph sequences to FASTA with explicit color bitsets, sorted by colors
+    /// Dump graph sequences to FASTA with explicit BS:Z color bitsets, sorted by colors
     DumpColoredFasta(DumpColoredFastaArgs),
     /// Dump all color names from a colormap
     DumpColors(DumpColorsArgs),
@@ -144,7 +144,7 @@ struct CommonArgs {
     )]
     pub intermediate_compression_level: Option<u32>,
 
-    /// Compression level for final output files (applies to .lz4/.gz/.zst/.zstd outputs)
+    /// Compression level for final output files (applies to .lz4/.gz/.zst/.zstd)
     #[arg(long = "output-compression-level", default_value = "2")]
     pub output_compression_level: u32,
 
@@ -162,6 +162,7 @@ struct AssemblerArgs {
     #[arg(short = 'l', long = "input-lists")]
     pub input_lists: Vec<PathBuf>,
 
+    /// Final output path. Compression is inferred from extension: .lz4, .gz, .zst, .zstd
     #[arg(short = 'o', long = "output-file", default_value = "output.fasta.lz4")]
     pub output_file: PathBuf,
 
@@ -259,7 +260,7 @@ struct DumpColoredFastaArgs {
     /// The input graph
     pub input_graph: PathBuf,
 
-    /// The output FASTA file
+    /// The output FASTA file (.zst/.zstd supported)
     #[arg(
         short = 'o',
         long = "output-file",
@@ -278,7 +279,7 @@ struct DumpColoredFastaArgs {
     #[arg(short = 'j', long, default_value = "16")]
     pub threads_count: usize,
 
-    /// Compression level for the output file when using .zst/.zstd extension
+    /// Compression level for output compression (.zst/.zstd)
     #[arg(long = "output-compression-level", default_value = "2")]
     pub output_compression_level: u32,
 }
@@ -302,6 +303,7 @@ struct QueryArgs {
     #[arg(short, long)]
     pub colors: bool,
 
+    /// Output prefix/path. For colored output, compression is inferred from extension: .lz4, .gz, .zst, .zstd
     #[arg(short = 'o', long = "output-file-prefix", default_value = "output")]
     pub output_file_prefix: PathBuf,
 
