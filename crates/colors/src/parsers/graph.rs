@@ -1,8 +1,9 @@
-use crate::colors_manager::{ColorsParser, MinimizerBucketingSeqColorData};
+use crate::colors_manager::{
+    ColorsParser, MinimizerBucketingSeqColorData, MinimizerBucketingSeqColorDataIterable,
+};
 use crate::managers::multiple::{
     KmerSerializedColor, UnitigColorData, UnitigsSerializerTempBuffer,
 };
-use crate::non_colored::NonColoredMultipleColors;
 use crate::parsers::{SequenceIdent, SingleSequenceInfo};
 use byteorder::ReadBytesExt;
 use config::{ColorCounterType, ColorIndexType};
@@ -13,6 +14,7 @@ use io::concurrent::temp_reads::extra_data::{
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use std::cmp::min;
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 use std::ops::Range;
 
 #[derive(Clone, Copy, Default, Debug, Eq, PartialEq)]
@@ -243,10 +245,50 @@ impl SequenceExtraData for MinBkMultipleColors {
 // fn parse_colors(ident: &[u8], colors_buffer: &mut UnitigsSerializerTempBuffer) -> Range<usize> {
 // }
 
-impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
-    type KmerColor<'a> = ColorIndexType;
-    type KmerColorIterator<'a> = MinBkColorsIterator<'a>;
+pub struct MinBkMultipleColorsIterator<'a>(PhantomData<&'a ()>);
+impl<'a> Iterator for MinBkMultipleColorsIterator<'a> {
+    type Item = &'a [ColorIndexType];
+    fn next(&mut self) -> Option<Self::Item> {
+        unimplemented!()
+    }
+}
 
+impl<'a> MinimizerBucketingSeqColorDataIterable<'a, &'a [ColorIndexType]> for MinBkMultipleColors {
+    type KmerColorIterator = MinBkMultipleColorsIterator<'a>;
+
+    fn get_iterator(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator {
+        unimplemented!()
+    }
+
+    fn get_unique_color(&'a self, _buffer: &'a Self::TempBuffer) -> &'a [ColorIndexType] {
+        unimplemented!()
+    }
+}
+
+impl<'a> MinimizerBucketingSeqColorDataIterable<'a, ColorIndexType> for MinBkMultipleColors {
+    type KmerColorIterator = MinBkColorsIterator<'a>;
+
+    fn get_iterator(&'a self, buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator {
+        // self.colors_slice
+
+        let mut self_ = self.clone();
+        self_.optimize_buffer_start(&buffer.colors);
+
+        MinBkColorsIterator {
+            colors_slice: &buffer.colors[self_.buffer_slice.as_range()],
+            slice_idx: 0,
+            colors_left: buffer.colors[self_.buffer_slice.start].counter
+                - self_.colors_subslice.start,
+            remaining_colors: self_.colors_subslice.len(),
+        }
+    }
+
+    fn get_unique_color(&'a self, _buffer: &'a Self::TempBuffer) -> ColorIndexType {
+        unimplemented!()
+    }
+}
+
+impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
     fn create(sequence_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self {
         let buffer_start = buffer.colors.len();
         let colors_subslice = match sequence_info.sequence_ident {
@@ -260,21 +302,6 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
                 colors_subslice.slice_start,
                 colors_subslice.slice_end,
             ),
-        }
-    }
-
-    fn get_iterator<'a>(&'a self, buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator<'a> {
-        // self.colors_slice
-
-        let mut self_ = self.clone();
-        self_.optimize_buffer_start(&buffer.colors);
-
-        MinBkColorsIterator {
-            colors_slice: &buffer.colors[self_.buffer_slice.as_range()],
-            slice_idx: 0,
-            colors_left: buffer.colors[self_.buffer_slice.start].counter
-                - self_.colors_subslice.start,
-            remaining_colors: self_.colors_subslice.len(),
         }
     }
 
@@ -292,10 +319,6 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
             buffer_slice: self.buffer_slice.clone(),
             colors_subslice: ColorRange::new(start, end),
         }
-    }
-
-    fn get_unique_color<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
-        unimplemented!()
     }
 
     fn debug_count(&self) -> usize {
@@ -330,9 +353,10 @@ impl SequenceExtraDataCombiner for MinBkMultipleColors {
     fn from_single_entry<'a>(
         out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
-        _in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
     ) -> (Self, &'a mut Self::TempBuffer) {
-        (single, out_buffer)
+        let multiple = Self::copy_extra_from(single, in_buffer, out_buffer);
+        (multiple, out_buffer)
     }
 }
 
@@ -341,13 +365,14 @@ pub struct GraphColorsParser;
 impl ColorsParser for GraphColorsParser {
     type SingleKmerColorDataType = ColorIndexType;
     type MinimizerBucketingSeqColorDataType = MinBkMultipleColors;
-    // This kind of structure is not supported on graph based data as compaction does not support it
-    type MinimizerBucketingMultipleSeqColorDataType = NonColoredMultipleColors<MinBkMultipleColors>;
+    type MinimizerBucketingMultipleSeqColorDataType = MinBkMultipleColors;
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::colors_manager::MinimizerBucketingSeqColorData;
+    use crate::colors_manager::{
+        MinimizerBucketingSeqColorData, MinimizerBucketingSeqColorDataIterable,
+    };
     use crate::managers::multiple::UnitigsSerializerTempBuffer;
     use crate::parsers::graph::MinBkMultipleColors;
     use crate::parsers::{SequenceIdent, SingleSequenceInfo};
@@ -373,7 +398,7 @@ mod tests {
 
         for start in 12..=70 {
             for end in (start + 1)..=70 {
-                let subset = colors.get_subslice(start..end);
+                let subset = colors.get_subslice(start..end, false);
                 assert_eq!(subset.debug_count(), end - start);
 
                 let mut encoded_buffer = Vec::new();

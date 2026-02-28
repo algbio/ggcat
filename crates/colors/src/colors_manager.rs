@@ -53,20 +53,25 @@ pub mod color_types {
 pub trait MinimizerBucketingSeqColorData:
     Default + Clone + Copy + SequenceExtraDataConsecutiveCompression + Send + Sync + 'static
 {
-    type KmerColor<'a>;
-    type KmerColorIterator<'a>: Iterator<Item = Self::KmerColor<'a>>
-    where
-        Self: 'a;
-
     fn create(stream_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self;
-    fn get_iterator<'a>(&'a self, buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator<'a>;
     fn get_subslice(&self, range: Range<usize>, reverse: bool) -> Self;
-    fn get_unique_color<'a>(&'a self, buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a>;
 
     fn debug_count(&self) -> usize {
         0
     }
 }
+
+pub trait MinimizerBucketingSeqColorDataIterable<'a, KmerColor: 'a>:
+    MinimizerBucketingSeqColorData
+{
+    type KmerColorIterator: Iterator<Item = KmerColor>
+    where
+        Self: 'a;
+
+    fn get_iterator(&'a self, buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator;
+    fn get_unique_color(&'a self, buffer: &'a Self::TempBuffer) -> KmerColor;
+}
+
 pub trait ColorMapReader {
     fn get_color_name(&self, index: ColorIndexType, json_escaped: bool) -> &str;
     fn colors_count(&self) -> usize;
@@ -101,11 +106,9 @@ pub trait ColorsParser: Sized {
         + Sync
         + Send
         + 'static;
-    type MinimizerBucketingSeqColorDataType: for<'a> MinimizerBucketingSeqColorData<
-        KmerColor<'a> = Self::SingleKmerColorDataType,
-    >;
+    type MinimizerBucketingSeqColorDataType: for<'a> MinimizerBucketingSeqColorDataIterable<'a, Self::SingleKmerColorDataType>;
     type MinimizerBucketingMultipleSeqColorDataType: SequenceExtraDataCombiner<SingleDataType = Self::MinimizerBucketingSeqColorDataType>
-        + for<'a> MinimizerBucketingSeqColorData<KmerColor<'a> = &'a [Self::SingleKmerColorDataType]>;
+        + for<'a> MinimizerBucketingSeqColorDataIterable<'a, &'a [Self::SingleKmerColorDataType]>;
 }
 
 /// Helper trait to manage colors labeling on KmersMerge step

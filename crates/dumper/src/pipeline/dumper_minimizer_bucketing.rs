@@ -1,7 +1,9 @@
 use colors::colors_manager::color_types::{
     MinimizerBucketingSeqColorDataType, SingleKmerColorDataType,
 };
-use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
+use colors::colors_manager::{
+    ColorsManager, MinimizerBucketingSeqColorData, MinimizerBucketingSeqColorDataIterable,
+};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
 use io::concurrent::temp_reads::extra_data::{

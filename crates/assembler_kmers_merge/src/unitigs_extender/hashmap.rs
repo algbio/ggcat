@@ -4,7 +4,7 @@ use std::{
 };
 
 use colors::colors_manager::{
-    ColorsManager, ColorsMergeManager, MinimizerBucketingSeqColorData,
+    ColorsManager, ColorsMergeManager, MinimizerBucketingSeqColorDataIterable,
     color_types::{self, MinimizerBucketingMultipleSeqColorDataType},
 };
 use config::{MultiplicityCounterType, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};

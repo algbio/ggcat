@@ -2,9 +2,9 @@ use crate::map_processor::ParallelKmersMergeMapPacket;
 use crate::unitigs_extender::sorting::SortingExtender;
 use crate::unitigs_extender::{UnitigExtensionColorsData, UnitigsExtenderTrait};
 use crate::{GlobalMergeData, ParallelKmersMergeFactory};
+use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
-use colors::colors_manager::{ColorsManager, color_types};
-use colors::colors_manager::{ColorsMergeManager, MinimizerBucketingSeqColorData};
+use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorDataIterable, color_types};
 use config::{
     DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE, READ_FLAG_INCL_BEGIN,
     READ_FLAG_INCL_END,

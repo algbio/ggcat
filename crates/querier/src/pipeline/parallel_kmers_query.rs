@@ -6,7 +6,9 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use colors::colors_manager::color_types::{
     MinimizerBucketingSeqColorDataType, SingleKmerColorDataType,
 };
-use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
+use colors::colors_manager::{
+    ColorsManager, MinimizerBucketingSeqColorData, MinimizerBucketingSeqColorDataIterable,
+};
 use config::{
     BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, MultiplicityCounterType,
     RESPLITTING_MAX_K_M_DIFFERENCE, SwapPriority, get_memory_mode,
@@ -166,11 +168,12 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataCombiner for QueryKmer
     fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
 
     fn from_single_entry<'a>(
-        _out_buffer: &'a mut Self::TempBuffer,
+        out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
         in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
     ) -> (Self, &'a mut Self::TempBuffer) {
-        (single, in_buffer)
+        Self::copy_extra_from(single, in_buffer, out_buffer);
+        (single, out_buffer)
     }
 }
 

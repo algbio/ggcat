@@ -1,5 +1,6 @@
 use crate::colors_manager::{
     ColorsManager, ColorsMergeManager, ColorsParser, MinimizerBucketingSeqColorData,
+    MinimizerBucketingSeqColorDataIterable,
 };
 use crate::parsers::SingleSequenceInfo;
 use config::{BucketIndexType, ColorCounterType};
@@ -9,21 +10,17 @@ use hashes::HashFunctionFactory;
 use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataCombiner,
-    SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataTempBufferManagement,
 };
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use std::fmt::Debug;
 use std::io::{Read, Write};
-use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::MapEntry;
 
 #[derive(Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Copy, Clone, Default)]
 pub struct NonColoredManager;
-
-#[derive(Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Copy, Clone, Default)]
-pub struct NonColoredMultipleColors<T>(PhantomData<T>);
 
 /// Dummy colors manager
 #[dynamic_dispatch]
@@ -44,27 +41,11 @@ impl ColorsManager for NonColoredManager {
 }
 
 impl HasEmptyExtraBuffer for NonColoredManager {}
-impl<T: Sync + Send + Debug + Clone> HasEmptyExtraBuffer for NonColoredMultipleColors<T> {}
 
 impl SequenceExtraData for NonColoredManager {
     #[inline(always)]
     fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl Read) -> Option<Self> {
         Some(NonColoredManager)
-    }
-
-    #[inline(always)]
-    fn encode_extended(&self, _buffer: &Self::TempBuffer, _writer: &mut impl Write) {}
-
-    #[inline(always)]
-    fn max_size(&self) -> usize {
-        0
-    }
-}
-
-impl<T: Sync + Send + Debug + Clone> SequenceExtraData for NonColoredMultipleColors<T> {
-    #[inline(always)]
-    fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl Read) -> Option<Self> {
-        Some(Self(PhantomData))
     }
 
     #[inline(always)]
@@ -85,57 +66,46 @@ impl Iterator for NonColoredManager {
     }
 }
 
-impl MinimizerBucketingSeqColorData for NonColoredManager {
-    type KmerColor<'a> = NonColoredManager;
-    type KmerColorIterator<'a> = std::iter::Repeat<NonColoredManager>;
-
+impl<'a> MinimizerBucketingSeqColorData for NonColoredManager {
     #[inline(always)]
     fn create(_file_index: SingleSequenceInfo, _: &mut ()) -> Self {
         NonColoredManager
     }
 
-    #[inline(always)]
-    fn get_iterator<'a>(&'a self, _: &'a ()) -> Self::KmerColorIterator<'a> {
-        std::iter::repeat(NonColoredManager)
-    }
-
     fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
         Self
     }
+}
 
-    fn get_unique_color<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
+impl<'a> MinimizerBucketingSeqColorDataIterable<'a, NonColoredManager> for NonColoredManager {
+    type KmerColorIterator = std::iter::Repeat<NonColoredManager>;
+
+    #[inline(always)]
+    fn get_iterator(&'a self, _: &'a ()) -> Self::KmerColorIterator {
+        std::iter::repeat(NonColoredManager)
+    }
+
+    fn get_unique_color(&'a self, _buffer: &'a Self::TempBuffer) -> NonColoredManager {
         NonColoredManager
     }
 }
 
-impl<T: Sync + Send + Debug + Copy + Default + MinimizerBucketingSeqColorData + 'static>
-    MinimizerBucketingSeqColorData for NonColoredMultipleColors<T>
+impl<'a, KmerColor> MinimizerBucketingSeqColorDataIterable<'a, &'a [KmerColor]>
+    for NonColoredManager
 {
-    type KmerColor<'a> = &'a [T::KmerColor<'a>];
+    type KmerColorIterator = std::iter::Repeat<&'a [KmerColor]>;
 
-    type KmerColorIterator<'a> = std::iter::Repeat<&'a [T::KmerColor<'a>]>;
-
-    fn create(_stream_info: SingleSequenceInfo, _buffer: &mut Self::TempBuffer) -> Self {
-        Self(PhantomData)
-    }
-
-    fn get_iterator<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator<'a> {
+    fn get_iterator(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator {
         std::iter::repeat(&[])
     }
 
-    fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
-        Self(PhantomData)
-    }
-
-    fn get_unique_color<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
+    fn get_unique_color(&'a self, _buffer: &'a Self::TempBuffer) -> &'a [KmerColor] {
         &[]
     }
 }
 
-impl<T: Sync + Send + Debug + Clone + SequenceExtraDataConsecutiveCompression + Default>
-    SequenceExtraDataCombiner for NonColoredMultipleColors<T>
-{
-    type SingleDataType = T;
+impl SequenceExtraDataCombiner for NonColoredManager {
+    type SingleDataType = NonColoredManager;
     const ALLOW_COMBINE: bool = true;
 
     fn combine_entries(
@@ -151,7 +121,7 @@ impl<T: Sync + Send + Debug + Clone + SequenceExtraDataConsecutiveCompression + 
         _in_buffer: &Self::TempBuffer,
         _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
     ) -> Self::SingleDataType {
-        T::default()
+        NonColoredManager
     }
 
     fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
@@ -162,7 +132,7 @@ impl<T: Sync + Send + Debug + Clone + SequenceExtraDataConsecutiveCompression + 
         _color: Self::SingleDataType,
         _in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
     ) -> (Self, &'a mut Self::TempBuffer) {
-        (Self(PhantomData), out_buffer)
+        (Self, out_buffer)
     }
 }
 
@@ -175,7 +145,7 @@ impl FastSortable for NonColoredManager {
 impl ColorsParser for NonColoredManager {
     type SingleKmerColorDataType = NonColoredManager;
     type MinimizerBucketingSeqColorDataType = NonColoredManager;
-    type MinimizerBucketingMultipleSeqColorDataType = NonColoredMultipleColors<NonColoredManager>;
+    type MinimizerBucketingMultipleSeqColorDataType = NonColoredManager;
 }
 
 impl IdentSequenceWriter for NonColoredManager {

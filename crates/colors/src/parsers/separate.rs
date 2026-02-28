@@ -1,4 +1,6 @@
-use crate::colors_manager::{ColorsParser, MinimizerBucketingSeqColorData};
+use crate::colors_manager::{
+    ColorsParser, MinimizerBucketingSeqColorData, MinimizerBucketingSeqColorDataIterable,
+};
 use crate::parsers::SingleSequenceInfo;
 use byteorder::ReadBytesExt;
 use config::{ColorIndexType, DEFAULT_PER_CPU_BUFFER_SIZE};
@@ -110,22 +112,23 @@ impl SequenceExtraDataConsecutiveCompression for MinBkSingleColor {
 }
 
 impl MinimizerBucketingSeqColorData for MinBkSingleColor {
-    type KmerColor<'a> = ColorIndexType;
-    type KmerColorIterator<'a> = std::iter::Repeat<ColorIndexType>;
-
     fn create(sequence_info: SingleSequenceInfo, _: &mut ()) -> Self {
         Self(sequence_info.static_color as ColorIndexType)
-    }
-
-    fn get_iterator<'a>(&'a self, _: &'a ()) -> Self::KmerColorIterator<'a> {
-        std::iter::repeat(self.0)
     }
 
     fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
         *self
     }
+}
 
-    fn get_unique_color<'a>(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
+impl<'a> MinimizerBucketingSeqColorDataIterable<'a, ColorIndexType> for MinBkSingleColor {
+    type KmerColorIterator = std::iter::Repeat<ColorIndexType>;
+
+    fn get_iterator(&'a self, _: &'a ()) -> Self::KmerColorIterator {
+        std::iter::repeat(self.0)
+    }
+
+    fn get_unique_color(&'a self, _buffer: &'a Self::TempBuffer) -> ColorIndexType {
         self.0
     }
 }
@@ -207,24 +210,25 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
 }
 
 impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
-    type KmerColor<'a> = &'a [ColorIndexType];
-    type KmerColorIterator<'a> = std::iter::Repeat<&'a [ColorIndexType]>;
-
     fn create(sequence_info: SingleSequenceInfo, extra_buffer: &mut AllocatorU32) -> Self {
         let mut vector = extra_buffer.new_vec(1);
         extra_buffer.push_vec(&mut vector, sequence_info.static_color);
         Self(vector)
     }
 
-    fn get_iterator<'a>(&'a self, extra_buffer: &'a AllocatorU32) -> Self::KmerColorIterator<'a> {
-        std::iter::repeat(extra_buffer.slice_vec(&self.0))
-    }
-
     fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
         *self
     }
+}
 
-    fn get_unique_color<'a>(&'a self, extra_buffer: &'a Self::TempBuffer) -> Self::KmerColor<'a> {
+impl<'a> MinimizerBucketingSeqColorDataIterable<'a, &'a [ColorIndexType]> for MinBkMultipleColors {
+    type KmerColorIterator = std::iter::Repeat<&'a [ColorIndexType]>;
+
+    fn get_iterator(&'a self, extra_buffer: &'a AllocatorU32) -> Self::KmerColorIterator {
+        std::iter::repeat(extra_buffer.slice_vec(&self.0))
+    }
+
+    fn get_unique_color(&'a self, extra_buffer: &'a Self::TempBuffer) -> &'a [ColorIndexType] {
         extra_buffer.slice_vec(&self.0)
     }
 }

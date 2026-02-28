@@ -1,7 +1,7 @@
 use binary_heap_plus::BinaryHeap;
-use colors::colors_manager::ColorsManager;
+use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::color_types::MinimizerBucketingMultipleSeqColorDataType;
-use colors::colors_manager::{ColorsMergeManager, MinimizerBucketingSeqColorData};
+use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorDataIterable};
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::extremal::DelayedHashComputation;
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
