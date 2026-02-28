@@ -213,7 +213,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
                         .get_subslice(last_index..(index + self.global_data.k - !is_last as usize)),
                     extra_data: match &preprocess_info.read_type {
                         ReadType::Graph { color } => QueryKmersReferenceData::Graph(
-                            color.get_subslice(last_index..index, false),
+                            color.get_subslice(last_index..index + is_last as usize, false),
                         ),
 
                         ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
