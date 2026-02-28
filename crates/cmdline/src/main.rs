@@ -265,7 +265,7 @@ struct QueryArgs {
     #[arg(long = "colored-query-output-format")]
     pub colored_query_output_format: Option<ColoredQueryOutputFormat>,
 
-    #[arg(short = 'x', long, default_value = "MinimizerBucketing")]
+    #[arg(short = 'x', long, default_value = "minimizer-bucketing")]
     pub step: QuerierStartingStep,
 
     #[command(flatten)]

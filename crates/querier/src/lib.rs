@@ -11,7 +11,7 @@ use hashes::HashFunctionFactory;
 use hashes::default::MNHFactory;
 use io::sequences_reader::SequencesReader;
 use io::sequences_stream::general::GeneralSequenceBlockData;
-use io::{compute_stats_from_input_blocks, debug_load_single_buckets};
+use io::{compute_stats_from_input_blocks, debug_load_buckets, debug_load_single_buckets};
 use parallel_processor::buckets::{BucketsCount, ExtraBuckets};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::fs::File;
@@ -102,10 +102,12 @@ pub fn run_query<MergingHash: HashFunctionFactory, QuerierColorsManager: ColorsM
             threads_count,
             k,
             m,
+            Some(file_stats.bucket_size_compaction_threshold),
+            file_stats.target_chunk_size,
         )
     } else {
         (
-            debug_load_single_buckets(&temp_dir, "query-buckets.debug").unwrap(),
+            debug_load_buckets(&temp_dir, "query-buckets.debug").unwrap(),
             {
                 let queries_count = BufReader::new(File::open(&query_input).unwrap())
                     .lines()

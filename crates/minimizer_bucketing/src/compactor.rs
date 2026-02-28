@@ -131,7 +131,7 @@ impl<
     }
 
     #[inline(always)]
-    fn process_superkmer<
+    fn process_compactable_superkmer<
         E: SequenceExtraDataCombiner + SequenceExtraDataConsecutiveCompression + Copy,
     >(
         super_kmer: SuperKmerEntryRef<E>,
@@ -176,7 +176,6 @@ impl<
                 false
             },
         );
-
         if found {
             return;
         }
@@ -214,6 +213,10 @@ impl<
 
         const COMPACTED_VS_UNCOMPACTED_RATIO: f64 = 0.5;
         const COMPACTED_VS_UNCOMPACTED_RATIO_FORCED: f64 = 2.0;
+
+        // Allow compaction only if the extra data can be combined
+        // otherwise the compaction is needed only for splitting in sub-buckets
+        let allow_compaction = MultipleData::ALLOW_COMBINE;
 
         // Outline of the compaction algorithm:
         // OBJECTIVE: Compact the new buckets avoiding too much overhead in compaction
@@ -263,7 +266,7 @@ impl<
         let force_advanced_compaction;
 
         // Compacted
-        {
+        if allow_compaction {
             let mut bucket = compacted_bucket.lock();
 
             let max_compacted =
@@ -371,18 +374,24 @@ impl<
 
         let compact_index = COMPACTED_INDEX.fetch_add(1, Ordering::Relaxed);
 
-        let new_path_multi = output_path.join(format!("comp-mult-{}.dat", compact_index));
+        let new_path_multi = if allow_compaction {
+            Some(output_path.join(format!("comp-mult-{}.dat", compact_index)))
+        } else {
+            None
+        };
         let new_path_single = output_path.join(format!("comp-single-{}.dat", compact_index));
 
-        let new_bucket_multi = LockFreeBinaryWriter::new(
-            &new_path_multi,
-            &(
-                get_memory_mode(SwapPriority::MinimizerBuckets),
-                MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-            ),
-            0,
-            &MinimizerBucketMode::Compacted,
-        );
+        let new_bucket_multi = new_path_multi.as_ref().map(|new_path_multi| {
+            LockFreeBinaryWriter::new(
+                &new_path_multi,
+                &(
+                    get_memory_mode(SwapPriority::MinimizerBuckets),
+                    MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
+                ),
+                0,
+                &MinimizerBucketMode::Compacted,
+            )
+        });
 
         let new_bucket_single = LockFreeBinaryWriter::new(
             &new_path_single,
@@ -460,122 +469,198 @@ impl<
                     .unwrap_or(0) as usize;
 
             // Clear all temp data
-            MultipleData::clear_temp_buffer(&mut self.super_kmers_extra_buffer);
             serializer_single.reset();
-            serializer_multi.reset();
-            // Clear and reset the hashmap capacity (double it to allow less collisions)
-            self.super_kmers_hashmap
-                .initialize(total_sequences_count.next_power_of_two() * 2);
 
-            if let Some(mut sub_bucket) = compacted_sub_bucket {
-                input_files_size += sub_bucket.total_size as usize;
+            if allow_compaction {
+                MultipleData::clear_temp_buffer(&mut self.super_kmers_extra_buffer);
+                serializer_multi.reset();
+                // Clear and reset the hashmap capacity (double it to allow less collisions)
+                self.super_kmers_hashmap
+                    .initialize(total_sequences_count.next_power_of_two() * 2);
 
-                decode_sequences::<SingleData, MultipleData, FlagsCount, NoAlignmentWithOverflow>(
-                    self.read_thread.clone(),
-                    &mut single_to_multiple_extra_buffer,
-                    &mut sub_bucket,
-                    self.k,
-                    #[inline(always)]
-                    |data, in_extra_buffer| {
-                        let DeserializedRead {
-                            read,
-                            extra,
-                            multiplicity,
-                            flags,
-                            second_bucket: _,
-                            minimizer_pos,
-                        } = data;
+                if let Some(mut sub_bucket) = compacted_sub_bucket {
+                    input_files_size += sub_bucket.total_size as usize;
 
-                        Self::process_superkmer::<MultipleData>(
-                            SuperKmerEntryRef {
+                    decode_sequences::<SingleData, MultipleData, FlagsCount, NoAlignmentWithOverflow>(
+                        Some(self.read_thread.clone()),
+                        &mut single_to_multiple_extra_buffer,
+                        &mut sub_bucket,
+                        self.k,
+                        #[inline(always)]
+                        |data, in_extra_buffer| {
+                            let DeserializedRead {
                                 read,
+                                extra,
+                                multiplicity,
+                                flags,
+                                second_bucket: _,
+                                minimizer_pos,
+                            } = data;
+
+                            Self::process_compactable_superkmer::<MultipleData>(
+                                SuperKmerEntryRef {
+                                    read,
+                                    multiplicity,
+                                    minimizer_pos,
+                                    flags,
+                                    extra,
+                                },
+                                &mut self.super_kmers_hashmap,
+                                &mut total_sequences,
+                                &in_extra_buffer,
+                                &mut self.super_kmers_extra_buffer,
+                            );
+                        },
+                    );
+                }
+
+                uncompacted_buffer.decode_reads(|entry| {
+                    Self::process_compactable_superkmer::<MultipleData>(
+                        SuperKmerEntryRef {
+                            read: entry.read,
+                            multiplicity: entry.multiplicity,
+                            minimizer_pos: entry.minimizer_pos,
+                            flags: entry.flags,
+                            extra: entry.extra,
+                        },
+                        &mut self.super_kmers_hashmap,
+                        &mut total_sequences,
+                        &self.uncompacted_super_kmers_extra_buffer,
+                        &mut self.super_kmers_extra_buffer,
+                    );
+                });
+                uncompacted_buffer.clear();
+
+                // Split between single (multiplicity = 1) and multiple superkmers
+                self.super_kmers_hashmap.process_elements(
+                    |sks| {
+                        memstorage_decode_reads::<
+                            MultipleData,
+                            WithFixedMultiplicity,
+                            AssemblerMinimizerPosition,
+                            true,
+                        >(sks.as_ptr(), sks.len(), |sk| {
+                            let mult_type = (sk.multiplicity > 1) as usize;
+                            super_kmers_temp[mult_type].encode_read(&sk);
+                        })
+                    },
+                    false,
+                );
+
+                // Create the new sub-bucket checkpoints
+                {
+                    if let Some(ref new_bucket_multi) = new_bucket_multi {
+                        new_bucket_multi.set_checkpoint_data(
+                            Some(&ReadsCheckpointData {
+                                target_subbucket: sub_bucket_index as BucketIndexType,
+                                sequences_count: super_kmers_temp[1].sequences_count(),
+                            }),
+                            None,
+                        );
+                    }
+
+                    new_bucket_single.set_checkpoint_data(
+                        Some(&ReadsCheckpointData {
+                            target_subbucket: sub_bucket_index as BucketIndexType,
+                            sequences_count: super_kmers_temp[0].sequences_count(),
+                        }),
+                        None,
+                    );
+                }
+
+                // Handle superkmers with multiplicity == 1
+                super_kmers_temp[0].decode_reads(
+                    |DeserializedRead {
+                         read,
+                         extra,
+                         minimizer_pos,
+                         flags,
+                         ..
+                     }| {
+                        // Not needed because the entry has a single value
+                        // extra.prepare_for_serialization(&mut self.super_kmers_extra_buffer);
+
+                        SingleData::clear_temp_buffer(&mut multiple_to_single_extra_buffer);
+                        let extra = extra.to_single(
+                            &self.super_kmers_extra_buffer,
+                            &mut multiple_to_single_extra_buffer,
+                        );
+
+                        serializer_single.write_to(
+                            &CompressedReadsBucketData::new_packed(read, flags, 0, minimizer_pos),
+                            &mut single_buffer,
+                            &extra,
+                            &multiple_to_single_extra_buffer,
+                        );
+
+                        if single_buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
+                            new_bucket_single.write_data(&single_buffer);
+                            single_buffer.clear();
+                        }
+                    },
+                );
+
+                let new_bucket_multi = new_bucket_multi.as_ref().unwrap();
+
+                // Handle superkmers with multiplicity > 1
+                super_kmers_temp[1].decode_reads(
+                    |DeserializedRead {
+                         read,
+                         mut extra,
+                         multiplicity,
+                         minimizer_pos,
+                         flags,
+                         ..
+                     }| {
+                        extra.prepare_for_serialization(&mut self.super_kmers_extra_buffer);
+
+                        serializer_multi.write_to(
+                            &CompressedReadsBucketData::new_packed_with_multiplicity(
+                                read,
+                                flags,
+                                0,
                                 multiplicity,
                                 minimizer_pos,
-                                flags,
-                                extra,
-                            },
-                            &mut self.super_kmers_hashmap,
-                            &mut total_sequences,
-                            &in_extra_buffer,
-                            &mut self.super_kmers_extra_buffer,
+                            ),
+                            &mut multi_buffer,
+                            &extra,
+                            &self.super_kmers_extra_buffer,
                         );
+                        if multi_buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
+                            new_bucket_multi.write_data(&multi_buffer);
+                            multi_buffer.clear();
+                        }
                     },
                 );
-            }
 
-            uncompacted_buffer.decode_reads(|entry| {
-                Self::process_superkmer::<MultipleData>(
-                    SuperKmerEntryRef {
-                        read: entry.read,
-                        multiplicity: entry.multiplicity,
-                        minimizer_pos: entry.minimizer_pos,
-                        flags: entry.flags,
-                        extra: entry.extra,
-                    },
-                    &mut self.super_kmers_hashmap,
-                    &mut total_sequences,
-                    &self.uncompacted_super_kmers_extra_buffer,
-                    &mut self.super_kmers_extra_buffer,
+                super_kmers_temp[0].clear();
+                super_kmers_temp[1].clear();
+                self.super_kmers_hashmap.reset_allocator();
+            } else {
+                // Not compacting, just write the uncompacted buffer into the output bucket
+
+                new_bucket_single.set_checkpoint_data(
+                    Some(&ReadsCheckpointData {
+                        target_subbucket: sub_bucket_index as BucketIndexType,
+                        sequences_count: uncompacted_buffer.sequences_count(),
+                    }),
+                    None,
                 );
-            });
-            uncompacted_buffer.clear();
-            // for entry in uncompacted_buffer.drain(..) {}
 
-            // super_kmers_temp[0].reserve(total_sequences);
-            // super_kmers_temp[1].reserve(total_sequences);
-
-            // Split between single (multiplicity = 1) and multiple superkmers
-            self.super_kmers_hashmap.process_elements(
-                |sks| {
-                    memstorage_decode_reads::<
-                        MultipleData,
-                        WithFixedMultiplicity,
-                        AssemblerMinimizerPosition,
-                        true,
-                    >(sks.as_ptr(), sks.len(), |sk| {
-                        let mult_type = (sk.multiplicity > 1) as usize;
-                        super_kmers_temp[mult_type].encode_read(&sk);
-                    })
-                },
-                false,
-            );
-
-            new_bucket_multi.set_checkpoint_data(
-                Some(&ReadsCheckpointData {
-                    target_subbucket: sub_bucket_index as BucketIndexType,
-                    sequences_count: super_kmers_temp[1].sequences_count(),
-                }),
-                None,
-            );
-
-            new_bucket_single.set_checkpoint_data(
-                Some(&ReadsCheckpointData {
-                    target_subbucket: sub_bucket_index as BucketIndexType,
-                    sequences_count: super_kmers_temp[0].sequences_count(),
-                }),
-                None,
-            );
-
-            // Handle superkmers with multiplicity == 1
-            super_kmers_temp[0].decode_reads(
-                |DeserializedRead {
-                     read,
-                     extra,
-                     minimizer_pos,
-                     flags,
-                     ..
-                 }| {
-                    // Not needed because the entry has a single value
-                    // extra.prepare_for_serialization(&mut self.super_kmers_extra_buffer);
-
+                uncompacted_buffer.decode_reads(|entry| {
                     SingleData::clear_temp_buffer(&mut multiple_to_single_extra_buffer);
-                    let extra = extra.to_single(
-                        &self.super_kmers_extra_buffer,
+                    let extra = entry.extra.to_single(
+                        &self.uncompacted_super_kmers_extra_buffer,
                         &mut multiple_to_single_extra_buffer,
                     );
 
                     serializer_single.write_to(
-                        &CompressedReadsBucketData::new_packed(read, flags, 0, minimizer_pos),
+                        &CompressedReadsBucketData::new_packed(
+                            entry.read,
+                            entry.flags,
+                            0,
+                            entry.minimizer_pos,
+                        ),
                         &mut single_buffer,
                         &extra,
                         &multiple_to_single_extra_buffer,
@@ -585,46 +670,14 @@ impl<
                         new_bucket_single.write_data(&single_buffer);
                         single_buffer.clear();
                     }
-                },
-            );
-
-            // Handle superkmers with multiplicity > 1
-            super_kmers_temp[1].decode_reads(
-                |DeserializedRead {
-                     read,
-                     mut extra,
-                     multiplicity,
-                     minimizer_pos,
-                     flags,
-                     ..
-                 }| {
-                    extra.prepare_for_serialization(&mut self.super_kmers_extra_buffer);
-
-                    serializer_multi.write_to(
-                        &CompressedReadsBucketData::new_packed_with_multiplicity(
-                            read,
-                            flags,
-                            0,
-                            multiplicity,
-                            minimizer_pos,
-                        ),
-                        &mut multi_buffer,
-                        &extra,
-                        &self.super_kmers_extra_buffer,
-                    );
-                    if multi_buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
-                        new_bucket_multi.write_data(&multi_buffer);
-                        multi_buffer.clear();
-                    }
-                },
-            );
-
-            super_kmers_temp[0].clear();
-            super_kmers_temp[1].clear();
-            self.super_kmers_hashmap.reset_allocator();
+                });
+                uncompacted_buffer.clear();
+            }
 
             if multi_buffer.len() > 0 {
-                new_bucket_multi.write_data(&multi_buffer);
+                new_bucket_multi
+                    .as_ref()
+                    .map(|b| b.write_data(&multi_buffer));
                 multi_buffer.clear();
             }
             if single_buffer.len() > 0 {
@@ -639,18 +692,22 @@ impl<
             MultipleData::clear_temp_buffer(&mut self.uncompacted_super_kmers_extra_buffer);
         }
 
-        let new_path = new_bucket_multi.get_path();
-        new_bucket_multi.finalize();
+        let new_path = new_bucket_multi.as_ref().map(|b| b.get_path());
+        new_bucket_multi.map(|b| b.finalize());
 
         let new_path_single = new_bucket_single.get_path();
         new_bucket_single.finalize();
 
         // Update the final buckets with new info
         let mut bucket = compacted_bucket.lock();
-        bucket.chunks.push(new_path.clone());
+        if let Some(ref new_path) = new_path {
+            bucket.chunks.push(new_path.clone());
+        }
         bucket.chunks.push(new_path_single.clone());
 
-        let output_files_size = MemoryFs::get_file_size(&new_path).unwrap()
+        let output_files_size = new_path
+            .map(|new_path| MemoryFs::get_file_size(&new_path).unwrap())
+            .unwrap_or(0)
             + MemoryFs::get_file_size(&new_path_single).unwrap();
         let _compression_ratio = input_files_size as f64 / output_files_size as f64;
 

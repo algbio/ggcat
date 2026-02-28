@@ -62,7 +62,6 @@ fn main() {
             1,
             ExtraElaboration::UnitigLinks,
             None,
-            5,
         )
         .unwrap();
 

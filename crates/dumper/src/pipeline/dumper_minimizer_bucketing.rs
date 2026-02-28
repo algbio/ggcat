@@ -17,7 +17,7 @@ use minimizer_bucketing::{
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
     MinimzerBucketingFilesReaderInputPacket, PushSequenceInfo,
 };
-use parallel_processor::buckets::{BucketsCount, SingleBucket};
+use parallel_processor::buckets::{BucketsCount, MultiChunkBucket};
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::io::{Read, Write};
@@ -74,10 +74,11 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
     }
 }
 
-impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + FastSortable>
+impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Copy + FastSortable>
     SequenceExtraDataCombiner for DumperKmersReferenceData<CX>
 {
     type SingleDataType = Self;
+    const ALLOW_COMBINE: bool = false;
 
     fn combine_entries(
         &mut self,
@@ -90,10 +91,10 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
 
     fn to_single(
         &self,
-        _in_buffer: &Self::TempBuffer,
-        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        in_buffer: &Self::TempBuffer,
+        out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
     ) -> Self::SingleDataType {
-        unimplemented!()
+        Self::copy_extra_from(*self, in_buffer, out_buffer)
     }
 
     fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
@@ -316,7 +317,9 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     k: usize,
     m: usize,
     colors_count: u64,
-) -> Vec<SingleBucket> {
+    chunking_size_threshold: Option<u64>,
+    target_chunk_size: u64,
+) -> Vec<MultiChunkBucket> {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: unitigs reorganization".to_string());
@@ -326,7 +329,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         stream_info: (),
     }];
 
-    GenericMinimizerBucketing::do_bucketing_no_max_usage::<
+    GenericMinimizerBucketing::do_bucketing::<
         DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
         DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
         DumperMinimizerBucketingExecutorFactory<CX>,
@@ -346,6 +349,8 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         None,
         CX::COLORS_ENABLED,
         k,
+        chunking_size_threshold,
+        target_chunk_size,
         false,
     )
 }

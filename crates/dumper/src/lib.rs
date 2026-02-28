@@ -65,15 +65,19 @@ pub fn dump_unitigs(
         INTERMEDIATE_COMPRESSION_LEVEL_FAST.store(default_compression_level, Ordering::Relaxed);
     }
 
+    let second_buckets_count = BucketsCount::new(second_buckets_count_log, ExtraBuckets::None);
+
     let reorganized_unitigs = minimizer_bucketing::<ColorBundleGraphQuerying>(
         graph_input.as_ref().to_path_buf(),
         BucketsCount::new(buckets_count_log, ExtraBuckets::None),
-        BucketsCount::new(second_buckets_count_log, ExtraBuckets::None),
+        second_buckets_count,
         threads_count,
         temp_dir.as_path(),
         k,
         m,
         color_map.colors_subsets_count(),
+        Some(file_stats.bucket_size_compaction_threshold),
+        file_stats.target_chunk_size,
     );
 
     MemoryFs::flush_to_disk(false);
@@ -84,6 +88,7 @@ pub fn dump_unitigs(
         k,
         colormap_file,
         reorganized_unitigs,
+        second_buckets_count.total_buckets_count,
         single_thread_output_function,
         output_function,
     )

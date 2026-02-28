@@ -100,6 +100,8 @@ pub trait SequenceExtraDataConsecutiveCompression: SequenceExtraDataTempBufferMa
 
 pub trait SequenceExtraDataCombiner: SequenceExtraDataConsecutiveCompression {
     type SingleDataType: SequenceExtraDataConsecutiveCompression;
+    const ALLOW_COMBINE: bool;
+
     fn combine_entries(
         &mut self,
         out_buffer: &mut Self::TempBuffer,

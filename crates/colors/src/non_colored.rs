@@ -136,6 +136,7 @@ impl<T: Sync + Send + Debug + Clone + SequenceExtraDataConsecutiveCompression + 
     SequenceExtraDataCombiner for NonColoredMultipleColors<T>
 {
     type SingleDataType = T;
+    const ALLOW_COMBINE: bool = true;
 
     fn combine_entries(
         &mut self,

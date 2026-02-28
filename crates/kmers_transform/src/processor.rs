@@ -130,7 +130,7 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                         F::FlagsCount,
                         AlignToMinimizerByteBoundary,
                     >(
-                        reader_thread.clone(),
+                        Some(reader_thread.clone()),
                         &mut tmp_mult_buffer,
                         &mut splitted_bucket,
                         global_context.k,

@@ -32,7 +32,7 @@ use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecut
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{
-    BucketsCount, ExtraBucketData, MultiThreadBuckets, SingleBucket,
+    BucketsCount, ExtraBucketData, MultiChunkBucket, MultiThreadBuckets, SingleBucket,
 };
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
@@ -144,6 +144,7 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataConsecutiveCompression
 
 impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataCombiner for QueryKmersReferenceData<CX> {
     type SingleDataType = Self;
+    const ALLOW_COMBINE: bool = false;
 
     fn combine_entries(
         &mut self,
@@ -156,10 +157,10 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataCombiner for QueryKmer
 
     fn to_single(
         &self,
-        _in_buffer: &Self::TempBuffer,
-        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        in_buffer: &Self::TempBuffer,
+        out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
     ) -> Self::SingleDataType {
-        unimplemented!()
+        Self::copy_extra_from(*self, in_buffer, out_buffer)
     }
 
     fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
@@ -429,9 +430,14 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
             }
         }
 
+        let buckets_count = self
+            .counters_tmp
+            .get_buckets_count()
+            .normal_buckets_count_log;
+
         for ((query_index, color_index), counter) in self.query_map.drain() {
             self.counters_tmp.add_element(
-                (query_index % 0xFF) as BucketIndexType,
+                (query_index % (1 << buckets_count)) as BucketIndexType,
                 &color_index,
                 &CounterEntry {
                     query_index,
@@ -454,7 +460,7 @@ pub fn parallel_kmers_counting<
     CX: ColorsManager,
     P: AsRef<Path> + Sync,
 >(
-    file_inputs: Vec<SingleBucket>,
+    file_inputs: Vec<MultiChunkBucket>,
     buckets_count: BucketsCount,
     second_buckets_count: BucketsCount,
     out_directory: P,
@@ -500,10 +506,7 @@ pub fn parallel_kmers_counting<
     });
 
     KmersTransform::<ParallelKmersQueryFactory<MH, CX>>::new(
-        file_inputs
-            .into_iter()
-            .map(|x| x.to_multi_chunk())
-            .collect(),
+        file_inputs,
         out_directory.as_ref(),
         buckets_count,
         second_buckets_count,

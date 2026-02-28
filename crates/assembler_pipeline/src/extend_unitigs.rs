@@ -652,7 +652,7 @@ pub fn extend_unitigs<
                             &read_struct.extra,
                             &extra_buffer,
                             0,
-                            Some(bases_count),
+                            Some(bases_count - k + 1),
                         );
                         let writable_color = CX::ColorsMergeManagerType::encode_part_unitigs_colors(
                             &mut join_colors_structure,

@@ -98,7 +98,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
             F::FlagsCount,
             NoAlignment,
         >(
-            reader_thread,
+            Some(reader_thread),
             &mut Default::default(),
             &mut resplit_data.splitted_bucket,
             global_context.k,

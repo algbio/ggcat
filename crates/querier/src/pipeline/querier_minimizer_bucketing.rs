@@ -15,7 +15,7 @@ use minimizer_bucketing::{
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
     MinimzerBucketingFilesReaderInputPacket, PushSequenceInfo,
 };
-use parallel_processor::buckets::{BucketsCount, SingleBucket};
+use parallel_processor::buckets::{BucketsCount, MultiChunkBucket};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
@@ -201,7 +201,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
             0,
             0,
             #[inline(always)]
-            |index, min_hash, _| {
+            |index, min_hash, is_last| {
                 push_sequence(PushSequenceInfo {
                     bucket: MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
                     second_bucket: MNHFactory::get_bucket(
@@ -209,7 +209,8 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
                         second_bits,
                         min_hash.0,
                     ),
-                    sequence: sequence.get_subslice(last_index..(index + self.global_data.k)),
+                    sequence: sequence
+                        .get_subslice(last_index..(index + self.global_data.k - !is_last as usize)),
                     extra_data: match &preprocess_info.read_type {
                         ReadType::Graph { color } => QueryKmersReferenceData::Graph(
                             color.get_subslice(last_index..index, false),
@@ -238,7 +239,9 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     threads_count: usize,
     k: usize,
     m: usize,
-) -> (Vec<SingleBucket>, u64) {
+    chunking_size_threshold: Option<u64>,
+    target_chunk_size: u64,
+) -> (Vec<MultiChunkBucket>, u64) {
     PHASES_TIMES_MONITOR
         .write()
         .start_phase("phase: graph + query bucketing".to_string());
@@ -257,7 +260,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     let queries_count = Arc::new(AtomicUsize::new(0));
 
     (
-        GenericMinimizerBucketing::do_bucketing_no_max_usage::<
+        GenericMinimizerBucketing::do_bucketing::<
             QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>,
             QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>,
             QuerierMinimizerBucketingExecutorFactory<CX>,
@@ -276,6 +279,8 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
             None,
             CX::COLORS_ENABLED,
             0,
+            chunking_size_threshold,
+            target_chunk_size,
             false,
         ),
         queries_count.load(Ordering::Relaxed) as u64,

@@ -20,7 +20,7 @@ pub fn decode_sequences<
     FlagsCount: typenum::Unsigned,
     AlignMode: AlignModeOption,
 >(
-    reader_thread: Arc<AsyncReaderThread>,
+    reader_thread: Option<Arc<AsyncReaderThread>>,
     tmp_mult_buffer: &mut <MultipleData as SequenceExtraDataTempBufferManagement>::TempBuffer,
     splitted_bucket: &mut SplittedBucket,
     k: usize,
@@ -41,7 +41,7 @@ pub fn decode_sequences<
         AlignMode,
     >(
         single_chunks,
-        Some(reader_thread.clone()),
+        reader_thread.clone(),
         |item, extra_buffer| {
             let (extra, extra_buffer) =
                 MultipleData::from_single_entry(tmp_mult_buffer, item.extra, extra_buffer);
@@ -65,5 +65,5 @@ pub fn decode_sequences<
         AssemblerMinimizerPosition,
         FlagsCount,
         AlignMode,
-    >(multi_chunks, Some(reader_thread.clone()), callback, k);
+    >(multi_chunks, reader_thread.clone(), callback, k);
 }

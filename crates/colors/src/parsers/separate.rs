@@ -231,6 +231,7 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
 
 impl SequenceExtraDataCombiner for MinBkMultipleColors {
     type SingleDataType = MinBkSingleColor;
+    const ALLOW_COMBINE: bool = true;
 
     fn combine_entries(
         &mut self,
