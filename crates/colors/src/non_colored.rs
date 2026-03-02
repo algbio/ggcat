@@ -49,7 +49,13 @@ impl SequenceExtraData for NonColoredManager {
     }
 
     #[inline(always)]
-    fn encode_extended(&self, _buffer: &Self::TempBuffer, _writer: &mut impl Write) {}
+    fn encode_extended(
+        &self,
+        _buffer: &Self::TempBuffer,
+        _writer: &mut impl Write,
+        _reverse_complement: bool,
+    ) {
+    }
 
     #[inline(always)]
     fn max_size(&self) -> usize {
@@ -261,6 +267,13 @@ impl ColorsMergeManager for NonColoredManager {
     }
 
     fn extend_forward_with_color(
+        _ts: &mut Self::TempUnitigColorStructure,
+        _entry_color: Self::TableColorEntry,
+        _count: usize,
+    ) {
+    }
+
+    fn extend_backward_with_color(
         _ts: &mut Self::TempUnitigColorStructure,
         _entry_color: Self::TableColorEntry,
         _count: usize,

@@ -7,8 +7,8 @@ use std::{
 use crate::resize_containers::ResizableVec;
 
 #[derive(Clone, Copy)]
-union AllocatedData<T: Copy, const LOCAL_FITTING: usize> {
-    index: usize,
+pub union AllocatedData<T: Copy, const LOCAL_FITTING: usize> {
+    pub index: usize,
     data: [T; LOCAL_FITTING],
 }
 impl<T: Copy, const LOCAL_FITTING: usize> AllocatedData<T, LOCAL_FITTING> {
@@ -33,15 +33,20 @@ pub type AllocatorU64 = Allocator<u64, 1>;
 
 #[derive(Copy, Clone)]
 pub struct InlineVec<T: Copy, const LOCAL_FITTING: usize> {
-    data: AllocatedData<T, LOCAL_FITTING>,
+    pub data: AllocatedData<T, LOCAL_FITTING>,
     size: usize,
 }
 
-impl<T: Copy, const LOCAL_FITTING: usize> Debug for InlineVec<T, LOCAL_FITTING> {
+impl<T: Copy + Debug, const LOCAL_FITTING: usize> Debug for InlineVec<T, LOCAL_FITTING> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InlineVec")
-            .field("size", &self.size)
-            .finish()
+        let mut debug_struct = f.debug_struct("InlineVec");
+        debug_struct.field("size", &self.size);
+        if self.size <= LOCAL_FITTING {
+            let data = unsafe { &self.data.data[0..self.size] };
+            debug_struct.field("inline_data", &data);
+        }
+
+        debug_struct.finish()
     }
 }
 

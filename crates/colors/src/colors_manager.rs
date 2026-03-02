@@ -125,7 +125,7 @@ pub trait ColorsMergeManager: Sized {
         + Sync
         + Send
         + 'static;
-    type TableColorEntry: Copy + Default;
+    type TableColorEntry: Copy + Default + Debug;
 
     type GlobalColorsTableWriter: Sync + Send + 'static;
     type GlobalColorsTableReader: ColorMapReader + Sync + Send + 'static;
@@ -190,6 +190,12 @@ pub trait ColorsMergeManager: Sized {
     );
 
     fn extend_forward_with_color(
+        ts: &mut Self::TempUnitigColorStructure,
+        entry_color: Self::TableColorEntry,
+        count: usize,
+    );
+
+    fn extend_backward_with_color(
         ts: &mut Self::TempUnitigColorStructure,
         entry_color: Self::TableColorEntry,
         count: usize,

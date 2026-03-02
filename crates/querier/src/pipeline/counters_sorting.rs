@@ -73,7 +73,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> BucketItemSer
         encode_varint(|b| bucket.extend_from_slice(b), element.query_index);
         encode_varint(|b| bucket.extend_from_slice(b), element.counter);
         extra_data.encode(bucket, self.0);
-        self.0 = extra_data.obtain_last_data(self.0);
+        self.0 = extra_data.obtain_last_data(self.0, false);
     }
 
     fn read_from<'a, S: Read>(
@@ -85,7 +85,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> BucketItemSer
         let query_index = decode_varint(|| stream.read_u8().ok())?;
         let counter = decode_varint(|| stream.read_u8().ok())?;
         let color = CX::decode(&mut stream, self.0)?;
-        self.0 = color.obtain_last_data(self.0);
+        self.0 = color.obtain_last_data(self.0, false);
         Some((
             CounterEntry {
                 query_index,

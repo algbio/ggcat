@@ -13,6 +13,10 @@ use std::io::{Read, Write};
 use std::ops::Range;
 use utils::inline_vec::{AllocatorU32, InlineVec};
 
+/*
+ * This file contains the color parsing and management for super-kmers where each kmer shares the exact same set of colors
+*/
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct MinBkSingleColor(ColorIndexType);
 
@@ -88,7 +92,13 @@ impl SequenceExtraDataConsecutiveCompression for MinBkSingleColor {
         decode_minbk_single_color(|| reader.read_u8().ok(), last_data)
     }
 
-    fn encode_extended(&self, _: &(), writer: &mut impl Write, last_data: Self::LastData) {
+    fn encode_extended(
+        &self,
+        _: &(),
+        writer: &mut impl Write,
+        last_data: Self::LastData,
+        _reverse_complement: bool,
+    ) {
         encode_varint(
             |b| writer.write_all(b),
             if last_data == *self {
@@ -106,7 +116,11 @@ impl SequenceExtraDataConsecutiveCompression for MinBkSingleColor {
     }
 
     #[inline(always)]
-    fn obtain_last_data(&self, _last_data: Self::LastData) -> Self::LastData {
+    fn obtain_last_data(
+        &self,
+        _last_data: Self::LastData,
+        _reverse_complement: bool,
+    ) -> Self::LastData {
         *self
     }
 }
@@ -183,6 +197,7 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         _last_data: Self::LastData,
+        _reverse_complement: bool,
     ) {
         let slice = buffer.slice_vec(&self.0);
         debug_assert!(slice.is_sorted());
@@ -200,7 +215,11 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
         }
     }
 
-    fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
+    fn obtain_last_data(
+        &self,
+        last_data: Self::LastData,
+        _reverse_complement: bool,
+    ) -> Self::LastData {
         last_data
     }
 

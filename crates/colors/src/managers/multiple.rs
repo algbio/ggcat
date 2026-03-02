@@ -43,6 +43,7 @@ impl ColorEntry {
     }
 }
 
+/// This manager handles the case where each kmer of a sequence has the same set of explicit colors
 pub struct MultipleColorsManager {
     colors_buffer: AllocatorU32,
     colors_list: ResizableVec<ColorEntry, DEFAULT_OUTPUT_BUFFER_SIZE>,
@@ -289,6 +290,24 @@ impl ColorsMergeManager for MultipleColorsManager {
         entry_color: Self::TableColorEntry,
         count: usize,
     ) {
+        if let Some(back_ts) = ts.colors.back_mut() {
+            if back_ts.color == entry_color {
+                back_ts.counter += count;
+                return;
+            }
+        }
+
+        ts.colors.push_back(KmerSerializedColor {
+            color: entry_color,
+            counter: count,
+        });
+    }
+
+    fn extend_backward_with_color(
+        ts: &mut Self::TempUnitigColorStructure,
+        entry_color: Self::TableColorEntry,
+        count: usize,
+    ) {
         if let Some(front_ts) = ts.colors.front_mut() {
             if front_ts.color == entry_color {
                 front_ts.counter += count;
@@ -520,14 +539,27 @@ impl SequenceExtraData for UnitigColorData {
         })
     }
 
-    fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write) {
+    fn encode_extended(
+        &self,
+        buffer: &Self::TempBuffer,
+        writer: &mut impl Write,
+        reverse_complement: bool,
+    ) {
         let colors_count = self.slice_end - self.slice_start;
         encode_varint(|b| writer.write_all(b), colors_count as u64).unwrap();
 
-        for i in self.slice_start..self.slice_end {
-            let el = buffer.colors[i];
-            encode_varint(|b| writer.write_all(b), el.color as u64).unwrap();
-            encode_varint(|b| writer.write_all(b), el.counter as u64).unwrap();
+        if reverse_complement {
+            for i in (self.slice_start..self.slice_end).rev() {
+                let el = buffer.colors[i];
+                encode_varint(|b| writer.write_all(b), el.color as u64).unwrap();
+                encode_varint(|b| writer.write_all(b), el.counter as u64).unwrap();
+            }
+        } else {
+            for i in self.slice_start..self.slice_end {
+                let el = buffer.colors[i];
+                encode_varint(|b| writer.write_all(b), el.color as u64).unwrap();
+                encode_varint(|b| writer.write_all(b), el.counter as u64).unwrap();
+            }
         }
     }
 

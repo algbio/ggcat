@@ -170,10 +170,10 @@ impl SequenceExtraData for UnitigIndex {
         Some(UnitigIndex::new_raw(bucket, index as usize))
     }
 
-    fn encode_extended(&self, _: &(), writer: &mut impl Write) {
+    fn encode_extended(&self, _: &(), writer: &mut impl Write, reverse_complement: bool) {
         encode_varint(
             |b| writer.write_all(b).ok(),
-            self.raw_bucket_revcomplemented() as u64,
+            (self.raw_bucket_revcomplemented() as u64) ^ (reverse_complement as u64),
         );
         encode_varint(|b| writer.write_all(b).ok(), self.index() as u64);
     }

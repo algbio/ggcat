@@ -115,11 +115,12 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataConsecutiveCompression
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         last_data: Self::LastData,
+        reverse_complement: bool,
     ) {
         match self {
             Self::Graph(cx) => {
                 writer.write_u8(0).unwrap();
-                CX::encode_extended(cx, &buffer.0, writer, last_data);
+                CX::encode_extended(cx, &buffer.0, writer, last_data, reverse_complement);
             }
             Self::Query(val) => {
                 writer.write_u8(1).unwrap();
@@ -136,9 +137,13 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataConsecutiveCompression
         }
     }
 
-    fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
+    fn obtain_last_data(
+        &self,
+        last_data: Self::LastData,
+        reverse_complement: bool,
+    ) -> Self::LastData {
         match self {
-            Self::Graph(cx) => cx.obtain_last_data(last_data),
+            Self::Graph(cx) => cx.obtain_last_data(last_data, reverse_complement),
             Self::Query(_) => Self::LastData::default(),
         }
     }

@@ -65,14 +65,20 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
         buffer: &Self::TempBuffer,
         writer: &mut impl std::io::Write,
         last_data: Self::LastData,
+        reverse_complement: bool,
     ) {
-        self.colors.encode_extended(buffer, writer, last_data);
+        self.colors
+            .encode_extended(buffer, writer, last_data, reverse_complement);
         #[cfg(feature = "support_kmer_counters")]
         self.counters.encode_extended(&(), writer, ());
     }
 
-    fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
-        self.colors.obtain_last_data(last_data)
+    fn obtain_last_data(
+        &self,
+        last_data: Self::LastData,
+        reverse_complement: bool,
+    ) -> Self::LastData {
+        self.colors.obtain_last_data(last_data, reverse_complement)
     }
 
     fn max_size(&self) -> usize {

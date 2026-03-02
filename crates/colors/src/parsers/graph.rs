@@ -17,6 +17,11 @@ use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::ops::Range;
 
+/*
+ * This file contains the color parsing and management for sequences where each kmer can have a different colorset,
+ * and each k-mer color set is represented as a single index
+*/
+
 #[derive(Clone, Copy, Default, Debug, Eq, PartialEq)]
 struct ColorRange {
     start: usize,
@@ -191,7 +196,13 @@ impl SequenceExtraData for MinBkMultipleColors {
         decode_minbk_color(buffer, || reader.read_u8().ok())
     }
 
-    fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write) {
+    fn encode_extended(
+        &self,
+        buffer: &Self::TempBuffer,
+        writer: &mut impl Write,
+        reverse_complement: bool,
+    ) {
+        debug_assert!(!reverse_complement);
         let mut self_ = self.clone();
         self_.optimize_buffer_start(&buffer.colors);
 
@@ -241,9 +252,6 @@ impl SequenceExtraData for MinBkMultipleColors {
         self.buffer_slice.len() * (VARINT_MAX_SIZE * 2) + VARINT_MAX_SIZE
     }
 }
-
-// fn parse_colors(ident: &[u8], colors_buffer: &mut UnitigsSerializerTempBuffer) -> Range<usize> {
-// }
 
 pub struct MinBkMultipleColorsIterator<'a>(PhantomData<&'a ()>);
 impl<'a> Iterator for MinBkMultipleColorsIterator<'a> {

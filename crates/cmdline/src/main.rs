@@ -15,6 +15,7 @@ use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance, GfaVersion};
 use ggcat_logging::UnrecoverableErrorLogging;
 use io::sequences_stream::general::GeneralSequenceBlockData;
 use parallel_processor::memory_fs::MemoryFs;
+use parking_lot::Mutex;
 use std::fs::File;
 use std::io::BufRead;
 use std::io::{BufReader, BufWriter, Write};
@@ -61,6 +62,7 @@ enum CliArgs {
     Query(QueryArgs),
     /// Dump all color names from a colormap
     DumpColors(DumpColorsArgs),
+    DumpColormap(DumpColormapArgs),
     Matches(MatchesArgs),
     // Utils(CmdUtilsArgs),
 }
@@ -238,6 +240,24 @@ struct AssemblerArgs {
 struct DumpColorsArgs {
     input_colormap: PathBuf,
     output_file: PathBuf,
+}
+
+/// Format of the queries output
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum DumpColormapFormat {
+    BitmapCSV,
+    RangesCSV,
+}
+
+#[derive(Parser, Debug)]
+struct DumpColormapArgs {
+    input_colormap: PathBuf,
+    output_file: PathBuf,
+    #[arg(long, default_value = "ranges-csv")]
+    format: DumpColormapFormat,
+    colors: Vec<String>,
+    #[command(flatten)]
+    common_args: CommonArgs,
 }
 
 /// Format of the queries output
@@ -611,6 +631,134 @@ fn main() {
             println!("Colors written to {}", output_file_name.display());
 
             return; // Skip final memory deallocation
+        }
+        CliArgs::DumpColormap(args) => {
+            let output_file_name = args.output_file.with_extension("csv");
+            let mut output_file = BufWriter::new(File::create(&output_file_name).unwrap());
+
+            let instance = initialize(&args.common_args, &output_file_name);
+
+            fn parse_color(color: &str) -> ColorIndexType {
+                let color = color.trim();
+                if color.starts_with("0x") {
+                    ColorIndexType::from_str_radix(&color[2..], 16)
+                        .expect("Invalid color, please use hex format or range with -")
+                } else {
+                    ColorIndexType::from_str_radix(color, 10)
+                        .expect("Invalid color, please use decimal format or range with -")
+                }
+            }
+
+            let (colors_count, colors_subsets_count) = {
+                let colors_deserializer = ColorsDeserializer::<DefaultColorsSerializer>::new(
+                    args.input_colormap.clone(),
+                    true,
+                )
+                .unwrap();
+
+                (
+                    colors_deserializer.colors_count(),
+                    colors_deserializer.colors_subsets_count(),
+                )
+            };
+
+            let mut subsets = vec![];
+            for colors in args.colors {
+                for color in colors.split(",") {
+                    if color.contains("-") {
+                        let range: Vec<_> = color.split("-").collect();
+                        if range.len() != 2 {
+                            println!("Invalid color range: {}", color);
+                            exit(1);
+                        }
+                        let start = parse_color(range[0]);
+
+                        if start >= colors_subsets_count as u32 {
+                            continue;
+                        }
+
+                        let end = parse_color(range[1]).min(colors_subsets_count as u32 - 1);
+                        if start > end {
+                            println!("Invalid color range (start > end): {}", color);
+                            exit(1);
+                        }
+                        subsets.extend(start..=end);
+                    } else {
+                        let color = parse_color(color);
+                        if color < colors_subsets_count as ColorIndexType {
+                            subsets.push(color);
+                        }
+                    }
+                }
+            }
+            subsets.sort();
+            subsets.dedup();
+
+            println!("Dumping colormap for {} colors...", subsets.len());
+
+            const PROCESS_CHUNK_SIZE: usize = 200000;
+
+            for sset in subsets.chunks(PROCESS_CHUNK_SIZE) {
+                let colorsets = Mutex::new(vec![]);
+                instance
+                    .query_colormap(
+                        args.input_colormap.clone(),
+                        sset.to_vec(),
+                        false,
+                        |index, colors| {
+                            colorsets.lock().push((index, colors.to_vec()));
+                        },
+                    )
+                    .unwrap();
+                let mut colorsets = colorsets.into_inner();
+                colorsets.sort_by_key(|(index, _)| *index);
+                for (index, colorset) in colorsets {
+                    match args.format {
+                        DumpColormapFormat::BitmapCSV => {
+                            let mut bitmap = "0,".repeat(colors_count).into_bytes();
+                            bitmap.pop();
+                            for color in colorset {
+                                bitmap[(color as usize) * 2] = b'1';
+                            }
+                            writeln!(
+                                output_file,
+                                "{},{}",
+                                index,
+                                String::from_utf8(bitmap).unwrap()
+                            )
+                            .unwrap();
+                        }
+                        DumpColormapFormat::RangesCSV => {
+                            let mut ranges = vec![];
+                            for color in colorset {
+                                if ranges.is_empty() {
+                                    ranges.push((color, color));
+                                } else {
+                                    let last_range = ranges.last_mut().unwrap();
+                                    if color == last_range.1 + 1 {
+                                        last_range.1 = color;
+                                    } else {
+                                        ranges.push((color, color));
+                                    }
+                                }
+                            }
+
+                            let ranges_str = ranges
+                                .into_iter()
+                                .map(|(start, end)| {
+                                    if start == end {
+                                        start.to_string()
+                                    } else {
+                                        format!("{}-{}", start, end)
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            writeln!(output_file, "{},{}", index, ranges_str).unwrap();
+                        }
+                    }
+                }
+            }
         }
     }
 
