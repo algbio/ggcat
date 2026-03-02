@@ -6,7 +6,7 @@ use crate::{
 use config::{DEFAULT_PER_CPU_BUFFER_SIZE, MIN_AVERAGE_CAP};
 use ggcat_logging::generate_stat_id;
 use ggcat_logging::stats::StatId;
-use io::concurrent::temp_reads::creads_utils::{AlignToMinimizerByteBoundary, ToReadData};
+use io::concurrent::temp_reads::creads_utils::AlignToMinimizerByteBoundary;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use minimizer_bucketing::decode_helper::decode_sequences;
 use minimizer_bucketing::split_buckets::SplittedBucket;
