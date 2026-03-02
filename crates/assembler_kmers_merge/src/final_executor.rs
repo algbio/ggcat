@@ -177,11 +177,6 @@ impl<
         color_types::PartialUnitigsColorStructure::<CX>::clear_temp_buffer(
             &mut colors_data.temp_color_buffer,
         );
-
-        // TODO:
-        // - write sequences to disk in buckets based on their extremal hash (randomly left or right)
-        // - Group sequences using an hashmap on a fast extremity hash + join them
-        // - Write sequences again using an hashmap
     }
 }
 

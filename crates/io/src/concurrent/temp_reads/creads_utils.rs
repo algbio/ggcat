@@ -373,12 +373,14 @@ impl<
             encode_varint(|b| bucket.extend_from_slice(b), element.multiplicity as u64);
         }
 
-        extra_data.encode_extended(extra_data_buffer, bucket, self.last_data);
-        self.last_data = extra_data.obtain_last_data(self.last_data);
+        let is_rc = matches!(element.read, ReadData::PlainRc(_))
+            || matches!(element.read, ReadData::PackedRc(_));
+
+        extra_data.encode_extended(extra_data_buffer, bucket, self.last_data, is_rc);
+        self.last_data = extra_data.obtain_last_data(self.last_data, is_rc);
 
         match element.read {
             ReadData::Plain(read) | ReadData::PlainRc(read) => {
-                let is_rc = matches!(element.read, ReadData::PlainRc(_));
                 CompressedRead::from_plain_write_directly_to_buffer_with_flags::<
                     MinimizerMode,
                     FlagsCount,
@@ -393,7 +395,6 @@ impl<
                 );
             }
             ReadData::Packed(read) | ReadData::PackedRc(read) => {
-                let is_rc = matches!(element.read, ReadData::PackedRc(_));
                 CompressedRead::encode_length::<MinimizerMode, FlagsCount>(
                     bucket,
                     read.size,
@@ -432,7 +433,7 @@ impl<
         };
 
         let extra = E::decode_extended(extra_read_buffer, &mut stream, self.last_data)?;
-        self.last_data = extra.obtain_last_data(self.last_data);
+        self.last_data = extra.obtain_last_data(self.last_data, false);
 
         read_buffer.clear();
         let (read, minimizer_pos, flags) =

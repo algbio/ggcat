@@ -15,6 +15,8 @@ use std::io::{Read, Write};
 use std::path::Path;
 use structs::map_entry::MapEntry;
 
+/// This manager handles the case where each k-mer has a single colorset (represented as a single color index)
+/// and a sequence can have k-mers with different colorsets.
 pub struct SingleColorManager;
 
 impl ColorsMergeManager for SingleColorManager {
@@ -52,11 +54,6 @@ impl ColorsMergeManager for SingleColorManager {
         _reached_threshold: bool,
     ) {
         unimplemented!()
-        // assert!(
-        //     entry.color_index.color_index == ColorIndexType::MAX
-        //         || entry.color_index.color_index == *kmer_color
-        // );
-        // entry.color_index.color_index = *kmer_color;
     }
 
     type HashMapTempColorIndex = SingleHashMapTempColorIndex;
@@ -108,6 +105,14 @@ impl ColorsMergeManager for SingleColorManager {
     }
 
     fn extend_forward_with_color(
+        _ts: &mut Self::TempUnitigColorStructure,
+        _entry_color: Self::TableColorEntry,
+        _count: usize,
+    ) {
+        panic!("Unsupported!");
+    }
+
+    fn extend_backward_with_color(
         _ts: &mut Self::TempUnitigColorStructure,
         _entry_color: Self::TableColorEntry,
         _count: usize,
@@ -228,9 +233,15 @@ impl SequenceExtraData for UnitigColorDataSerializer {
         })
     }
 
-    fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write) {
+    fn encode_extended(
+        &self,
+        buffer: &Self::TempBuffer,
+        writer: &mut impl Write,
+        reverse_complement: bool,
+    ) {
         let colors_count = self.slice_end - self.slice_start;
         encode_varint(|b| writer.write_all(b), colors_count as u64).unwrap();
+        debug_assert!(!reverse_complement);
 
         for i in self.slice_start..self.slice_end {
             let el = buffer.colors[i];

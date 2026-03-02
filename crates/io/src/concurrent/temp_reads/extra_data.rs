@@ -91,9 +91,14 @@ pub trait SequenceExtraDataConsecutiveCompression: SequenceExtraDataTempBufferMa
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         last_data: Self::LastData,
+        reverse_complement: bool,
     );
 
-    fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData;
+    fn obtain_last_data(
+        &self,
+        last_data: Self::LastData,
+        reverse_complement: bool,
+    ) -> Self::LastData;
 
     fn max_size(&self) -> usize;
 }
@@ -141,7 +146,12 @@ pub trait SequenceExtraData: SequenceExtraDataTempBufferManagement {
     }
 
     fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self>;
-    fn encode_extended(&self, buffer: &Self::TempBuffer, writer: &mut impl Write);
+    fn encode_extended(
+        &self,
+        buffer: &Self::TempBuffer,
+        writer: &mut impl Write,
+        reverse_complement: bool,
+    );
 
     fn max_size(&self) -> usize;
 }
@@ -170,7 +180,7 @@ impl<T: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> SequenceExtraD
     }
 
     fn encode(&self, writer: &mut impl Write, last_data: Self::LastData) {
-        self.encode_extended(&mut (), writer, last_data)
+        self.encode_extended(&mut (), writer, last_data, false)
     }
 }
 
@@ -192,8 +202,9 @@ impl<T: SequenceExtraData> SequenceExtraDataConsecutiveCompression for T {
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         _last_data: Self::LastData,
+        reverse_complement: bool,
     ) {
-        <Self as SequenceExtraData>::encode_extended(&self, buffer, writer)
+        <Self as SequenceExtraData>::encode_extended(&self, buffer, writer, reverse_complement)
     }
 
     #[inline(always)]
@@ -201,7 +212,11 @@ impl<T: SequenceExtraData> SequenceExtraDataConsecutiveCompression for T {
         <Self as SequenceExtraData>::max_size(self)
     }
 
-    fn obtain_last_data(&self, _last_data: Self::LastData) -> Self::LastData {
+    fn obtain_last_data(
+        &self,
+        _last_data: Self::LastData,
+        _reverse_complement: bool,
+    ) -> Self::LastData {
         ()
     }
 }
@@ -214,7 +229,13 @@ impl SequenceExtraData for () {
     }
 
     #[inline(always)]
-    fn encode_extended(&self, _buffer: &Self::TempBuffer, _writer: &mut impl Write) {}
+    fn encode_extended(
+        &self,
+        _buffer: &Self::TempBuffer,
+        _writer: &mut impl Write,
+        _reverse_complement: bool,
+    ) {
+    }
 
     #[inline(always)]
     fn max_size(&self) -> usize {
@@ -228,7 +249,12 @@ impl SequenceExtraData for ColorIndexType {
         decode_varint(|| reader.read_u8().ok()).map(|x| x as ColorIndexType)
     }
 
-    fn encode_extended(&self, _: &Self::TempBuffer, writer: &mut impl Write) {
+    fn encode_extended(
+        &self,
+        _: &Self::TempBuffer,
+        writer: &mut impl Write,
+        _reverse_complement: bool,
+    ) {
         encode_varint(|b| writer.write_all(b).unwrap(), *self as u64);
     }
 

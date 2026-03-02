@@ -62,8 +62,9 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
         _buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         last_data: CX::LastData,
+        reverse_complement: bool,
     ) {
-        CX::encode_extended(&self.color, &(), writer, last_data);
+        CX::encode_extended(&self.color, &(), writer, last_data, reverse_complement);
     }
 
     #[inline(always)]
@@ -71,8 +72,12 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
         self.color.max_size()
     }
 
-    fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
-        self.color.obtain_last_data(last_data)
+    fn obtain_last_data(
+        &self,
+        last_data: Self::LastData,
+        reverse_complement: bool,
+    ) -> Self::LastData {
+        self.color.obtain_last_data(last_data, reverse_complement)
     }
 }
 

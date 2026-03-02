@@ -90,54 +90,64 @@ fn try_join<'a, MH: HashFunctionFactory, CX: ColorsManager>(
         return None;
     }
 
-    let ((first_read, first_flags, _first_counters), (second_read, second_flags, _second_counters)) =
-        if first_glue_beginning {
+    let (
+        (first_read, first_flags, first_extra, first_buffer, _first_counters),
+        (second_read, second_flags, second_extra, second_buffer, _second_counters),
+    ) = if first_glue_beginning {
+        (
             (
-                (
-                    second_read,
-                    second_flags,
-                    match () {
-                        #[cfg(feature = "support_kmer_counters")]
-                        () => second_counters,
-                        #[cfg(not(feature = "support_kmer_counters"))]
-                        () => (),
-                    },
-                ),
-                (
-                    first_read,
-                    first_flags,
-                    match () {
-                        #[cfg(feature = "support_kmer_counters")]
-                        () => first_counters,
-                        #[cfg(not(feature = "support_kmer_counters"))]
-                        () => (),
-                    },
-                ),
-            )
-        } else {
+                second_read,
+                second_flags,
+                second_extra,
+                second_buffer,
+                match () {
+                    #[cfg(feature = "support_kmer_counters")]
+                    () => second_counters,
+                    #[cfg(not(feature = "support_kmer_counters"))]
+                    () => (),
+                },
+            ),
             (
-                (
-                    first_read,
-                    first_flags,
-                    match () {
-                        #[cfg(feature = "support_kmer_counters")]
-                        () => first_counters,
-                        #[cfg(not(feature = "support_kmer_counters"))]
-                        () => (),
-                    },
-                ),
-                (
-                    second_read,
-                    second_flags,
-                    match () {
-                        #[cfg(feature = "support_kmer_counters")]
-                        () => second_counters,
-                        #[cfg(not(feature = "support_kmer_counters"))]
-                        () => (),
-                    },
-                ),
-            )
-        };
+                first_read,
+                first_flags,
+                first_extra,
+                first_buffer,
+                match () {
+                    #[cfg(feature = "support_kmer_counters")]
+                    () => first_counters,
+                    #[cfg(not(feature = "support_kmer_counters"))]
+                    () => (),
+                },
+            ),
+        )
+    } else {
+        (
+            (
+                first_read,
+                first_flags,
+                first_extra,
+                first_buffer,
+                match () {
+                    #[cfg(feature = "support_kmer_counters")]
+                    () => first_counters,
+                    #[cfg(not(feature = "support_kmer_counters"))]
+                    () => (),
+                },
+            ),
+            (
+                second_read,
+                second_flags,
+                second_extra,
+                second_buffer,
+                match () {
+                    #[cfg(feature = "support_kmer_counters")]
+                    () => second_counters,
+                    #[cfg(not(feature = "support_kmer_counters"))]
+                    () => (),
+                },
+            ),
+        )
+    };
 
     #[cfg(feature = "support_kmer_counters")]
     let counters = io::concurrent::structured_sequences::SequenceAbundance {
@@ -480,19 +490,6 @@ pub fn extend_unitigs<
                                                 (joined.read.bases_count() - k) % 4
                                             };
 
-                                        // println!(
-                                        //     "Pushing read {} to bucket {} with start: {} and rc: {}",
-                                        //     joined.read.to_string(),
-                                        //     MH::get_bucket(
-                                        //         0,
-                                        //         joined_unitigs_buckets
-                                        //             .get_buckets_count()
-                                        //             .normal_buckets_count_log,
-                                        //         extremity_hash,
-                                        //     ),
-                                        //     joined.read.start,
-                                        //     joined.should_rc
-                                        // );
                                         remaining_count += 1;
                                         joined_unitigs_buckets.add_element_extended(
                                             MH::get_bucket(
@@ -639,6 +636,8 @@ pub fn extend_unitigs<
                     };
 
                     if is_circular {
+                        // Write a circular unitig
+
                         let circular_unitigs_buffer = tmp_final_circular_unitigs_buffer
                             .as_mut()
                             .unwrap_or(&mut tmp_final_unitigs_buffer);
@@ -669,8 +668,6 @@ pub fn extend_unitigs<
                             #[cfg(feature = "support_kmer_counters")]
                             read_struct.counters,
                         );
-
-                        // Write a circular unitig
                     } else {
                         has_written = true;
                         let should_rc = !hash.is_forward();

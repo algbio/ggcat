@@ -183,25 +183,48 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         last_data: Self::LastData,
+        reverse_complement: bool,
     ) {
         encode_varint(|b| writer.write_all(b).ok(), self.index).unwrap();
         #[cfg(feature = "support_kmer_counters")]
         {
-            encode_varint(|b| writer.write_all(b).ok(), self.abundance.first).unwrap();
+            encode_varint(
+                |b| writer.write_all(b).ok(),
+                if reverse_complement {
+                    self.abundance.last
+                } else {
+                    self.abundance.first
+                },
+            )
+            .unwrap();
             encode_varint(|b| writer.write_all(b).ok(), self.abundance.sum).unwrap();
-            encode_varint(|b| writer.write_all(b).ok(), self.abundance.last).unwrap();
+            encode_varint(
+                |b| writer.write_all(b).ok(),
+                if reverse_complement {
+                    self.abundance.first
+                } else {
+                    self.abundance.last
+                },
+            )
+            .unwrap();
         }
 
-        self.color.encode_extended(&buffer.0, writer, last_data);
-        self.link.encode_extended(&buffer.1, writer);
+        self.color
+            .encode_extended(&buffer.0, writer, last_data, reverse_complement);
+        self.link
+            .encode_extended(&buffer.1, writer, reverse_complement);
     }
 
     fn max_size(&self) -> usize {
         VARINT_MAX_SIZE * 4 + self.color.max_size() + self.link.max_size()
     }
 
-    fn obtain_last_data(&self, last_data: Self::LastData) -> Self::LastData {
-        self.color.obtain_last_data(last_data)
+    fn obtain_last_data(
+        &self,
+        last_data: Self::LastData,
+        reverse_complement: bool,
+    ) -> Self::LastData {
+        self.color.obtain_last_data(last_data, reverse_complement)
     }
 }
 

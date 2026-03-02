@@ -60,3 +60,20 @@ impl Utils {
         cbase ^ if do_rc { 2 } else { 0 }
     }
 }
+
+// Fast (low endian) copy of a slice of bytes, up to 7. Needs write access to the next 8 bytes
+#[inline(always)]
+pub fn copy_array_nooverwrite(value: &[u8; 8], count: usize, dest: *mut u8) {
+    debug_assert!(count <= 7);
+
+    unsafe {
+        let memory = u64::from_le_bytes((dest as *const [u8; 8]).read_unaligned());
+
+        let mask = u64::MAX << (count * 8);
+
+        std::ptr::write_unaligned(
+            dest as *mut [u8; 8],
+            ((memory & mask) | u64::from_le_bytes(*value)).to_le_bytes(),
+        );
+    }
+}

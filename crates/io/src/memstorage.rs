@@ -5,7 +5,7 @@ use std::{
 
 use config::MultiplicityCounterType;
 use hashes::HashableSequence;
-use utils::resize_containers::ResizableVec;
+use utils::{copy_array_nooverwrite, resize_containers::ResizableVec};
 
 use crate::{
     compressed_read::CompressedRead,
@@ -202,7 +202,7 @@ pub fn memstorage_encode_read<
                     read.multiplicity as u64,
                     0,
                     |data, count| {
-                        std::ptr::write_unaligned(data_ptr as *mut _, *data);
+                        copy_array_nooverwrite(data, count, data_ptr);
                         data_ptr = data_ptr.add(count);
                     },
                 );
@@ -221,7 +221,7 @@ pub fn memstorage_encode_read<
             bases_count as u64,
             read.flags,
             |data, count| {
-                std::ptr::write_unaligned(data_ptr as *mut _, *data);
+                copy_array_nooverwrite(data, count, data_ptr);
                 data_ptr = data_ptr.add(count);
             },
         );
