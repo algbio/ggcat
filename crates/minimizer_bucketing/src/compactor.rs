@@ -28,7 +28,8 @@ use io::{
             AssemblerMinimizerPosition, CompressedReadsBucketData,
             CompressedReadsBucketDataSerializer, DeserializedRead, NoAlignment,
             NoAlignmentWithOverflow, NoMultiplicity, NoSecondBucket, ReadsCheckpointData,
-            WithFixedMultiplicity, WithMultiplicity, WithSecondBucket, helpers::helper_read_bucket,
+            ToReadData, WithFixedMultiplicity, WithMultiplicity, WithSecondBucket,
+            helpers::helper_read_bucket,
         },
         extra_data::{
             SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
