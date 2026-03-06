@@ -154,7 +154,7 @@ pub trait ColorsMergeManager: Sized {
     );
 
     /// Temporary storage for colors associated with a single kmer in the hashmap (holds the color subset index)
-    type HashMapTempColorIndex: 'static + Send + Sync + Copy;
+    type HashMapTempColorIndex: 'static + Send + Sync + Copy + Debug;
     fn new_color_index() -> Self::HashMapTempColorIndex;
 
     /// This step finds the color subset indexes for each map entry

@@ -7,7 +7,7 @@ use colors::colors_manager::{
     ColorsManager, ColorsMergeManager, MinimizerBucketingSeqColorDataIterable,
     color_types::{self, MinimizerBucketingMultipleSeqColorDataType},
 };
-use config::{MultiplicityCounterType, READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
+use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     extremal::PrecomputedHash,
@@ -400,12 +400,13 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             let crossed_min_abundance =
                 entry.incr_by_and_check(sequence.multiplicity, self.params.min_multiplicity);
 
+            let over_threshold = entry.get_kmer_multiplicity() >= self.params.min_multiplicity;
             CX::ColorsMergeManagerType::add_temp_buffer_structure_el::<MH>(
                 &mut self.temp_colors,
                 kmer_color,
                 &mut entry.color_index,
                 idx != 0,
-                sequence.multiplicity >= self.params.min_multiplicity as MultiplicityCounterType,
+                over_threshold,
             );
 
             // Update the valid indexes to allow saving reads that cross the min abundance threshold

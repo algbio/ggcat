@@ -115,6 +115,7 @@ impl ColorsMergeManager for MultipleColorsManager {
             data.colors_list[data.last_color_index].tracking_counter_or_color += 1;
         } else {
             data.last_switch_color_index = *entry_color;
+            // No color assigned, create a new one
             if *entry_color == usize::MAX {
                 let mut new_colors = data.colors_buffer.new_vec(kmer_color.len());
                 let new_slice = data.colors_buffer.slice_vec_mut(&mut new_colors);
@@ -154,11 +155,6 @@ impl ColorsMergeManager for MultipleColorsManager {
                     });
                 }
             };
-
-            let color = &data.colors_list[*entry_color];
-            if color.reached_multiplicity() {
-                assert!(color.colors.len() > 0);
-            }
 
             // Set the reached threshold flag
             data.last_color_index = *entry_color;

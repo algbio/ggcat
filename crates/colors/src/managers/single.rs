@@ -156,7 +156,7 @@ impl ColorsMergeManager for SingleColorManager {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct SingleHashMapTempColorIndex;
 
 #[derive(Debug)]
