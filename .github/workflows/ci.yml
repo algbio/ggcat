@@ -38,6 +38,10 @@ jobs:
         shell: bash
         run: |
           cross build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline
+      - name: Build cli with kmer-counters
+        shell: bash
+        run: |
+          cross build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline --features "kmer-counters"
 
   linux-musl:
     strategy:
@@ -60,6 +64,8 @@ jobs:
           submodules: true
       - name: Build cli
         run: cargo build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline
+      - name: Build cli with kmer-counters
+        run: cargo build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline --features "kmer-counters"
 
   windows:
     strategy:
@@ -79,12 +85,14 @@ jobs:
           target: ${{ matrix.platform.target }}
       - name: Build cli
         run: cargo build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline
+      - name: Build cli with kmer-counters
+        run: cargo build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline --features "kmer-counters"
 
   macos:
     strategy:
       matrix:
         platform:
-          - runner: macos-13
+          - runner: macos-15-intel
             target: x86_64-apple-darwin
           - runner: macos-14
             target: aarch64-apple-darwin
@@ -100,3 +108,5 @@ jobs:
           target: ${{ matrix.platform.target }}
       - name: Build cli
         run: cargo build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline
+      - name: Build cli with kmer-counters
+        run: cargo build --release --target ${{ matrix.platform.target }} --locked -p ggcat_cmdline --features "kmer-counters"

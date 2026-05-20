@@ -80,10 +80,21 @@ impl SequenceExtraData for SequenceAbundance {
         Some(Self { first, sum, last })
     }
 
-    fn encode_extended(&self, _: &Self::TempBuffer, writer: &mut impl Write) {
-        encode_varint(|b| writer.write(b).ok(), self.first).unwrap();
+    fn encode_extended(
+        &self,
+        _: &Self::TempBuffer,
+        writer: &mut impl Write,
+        reverse_complement: bool,
+    ) {
+        let (first, last) = if reverse_complement {
+            (self.last, self.first)
+        } else {
+            (self.first, self.last)
+        };
+
+        encode_varint(|b| writer.write(b).ok(), first).unwrap();
         encode_varint(|b| writer.write(b).ok(), self.sum).unwrap();
-        encode_varint(|b| writer.write(b).ok(), self.last).unwrap();
+        encode_varint(|b| writer.write(b).ok(), last).unwrap();
     }
 
     #[inline(always)]

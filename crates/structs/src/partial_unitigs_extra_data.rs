@@ -70,7 +70,8 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
         self.colors
             .encode_extended(buffer, writer, last_data, reverse_complement);
         #[cfg(feature = "support_kmer_counters")]
-        self.counters.encode_extended(&(), writer, ());
+        self.counters
+            .encode_extended(&(), writer, (), reverse_complement);
     }
 
     fn obtain_last_data(
