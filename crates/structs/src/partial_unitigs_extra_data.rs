@@ -2,11 +2,19 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
 };
 
+pub const INDIRECT_UNITIG_FLAG_MASK: u8 = 4;
+
 #[derive(Clone, Debug)]
-pub struct PartialUnitigExtraData<X: SequenceExtraDataConsecutiveCompression> {
-    #[cfg(feature = "support_kmer_counters")]
-    pub counters: io::concurrent::structured_sequences::SequenceAbundance,
-    pub colors: X,
+pub enum PartialUnitigExtraData<X: SequenceExtraDataConsecutiveCompression> {
+    Indirect {
+        #[cfg(feature = "support_kmer_counters")]
+        counters: io::concurrent::structured_sequences::SequenceAbundance,
+    },
+    Inline {
+        #[cfg(feature = "support_kmer_counters")]
+        counters: io::concurrent::structured_sequences::SequenceAbundance,
+        colors: X,
+    },
 }
 
 impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataTempBufferManagement
@@ -27,10 +35,22 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataTempBufferMana
     }
 
     fn copy_extra_from(extra: Self, src: &Self::TempBuffer, dst: &mut Self::TempBuffer) -> Self {
-        Self {
-            colors: X::copy_extra_from(extra.colors, src, dst),
-            #[cfg(feature = "support_kmer_counters")]
-            counters: extra.counters,
+        match extra {
+            Self::Indirect {
+                #[cfg(feature = "support_kmer_counters")]
+                counters,
+            } => {
+                todo!()
+            }
+            Self::Inline {
+                #[cfg(feature = "support_kmer_counters")]
+                counters,
+                colors,
+            } => Self::Inline {
+                #[cfg(feature = "support_kmer_counters")]
+                counters: counters,
+                colors: X::copy_extra_from(colors, src, dst),
+            },
         }
     }
 }
@@ -48,17 +68,24 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
     ) -> Option<Self> {
         let color = X::decode_extended(buffer, reader, last_data, read_flags)?;
 
-        #[cfg(feature = "support_kmer_counters")]
-        let counter = io::concurrent::structured_sequences::SequenceAbundance::decode_extended(
-            &mut (),
-            reader,
-            (),
-            read_flags,
-        )?;
-        Some(Self {
-            colors: color,
+        Some(if read_flags & INDIRECT_UNITIG_FLAG_MASK != 0 {
+            Self::Indirect {
+                #[cfg(feature = "support_kmer_counters")]
+                counters: todo!(),
+            }
+        } else {
             #[cfg(feature = "support_kmer_counters")]
-            counters: counter,
+            let counter = io::concurrent::structured_sequences::SequenceAbundance::decode_extended(
+                &mut (),
+                reader,
+                (),
+                read_flags,
+            )?;
+            Self::Inline {
+                colors: color,
+                #[cfg(feature = "support_kmer_counters")]
+                counters: counter,
+            }
         })
     }
 
@@ -70,11 +97,25 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
         reverse_complement: bool,
         read_flags: u8,
     ) {
-        self.colors
-            .encode_extended(buffer, writer, last_data, reverse_complement, read_flags);
-        #[cfg(feature = "support_kmer_counters")]
-        self.counters
-            .encode_extended(&(), writer, (), reverse_complement, read_flags);
+        if read_flags & INDIRECT_UNITIG_FLAG_MASK != 0 {
+            unimplemented!()
+        }
+
+        match self {
+            PartialUnitigExtraData::Indirect {
+                #[cfg(feature = "support_kmer_counters")]
+                counters,
+            } => todo!(),
+            PartialUnitigExtraData::Inline {
+                colors,
+                #[cfg(feature = "support_kmer_counters")]
+                counters,
+            } => {
+                colors.encode_extended(buffer, writer, last_data, reverse_complement, read_flags);
+                #[cfg(feature = "support_kmer_counters")]
+                counters.encode_extended(&(), writer, (), reverse_complement, read_flags);
+            }
+        }
     }
 
     fn obtain_last_data(
@@ -82,16 +123,33 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
         last_data: Self::LastData,
         reverse_complement: bool,
     ) -> Self::LastData {
-        self.colors.obtain_last_data(last_data, reverse_complement)
+        match self {
+            PartialUnitigExtraData::Indirect { .. } => Default::default(),
+            PartialUnitigExtraData::Inline { colors, .. } => {
+                colors.obtain_last_data(last_data, reverse_complement)
+            }
+        }
     }
 
     fn max_size(&self) -> usize {
-        self.colors.max_size()
-            + match () {
+        match self {
+            PartialUnitigExtraData::Indirect {
                 #[cfg(feature = "support_kmer_counters")]
-                () => self.counters.max_size(),
-                #[cfg(not(feature = "support_kmer_counters"))]
-                () => 0,
+                counters,
+            } => todo!(),
+            PartialUnitigExtraData::Inline {
+                colors,
+                #[cfg(feature = "support_kmer_counters")]
+                counters,
+            } => {
+                colors.max_size()
+                    + match () {
+                        #[cfg(feature = "support_kmer_counters")]
+                        () => counters.max_size(),
+                        #[cfg(not(feature = "support_kmer_counters"))]
+                        () => 0,
+                    }
             }
+        }
     }
 }

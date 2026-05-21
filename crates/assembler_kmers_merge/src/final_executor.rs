@@ -32,7 +32,7 @@ use std::ops::DerefMut;
 use std::slice::from_raw_parts;
 use std::sync::Arc;
 use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
-use typenum::U2;
+use typenum::U3;
 
 local_setup_instrumenter!();
 
@@ -49,7 +49,7 @@ pub struct ParallelKmersMergeFinalExecutor<
             NoSecondBucket,
             NoMultiplicity,
             AssemblerMinimizerPosition,
-            U2,
+            U3,
             AlignToMinimizerByteBoundary,
         >,
     >,
@@ -109,7 +109,7 @@ impl<
                 NoSecondBucket,
                 NoMultiplicity,
                 AssemblerMinimizerPosition,
-                U2,
+                U3,
                 AlignToMinimizerByteBoundary,
             >,
         >,
@@ -126,17 +126,11 @@ impl<
             &mut colors_data.temp_color_buffer,
         );
 
-        let extra_data = PartialUnitigExtraData {
-            colors,
-            #[cfg(feature = "support_kmer_counters")]
-            counters,
-        };
-
         if forward_linked.is_none() && backward_linked.is_none() {
             lonely_unitigs.add_read(
                 out_seq.into_bases_iter(),
                 None,
-                extra_data.colors,
+                colors,
                 &colors_data.temp_color_buffer,
                 (),
                 &(),
@@ -144,6 +138,12 @@ impl<
                 counters,
             );
         } else {
+            let extra_data = PartialUnitigExtraData::Inline {
+                colors,
+                #[cfg(feature = "support_kmer_counters")]
+                counters,
+            };
+
             let both_ends = forward_linked.is_some() && backward_linked.is_some();
 
             let (left_bucket, left_should_rc) = backward_linked
