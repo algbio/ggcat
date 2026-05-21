@@ -133,6 +133,10 @@ impl HashFunctionFactory for ForwardSeqHashFactory {
         requested_bits: usize,
         hash: Self::HashTypeUnextendable,
     ) -> BucketIndexType {
+        let hash = hash
+            .wrapping_mul(BUCKET_MULTIPLIER)
+            .wrapping_add(BUCKET_BASIS)
+            .rotate_right(3);
         ((hash >> used_bits) % (1 << requested_bits)) as BucketIndexType
     }
 
