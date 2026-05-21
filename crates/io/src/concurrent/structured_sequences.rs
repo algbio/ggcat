@@ -85,6 +85,7 @@ impl SequenceExtraData for SequenceAbundance {
         _: &Self::TempBuffer,
         writer: &mut impl Write,
         reverse_complement: bool,
+        _read_flags: u8,
     ) {
         let (first, last) = if reverse_complement {
             (self.last, self.first)

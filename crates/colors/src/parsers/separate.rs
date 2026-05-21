@@ -57,6 +57,7 @@ impl SequenceExtraDataConsecutiveCompression for MinBkSingleColor {
         _: &mut (),
         slice: &[u8],
         last_data: Self::LastData,
+        _read_flags: u8,
     ) -> Option<Self> {
         let mut index = 0;
         decode_minbk_single_color(
@@ -73,6 +74,7 @@ impl SequenceExtraDataConsecutiveCompression for MinBkSingleColor {
         _: &mut (),
         mut ptr: *const u8,
         last_data: Self::LastData,
+        _read_flags: u8,
     ) -> Option<Self> {
         decode_minbk_single_color(
             || unsafe {
@@ -88,6 +90,7 @@ impl SequenceExtraDataConsecutiveCompression for MinBkSingleColor {
         _: &mut (),
         reader: &mut impl Read,
         last_data: Self::LastData,
+        _read_flags: u8,
     ) -> Option<Self> {
         decode_minbk_single_color(|| reader.read_u8().ok(), last_data)
     }
@@ -98,6 +101,7 @@ impl SequenceExtraDataConsecutiveCompression for MinBkSingleColor {
         writer: &mut impl Write,
         last_data: Self::LastData,
         _reverse_complement: bool,
+        _read_flags: u8,
     ) {
         encode_varint(
             |b| writer.write_all(b),
@@ -178,6 +182,7 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
         buffer: &mut Self::TempBuffer,
         reader: &mut impl Read,
         _last_data: Self::LastData,
+        _read_flags: u8,
     ) -> Option<Self> {
         let len = decode_varint(|| reader.read_u8().ok())? as usize + 1;
         let mut vec = buffer.new_vec(len);
@@ -198,6 +203,7 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
         writer: &mut impl Write,
         _last_data: Self::LastData,
         _reverse_complement: bool,
+        _read_flags: u8,
     ) {
         let slice = buffer.slice_vec(&self.0);
         debug_assert!(slice.is_sorted());

@@ -50,9 +50,10 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
         _buffer: &mut Self::TempBuffer,
         reader: &mut impl Read,
         last_data: CX::LastData,
+        read_flags: u8,
     ) -> Option<Self> {
         Some(Self {
-            color: CX::decode_extended(&mut (), reader, last_data)?,
+            color: CX::decode_extended(&mut (), reader, last_data, read_flags)?,
         })
     }
 
@@ -63,8 +64,16 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
         writer: &mut impl Write,
         last_data: CX::LastData,
         reverse_complement: bool,
+        read_flags: u8,
     ) {
-        CX::encode_extended(&self.color, &(), writer, last_data, reverse_complement);
+        CX::encode_extended(
+            &self.color,
+            &(),
+            writer,
+            last_data,
+            reverse_complement,
+            read_flags,
+        );
     }
 
     #[inline(always)]

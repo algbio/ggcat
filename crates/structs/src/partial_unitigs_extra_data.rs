@@ -44,14 +44,16 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
         buffer: &mut Self::TempBuffer,
         reader: &mut impl std::io::Read,
         last_data: Self::LastData,
+        read_flags: u8,
     ) -> Option<Self> {
-        let color = X::decode_extended(buffer, reader, last_data)?;
+        let color = X::decode_extended(buffer, reader, last_data, read_flags)?;
 
         #[cfg(feature = "support_kmer_counters")]
         let counter = io::concurrent::structured_sequences::SequenceAbundance::decode_extended(
             &mut (),
             reader,
             (),
+            read_flags,
         )?;
         Some(Self {
             colors: color,
@@ -66,12 +68,13 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
         writer: &mut impl std::io::Write,
         last_data: Self::LastData,
         reverse_complement: bool,
+        read_flags: u8,
     ) {
         self.colors
-            .encode_extended(buffer, writer, last_data, reverse_complement);
+            .encode_extended(buffer, writer, last_data, reverse_complement, read_flags);
         #[cfg(feature = "support_kmer_counters")]
         self.counters
-            .encode_extended(&(), writer, (), reverse_complement);
+            .encode_extended(&(), writer, (), reverse_complement, read_flags);
     }
 
     fn obtain_last_data(

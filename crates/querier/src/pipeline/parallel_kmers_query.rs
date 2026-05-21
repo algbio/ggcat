@@ -96,12 +96,14 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataConsecutiveCompression
         buffer: &mut Self::TempBuffer,
         reader: &mut impl Read,
         last_data: Self::LastData,
+        read_flags: u8,
     ) -> Option<Self> {
         match reader.read_u8().ok()? {
             0 => Some(Self::Graph(CX::decode_extended(
                 &mut buffer.0,
                 reader,
                 last_data,
+                read_flags,
             )?)),
             _ => Some(Self::Query(
                 NonZeroU64::new(decode_varint(|| reader.read_u8().ok())? + 1).unwrap(),
@@ -116,11 +118,19 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataConsecutiveCompression
         writer: &mut impl Write,
         last_data: Self::LastData,
         reverse_complement: bool,
+        read_flags: u8,
     ) {
         match self {
             Self::Graph(cx) => {
                 writer.write_u8(0).unwrap();
-                CX::encode_extended(cx, &buffer.0, writer, last_data, reverse_complement);
+                CX::encode_extended(
+                    cx,
+                    &buffer.0,
+                    writer,
+                    last_data,
+                    reverse_complement,
+                    read_flags,
+                );
             }
             Self::Query(val) => {
                 writer.write_u8(1).unwrap();

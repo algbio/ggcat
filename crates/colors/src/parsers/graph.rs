@@ -201,6 +201,7 @@ impl SequenceExtraData for MinBkMultipleColors {
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         reverse_complement: bool,
+        _read_flags: u8,
     ) {
         debug_assert!(!reverse_complement);
         let mut self_ = self.clone();

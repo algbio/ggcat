@@ -150,6 +150,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
         buffer: &mut Self::TempBuffer,
         reader: &mut impl Read,
         last_data: Self::LastData,
+        read_flags: u8,
     ) -> Option<Self> {
         let index = decode_varint(|| reader.read_u8().ok())?;
         #[cfg(feature = "support_kmer_counters")]
@@ -163,7 +164,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
 
         Some(Self {
             index,
-            color: CX::decode_extended(&mut buffer.0, reader, last_data)?,
+            color: CX::decode_extended(&mut buffer.0, reader, last_data, read_flags)?,
             link: LX::decode_extended(&mut buffer.1, reader)?,
             abundance: match () {
                 #[cfg(feature = "support_kmer_counters")]
@@ -184,6 +185,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
         writer: &mut impl Write,
         last_data: Self::LastData,
         reverse_complement: bool,
+        read_flags: u8,
     ) {
         encode_varint(|b| writer.write_all(b).ok(), self.index).unwrap();
         #[cfg(feature = "support_kmer_counters")]
@@ -210,9 +212,9 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
         }
 
         self.color
-            .encode_extended(&buffer.0, writer, last_data, reverse_complement);
+            .encode_extended(&buffer.0, writer, last_data, reverse_complement, read_flags);
         self.link
-            .encode_extended(&buffer.1, writer, reverse_complement);
+            .encode_extended(&buffer.1, writer, reverse_complement, read_flags);
     }
 
     fn max_size(&self) -> usize {

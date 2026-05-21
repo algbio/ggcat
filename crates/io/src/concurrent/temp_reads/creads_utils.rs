@@ -376,9 +376,6 @@ impl<
         let is_rc = matches!(element.read, ReadData::PlainRc(_))
             || matches!(element.read, ReadData::PackedRc(_));
 
-        extra_data.encode_extended(extra_data_buffer, bucket, self.last_data, is_rc);
-        self.last_data = extra_data.obtain_last_data(self.last_data, is_rc);
-
         match element.read {
             ReadData::Plain(read) | ReadData::PlainRc(read) => {
                 CompressedRead::from_plain_write_directly_to_buffer_with_flags::<
@@ -411,6 +408,15 @@ impl<
                 }
             }
         }
+
+        extra_data.encode_extended(
+            extra_data_buffer,
+            bucket,
+            self.last_data,
+            is_rc,
+            element.flags,
+        );
+        self.last_data = extra_data.obtain_last_data(self.last_data, is_rc);
     }
 
     #[inline]
@@ -432,9 +438,6 @@ impl<
             1
         };
 
-        let extra = E::decode_extended(extra_read_buffer, &mut stream, self.last_data)?;
-        self.last_data = extra.obtain_last_data(self.last_data, false);
-
         read_buffer.clear();
         let (read, minimizer_pos, flags) =
             CompressedRead::read_from_stream::<_, MinimizerMode, FlagsCount, AlignMode>(
@@ -443,6 +446,9 @@ impl<
                 self.min_size,
                 self.min_size_log,
             )?;
+
+        let extra = E::decode_extended(extra_read_buffer, &mut stream, self.last_data, flags)?;
+        self.last_data = extra.obtain_last_data(self.last_data, false);
 
         Some(DeserializedRead {
             read,

@@ -238,6 +238,7 @@ impl SequenceExtraData for UnitigColorDataSerializer {
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         reverse_complement: bool,
+        _read_flags: u8,
     ) {
         let colors_count = self.slice_end - self.slice_start;
         encode_varint(|b| writer.write_all(b), colors_count as u64).unwrap();

@@ -144,12 +144,41 @@ impl<
                 counters,
             );
         } else {
-            let hash_beginning = forward_linked.is_none();
             let both_ends = forward_linked.is_some() && backward_linked.is_some();
-            let hash = forward_linked.or(backward_linked).unwrap();
 
-            let extremal_hash = hash.get_extremal_hash(out_seq, k, hash_beginning);
-            let should_rc = !extremal_hash.is_forward();
+            let (left_bucket, left_should_rc) = backward_linked
+                .map(|hash| {
+                    let hash = hash.get_extremal_hash(out_seq, k, true);
+                    (
+                        MH::get_bucket(
+                            0,
+                            unitigs_tmp.get_buckets_count().normal_buckets_count_log,
+                            hash.to_unextendable(),
+                        ),
+                        !hash.is_forward(),
+                    )
+                })
+                .unwrap_or((u16::MAX, false));
+            let (right_bucket, right_should_rc) = forward_linked
+                .map(|hash| {
+                    let hash = hash.get_extremal_hash(out_seq, k, false);
+                    (
+                        MH::get_bucket(
+                            0,
+                            unitigs_tmp.get_buckets_count().normal_buckets_count_log,
+                            hash.to_unextendable(),
+                        ),
+                        !hash.is_forward(),
+                    )
+                })
+                .unwrap_or((u16::MAX, true));
+
+            // Always put the unitig in the smallest bucket
+            let (bucket, should_rc, hash_beginning) = if left_bucket <= right_bucket {
+                (left_bucket, left_should_rc, true)
+            } else {
+                (right_bucket, right_should_rc, false)
+            };
 
             let last_align = if hash_beginning ^ should_rc {
                 0
@@ -158,11 +187,7 @@ impl<
             };
 
             unitigs_tmp.add_element_extended(
-                MH::get_bucket(
-                    0,
-                    unitigs_tmp.get_buckets_count().normal_buckets_count_log,
-                    extremal_hash.to_unextendable(),
-                ),
+                bucket,
                 &extra_data,
                 &colors_data.temp_color_buffer,
                 &CompressedReadsBucketData {

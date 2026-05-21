@@ -74,7 +74,13 @@ impl SequenceExtraData for MaximalUnitigIndex {
         ))
     }
 
-    fn encode_extended(&self, _: &(), writer: &mut impl Write, reverse_complement: bool) {
+    fn encode_extended(
+        &self,
+        _: &(),
+        writer: &mut impl Write,
+        reverse_complement: bool,
+        _read_flags: u8,
+    ) {
         debug_assert!(!reverse_complement);
         encode_varint(|b| writer.write_all(b).ok(), self.index() as u64).unwrap();
         encode_varint(|b| writer.write_all(b).ok(), self.overlap_start).unwrap();
@@ -273,6 +279,7 @@ impl SequenceExtraData for DoubleMaximalUnitigLinks {
         _buffer: &Self::TempBuffer,
         _writer: &mut impl Write,
         _reverse_complement: bool,
+        _read_flags: u8,
     ) {
         unimplemented!()
     }

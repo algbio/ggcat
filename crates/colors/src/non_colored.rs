@@ -54,6 +54,7 @@ impl SequenceExtraData for NonColoredManager {
         _buffer: &Self::TempBuffer,
         _writer: &mut impl Write,
         _reverse_complement: bool,
+        _read_flags: u8,
     ) {
     }
 
