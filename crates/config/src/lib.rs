@@ -44,6 +44,14 @@ pub const MINIMIZER_BUCKETS_CHECKPOINT_SIZE: LockFreeCheckpointSize =
 pub const MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE: CompressedCheckpointSize =
     CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(8));
 
+pub const PARTIAL_UNITIGS_COMPACTED_CHECKPOINT_SIZE: CompressedCheckpointSize =
+    CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(8));
+
+pub const MAX_SUBPARTITION_SIZE: u64 = 1024 * 1024 * 1024;
+pub const MAX_SUBSUBPARTITION_SIZE: usize = 1024 * 1024 * 4;
+pub const MAX_SUBPARTITIONS_COUNT: u64 = 1 << 10;
+pub const MIN_SUBPARTITIONS_COUNT: u64 = 8;
+
 pub const DEFAULT_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024 * 4;
 pub const DEFAULT_PER_CPU_BUFFER_SIZE: MemoryDataSize = MemoryDataSize::from_kibioctets(4);
 

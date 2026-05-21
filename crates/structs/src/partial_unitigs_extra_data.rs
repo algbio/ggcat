@@ -2,7 +2,7 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
 };
 
-pub const INDIRECT_UNITIG_FLAG_MASK: u8 = 4;
+pub const INDIRECT_UNITIG_FLAG_MASK: u8 = 8;
 
 #[derive(Clone, Debug)]
 pub enum PartialUnitigExtraData<X: SequenceExtraDataConsecutiveCompression> {

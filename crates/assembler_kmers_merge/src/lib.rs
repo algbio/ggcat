@@ -10,8 +10,9 @@ use colors::colors_manager::color_types::{
     MinimizerBucketingSeqColorDataType, PartialUnitigsColorStructure,
 };
 use config::{
-    BucketIndexType, RESPLITTING_MAX_K_M_DIFFERENCE, SwapPriority, get_compression_level_info,
-    get_memory_mode,
+    BucketIndexType, MAX_SUBPARTITION_SIZE, MAX_SUBPARTITIONS_COUNT, MIN_SUBPARTITIONS_COUNT,
+    PARTIAL_UNITIGS_COMPACTED_CHECKPOINT_SIZE, RESPLITTING_MAX_K_M_DIFFERENCE, SwapPriority,
+    get_compression_level_info, get_memory_mode,
 };
 use hashes::HashFunctionFactory;
 use hashes::default::MNHFactory;
@@ -26,7 +27,10 @@ use kmers_transform::{
 };
 use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::{BucketsCount, MultiChunkBucket, MultiThreadBuckets};
+use parallel_processor::buckets::{
+    BucketsCount, ExtraBuckets, MultiChunkBucket, MultiThreadBuckets,
+};
+use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::any::Any;
 use std::cmp::min;
@@ -46,6 +50,7 @@ pub struct GlobalMergeData<CX: ColorsManager, O: StructuredSequenceBackendWrappe
     k: usize,
     m: usize,
     buckets_count: BucketsCount,
+    sequential_partitions_count: BucketsCount,
     min_multiplicity: usize,
     colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
     output_results_buckets: Arc<MultiThreadBuckets<CompressedBinaryWriter>>,
@@ -192,13 +197,31 @@ pub fn kmers_merge<
     MH::initialize(k);
     *KMERGE_TEMP_DIR.write() = Some(out_directory.to_path_buf());
 
+    let total_input_size = file_inputs
+        .iter()
+        .map(|f| {
+            f.chunks
+                .iter()
+                .map(|c| MemoryFs::get_file_size(c).unwrap() as u64)
+                .sum::<u64>()
+        })
+        .sum::<u64>();
+
+    let sequential_partitions_count = BucketsCount::from_power_of_two(
+        (total_input_size / MAX_SUBPARTITION_SIZE)
+            .next_power_of_two()
+            .max(MIN_SUBPARTITIONS_COUNT)
+            .min(MAX_SUBPARTITIONS_COUNT) as usize,
+        ExtraBuckets::None,
+    );
+
     let reads_buckets = MultiThreadBuckets::<CompressedBinaryWriter>::new(
-        buckets_count,
+        sequential_partitions_count,
         out_directory.join("result"),
         None,
         &(
             get_memory_mode(SwapPriority::ResultBuckets),
-            CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
+            PARTIAL_UNITIGS_COMPACTED_CHECKPOINT_SIZE,
             get_compression_level_info(),
         ),
         &(),
@@ -208,6 +231,7 @@ pub fn kmers_merge<
         k,
         m,
         buckets_count,
+        sequential_partitions_count,
         min_multiplicity,
         colors_global_table,
         output_results_buckets: Arc::new(reads_buckets),
@@ -269,15 +293,12 @@ mod tests {
     use config::{DEFAULT_PREFETCH_AMOUNT, FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
     use hashes::cn_seqhash::u128::CanonicalSeqHashFactory;
     use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
-    use io::concurrent::temp_reads::creads_utils::{
-        AssemblerMinimizerPosition, ReadsCheckpointData,
-    };
-    use kmers_transform::KmersTransformExecutorFactory;
+    use io::concurrent::temp_reads::creads_utils::ReadsCheckpointData;
     use minimizer_bucketing::MinimizerBucketMode;
     use parallel_processor::buckets::readers::binary_reader::{
         BinaryReaderChunk, ChunkedBinaryReaderIndex,
     };
-    use parallel_processor::buckets::{BucketsCount, ExtraBuckets, SingleBucket};
+    use parallel_processor::buckets::{BucketsCount, ExtraBuckets};
     use parallel_processor::memory_data_size::MemoryDataSize;
     use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
     use rayon::ThreadPoolBuilder;
@@ -379,36 +400,6 @@ mod tests {
             }
 
             let mut tot_count = 0;
-
-            // helper_read_bucket_with_type::<
-            //     <F as KmersTransformExecutorFactory>::AssociatedExtraData,
-            //     <F as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
-            //     AssemblerMinimizerPosition,
-            //     <F as KmersTransformExecutorFactory>::FlagsCount,
-            // >(
-            //     single_chunks,
-            //     None, // Some(reader_thread.clone()),
-            //     MinimizerBucketMode::SingleGrouped,
-            //     |_, _| {
-            //         tot_count += 1;
-            //     },
-            //     27,
-            // );
-
-            // helper_read_bucket_with_type::<
-            //     <F as KmersTransformExecutorFactory>::AssociatedExtraData,
-            //     <F as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
-            //     AssemblerMinimizerPosition,
-            //     <F as KmersTransformExecutorFactory>::FlagsCount,
-            // >(
-            //     multi_chunks,
-            //     None, // Some(reader_thread.clone()),
-            //     MinimizerBucketMode::Compacted,
-            //     |_, _| {
-            //         tot_count += 1;
-            //     },
-            //     27,
-            // );
 
             info.dedup_by(|a, b| a == b);
 

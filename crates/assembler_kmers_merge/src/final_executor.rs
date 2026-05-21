@@ -31,8 +31,9 @@ use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::slice::from_raw_parts;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
-use typenum::U3;
+use typenum::U4;
 
 local_setup_instrumenter!();
 
@@ -49,7 +50,7 @@ pub struct ParallelKmersMergeFinalExecutor<
             NoSecondBucket,
             NoMultiplicity,
             AssemblerMinimizerPosition,
-            U3,
+            U4,
             AlignToMinimizerByteBoundary,
         >,
     >,
@@ -66,8 +67,10 @@ impl<
 > ParallelKmersMergeFinalExecutor<MH, CX, OM, COMPUTE_SIMPLITIGS>
 {
     pub fn new(global_data: &GlobalMergeData<CX, OM>) -> Self {
-        let unitigs_out_buffer =
-            BucketsThreadBuffer::new(DEFAULT_PER_CPU_BUFFER_SIZE, &global_data.buckets_count);
+        let unitigs_out_buffer = BucketsThreadBuffer::new(
+            DEFAULT_PER_CPU_BUFFER_SIZE,
+            &global_data.sequential_partitions_count,
+        );
 
         Self {
             unitigs_tmp: BucketsThreadDispatcher::new(
@@ -109,7 +112,7 @@ impl<
                 NoSecondBucket,
                 NoMultiplicity,
                 AssemblerMinimizerPosition,
-                U3,
+                U4,
                 AlignToMinimizerByteBoundary,
             >,
         >,
@@ -173,6 +176,8 @@ impl<
                 })
                 .unwrap_or((u16::MAX, true));
 
+            let same_bucket = left_bucket == right_bucket;
+
             // Always put the unitig in the smallest bucket
             let (bucket, should_rc, hash_beginning) = if left_bucket <= right_bucket {
                 (left_bucket, left_should_rc, true)
@@ -195,7 +200,9 @@ impl<
                     multiplicity: 0,
                     minimizer_pos: last_align as u16,
                     extra_bucket: 0,
-                    flags: (!hash_beginning ^ should_rc) as u8 | ((both_ends as u8) << 1),
+                    flags: (!hash_beginning ^ should_rc) as u8
+                        | ((both_ends as u8) << 1)
+                        | ((same_bucket as u8) << 2),
                 },
             );
         }
