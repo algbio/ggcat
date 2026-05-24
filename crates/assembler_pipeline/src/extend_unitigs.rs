@@ -62,6 +62,11 @@ fn chosen_extremity_at_beginning(flags: u8) -> bool {
     flags & HASH_ENDING_FLAG_MASK == 0
 }
 
+/// The chosen extremity is at the end of (the current orientation of) the sequence
+fn chosen_extremity_at_end(flags: u8) -> bool {
+    flags & HASH_ENDING_FLAG_MASK != 0
+}
+
 /// Both the extremities are open and need to be processed
 fn both_extremities_are_open(flags: u8) -> bool {
     flags & OTHER_END_FLAG_MASK != 0
@@ -171,6 +176,7 @@ struct SubsplitBestOrientationAndFlags {
 struct SubsplitGlobalData<MH: HashFunctionFactory> {
     k: usize,
     extremities_hashmaps_presence: Vec<Mutex<HashMap<MH::HashTypeUnextendable, bool>>>,
+    extremities_hashmaps_symmetric_at_end: Vec<Mutex<HashMap<MH::HashTypeUnextendable, bool>>>,
     hashmap_size: AtomicUsize,
     input_buckets_count: BucketsCount,
     subpartitions_count: BucketsCount,
@@ -296,16 +302,26 @@ fn find_best_orientation_and_flags<MH: HashFunctionFactory>(
         (extremity_data, false, false)
     };
 
-    if chosen_extremity.hash.is_rc_symmetric() {
+    let should_rc = if chosen_extremity.hash.is_rc_symmetric() {
         // Case where there is only one ending but it is rc-symmetric, choose only if we need to change orientation
-        panic!(
-            "RC SYMMETRIC: {} circ: {}",
-            read.debug_to_string(),
-            is_circular
-        );
-    }
-
-    let should_rc = !chosen_extremity.hash.is_forward();
+        // println!(
+        //     "RC SYMMETRIC: {} circ: {}",
+        //     read.debug_to_string(),
+        //     is_circular
+        // );
+        let mut should_rc = false;
+        global_data.extremities_hashmaps_symmetric_at_end[chosen_extremity.subpartition as usize]
+            .lock()
+            .entry(chosen_extremity.hash.to_unextendable())
+            .and_modify(|other_is_at_end| {
+                should_rc =
+                    chosen_extremity_at_beginning(flags) ^ change_extremity ^ *other_is_at_end;
+            })
+            .or_insert(chosen_extremity_at_end(flags) ^ change_extremity);
+        should_rc
+    } else {
+        !chosen_extremity.hash.is_forward()
+    };
 
     // Change the extremity if needed
     if change_extremity ^ should_rc {
@@ -553,6 +569,11 @@ pub fn extend_unitigs<
                 .total_buckets_count)
                 .map(|_| Mutex::new(HashMap::<MH::HashTypeUnextendable, bool>::new()))
                 .collect(),
+            extremities_hashmaps_symmetric_at_end: (0..subpartitions
+                .get_buckets_count()
+                .total_buckets_count)
+                .map(|_| Mutex::new(HashMap::<MH::HashTypeUnextendable, bool>::new()))
+                .collect(),
             hashmap_size: AtomicUsize::new(0),
             input_buckets_count,
             subpartitions_count,
@@ -645,6 +666,11 @@ pub fn extend_unitigs<
             global_data.hashmap_size.store(0, Ordering::Relaxed);
             global_data
                 .extremities_hashmaps_presence
+                .par_iter()
+                .for_each(|h| h.lock().clear());
+
+            global_data
+                .extremities_hashmaps_symmetric_at_end
                 .par_iter()
                 .for_each(|h| h.lock().clear());
 
