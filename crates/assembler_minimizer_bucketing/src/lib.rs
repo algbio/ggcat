@@ -237,6 +237,18 @@ impl<CD: MinimizerBucketingSeqColorData>
                         )
                     };
 
+                    // println!("Push sequence: {} bucket={}, second_bucket={}, minimizer_pos={}, rc={}, include_first={}, include_last={}, sequence_len={} db={}", 
+                    //     sequence.get_subslice((last_index - 1)..(index + self.global_data.k - 1)).debug_to_string(),
+                    //     MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
+                    //     MNHFactory::get_bucket(used_bits + first_bits, second_bits, min_hash.0),
+                    //     minimizer_pos,
+                    //     rc,
+                    //     include_first,
+                    //     include_last,
+                    //     index + self.global_data.k - 1 - (last_index - 1),
+                    //     self.duplicates_bucket
+                    // );
+
                     push_sequence(
                         PushSequenceInfo {
                             bucket,

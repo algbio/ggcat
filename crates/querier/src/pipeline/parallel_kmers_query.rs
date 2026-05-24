@@ -432,7 +432,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
 {
     type MapStruct = ParallelKmersQueryMapPacket<MH, SingleKmerColorDataType<CX>>;
 
-    fn process_map(
+    fn process_map<const EVEN_K: bool>(
         &mut self,
         _global_data: &Arc<GlobalQueryMergeData>,
         map_struct: Packet<Self::MapStruct>,

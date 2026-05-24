@@ -13,7 +13,7 @@ use ggcat_logging::stats;
 use hashes::extremal::{DelayedHashComputation, HashGenerator};
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use instrumenter::local_setup_instrumenter;
-use io::compressed_read::CompressedReadIndipendent;
+use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
 use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::temp_reads::creads_utils::{
@@ -188,6 +188,18 @@ impl<
                 (out_seq.bases_count() - k) % 4
             };
 
+            // println!(
+            //     "Unitig: seq={}, bucket={}, should_rc={}, hash_beginning={}, last_align={}, both_ends={}, left_bucket={}, right_bucket={}",
+            //     out_seq.debug_to_string(),
+            //     bucket,
+            //     should_rc,
+            //     hash_beginning,
+            //     last_align,
+            //     both_ends,
+            //     left_bucket,
+            //     right_bucket
+            // );
+
             unitigs_tmp.add_element_extended(
                 bucket,
                 &extra_data,
@@ -207,6 +219,24 @@ impl<
     }
 }
 
+#[inline(always)]
+pub fn check_problematic_self_complemental_kmer<MH: HashFunctionFactory>(
+    k: usize,
+    kmer: &CompressedRead<'_>,
+    action_on_match: impl FnOnce(bool, bool),
+) {
+    // Problematic read:
+    debug_assert_eq!(k % 2, 0);
+
+    let hash_bw = HashGenerator::<MH>::get_extremal_hash(&DelayedHashComputation, *kmer, k, true);
+    let hash_fw = HashGenerator::<MH>::get_extremal_hash(&DelayedHashComputation, *kmer, k, false);
+
+    // - self complemental
+    if hash_bw.is_rc_symmetric() || hash_fw.is_rc_symmetric() {
+        action_on_match(hash_bw.is_rc_symmetric(), hash_fw.is_rc_symmetric());
+    }
+}
+
 impl<
     MH: HashFunctionFactory,
     CX: ColorsManager,
@@ -218,7 +248,7 @@ impl<
     type MapStruct = ParallelKmersMergeMapPacket<MH, CX, OM>;
 
     #[instrumenter::track(fields(map_capacity = map_struct_packet.rhash_map.capacity(), map_size = map_struct_packet.rhash_map.len()))]
-    fn process_map(
+    fn process_map<const EVEN_K: bool>(
         &mut self,
         global_data: &Arc<<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData>,
         mut map_struct_packet: Packet<Self::MapStruct>,
@@ -246,9 +276,43 @@ impl<
                 superkmers_storage: &[u8],
                 superkmers_extra_buffer: &<<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer| {
                     if minimizer_elements.len() <= 1
-                        && minimizer_elements[0].multiplicity as usize
-                            >= global_data.min_multiplicity
                     {
+                        if (minimizer_elements[0].multiplicity as usize) < global_data.min_multiplicity {
+                                return;
+                        }
+
+                        const BOTH_FLAGS: u8 = READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END;
+                        if EVEN_K && minimizer_elements[0].flags & BOTH_FLAGS == 0 {
+
+                            check_problematic_self_complemental_kmer::<MH>(
+                                map_struct.k, 
+                                &minimizer_elements[0].read.as_reference(superkmers_storage), 
+                                |bws, fws| {
+
+                                    let half_pass= minimizer_elements[0].multiplicity as usize / 2 >= global_data.min_multiplicity;
+
+                                    // if kmer is problematic: remove extra bases and trim if half of the multiplicity does not pass the threshold
+                                    if bws && minimizer_elements[0].flags & READ_FLAG_INCL_BEGIN == 0 {
+                                        if !half_pass {
+                                            minimizer_elements[0].read.start += 1;
+                                            minimizer_elements[0].read.size -= 1;
+                                        }
+                                        minimizer_elements[0].flags |= READ_FLAG_INCL_BEGIN;
+                                    }
+
+                                    if fws && minimizer_elements[0].flags & READ_FLAG_INCL_END == 0 {
+                                        if !half_pass {
+                                            minimizer_elements[0].read.size -= 1;
+                                        }
+                                        minimizer_elements[0].flags |= READ_FLAG_INCL_END;
+                                    }
+                                }
+                            );
+                            if minimizer_elements[0].read.bases_count() < map_struct.k {
+                                return;
+                            }
+                        }
+
                         let read = &minimizer_elements[0];
                         stats!(
                             stat_output_kmers_count += 1;
@@ -305,7 +369,7 @@ impl<
                     }
 
                     sorting_extender.clear_supertigs();
-                    sorting_extender.process_reads::<COMPUTE_SIMPLITIGS>(
+                    sorting_extender.process_reads::<MH, COMPUTE_SIMPLITIGS, EVEN_K>(
                         &mut self.colors_data,
                         minimizer_elements,
                         superkmers_extra_buffer,

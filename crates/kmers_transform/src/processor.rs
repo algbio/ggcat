@@ -164,7 +164,11 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                 );
             }
 
-            packet = final_executor.process_map(&global_context.global_extra_data, packet);
+            packet = if global_context.k % 2 == 0 {
+                final_executor.process_map::<true>(&global_context.global_extra_data, packet)
+            } else {
+                final_executor.process_map::<false>(&global_context.global_extra_data, packet)
+            };
 
             global_context
                 .total_sequences

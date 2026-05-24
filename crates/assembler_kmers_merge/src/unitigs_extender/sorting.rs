@@ -3,6 +3,7 @@ use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::color_types::MinimizerBucketingMultipleSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorDataIterable};
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
+use hashes::HashFunctionFactory;
 use hashes::extremal::DelayedHashComputation;
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use io::concurrent::structured_sequences::SequenceAbundanceType;
@@ -11,6 +12,7 @@ use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagemen
 use nightly_quirks::branch_pred::unlikely;
 use std::{iter::repeat, mem::take, ops::Range};
 
+use crate::final_executor::check_problematic_self_complemental_kmer;
 use crate::unitigs_extender::UnitigExtensionColorsData;
 
 struct SuffixStackElement {
@@ -42,6 +44,11 @@ struct SortingHeapElement {
     last: usize,
 }
 
+const BACKWARD_EXTRA_BASE: u8 = 1;
+const FORWARD_EXTRA_BASE: u8 = 2;
+const IS_LINKED: u8 = 4;
+const IS_PROBLEMATIC: u8 = 8;
+
 #[derive(Clone)]
 struct Supertig<C> {
     read: CompressedReadIndipendent,
@@ -49,9 +56,25 @@ struct Supertig<C> {
     #[cfg(feature = "support_kmer_counters")]
     multiplicity: usize,
     next: usize,
-    linked: bool,
-    backward_extra_base: bool,
-    forward_extra_base: bool,
+    flags: u8,
+}
+
+impl<C> Supertig<C> {
+    fn backward_extra_base(&self) -> bool {
+        self.flags & BACKWARD_EXTRA_BASE != 0
+    }
+
+    fn forward_extra_base(&self) -> bool {
+        self.flags & FORWARD_EXTRA_BASE != 0
+    }
+
+    fn is_linked(&self) -> bool {
+        self.flags & IS_LINKED != 0
+    }
+
+    fn is_problematic(&self) -> bool {
+        self.flags & IS_PROBLEMATIC != 0
+    }
 }
 
 pub struct SortingExtender<CX: ColorsManager> {
@@ -209,7 +232,7 @@ impl<CX: ColorsManager> Default for SortingExtender<CX> {
 // }
 
 impl<CX: ColorsManager> SortingExtender<CX> {
-    pub fn process_supertigs<'a, const COMPUTE_SIMPLITIGS: bool>(
+    pub fn process_supertigs<'a, const COMPUTE_SIMPLITIGS: bool, const EVEN_K: bool>(
         &mut self,
         supertigs_range_start: usize,
     ) {
@@ -223,24 +246,73 @@ impl<CX: ColorsManager> SortingExtender<CX> {
 
         let valid_joining = left_supertigs_count > 0
             && self.branching_supertigs.len() > 0
-            && !self.supertigs[supertigs_range_start].forward_extra_base
-            && !self.supertigs[self.branching_supertigs[0]].backward_extra_base;
-
-        let unitig_extendable = self.branching_supertigs.len() == 1 && left_supertigs_count == 1;
+            && !self.supertigs[supertigs_range_start].forward_extra_base()
+            && !self.supertigs[self.branching_supertigs[0]].backward_extra_base();
 
         if valid_joining {
             if COMPUTE_SIMPLITIGS {
+                let mut contains_problematic = false;
                 for (prev_idx, next_idx) in (supertigs_range_start..self.supertigs.len())
                     .zip(self.branching_supertigs.iter().copied())
                 {
+                    if EVEN_K {
+                        contains_problematic |= self.supertigs[next_idx].is_problematic()
+                            | self.supertigs[prev_idx].is_problematic();
+                    } 
+                    
                     // Link supertigs
-                    self.supertigs[next_idx].linked = true;
+                    self.supertigs[next_idx].flags |= IS_LINKED;
                     self.supertigs[prev_idx].next = next_idx;
                 }
+
+                if EVEN_K && unlikely(contains_problematic) {
+                    let prev_len = (supertigs_range_start..self.supertigs.len()).len();
+                    let next_len = self.branching_supertigs.len();
+                    let first_unjoined = prev_len.min(next_len);
+
+                    // Iterate the supertigs to find the problematic one
+                    for (prev_idx, next_idx) in (supertigs_range_start..self.supertigs.len())
+                        .zip(self.branching_supertigs.iter().copied())
+                    {
+                        let (problematic_idx, is_next) =
+                            if self.supertigs[next_idx].is_problematic() {
+                                (next_idx, true)
+                            } else if self.supertigs[prev_idx].is_problematic() {
+                                (prev_idx, false)
+                            } else {
+                                continue;
+                            };
+
+                        // Check if we can join another read to the problematic supertig
+                        if is_next && first_unjoined < prev_len {
+                            // We can join it to a previous read, mark it as forward joinable as it will be written two times
+                            self.supertigs[problematic_idx].flags |= FORWARD_EXTRA_BASE;
+                            let (prev_idx, next_idx) =
+                                (supertigs_range_start + first_unjoined, problematic_idx);
+                            self.supertigs[next_idx].flags |= IS_LINKED;
+                            self.supertigs[prev_idx].next = next_idx;
+                        } else if !is_next && first_unjoined < next_len {
+                            // We can join it to a previous read, make a copy and mark it as backward joinable
+                            self.supertigs[problematic_idx].flags |= BACKWARD_EXTRA_BASE;
+                            let (prev_idx, next_idx) = (
+                                self.supertigs.len(),
+                                self.branching_supertigs[first_unjoined],
+                            );
+                            self.supertigs.push(self.supertigs[problematic_idx].clone());
+                            self.supertigs[next_idx].flags |= IS_LINKED;
+                            self.supertigs[prev_idx].next = next_idx;
+                        }
+
+                        break;
+                    }
+                }
             } else {
+                let unitig_extendable =
+                    self.branching_supertigs.len() == 1 && left_supertigs_count == 1;
+
                 if unitig_extendable {
                     // Link supertigs
-                    self.supertigs[self.branching_supertigs[0]].linked = true;
+                    self.supertigs[self.branching_supertigs[0]].flags |= IS_LINKED;
                     self.supertigs[supertigs_range_start].next = self.branching_supertigs[0];
                 }
             }
@@ -279,7 +351,12 @@ impl<CX: ColorsManager> SortingExtender<CX> {
 
     /// Processes elements in range, assuming they are prefix sorted and share the same suffix of length `suffix_length`.
     /// Reduces every read suffix to exactly `target_suffix_length` bases, and outputs the used kmers
-    pub fn process_reads_block<'a, const COMPUTE_SIMPLITIGS: bool>(
+    pub fn process_reads_block<
+        'a,
+        MH: HashFunctionFactory,
+        const COMPUTE_SIMPLITIGS: bool,
+        const EVEN_K: bool,
+    >(
         &mut self,
         colors_data: &mut UnitigExtensionColorsData<CX>,
         reads: &[DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>],
@@ -359,7 +436,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                         || element_target_index >= target_index_end
                     {
                         // Process supertigs
-                        self.process_supertigs::<COMPUTE_SIMPLITIGS>(supertigs_range_start);
+                        self.process_supertigs::<COMPUTE_SIMPLITIGS, EVEN_K>(supertigs_range_start);
                         self.branching_supertigs.clear();
                         supertigs_range_start = self.supertigs.len();
                     }
@@ -447,33 +524,76 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                 }
 
                 if multiplicity >= abundance_cutoff {
-                    let read = reference.read.sub_slice(
+                    let mut is_problematic = false;
+                    let mut read = reference.read.sub_slice(
                         (reference.minimizer_pos as usize + leftmost_allowed_suffix - k)
                             ..(reference.minimizer_pos as usize + shared_suffix),
                     );
 
-                    let supertig_index = self.supertigs.len();
+                    if EVEN_K && (backward_extra_base || forward_extra_base) {
+                        check_problematic_self_complemental_kmer::<MH>(
+                            k,
+                            &read.as_reference(superkmers_storage),
+                            |bws, fws| {
+                                let half_pass = multiplicity as usize / 2 >= abundance_cutoff;
 
-                    self.supertigs.push(Supertig {
-                        read,
-                        color: if CX::COLORS_ENABLED {
-                            CX::ColorsMergeManagerType::assign_color(
-                                &colors_data.colors_global_table,
-                                &mut self.unitig_colors,
-                            )
-                        } else {
-                            Default::default()
-                        },
-                        #[cfg(feature = "support_kmer_counters")]
-                        multiplicity,
-                        next: usize::MAX,
-                        linked: false,
-                        backward_extra_base,
-                        forward_extra_base,
-                    });
+                                is_problematic = read.bases_count() == k;
 
-                    for idx in reference_index..element_target_index {
-                        self.supertigs_mapping[self.elements_mapping[idx]] = supertig_index;
+                                // if kmer is problematic: remove extra bases and trim if half of the multiplicity does not pass the threshold
+                                if bws && backward_extra_base {
+                                    if !half_pass {
+                                        read.start += 1;
+                                        read.size -= 1;
+                                    }
+                                    backward_extra_base = false;
+                                }
+
+                                if fws && forward_extra_base {
+                                    if !half_pass {
+                                        read.size -= 1;
+                                    }
+                                    forward_extra_base = false;
+                                }
+                            },
+                        );
+                    }
+
+                    if read.bases_count() >= k {
+                        let supertig_index = self.supertigs.len();
+
+                        self.supertigs.push(Supertig {
+                            read,
+                            color: if CX::COLORS_ENABLED {
+                                CX::ColorsMergeManagerType::assign_color(
+                                    &colors_data.colors_global_table,
+                                    &mut self.unitig_colors,
+                                )
+                            } else {
+                                Default::default()
+                            },
+                            #[cfg(feature = "support_kmer_counters")]
+                            multiplicity,
+                            next: usize::MAX,
+                            flags: if forward_extra_base {
+                                FORWARD_EXTRA_BASE
+                            } else {
+                                0
+                            } | if backward_extra_base {
+                                BACKWARD_EXTRA_BASE
+                            } else {
+                                0
+                            } | if is_problematic { IS_PROBLEMATIC } else { 0 },
+                        });
+
+                        for idx in reference_index..element_target_index {
+                            self.supertigs_mapping[self.elements_mapping[idx]] = supertig_index;
+                        }
+                    } else {
+                        // The current stabletig does not reach the required length (due to trimming).
+                        // Clear the current supertigs mapping for the elements in the range
+                        for idx in reference_index..element_target_index {
+                            self.supertigs_mapping[self.elements_mapping[idx]] = usize::MAX;
+                        }
                     }
                 } else {
                     // The current stabletig does not reach the required abundance cutoff.
@@ -492,7 +612,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
 
                 if km1mer_break {
                     // Process supertigs
-                    self.process_supertigs::<COMPUTE_SIMPLITIGS>(supertigs_range_start);
+                    self.process_supertigs::<COMPUTE_SIMPLITIGS, EVEN_K>(supertigs_range_start);
                     self.branching_supertigs.clear();
 
                     // Analyze the last added supertigs and check for branching
@@ -518,7 +638,11 @@ impl<CX: ColorsManager> SortingExtender<CX> {
         self.supertigs.clear();
     }
 
-    pub fn process_reads<const COMPUTE_SIMPLITIGS: bool>(
+    pub fn process_reads<
+        MH: HashFunctionFactory,
+        const COMPUTE_SIMPLITIGS: bool,
+        const EVEN_K: bool,
+    >(
         &mut self,
         colors_data: &mut UnitigExtensionColorsData<CX>,
         reads: &mut [DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>],
@@ -779,7 +903,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
 
             assert!(max_allowed_suffix < needed_suffix);
 
-            self.process_reads_block::<COMPUTE_SIMPLITIGS>(
+            self.process_reads_block::<MH, COMPUTE_SIMPLITIGS, EVEN_K>(
                 colors_data,
                 remapped_minimizer_elements,
                 extra_buffer,
@@ -804,7 +928,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
         }
 
         for mut supertig in self.supertigs.iter() {
-            if !supertig.linked {
+            if !supertig.is_linked() {
                 CX::ColorsMergeManagerType::reset_unitig_color_structure(
                     &mut colors_data.unitigs_temp_colors,
                 );
@@ -830,12 +954,12 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                     output_unitig(
                         colors_data,
                         supertig.read.as_reference(&superkmers_storage),
-                        if supertig.forward_extra_base {
+                        if supertig.forward_extra_base() {
                             Some(DelayedHashComputation)
                         } else {
                             None
                         },
-                        if supertig.backward_extra_base {
+                        if supertig.backward_extra_base() {
                             Some(DelayedHashComputation)
                         } else {
                             None
@@ -851,8 +975,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                     let mut mask = 0;
                     self.unitig_storage.push(0);
 
-                    let mut forward_extra_base = false;
-                    let mut backward_extra_base = false;
+                    let mut cumulative_flags = 0;
 
                     loop {
                         let skip_offset = if unitig_bases_count == 0 { 0 } else { k - 1 };
@@ -872,8 +995,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                             &superkmers_storage[(byte0_index + 1)..last_byte_entry],
                         );
 
-                        forward_extra_base |= supertig.forward_extra_base;
-                        backward_extra_base |= supertig.backward_extra_base;
+                        cumulative_flags |= supertig.flags;
 
                         if supertig.next == usize::MAX {
                             break;
@@ -910,12 +1032,12 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                     output_unitig(
                         colors_data,
                         final_unitig,
-                        if forward_extra_base {
+                        if cumulative_flags & FORWARD_EXTRA_BASE != 0 {
                             Some(DelayedHashComputation)
                         } else {
                             None
                         },
-                        if backward_extra_base {
+                        if cumulative_flags & BACKWARD_EXTRA_BASE != 0 {
                             Some(DelayedHashComputation)
                         } else {
                             None

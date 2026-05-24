@@ -120,7 +120,7 @@ pub trait KmersTransformFinalExecutor<F: KmersTransformExecutorFactory>:
 {
     type MapStruct: PacketTrait + PoolObjectTrait<InitData = F::KmersTransformPacketInitData>;
 
-    fn process_map(
+    fn process_map<const EVEN_K: bool>(
         &mut self,
         global_data: &Arc<F::GlobalExtraData>,
         map_struct: Packet<Self::MapStruct>,
