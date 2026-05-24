@@ -284,6 +284,10 @@ impl BucketItemSerializer for UnitigLinkSerializer {
 
     type CheckpointData = ();
 
+    fn clear_buffer(buffer: &mut Self::ReadBuffer) {
+        buffer.clear();
+    }
+
     #[inline(always)]
     fn new(_: ()) -> Self {
         Self

@@ -16,8 +16,8 @@ use crate::{
 };
 use config::{
     BucketIndexType, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS, DEFAULT_OUTPUT_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-    MultiplicityCounterType, SwapPriority, get_memory_mode,
+    KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, MultiplicityCounterType, SwapPriority,
+    get_memory_mode,
 };
 use ggcat_logging::stats;
 use hashes::HashableSequence;
@@ -334,7 +334,6 @@ impl<
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
-                DEFAULT_PREFETCH_AMOUNT,
             );
             input_files_size += bucket_file_index.get_file_size() as usize;
 
@@ -429,7 +428,6 @@ impl<
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
-            DEFAULT_PREFETCH_AMOUNT,
             self.uncompacted_super_kmers_buffer.len(),
         );
 

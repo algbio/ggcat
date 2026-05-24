@@ -78,6 +78,8 @@ impl<H: Encode + Decode<()> + Copy> BucketItemSerializer for MaximalHashEntrySer
 
     type CheckpointData = ();
 
+    fn clear_buffer(_buffer: &mut Self::ReadBuffer) {}
+
     #[inline(always)]
     fn new(_: ()) -> Self {
         Self(PhantomData)

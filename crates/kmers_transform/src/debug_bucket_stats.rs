@@ -1,4 +1,4 @@
-use config::{BucketIndexType, DEFAULT_PREFETCH_AMOUNT, READ_FLAG_INCL_END};
+use config::{BucketIndexType, READ_FLAG_INCL_END};
 use hashes::default::MNHFactory;
 use hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use io::concurrent::temp_reads::creads_utils::{
@@ -40,11 +40,8 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
     k: usize,
     m: usize,
 ) {
-    let bucket_file_index = ChunkedBinaryReaderIndex::from_file(
-        &bucket,
-        RemoveFileMode::Remove { remove_fs: false },
-        DEFAULT_PREFETCH_AMOUNT,
-    );
+    let bucket_file_index =
+        ChunkedBinaryReaderIndex::from_file(&bucket, RemoveFileMode::Remove { remove_fs: false });
 
     let file_size = bucket_file_index.get_file_size();
 

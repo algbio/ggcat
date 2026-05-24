@@ -69,6 +69,7 @@ impl<T> ResizableContainer for HashTable<T> {
 }
 
 #[repr(transparent)]
+#[derive(Debug)]
 pub struct FixedSizeResizableContainer<C: ResizableContainer, const SIZE: usize>(C);
 
 impl<C: ResizableContainer, const SIZE: usize> Deref for FixedSizeResizableContainer<C, SIZE> {

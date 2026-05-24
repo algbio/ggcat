@@ -2,9 +2,8 @@ use byteorder::ReadBytesExt;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::SingleKmerColorDataType;
 use config::{
-    DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
-    MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, SwapPriority, get_compression_level_info,
-    get_memory_mode,
+    DEFAULT_PER_CPU_BUFFER_SIZE, KEEP_FILES, MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
+    SwapPriority, get_compression_level_info, get_memory_mode,
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataOwned,
@@ -51,6 +50,8 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> BucketItemSer
     type InitData = ();
 
     type CheckpointData = ();
+
+    fn clear_buffer(_buffer: &mut Self::ReadBuffer) {}
 
     #[inline(always)]
     fn new(_: ()) -> Self {
@@ -165,7 +166,6 @@ pub fn counters_sorting<CX: ColorsManager>(
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
-            DEFAULT_PREFETCH_AMOUNT,
         );
 
         TypedStreamReader::get_items::<CounterEntrySerializer<SingleKmerColorDataType<CX>>>(

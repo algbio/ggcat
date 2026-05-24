@@ -1,6 +1,6 @@
 use colors::colors_manager::{ColorsManager, color_types};
 use colors::colors_manager::{ColorsMergeManager, color_types::PartialUnitigsColorStructure};
-use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT};
+use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use dashmap::DashMap;
 use hashes::HashFunctionFactory;
 use hashes::{ExtendableHashTraitType, HashFunction, HashableSequence};
@@ -405,7 +405,6 @@ pub fn build_eulertigs<
     let circular_unitigs_reader_index = ChunkedBinaryReaderIndex::from_file(
         &circ_in_file,
         RemoveFileMode::Remove { remove_fs: true },
-        DEFAULT_PREFETCH_AMOUNT,
     );
 
     let joined = Mutex::new(CircularUnionFind::new(DEFAULT_OUTPUT_BUFFER_SIZE));
@@ -545,7 +544,6 @@ pub fn build_eulertigs<
     let flat_unitigs_reader_index = ChunkedBinaryReaderIndex::from_file(
         &flat_in_file,
         RemoveFileMode::Remove { remove_fs: true },
-        DEFAULT_PREFETCH_AMOUNT,
     );
 
     PHASES_TIMES_MONITOR

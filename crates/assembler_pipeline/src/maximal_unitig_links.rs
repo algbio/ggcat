@@ -15,8 +15,8 @@ use crate::maximal_unitig_links::maximal_unitig_index::{
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use config::{
-    BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE,
-    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, SwapPriority, get_compression_level_info, get_memory_mode,
+    BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE, KEEP_FILES,
+    SwapPriority, get_compression_level_info, get_memory_mode,
 };
 use dashmap::DashSet;
 use hashbrown::HashSet;
@@ -75,11 +75,8 @@ pub fn build_maximal_unitigs_links<
             .write()
             .start_phase("phase: maximal unitigs links building [step 1]".to_string());
 
-        let maximal_unitigs_reader_step1_index = ChunkedBinaryReaderIndex::from_file(
-            &in_file,
-            RemoveFileMode::Keep,
-            DEFAULT_PREFETCH_AMOUNT,
-        );
+        let maximal_unitigs_reader_step1_index =
+            ChunkedBinaryReaderIndex::from_file(&in_file, RemoveFileMode::Keep);
 
         let maximal_unitigs_extremities_hashes_buckets =
             Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
@@ -273,7 +270,6 @@ pub fn build_maximal_unitigs_links<
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
-                DEFAULT_PREFETCH_AMOUNT,
             );
 
             TypedStreamReader::get_items::<MaximalHashEntrySerializer<MH::HashTypeUnextendable>>(
@@ -350,7 +346,6 @@ pub fn build_maximal_unitigs_links<
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
-            DEFAULT_PREFETCH_AMOUNT,
         );
 
         let maximal_unitigs_reader_step3_parallel_chunks =

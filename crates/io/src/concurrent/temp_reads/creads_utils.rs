@@ -342,6 +342,10 @@ impl<
 
     type CheckpointData = ReadsCheckpointData;
 
+    fn clear_buffer(buffer: &mut Self::ReadBuffer) {
+        buffer.clear();
+    }
+
     #[inline(always)]
     fn new(min_size: Self::InitData) -> Self {
         Self {
@@ -438,7 +442,6 @@ impl<
             1
         };
 
-        read_buffer.clear();
         let (read, minimizer_pos, flags) =
             CompressedRead::read_from_stream::<_, MinimizerMode, FlagsCount, AlignMode>(
                 read_buffer,

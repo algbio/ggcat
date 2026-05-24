@@ -11,7 +11,7 @@ config = { package = "ggcat_config", path = "../config" }
 dynamic-dispatch = "0.5.4"
 
 # Common libraries
-parallel-processor = "0.2.4"
+parallel-processor = "0.2.5"
 streaming-libdeflate-rs = "0.2.3"
 nightly-quirks = "0.1.4"
 
@@ -22,7 +22,7 @@ structs = { package = "ggcat_structs", path = "../structs" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Other libraries
-hashbrown = "0.14.5"
+hashbrown = "0.15.3"
 dashmap = "6.0.1"
 byteorder = "1.5.0"
 siphasher = "1.0.1"

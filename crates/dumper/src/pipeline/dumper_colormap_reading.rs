@@ -3,7 +3,7 @@ use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::SingleKmerColorDataType;
 use colors::storage::ColorsSerializerTrait;
 use colors::storage::deserializer::ColorsDeserializer;
-use config::{ColorIndexType, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
+use config::{ColorIndexType, KEEP_FILES};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::creads_utils::{DeserializedRead, NoAlignment};
 use minimizer_bucketing::decode_helper::decode_sequences;
@@ -57,7 +57,6 @@ pub fn colormap_reading<
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
-            DEFAULT_PREFETCH_AMOUNT,
             sub_buckets_count,
         );
 

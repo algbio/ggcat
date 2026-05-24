@@ -49,7 +49,7 @@ pub mod unitigs_extender;
 pub struct GlobalMergeData<CX: ColorsManager, O: StructuredSequenceBackendWrapper> {
     k: usize,
     m: usize,
-    buckets_count: BucketsCount,
+    _buckets_count: BucketsCount,
     sequential_partitions_count: BucketsCount,
     min_multiplicity: usize,
     colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
@@ -230,7 +230,7 @@ pub fn kmers_merge<
     let global_data = Arc::new(GlobalMergeData::<CX, OM> {
         k,
         m,
-        buckets_count,
+        _buckets_count: buckets_count,
         sequential_partitions_count,
         min_multiplicity,
         colors_global_table,

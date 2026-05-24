@@ -5,8 +5,8 @@ use crate::structs::query_colored_counters::{
 use colors::storage::ColorsSerializerTrait;
 use colors::storage::deserializer::ColorsDeserializer;
 use config::{
-    BucketIndexType, ColorIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT,
-    KEEP_FILES, MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, QUERIES_COUNT_MIN_BATCH, SwapPriority,
+    BucketIndexType, ColorIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, KEEP_FILES,
+    MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, QUERIES_COUNT_MIN_BATCH, SwapPriority,
     get_compression_level_info, get_memory_mode,
 };
 use nightly_quirks::prelude::*;
@@ -82,7 +82,6 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
-            DEFAULT_PREFETCH_AMOUNT,
         );
 
         TypedStreamReader::get_items::<CounterEntrySerializer<ColorIndexType>>(

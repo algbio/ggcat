@@ -1,8 +1,7 @@
 use crate::processor::{KmersProcessorInitData, KmersTransformProcessor, ResplitConfig};
 use config::{
-    DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, MAX_RESPLIT_BUCKETS_COUNT,
-    MAX_SUBBUCKET_AVERAGE_MULTIPLIER, MIN_AVERAGE_CAP, MIN_RESPLIT_BUCKETS_COUNT,
-    MINIMUM_LOG_DELTA_TIME,
+    KEEP_FILES, MAX_RESPLIT_BUCKETS_COUNT, MAX_SUBBUCKET_AVERAGE_MULTIPLIER, MIN_AVERAGE_CAP,
+    MIN_RESPLIT_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME,
 };
 use ggcat_logging::{generate_stat_id, info};
 use io::DUPLICATES_BUCKET_EXTRA;
@@ -297,7 +296,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                 RemoveFileMode::Remove {
                     remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                 },
-                DEFAULT_PREFETCH_AMOUNT,
                 self.global_context.second_buckets_count.total_buckets_count,
             );
 

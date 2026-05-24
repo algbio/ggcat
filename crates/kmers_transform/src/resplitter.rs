@@ -1,7 +1,7 @@
 use crate::processor::{KmersProcessorInitData, KmersTransformProcessor};
 use crate::{KmersTransformContext, KmersTransformExecutorFactory};
 use config::{
-    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES,
+    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, KEEP_FILES,
     MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, SwapPriority, get_compression_level_info,
     get_memory_mode,
 };
@@ -168,7 +168,6 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                         RemoveFileMode::Remove {
                             remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                         },
-                        DEFAULT_PREFETCH_AMOUNT,
                         sequences_count,
                     ))),
                     is_resplitted: true,

@@ -1,7 +1,7 @@
 use crate::maximal_unitig_links::maximal_unitig_index::{
     DoubleMaximalUnitigLinks, MaximalUnitigIndex, MaximalUnitigLink,
 };
-use config::{DEFAULT_PREFETCH_AMOUNT, KEEP_FILES};
+use config::KEEP_FILES;
 use parallel_processor::buckets::SingleBucket;
 use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
 use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
@@ -51,7 +51,6 @@ impl MaximalUnitigLinksMapping {
             RemoveFileMode::Remove {
                 remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
             },
-            DEFAULT_PREFETCH_AMOUNT,
         );
 
         let mappings_data = TypedStreamReader::get_items::<MaximalUnitigLinkSerializer>(

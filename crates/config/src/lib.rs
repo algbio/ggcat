@@ -27,9 +27,6 @@ pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(2)
 
 pub const KMERS_TRANSFORM_READS_CHUNKS_SIZE: usize = 1024 * 24;
 
-/// 2MB read file prefetch
-pub const DEFAULT_PREFETCH_AMOUNT: Option<usize> = Some(1024 * 1024 * 2);
-
 /// The maximum number of threads that can be spawned for each bucket
 pub const MAX_KMERS_TRANSFORM_READERS_PER_BUCKET: usize = 4;
 
@@ -47,10 +44,11 @@ pub const MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE: CompressedCheckpointSize 
 pub const PARTIAL_UNITIGS_COMPACTED_CHECKPOINT_SIZE: CompressedCheckpointSize =
     CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(8));
 
-pub const MAX_SUBPARTITION_SIZE: u64 = 1024 * 1024 * 1024;
-pub const MAX_SUBSUBPARTITION_SIZE: usize = 1024 * 1024 * 4;
-pub const MAX_SUBPARTITIONS_COUNT: u64 = 1 << 10;
+pub const MAX_SUBPARTITION_SIZE: u64 = 1024 * 1024 * 512;
+pub const MAX_SUBSUBPARTITION_SIZE: usize = 1024 * 128;
+pub const MAX_SUBPARTITIONS_COUNT: u64 = 1 << 11;
 pub const MIN_SUBPARTITIONS_COUNT: u64 = 8;
+pub const MAX_EXTREMITIES_HASHMAP_SIZE: usize = 524288;
 
 pub const DEFAULT_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024 * 4;
 pub const DEFAULT_PER_CPU_BUFFER_SIZE: MemoryDataSize = MemoryDataSize::from_kibioctets(4);
@@ -99,8 +97,10 @@ pub const COLORS_SINGLE_INDEX_DEFAULT_COLORS: usize = 1024;
 pub const COLORS_SINGLE_BATCH_SIZE: u64 = 20000;
 pub const QUERIES_COUNT_MIN_BATCH: u64 = 1000;
 pub const MAX_COLORMAP_WRITING_THREADS: usize = 24;
+pub const COLORS_BUFFER_DEFAULT_SIZE: usize = 1024 * 16;
 
 pub const DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS: usize = 8192;
+pub const DEFAULT_COMPACTION_MAP_SUBBUCKET_VEC_ELEMENTS: usize = 8192;
 pub const DEFAULT_COMPACTION_STORAGE_PER_BUCKET_SIZE: usize = 8192;
 pub const DEFAULT_UNCOMPACTED_TEMP_STORAGE: usize = 2 * DEFAULT_BUCKETS_CHUNK_SIZE as usize;
 

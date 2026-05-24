@@ -1,7 +1,7 @@
 use byteorder::ReadBytesExt;
 use colors::storage::run_length::ColorIndexSerializer;
 use config::ColorIndexType;
-use io::varint::{decode_varint, encode_varint, VARINT_MAX_SIZE};
+use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use std::io::Read;
 use std::ops::Range;
@@ -45,6 +45,8 @@ impl BucketItemSerializer for QueryColoredCountersSerializer {
     type InitData = ();
 
     type CheckpointData = ();
+
+    fn clear_buffer(_buffer: &mut Self::ReadBuffer) {}
 
     fn new(_: ()) -> Self {
         Self

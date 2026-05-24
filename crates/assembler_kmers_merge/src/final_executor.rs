@@ -31,7 +31,6 @@ use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::slice::from_raw_parts;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
 use typenum::U4;
 
@@ -176,8 +175,6 @@ impl<
                 })
                 .unwrap_or((u16::MAX, true));
 
-            let same_bucket = left_bucket == right_bucket;
-
             // Always put the unitig in the smallest bucket
             let (bucket, should_rc, hash_beginning) = if left_bucket <= right_bucket {
                 (left_bucket, left_should_rc, true)
@@ -200,9 +197,7 @@ impl<
                     multiplicity: 0,
                     minimizer_pos: last_align as u16,
                     extra_bucket: 0,
-                    flags: (!hash_beginning ^ should_rc) as u8
-                        | ((both_ends as u8) << 1)
-                        | ((same_bucket as u8) << 2),
+                    flags: (!hash_beginning ^ should_rc) as u8 | ((both_ends as u8) << 1),
                 },
             );
         }

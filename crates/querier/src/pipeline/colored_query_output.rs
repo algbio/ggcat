@@ -3,8 +3,8 @@ use crate::structs::query_colored_counters::{ColorsRange, QueryColoredCountersSe
 use colors::colors_manager::ColorMapReader;
 use colors::colors_manager::{ColorsManager, ColorsMergeManager};
 use config::{
-    ColorIndexType, DEFAULT_PREFETCH_AMOUNT, KEEP_FILES, QUERIES_COUNT_MIN_BATCH, SwapPriority,
-    get_compression_level_info, get_memory_mode,
+    ColorIndexType, KEEP_FILES, QUERIES_COUNT_MIN_BATCH, SwapPriority, get_compression_level_info,
+    get_memory_mode,
 };
 use flate2::Compression;
 use ggcat_logging::UnrecoverableErrorLogging;
@@ -138,7 +138,6 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
                     RemoveFileMode::Remove {
                         remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
                     },
-                    DEFAULT_PREFETCH_AMOUNT,
                 );
 
                 TypedStreamReader::get_items::<QueryColoredCountersSerializer>(
@@ -253,7 +252,6 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
                 let file_index = ChunkedBinaryReaderIndex::from_file(
                     stream_path,
                     RemoveFileMode::Remove { remove_fs: true },
-                    DEFAULT_PREFETCH_AMOUNT,
                 );
 
                 let mut queries_lock = query_output.lock();

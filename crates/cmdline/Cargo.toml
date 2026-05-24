@@ -17,7 +17,7 @@ lazy_static = "1.5.0"
 lz4 = "1.25.0"
 rayon = "1.10.0"
 serde = "1.0.203"
-hashbrown = "0.14.5"
+hashbrown = "0.15.3"
 rand = "0.8.5"
 libc = "0.2.155"
 filebuffer = "1.0.0"
@@ -48,7 +48,7 @@ dynamic-dispatch = "0.5.4"
 
 
 # Common libraries
-parallel-processor = "0.2.4"
+parallel-processor = "0.2.5"
 io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
 

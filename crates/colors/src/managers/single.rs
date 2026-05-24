@@ -2,6 +2,7 @@ use crate::DefaultColorsSerializer;
 use crate::colors_manager::ColorsMergeManager;
 use crate::storage::deserializer::ColorsDeserializer;
 use byteorder::ReadBytesExt;
+use config::COLORS_BUFFER_DEFAULT_SIZE;
 use config::{ColorCounterType, ColorIndexType};
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
@@ -14,6 +15,7 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::path::Path;
 use structs::map_entry::MapEntry;
+use utils::resize_containers::FixedSizeResizableContainer;
 
 /// This manager handles the case where each k-mer has a single colorset (represented as a single color index)
 /// and a sequence can have k-mers with different colorsets.
@@ -166,7 +168,7 @@ pub struct DefaultUnitigsTempColorData {
 
 #[derive(Debug, Default)]
 pub struct UnitigsSerializerTempBuffer {
-    colors: Vec<(ColorIndexType, u64)>,
+    colors: FixedSizeResizableContainer<Vec<(ColorIndexType, u64)>, COLORS_BUFFER_DEFAULT_SIZE>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -188,7 +190,9 @@ impl SequenceExtraDataTempBufferManagement for UnitigColorDataSerializer {
     type TempBuffer = UnitigsSerializerTempBuffer;
 
     fn new_temp_buffer() -> UnitigsSerializerTempBuffer {
-        UnitigsSerializerTempBuffer { colors: Vec::new() }
+        UnitigsSerializerTempBuffer {
+            colors: FixedSizeResizableContainer::new(),
+        }
     }
 
     fn clear_temp_buffer(buffer: &mut UnitigsSerializerTempBuffer) {
