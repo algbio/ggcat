@@ -117,6 +117,7 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataConsecutiveCompression
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         last_data: Self::LastData,
+        sequence_length: usize,
         reverse_complement: bool,
         read_flags: u8,
     ) {
@@ -128,6 +129,7 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataConsecutiveCompression
                     &buffer.0,
                     writer,
                     last_data,
+                    sequence_length,
                     reverse_complement,
                     read_flags,
                 );

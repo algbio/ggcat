@@ -78,6 +78,7 @@ impl SequenceExtraData for MaximalUnitigIndex {
         &self,
         _: &(),
         writer: &mut impl Write,
+        _sequence_length: usize,
         reverse_complement: bool,
         _read_flags: u8,
     ) {
@@ -282,6 +283,7 @@ impl SequenceExtraData for DoubleMaximalUnitigLinks {
         &self,
         _buffer: &Self::TempBuffer,
         _writer: &mut impl Write,
+        _sequence_length: usize,
         _reverse_complement: bool,
         _read_flags: u8,
     ) {

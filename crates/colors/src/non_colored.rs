@@ -53,6 +53,7 @@ impl SequenceExtraData for NonColoredManager {
         &self,
         _buffer: &Self::TempBuffer,
         _writer: &mut impl Write,
+        _sequence_length: usize,
         _reverse_complement: bool,
         _read_flags: u8,
     ) {

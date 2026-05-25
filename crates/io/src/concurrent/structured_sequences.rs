@@ -84,6 +84,7 @@ impl SequenceExtraData for SequenceAbundance {
         &self,
         _: &Self::TempBuffer,
         writer: &mut impl Write,
+        _sequence_length: usize,
         reverse_complement: bool,
         _read_flags: u8,
     ) {

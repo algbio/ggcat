@@ -15,6 +15,7 @@ use io::concurrent::{
     },
 };
 use kmers_transform::GroupProcessStats;
+use structs::partial_unitigs_extra_data::IndirectReadInfo;
 
 pub mod hashmap;
 pub mod sorting;
@@ -29,15 +30,17 @@ pub struct GlobalExtenderParams {
 pub struct UnitigExtensionColorsData<CX: ColorsManager> {
     pub colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
     pub unitigs_temp_colors: TempUnitigColorStructure<CX>,
-    pub temp_color_buffer:
+    pub temp_color_buffer: (
         <PartialUnitigsColorStructure<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        Vec<IndirectReadInfo>,
+    ),
 }
 
 impl<CX: ColorsManager> UnitigExtensionColorsData<CX> {
     pub fn get_colors(&mut self) -> PartialUnitigsColorStructure<CX> {
         color_types::ColorsMergeManagerType::<CX>::encode_part_unitigs_colors(
             &mut self.unitigs_temp_colors,
-            &mut self.temp_color_buffer,
+            &mut self.temp_color_buffer.0,
         )
     }
 }

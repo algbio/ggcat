@@ -31,7 +31,7 @@ use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::slice::from_raw_parts;
 use std::sync::Arc;
-use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
+use structs::partial_unitigs_extra_data::{PartialUnitigExtraData, PartialUnitigMode};
 use typenum::U4;
 
 local_setup_instrumenter!();
@@ -80,7 +80,7 @@ impl<
             colors_data: UnitigExtensionColorsData {
                 colors_global_table: global_data.colors_global_table.clone(),
                 unitigs_temp_colors: CX::ColorsMergeManagerType::alloc_unitig_color_structure(),
-                temp_color_buffer: <PartialUnitigsColorStructure<CX> as SequenceExtraDataTempBufferManagement>::new_temp_buffer()
+                temp_color_buffer: <PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::new_temp_buffer()
             },
             _phantom: PhantomData
         }
@@ -125,7 +125,7 @@ impl<
     ) {
         let colors = color_types::ColorsMergeManagerType::<CX>::encode_part_unitigs_colors(
             &mut colors_data.unitigs_temp_colors,
-            &mut colors_data.temp_color_buffer,
+            &mut colors_data.temp_color_buffer.0,
         );
 
         if forward_linked.is_none() && backward_linked.is_none() {
@@ -133,17 +133,18 @@ impl<
                 out_seq.into_bases_iter(),
                 None,
                 colors,
-                &colors_data.temp_color_buffer,
+                &colors_data.temp_color_buffer.0,
                 (),
                 &(),
                 #[cfg(feature = "support_kmer_counters")]
                 counters,
             );
         } else {
-            let extra_data = PartialUnitigExtraData::Inline {
+            let extra_data = PartialUnitigExtraData {
                 colors,
                 #[cfg(feature = "support_kmer_counters")]
                 counters,
+                mode: PartialUnitigMode::Inline
             };
 
             let both_ends = forward_linked.is_some() && backward_linked.is_some();
@@ -214,7 +215,7 @@ impl<
             );
         }
         color_types::PartialUnitigsColorStructure::<CX>::clear_temp_buffer(
-            &mut colors_data.temp_color_buffer,
+            &mut colors_data.temp_color_buffer.0,
         );
     }
 }

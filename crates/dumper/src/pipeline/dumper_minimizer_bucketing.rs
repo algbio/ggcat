@@ -63,6 +63,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
         _buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         last_data: CX::LastData,
+        sequence_length: usize,
         reverse_complement: bool,
         read_flags: u8,
     ) {
@@ -71,6 +72,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
             &(),
             writer,
             last_data,
+            sequence_length,
             reverse_complement,
             read_flags,
         );

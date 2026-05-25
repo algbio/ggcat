@@ -94,6 +94,7 @@ pub trait SequenceExtraDataConsecutiveCompression: SequenceExtraDataTempBufferMa
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         last_data: Self::LastData,
+        sequence_length: usize,
         reverse_complement: bool,
         read_flags: u8,
     );
@@ -154,6 +155,7 @@ pub trait SequenceExtraData: SequenceExtraDataTempBufferManagement {
         &self,
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
+        sequence_length: usize,
         reverse_complement: bool,
         read_flags: u8,
     );
@@ -193,7 +195,7 @@ impl<T: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> SequenceExtraD
     }
 
     fn encode(&self, writer: &mut impl Write, last_data: Self::LastData) {
-        self.encode_extended(&mut (), writer, last_data, false, 0)
+        self.encode_extended(&mut (), writer, last_data, 0, false, 0)
     }
 }
 
@@ -216,6 +218,7 @@ impl<T: SequenceExtraData> SequenceExtraDataConsecutiveCompression for T {
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         _last_data: Self::LastData,
+        sequence_length: usize,
         reverse_complement: bool,
         read_flags: u8,
     ) {
@@ -223,6 +226,7 @@ impl<T: SequenceExtraData> SequenceExtraDataConsecutiveCompression for T {
             &self,
             buffer,
             writer,
+            sequence_length,
             reverse_complement,
             read_flags,
         )
@@ -254,6 +258,7 @@ impl SequenceExtraData for () {
         &self,
         _buffer: &Self::TempBuffer,
         _writer: &mut impl Write,
+        _sequence_length: usize,
         _reverse_complement: bool,
         _read_flags: u8,
     ) {
@@ -275,6 +280,7 @@ impl SequenceExtraData for ColorIndexType {
         &self,
         _: &Self::TempBuffer,
         writer: &mut impl Write,
+        _sequence_length: usize,
         _reverse_complement: bool,
         _read_flags: u8,
     ) {

@@ -32,6 +32,15 @@ impl<'a> ReadData<'a> {
             self
         }
     }
+
+    pub fn bases_count(&self) -> usize {
+        match self {
+            ReadData::Plain(items) | ReadData::PlainRc(items) => items.len(),
+            ReadData::Packed(compressed_read) | ReadData::PackedRc(compressed_read) => {
+                compressed_read.bases_count()
+            }
+        }
+    }
 }
 
 pub trait ToReadData<'a>: HashableSequence {
@@ -417,6 +426,7 @@ impl<
             extra_data_buffer,
             bucket,
             self.last_data,
+            element.read.bases_count(),
             is_rc,
             element.flags,
         );

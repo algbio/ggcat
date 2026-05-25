@@ -184,6 +184,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         last_data: Self::LastData,
+        sequence_length: usize,
         reverse_complement: bool,
         read_flags: u8,
     ) {
@@ -211,10 +212,21 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
             .unwrap();
         }
 
-        self.color
-            .encode_extended(&buffer.0, writer, last_data, reverse_complement, read_flags);
-        self.link
-            .encode_extended(&buffer.1, writer, reverse_complement, read_flags);
+        self.color.encode_extended(
+            &buffer.0,
+            writer,
+            last_data,
+            sequence_length,
+            reverse_complement,
+            read_flags,
+        );
+        self.link.encode_extended(
+            &buffer.1,
+            writer,
+            sequence_length,
+            reverse_complement,
+            read_flags,
+        );
     }
 
     fn max_size(&self) -> usize {

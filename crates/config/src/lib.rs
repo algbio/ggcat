@@ -123,6 +123,8 @@ pub const MAX_TARGET_CHUNK_SIZE: u64 = 1024 * 1024 * 64;
 
 pub const HASH_MAX_OVERREAD: usize = 16;
 
+pub const MAX_INLINE_UNITIG_SIZE: usize = 4096;
+
 // Higher priority means faster swap to disk
 pub struct SwapPriority {}
 #[allow(non_upper_case_globals)]

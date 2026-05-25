@@ -100,6 +100,7 @@ impl SequenceExtraDataConsecutiveCompression for MinBkSingleColor {
         _: &(),
         writer: &mut impl Write,
         last_data: Self::LastData,
+        _sequence_length: usize,
         _reverse_complement: bool,
         _read_flags: u8,
     ) {
@@ -202,6 +203,7 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
         _last_data: Self::LastData,
+        _sequence_length: usize,
         _reverse_complement: bool,
         _read_flags: u8,
     ) {

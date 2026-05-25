@@ -9,7 +9,7 @@ use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::{LockFreeBucket, SingleBucket};
 use std::marker::PhantomData;
-use structs::partial_unitigs_extra_data::PartialUnitigExtraData;
+use structs::partial_unitigs_extra_data::{IndirectReadInfo, PartialUnitigExtraData};
 use utils::owned_drop::OwnedDrop;
 
 pub struct ResultsBucket<X: SequenceExtraDataConsecutiveCompression> {
@@ -32,7 +32,7 @@ impl<X: SequenceExtraDataConsecutiveCompression> ResultsBucket<X> {
         &mut self,
         el: PartialUnitigExtraData<X>,
         read: R,
-        extra_buffer: &X::TempBuffer,
+        extra_buffer: &(X::TempBuffer, Vec<IndirectReadInfo>),
     ) -> u64 {
         self.temp_buffer.clear();
         self.serializer.write_to(
@@ -52,7 +52,7 @@ impl<X: SequenceExtraDataConsecutiveCompression> ResultsBucket<X> {
         &mut self,
         el: PartialUnitigExtraData<X>,
         read: CompressedRead,
-        extra_buffer: &X::TempBuffer,
+        extra_buffer: &(X::TempBuffer, Vec<IndirectReadInfo>),
     ) -> u64 {
         self.temp_buffer.clear();
         self.serializer.write_to(

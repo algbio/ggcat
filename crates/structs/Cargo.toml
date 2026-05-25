@@ -9,6 +9,7 @@ config = { package = "ggcat_config", path = "../config" }
 io = { package = "ggcat_io", path = "../io" }
 parallel-processor = "0.2.5"
 serde = { version = "1.0.203", features = ["derive"] }
+typenum = "1.20.0"
 
 
 [features]
