@@ -29,6 +29,7 @@ use io::concurrent::temp_reads::extra_data::{
     self, SequenceExtraData, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement,
 };
+use io::concurrent_filewriter::ConcurrentFileWriter;
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLinkSerializer};
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use nightly_quirks::branch_pred::unlikely;
@@ -44,13 +45,15 @@ use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use parking_lot::Mutex;
 use rayon::{current_num_threads, prelude::*};
 use std::cmp::Reverse;
+use std::fs::File;
+use std::io::Write;
 use std::mem::swap;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use structs::partial_unitigs_extra_data::{
-    IndirectReadInfo, PartialUnitigExtraData, PartialUnitigMode,
+    IndirectReadInfo, PartialUnitigExtraData, PartialUnitigMode, indirect_read_extract_all,
 };
 use typenum::U4;
 use utils::fast_rand_bool::FastRandBool;
@@ -111,6 +114,8 @@ struct SubsplitBestOrientationAndFlags {
 
 struct SubsplitGlobalData<MH: HashFunctionFactory> {
     k: usize,
+    oversize_unitigs_file: ConcurrentFileWriter,
+
     extremities_hashmaps_presence: Vec<Mutex<HashMap<MH::HashTypeUnextendable, bool>>>,
     extremities_hashmaps_symmetric_at_end: Vec<Mutex<HashMap<MH::HashTypeUnextendable, bool>>>,
     hashmap_size: AtomicUsize,
@@ -280,13 +285,62 @@ fn find_best_orientation_and_flags<MH: HashFunctionFactory>(
 fn write_oversize_unitig<MH: HashFunctionFactory, CX: ColorsManager>(
     global_data: &SubsplitGlobalData<MH>,
     join_data: &mut JoinTempData<CX>,
-    middle: CompressedReadIndipendent,
+    unitig: CompressedReadIndipendent,
+    joined_color: PartialUnitigsColorStructure<CX>,
+    splice_start_colors_offset: usize,
+    splice_end_colors_offset: usize,
 ) -> IndirectReadInfo {
-    // todo!()
-    IndirectReadInfo {
-        length: 0,
-        offset: 0,
-    }
+    // Colors from splice_start - k + 1 to splice_end_colors_offset
+    join_data.oversize_temp_buffer.clear();
+
+    let extra_length = if CX::COLORS_ENABLED {
+        let oversize_color = {
+            CX::ColorsMergeManagerType::reset_unitig_color_structure(
+                &mut join_data.final_unitig_color,
+            );
+
+            // Copy only required colors
+            CX::ColorsMergeManagerType::join_structures::<false>(
+                &mut join_data.final_unitig_color,
+                &joined_color,
+                &join_data.final_extra_buffer.0,
+                splice_start_colors_offset,
+                Some(splice_end_colors_offset - splice_start_colors_offset),
+            );
+
+            PartialUnitigsColorStructure::<CX>::clear_temp_buffer(
+                &mut join_data.oversize_color_buffer,
+            );
+            CX::ColorsMergeManagerType::encode_part_unitigs_colors(
+                &mut join_data.final_unitig_color,
+                &mut join_data.oversize_color_buffer,
+            )
+        };
+
+        oversize_color.encode_extended(
+            &join_data.oversize_color_buffer,
+            &mut join_data.oversize_temp_buffer,
+            Default::default(),
+            0,
+            false,
+            0,
+        );
+        join_data.oversize_temp_buffer.len()
+    } else {
+        0
+    };
+
+    join_data.oversize_temp_buffer.clear();
+    unitig
+        .as_reference(&join_data.final_join_buffer)
+        .copy_to_buffer(&mut join_data.oversize_temp_buffer);
+
+    let position = global_data
+        .oversize_unitigs_file
+        .write(&join_data.oversize_temp_buffer[..])
+        .unwrap();
+
+    IndirectReadInfo::new(position as usize, extra_length, unitig.bases_count())
 }
 
 #[track_caller]
@@ -296,6 +350,7 @@ fn splice_operation<'a, MH: HashFunctionFactory, CX: ColorsManager>(
     joined_read: CompressedReadIndipendent,
     splice_start: usize,
     splice_end: usize,
+    splice_end_colors_offset: usize,
     joined_color: PartialUnitigsColorStructure<CX>,
 ) -> (
     CompressedReadIndipendent,
@@ -303,7 +358,14 @@ fn splice_operation<'a, MH: HashFunctionFactory, CX: ColorsManager>(
     IndirectReadInfo,
 ) {
     let middle = joined_read.sub_slice(splice_start..splice_end);
-    let indirect_middle = write_oversize_unitig::<MH, CX>(global_data, join_data, middle);
+    let indirect_middle = write_oversize_unitig::<MH, CX>(
+        global_data,
+        join_data,
+        middle,
+        joined_color,
+        splice_start - global_data.k + 1,
+        splice_end_colors_offset,
+    );
 
     // Swap the final buffer with the temp one, to allow creating a new sequence using the previous one
     swap(
@@ -320,22 +382,7 @@ fn splice_operation<'a, MH: HashFunctionFactory, CX: ColorsManager>(
     prefix.copy_to_buffer(&mut join_data.final_join_buffer);
     let required_suffix_offset = splice_start % 4;
 
-    if required_suffix_offset == 0 {
-        suffix.copy_to_buffer(&mut join_data.final_join_buffer);
-    } else {
-        let last_byte = join_data.final_join_buffer.pop().unwrap();
-        let last_byte_pos = join_data.final_join_buffer.len();
-
-        suffix.copy_to_buffer(&mut join_data.final_join_buffer);
-        join_data.final_join_buffer.push(0);
-        CompressedRead::offset_read(
-            required_suffix_offset,
-            &mut join_data.final_join_buffer[last_byte_pos..],
-            suffix.bases_count(),
-        );
-
-        join_data.final_join_buffer[last_byte_pos] |= last_byte;
-    }
+    suffix.copy_to_buffer_with_offset(&mut join_data.final_join_buffer, required_suffix_offset, false);
     let spliced_bases_count = prefix.bases_count() + suffix.bases_count();
 
     CX::ColorsMergeManagerType::reset_unitig_color_structure(&mut join_data.final_unitig_color);
@@ -353,7 +400,7 @@ fn splice_operation<'a, MH: HashFunctionFactory, CX: ColorsManager>(
         &mut join_data.final_unitig_color,
         &joined_color,
         &join_data.final_extra_buffer.0,
-        splice_end,
+        splice_end_colors_offset,
         Some(suffix.bases_count() - global_data.k + 1),
     );
 
@@ -373,6 +420,9 @@ fn splice_operation<'a, MH: HashFunctionFactory, CX: ColorsManager>(
 
 struct JoinTempData<CX: ColorsManager> {
     temp_join_buffer: Vec<u8>,
+    oversize_temp_buffer: Vec<u8>,
+    oversize_color_buffer: <PartialUnitigsColorStructure<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+
     final_unitig_color: TempUnitigColorStructure<CX>,
     final_join_buffer: Vec<u8>,
     final_extra_buffer: <PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer,
@@ -496,6 +546,7 @@ fn join_reads<'a, MH: HashFunctionFactory, CX: ColorsManager>(
                         joined_read,
                         k,
                         joined_read.bases_count() - k,
+                        joined_read.bases_count() - k,
                         joined_color,
                     );
 
@@ -537,6 +588,7 @@ fn join_reads<'a, MH: HashFunctionFactory, CX: ColorsManager>(
                         joined_read,
                         indirection_start,
                         joined_read.bases_count() - k,
+                        (joined_read.bases_count() - k) - k + 1,
                         joined_color,
                     );
 
@@ -578,6 +630,7 @@ fn join_reads<'a, MH: HashFunctionFactory, CX: ColorsManager>(
                         joined_read,
                         k,
                         new_indirection_start,
+                        new_indirection_start - k + 1,
                         joined_color,
                     );
 
@@ -629,6 +682,7 @@ fn join_reads<'a, MH: HashFunctionFactory, CX: ColorsManager>(
                     joined_read,
                     left_indirection_start,
                     right_indirection_start,
+                    right_indirection_start - k * 2 + 2,
                     joined_color,
                 );
 
@@ -817,6 +871,10 @@ pub fn extend_unitigs<
 
         let mut global_data = SubsplitGlobalData {
             k,
+            oversize_unitigs_file: ConcurrentFileWriter::create(
+                temp_path.join("oversize-unitigs.dat"),
+            )
+            .unwrap(),
             // These hashmaps are used for two purposes:
             // - the first hashmap is to ensure that extremities are paired together when possible, so that between two adjacent unitigs at least one gets merged.
             // - the second hashmap is to handle symmetric k-mer endings, ensuring the orientation of the reads is matched correctly
@@ -992,8 +1050,15 @@ pub fn extend_unitigs<
                             )
                         });
 
+                    let mut extract_buffer1 = Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes());
+                    let mut extract_buffer2 = Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes());
+                    let mut extract_extra_buffer = PartialUnitigsColorStructure::<CX>::new_temp_buffer();
+
                     let mut join_data = JoinTempData {
                         temp_join_buffer: Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes()),
+                        oversize_temp_buffer: Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes()),
+                        oversize_color_buffer:
+                            PartialUnitigsColorStructure::<CX>::new_temp_buffer(),
                         final_unitig_color: CX::ColorsMergeManagerType::alloc_unitig_color_structure(),
                         final_join_buffer: Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes()),
                         final_extra_buffer: PartialUnitigExtraData::<
@@ -1135,16 +1200,48 @@ pub fn extend_unitigs<
                                             let (color, _counters) =
                                                 get_color_and_counters::<CX>(&joined.extra);
 
-                                            tmp_final_unitigs_buffer.add_read(
-                                                read.into_bases_iter(),
-                                                None,
-                                                color,
-                                                &join_data.final_extra_buffer.0,
-                                                (),
-                                                &(),
-                                                #[cfg(feature = "support_kmer_counters")]
-                                                _counters,
-                                            );
+                                            match &joined.extra.mode {
+                                                PartialUnitigMode::Inline => {
+                                                    tmp_final_unitigs_buffer.add_read(
+                                                        read.into_bases_iter(),
+                                                        None,
+                                                        color,
+                                                        &join_data.final_extra_buffer.0,
+                                                        (),
+                                                        &(),
+                                                        #[cfg(feature = "support_kmer_counters")]
+                                                        _counters,
+                                                    );
+                                                },
+                                                PartialUnitigMode::Indirect { .. } => {
+
+                                                    let mut bases = vec![];
+                                                    let (read, color) = indirect_read_extract_all(
+                                                        read, 
+                                                        &joined.extra, 
+                                                        &join_data.final_extra_buffer, 
+                                                        &mut extract_buffer1, 
+                                                        &mut extract_buffer2,
+                                                        &mut extract_extra_buffer, 
+                                                        &global_data.oversize_unitigs_file
+                                                    );
+
+                                                    read.write_unpacked_to_vec(&mut bases, false);
+
+
+                                                    tmp_final_unitigs_buffer.add_read(
+                                                        bases.iter().copied(),
+                                                        None,
+                                                        color,
+                                                        &join_data.final_extra_buffer.0,
+                                                        (),
+                                                        &(),
+                                                        #[cfg(feature = "support_kmer_counters")]
+                                                        _counters,
+                                                    );     
+                                                },
+                                            }
+
                                         } else {
                                             let info = find_best_orientation_and_flags::<MH>(
                                                 &global_data,

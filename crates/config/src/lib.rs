@@ -142,6 +142,7 @@ impl SwapPriority {
     pub const KmersMergeTempColors: usize = 4;
     pub const ColoredQueryBuckets: usize = 5;
     pub const KmersMergeBuckets: usize = 6;
+    pub const OversizeUnitigs: usize = 7;
 }
 
 // Functions depending on global config parameters set at runtime

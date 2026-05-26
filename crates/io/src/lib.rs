@@ -22,6 +22,7 @@ pub mod sequences_reader;
 pub mod sequences_stream;
 pub mod structs;
 pub mod varint;
+pub mod concurrent_filewriter;
 
 pub const DUPLICATES_BUCKET_EXTRA: ExtraBucketData = ExtraBucketData(0xdddd);
 

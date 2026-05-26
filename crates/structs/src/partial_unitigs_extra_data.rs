@@ -1,11 +1,17 @@
-use std::ops::Range;
+use std::{fs::File, ops::Range};
 
 use byteorder::ReadBytesExt;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use io::{
-    concurrent::temp_reads::extra_data::{
-        SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
+    compressed_read::CompressedRead,
+    concurrent::temp_reads::{
+        creads_utils::DeserializedRead,
+        extra_data::{
+            SequenceExtraData, SequenceExtraDataConsecutiveCompression,
+            SequenceExtraDataTempBufferManagement,
+        },
     },
+    concurrent_filewriter::ConcurrentFileWriter,
     varint::{
         VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, decode_varint, decode_varint_flags, encode_varint,
         encode_varint_flags,
@@ -24,6 +30,24 @@ pub enum PartialUnitigMode {
     },
 }
 
+impl PartialUnitigMode {
+    #[allow(dead_code)]
+    pub fn debug_get_total_length(&self, buffer: &[IndirectReadInfo]) -> usize {
+        let mut totlen = 0;
+        match self {
+            PartialUnitigMode::Inline => {}
+            PartialUnitigMode::Indirect {
+                indirections_range, ..
+            } => {
+                for idx in indirections_range.clone() {
+                    totlen += buffer[idx].get_sequence_length();
+                }
+            }
+        }
+        totlen
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PartialUnitigExtraData<X: SequenceExtraDataConsecutiveCompression> {
     #[cfg(feature = "support_kmer_counters")]
@@ -32,10 +56,37 @@ pub struct PartialUnitigExtraData<X: SequenceExtraDataConsecutiveCompression> {
     pub mode: PartialUnitigMode,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct IndirectReadInfo {
-    pub offset: usize,
-    pub length: usize,
+    file_offset: usize,
+    extra_length: u32,
+    sequence_length: u32,
+}
+
+impl IndirectReadInfo {
+    pub fn new(file_offset: usize, extra_length: usize, sequence_length: usize) -> Self {
+        Self {
+            file_offset,
+            extra_length: extra_length as u32,
+            sequence_length: (sequence_length as u32) << 1,
+        }
+    }
+
+    pub fn get_file_offset(&self) -> usize {
+        self.file_offset
+    }
+
+    pub fn get_extra_length(&self) -> usize {
+        self.extra_length as usize
+    }
+
+    pub fn get_sequence_length(&self) -> usize {
+        (self.sequence_length >> 1) as usize
+    }
+
+    pub fn is_rc(&self) -> bool {
+        self.sequence_length & 0x1 != 0
+    }
 }
 
 impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataTempBufferManagement
@@ -116,11 +167,14 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
                 let range_start = buffer.1.len();
 
                 for _ in 0..elcount {
-                    let offset = decode_varint(|| reader.read_u8().ok())? as usize;
-                    let (length, is_rc) = decode_varint_flags::<_, U1>(|| reader.read_u8().ok())?;
+                    let file_offset = decode_varint(|| reader.read_u8().ok())? as usize;
+                    let extra_length = decode_varint(|| reader.read_u8().ok())? as u32;
+                    let (sequence_length, is_rc) =
+                        decode_varint_flags::<_, U1>(|| reader.read_u8().ok())?;
                     buffer.1.push(IndirectReadInfo {
-                        offset,
-                        length: (length << 1) as usize | is_rc as usize,
+                        file_offset,
+                        extra_length,
+                        sequence_length: (sequence_length << 1) as u32 | is_rc as u32,
                     });
                 }
 
@@ -184,16 +238,32 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
                 .unwrap();
                 encode_varint(|b| writer.write(b).ok(), elcount as u64).unwrap();
 
-                for idx in indirections_range.clone() {
+                fn iterate_range<F>(range: Range<usize>, forward: bool, mut f: F)
+                where
+                    F: FnMut(usize),
+                {
+                    if forward {
+                        for i in range {
+                            f(i);
+                        }
+                    } else {
+                        for i in range.rev() {
+                            f(i);
+                        }
+                    }
+                }
+
+                iterate_range(indirections_range.clone(), !reverse_complement, |idx| {
                     let info = &buffer.1[idx];
-                    encode_varint(|b| writer.write(b).ok(), info.offset as u64).unwrap();
+                    encode_varint(|b| writer.write(b).ok(), info.file_offset as u64).unwrap();
+                    encode_varint(|b| writer.write(b).ok(), info.extra_length as u64).unwrap();
                     encode_varint_flags::<_, _, U1>(
                         |b| writer.write(b).ok(),
-                        (info.length >> 1) as u64,
-                        (info.length & 0x1) as u8 ^ reverse_complement as u8,
+                        (info.sequence_length >> 1) as u64,
+                        (info.sequence_length & 0x1) as u8 ^ reverse_complement as u8,
                     )
                     .unwrap();
-                }
+                });
             }
             PartialUnitigMode::Inline => {}
         }
@@ -221,8 +291,59 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
                     indirections_range, ..
                 } => {
                     VARINT_MAX_SIZE * 2
-                        + (VARINT_MAX_SIZE + VARINT_FLAGS_MAX_SIZE) * indirections_range.len()
+                        + (VARINT_MAX_SIZE * 2 + VARINT_FLAGS_MAX_SIZE) * indirections_range.len()
                 }
             }
+    }
+}
+
+pub fn indirect_read_extract_all<'a, X: SequenceExtraDataConsecutiveCompression>(
+    read: CompressedRead<'a>,
+    extra: &PartialUnitigExtraData<X>,
+    input_extra_buffer: &(X::TempBuffer, Vec<IndirectReadInfo>),
+    output_buffer_1: &'a mut Vec<u8>,
+    output_buffer_2: &'a mut Vec<u8>,
+    output_extra_buffer: &mut X::TempBuffer,
+    indirect_file: &ConcurrentFileWriter,
+) -> (CompressedRead<'a>, X) {
+    match extra.mode.clone() {
+        PartialUnitigMode::Inline => (read, extra.colors.clone()),
+        PartialUnitigMode::Indirect {
+            indirection_start,
+            indirections_range,
+        } => {
+            output_buffer_1.clear();
+            output_buffer_2.clear();
+            let mut bases_count = 0;
+            read.sub_slice(0..indirection_start)
+                .copy_to_buffer(output_buffer_2);
+            bases_count += indirection_start;
+            for part_idx in indirections_range {
+                let part = input_extra_buffer.1[part_idx];
+                output_buffer_1.clear();
+                let extra_length = part.get_extra_length();
+                let sequence_length = part.get_sequence_length();
+                let is_rc = part.is_rc();
+                let total_bytes = extra_length + sequence_length.div_ceil(4);
+                indirect_file
+                    .read_all_at(output_buffer_1, part.file_offset as u64, total_bytes)
+                    .unwrap();
+                let part = CompressedRead::from_compressed_reads(
+                    &output_buffer_1[extra_length..],
+                    0,
+                    sequence_length,
+                );
+                part.copy_to_buffer_with_offset(output_buffer_2, bases_count % 4, is_rc);
+                bases_count += part.get_length();
+            }
+            read.sub_slice(indirection_start..read.get_length())
+                .copy_to_buffer_with_offset(output_buffer_2, bases_count % 4, false);
+            bases_count += read.get_length() - indirection_start;
+
+            (
+                CompressedRead::from_compressed_reads(&output_buffer_2[..], 0, bases_count),
+                extra.colors.clone(),
+            )
+        }
     }
 }

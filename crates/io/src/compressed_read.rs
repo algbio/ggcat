@@ -713,6 +713,45 @@ impl<'a> CompressedRead<'a> {
     //     low ^ high
     // }
 
+    #[inline(always)]
+    pub fn copy_to_buffer_with_offset(
+        &self,
+        buffer: &mut Vec<u8>,
+        required_offset: usize,
+        rc: bool,
+    ) {
+        if required_offset == 0 {
+            if rc {
+                self.copy_to_buffer_rc(buffer);
+            } else {
+                self.copy_to_buffer(buffer);
+            }
+        } else {
+            let last_byte = buffer.pop().unwrap();
+            let last_byte_pos = buffer.len();
+
+            let required_len = buffer.len() + (self.bases_count() + required_offset).div_ceil(4);
+
+            if rc {
+                self.copy_to_buffer_rc(buffer);
+            } else {
+                self.copy_to_buffer(buffer);
+            }
+            buffer.reserve(8);
+            unsafe {
+                buffer.set_len(required_len);
+            }
+
+            CompressedRead::offset_read(
+                required_offset,
+                &mut buffer[last_byte_pos..],
+                self.bases_count(),
+            );
+
+            buffer[last_byte_pos] |= last_byte;
+        }
+    }
+
     pub fn copy_to_buffer(&self, buffer: &mut Vec<u8>) {
         /*
         0 => 11111111
@@ -891,6 +930,7 @@ impl<'a> CompressedRead<'a> {
         )
     }
 
+    #[inline(always)]
     pub fn get_length(&self) -> usize {
         self.bases_count()
     }
