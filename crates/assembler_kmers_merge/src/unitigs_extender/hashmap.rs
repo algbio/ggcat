@@ -14,16 +14,14 @@ use hashes::{
 };
 use io::{
     compressed_read::CompressedRead,
-    concurrent::{
-        structured_sequences::SequenceAbundanceType,
-        temp_reads::{
-            creads_utils::DeserializedRead, extra_data::SequenceExtraDataTempBufferManagement,
-        },
+    concurrent::temp_reads::{
+        creads_utils::DeserializedRead, extra_data::SequenceExtraDataTempBufferManagement,
     },
     varint::{decode_varint, encode_varint},
 };
 use kmers_transform::GroupProcessStats;
 use rustc_hash::{FxBuildHasher, FxHashMap};
+use sequence_output::structured_sequences::SequenceAbundanceType;
 use structs::map_entry::MapEntry;
 use utils::Utils;
 
@@ -44,6 +42,7 @@ pub struct HashMapUnitigsExtender<MH: HashFunctionFactory, CX: ColorsManager> {
     last_saved_len: usize,
     forward_seq: Vec<u8>,
     backward_seq: Vec<u8>,
+    compressed_seq_buffer: Vec<u8>,
 }
 
 #[inline]
@@ -186,7 +185,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> HashMapUnitigsExtender<MH, CX> 
         ),
         #[cfg(feature = "support_kmer_counters")] is_forward: bool,
         #[cfg(feature = "support_kmer_counters")]
-        counters: &mut io::concurrent::structured_sequences::SequenceAbundance,
+        counters: &mut sequence_output::structured_sequences::SequenceAbundance,
     ) -> Option<MH::HashTypeExtendable> {
         let mut temp_data = (hash, 0);
         let mut current_hash;
@@ -319,6 +318,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             last_saved_len: 0,
             forward_seq: Vec::with_capacity(params.k * 2),
             backward_seq: Vec::with_capacity(params.k * 2),
+            compressed_seq_buffer: Vec::with_capacity(params.k),
         }
     }
 
@@ -446,7 +446,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
         colors_data: &mut UnitigExtensionColorsData<CX>,
         mut output_unitig: impl FnMut(
             &mut UnitigExtensionColorsData<CX>,
-            &[u8],
+            CompressedRead,
             Option<PrecomputedHash<MH>>,
             Option<PrecomputedHash<MH>>,
             SequenceAbundanceType,
@@ -466,6 +466,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
 
         let forward_seq = unsafe { &mut *(&mut self.forward_seq as *mut Vec<u8>) };
         let backward_seq = unsafe { &mut *(&mut self.backward_seq as *mut Vec<u8>) };
+        let compressed_seq_buffer =
+            unsafe { &mut *(&mut self.compressed_seq_buffer as *mut Vec<u8>) };
 
         self.get_kmers(|hash, cread, rhentry| {
             let ignored_status = rhentry.get_flags();
@@ -506,7 +508,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             let first_count = rhentry.get_kmer_multiplicity() as u64;
 
             #[cfg(feature = "support_kmer_counters")]
-            let mut counters = io::concurrent::structured_sequences::SequenceAbundance {
+            let mut counters = sequence_output::structured_sequences::SequenceAbundance {
                 first: first_count,
                 sum: first_count,
                 last: first_count,
@@ -556,9 +558,14 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                 &backward_seq[..]
             };
 
+            compressed_seq_buffer.clear();
+            CompressedRead::compress_from_plain(out_seq, |b| {
+                compressed_seq_buffer.extend_from_slice(b);
+            });
+
             output_unitig(
                 colors_data,
-                out_seq,
+                CompressedRead::new_from_compressed(&compressed_seq_buffer, out_seq.len()),
                 fw_hash.map(PrecomputedHash),
                 bw_hash.map(PrecomputedHash),
                 match () {

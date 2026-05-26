@@ -16,12 +16,6 @@ use config::{
 };
 use hashes::HashFunctionFactory;
 use hashes::default::MNHFactory;
-use io::concurrent::structured_sequences::binary::StructSeqBinaryWriterWrapper;
-use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
-use io::concurrent::structured_sequences::gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2};
-use io::concurrent::structured_sequences::{
-    StructuredSequenceBackendWrapper, StructuredSequenceWriter,
-};
 use kmers_transform::{
     KmersTransform, KmersTransformExecutorFactory, KmersTransformGlobalExtraData,
 };
@@ -32,6 +26,12 @@ use parallel_processor::buckets::{
 };
 use parallel_processor::memory_fs::MemoryFs;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use sequence_output::structured_sequences::binary::StructSeqBinaryWriterWrapper;
+use sequence_output::structured_sequences::fasta::FastaWriterWrapper;
+use sequence_output::structured_sequences::gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2};
+use sequence_output::structured_sequences::{
+    StructuredSequenceBackendWrapper, StructuredSequenceWriter,
+};
 use std::any::Any;
 use std::cmp::min;
 use std::marker::PhantomData;
@@ -54,13 +54,7 @@ pub struct GlobalMergeData<CX: ColorsManager, O: StructuredSequenceBackendWrappe
     min_multiplicity: usize,
     colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
     output_results_buckets: Arc<MultiThreadBuckets<CompressedBinaryWriter>>,
-    final_unitigs_file: Arc<
-        StructuredSequenceWriter<
-            PartialUnitigsColorStructure<CX>,
-            (),
-            O::Backend<PartialUnitigsColorStructure<CX>, ()>,
-        >,
-    >,
+    final_unitigs_file: Arc<StructuredSequenceWriter<CX, (), O::Backend<CX, ()>>>,
     global_resplit_data: Arc<MinimizerBucketingCommonData<()>>,
     hasnmap_kmers_total: AtomicU64,
     kmer_batches_count: AtomicU64,
@@ -181,13 +175,8 @@ pub fn kmers_merge<
     let colors_global_table: Arc<GlobalColorsTableWriter<CX>> =
         Arc::downcast(colors_global_table).unwrap();
 
-    let final_unitigs_file: Arc<
-        StructuredSequenceWriter<
-            PartialUnitigsColorStructure<CX>,
-            (),
-            OM::Backend<PartialUnitigsColorStructure<CX>, ()>,
-        >,
-    > = Arc::downcast(final_unitigs_file).unwrap();
+    let final_unitigs_file: Arc<StructuredSequenceWriter<CX, (), OM::Backend<CX, ()>>> =
+        Arc::downcast(final_unitigs_file).unwrap();
 
     PHASES_TIMES_MONITOR
         .write()
@@ -290,9 +279,8 @@ pub fn kmers_merge<
 mod tests {
     use colors::colors_manager::{ColorsManager, ColorsMergeManager};
     use colors::non_colored::NonColoredManager;
-    use config::{DEFAULT_PREFETCH_AMOUNT, FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
+    use config::{FLUSH_QUEUE_FACTOR, KEEP_FILES, PREFER_MEMORY};
     use hashes::cn_seqhash::u128::CanonicalSeqHashFactory;
-    use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
     use io::concurrent::temp_reads::creads_utils::ReadsCheckpointData;
     use minimizer_bucketing::MinimizerBucketMode;
     use parallel_processor::buckets::readers::binary_reader::{
@@ -302,6 +290,7 @@ mod tests {
     use parallel_processor::memory_data_size::MemoryDataSize;
     use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
     use rayon::ThreadPoolBuilder;
+    use sequence_output::structured_sequences::fasta::FastaWriterWrapper;
     use std::cmp::max;
     use std::path::Path;
     use std::sync::Arc;

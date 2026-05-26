@@ -22,22 +22,13 @@ use config::{
 };
 use ggcat_logging::stats;
 use hashes::HashFunctionFactory;
-use io::concurrent::structured_sequences::IdentSequenceWriter;
-use io::concurrent::structured_sequences::StructuredSequenceBackend;
-use io::concurrent::structured_sequences::StructuredSequenceBackendInit;
-use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
-use io::concurrent::structured_sequences::StructuredSequenceWriter;
-use io::concurrent::structured_sequences::binary::StructSeqBinaryWriter;
-use io::concurrent::structured_sequences::binary::StructSeqBinaryWriterWrapper;
-use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
-use io::concurrent::structured_sequences::gfa::GFAWriterWrapperV1;
-use io::concurrent::structured_sequences::gfa::GFAWriterWrapperV2;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
 use io::debug_load_buckets;
 use io::debug_load_single_buckets;
 use io::debug_save_buckets;
 use io::debug_save_single_buckets;
+use io::ident_writer::IdentSequenceWriter;
 use io::sequences_stream::general::GeneralSequenceBlockData;
 use io::{DUPLICATES_BUCKET_EXTRA, compute_stats_from_input_blocks};
 use parallel_processor::buckets::ExtraBucketData;
@@ -49,6 +40,15 @@ use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
+use sequence_output::structured_sequences::StructuredSequenceBackend;
+use sequence_output::structured_sequences::StructuredSequenceBackendInit;
+use sequence_output::structured_sequences::StructuredSequenceBackendWrapper;
+use sequence_output::structured_sequences::StructuredSequenceWriter;
+use sequence_output::structured_sequences::binary::StructSeqBinaryWriter;
+use sequence_output::structured_sequences::binary::StructSeqBinaryWriterWrapper;
+use sequence_output::structured_sequences::fasta::FastaWriterWrapper;
+use sequence_output::structured_sequences::gfa::GFAWriterWrapperV1;
+use sequence_output::structured_sequences::gfa::GFAWriterWrapperV2;
 use std::any::Any;
 use std::fs::remove_file;
 use std::path::Path;
@@ -226,26 +226,18 @@ pub fn run_assembler<
     {
         OutputFileMode::Intermediate {
             // Temporary file to store maximal unitigs data without links info, if further processing is requested
-            flat_unitigs:
-                Arc::new(
-                    StructuredSequenceWriter::new(
-                        StructSeqBinaryWriter::<
-                            PartialUnitigsColorStructure<AssemblerColorsManager>,
-                            (),
-                        >::new(
-                            temp_dir.join("maximal_unitigs.tmp"),
-                            &(
-                                get_memory_mode(SwapPriority::FinalMaps as usize),
-                                CompressedCheckpointSize::new_from_size(
-                                    MemoryDataSize::from_mebioctets(4),
-                                ),
-                                get_compression_level_info(),
-                            ),
-                            &(),
-                        ),
-                        k,
+            flat_unitigs: Arc::new(StructuredSequenceWriter::new(
+                StructSeqBinaryWriter::<AssemblerColorsManager, ()>::new(
+                    temp_dir.join("maximal_unitigs.tmp"),
+                    &(
+                        get_memory_mode(SwapPriority::FinalMaps as usize),
+                        CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
+                        get_compression_level_info(),
                     ),
+                    &(),
                 ),
+                k,
+            )),
             circular_unitigs: if let Some(MatchtigMode::FastEulerTigs) = compute_tigs_mode {
                 Some(Arc::new(StructuredSequenceWriter::new(
                     StructSeqBinaryWriter::new(

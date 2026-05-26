@@ -3,11 +3,11 @@ use config::{BucketIndexType, ColorCounterType, ColorIndexType};
 use dynamic_dispatch::dynamic_dispatch;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
-use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement,
 };
+use io::ident_writer::IdentSequenceWriter;
 use nightly_quirks::prelude::*;
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use std::cmp::min;
@@ -231,7 +231,10 @@ pub trait ColorsMergeManager: Sized {
         }
     }
 
-    fn pop_base(target: &mut Self::TempUnitigColorStructure);
+    fn pop_base(
+        target: &mut Self::PartialUnitigsColorStructure,
+        colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    );
 
     /// Encodes partial unitig colors into the extra data structure
     fn encode_part_unitigs_colors(

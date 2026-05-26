@@ -7,11 +7,11 @@ use config::{BucketIndexType, ColorCounterType};
 use dynamic_dispatch::dynamic_dispatch;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
-use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataCombiner,
     SequenceExtraDataTempBufferManagement,
 };
+use io::ident_writer::IdentSequenceWriter;
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use std::fmt::Debug;
 use std::io::{Read, Write};
@@ -293,7 +293,11 @@ impl ColorsMergeManager for NonColoredManager {
     }
 
     #[inline(always)]
-    fn pop_base(_target: &mut Self::TempUnitigColorStructure) {}
+    fn pop_base(
+        _target: &mut Self::PartialUnitigsColorStructure,
+        _colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) {
+    }
 
     #[inline(always)]
     fn encode_part_unitigs_colors(

@@ -6,7 +6,7 @@ use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::HashFunctionFactory;
 use hashes::extremal::DelayedHashComputation;
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
-use io::concurrent::structured_sequences::SequenceAbundanceType;
+use sequence_output::structured_sequences::SequenceAbundanceType;
 use io::concurrent::temp_reads::creads_utils::DeserializedReadIndependent;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
 use nightly_quirks::branch_pred::unlikely;
@@ -941,7 +941,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
 
                 let mut _abundance = match () {
                     #[cfg(feature = "support_kmer_counters")]
-                    () => io::concurrent::structured_sequences::new_sequence_abundance(
+                    () => sequence_output::structured_sequences::new_sequence_abundance(
                         supertig.multiplicity,
                         supertig.read.bases_count() - k + 1,
                     ),

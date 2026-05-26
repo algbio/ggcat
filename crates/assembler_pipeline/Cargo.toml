@@ -25,6 +25,7 @@ io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
 structs = { package = "ggcat_structs", path = "../structs" }
 kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
+sequence_output = { package = "ggcat_sequence_output", path = "../sequence_output" }
 
 
 # Matchtigs support

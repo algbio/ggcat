@@ -18,6 +18,7 @@ hashes = { package = "ggcat_hashes", path = "../hashes" }
 io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
 structs = { package = "ggcat_structs", path = "../structs" }
+sequence_output = { package = "ggcat_sequence_output", path = "../sequence_output" }
 kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
 
@@ -48,6 +49,7 @@ rayon = "1.10.0"
 support_kmer_counters = [
     "colors/support_kmer_counters",
     "structs/support_kmer_counters",
+    "sequence_output/support_kmer_counters",
 ]
 
 # Features used to filter ggcat capabilites

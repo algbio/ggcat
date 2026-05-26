@@ -8,14 +8,15 @@ use colors::colors_manager::{
     },
 };
 use hashes::{HashFunctionFactory, extremal::PrecomputedHash};
-use io::concurrent::{
-    structured_sequences::SequenceAbundanceType,
-    temp_reads::{
+use io::partial_unitigs_extra_data::IndirectReadInfo;
+use io::{
+    compressed_read::CompressedRead,
+    concurrent::temp_reads::{
         creads_utils::DeserializedRead, extra_data::SequenceExtraDataTempBufferManagement,
     },
 };
 use kmers_transform::GroupProcessStats;
-use structs::partial_unitigs_extra_data::IndirectReadInfo;
+use sequence_output::structured_sequences::SequenceAbundanceType;
 
 pub mod hashmap;
 pub mod sorting;
@@ -60,7 +61,7 @@ pub trait UnitigsExtenderTrait<MH: HashFunctionFactory, CX: ColorsManager> {
         colors_manager: &mut UnitigExtensionColorsData<CX>,
         output_unitig: impl FnMut(
             &mut UnitigExtensionColorsData<CX>,
-            &[u8],
+            CompressedRead,
             Option<PrecomputedHash<MH>>,
             Option<PrecomputedHash<MH>>,
             SequenceAbundanceType,

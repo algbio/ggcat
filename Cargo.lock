@@ -933,9 +933,9 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flate2"
-version = "1.1.4"
+version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc5a4e564e38c699f2880d3fda590bedc2e69f3f84cd48b457bd892ce61d0aa9"
+checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "cloudflare-zlib-sys",
  "crc32fast",
@@ -1031,6 +1031,7 @@ dependencies = [
  "ggcat_hashes",
  "ggcat_io",
  "ggcat_querier",
+ "ggcat_sequence_output",
  "ggcat_utils",
  "parallel-processor",
  "parking_lot",
@@ -1077,6 +1078,7 @@ dependencies = [
  "ggcat_hashes",
  "ggcat_io",
  "ggcat_kmers_transform",
+ "ggcat_sequence_output",
  "ggcat_structs",
  "ggcat_utils",
  "hashbrown 0.15.5",
@@ -1106,6 +1108,7 @@ dependencies = [
  "ggcat_io",
  "ggcat_kmers_transform",
  "ggcat_minimizer_bucketing",
+ "ggcat_sequence_output",
  "ggcat_structs",
  "ggcat_utils",
  "hashbrown 0.15.5",
@@ -1153,6 +1156,7 @@ dependencies = [
  "ggcat_hashes",
  "ggcat_io",
  "ggcat_kmers_transform",
+ "ggcat_sequence_output",
  "ggcat_structs",
  "ggcat_utils",
  "hashbrown 0.15.5",
@@ -1395,6 +1399,28 @@ dependencies = [
  "parallel-processor",
  "parking_lot",
  "rayon",
+ "streaming-libdeflate-rs",
+ "typenum",
+]
+
+[[package]]
+name = "ggcat_sequence_output"
+version = "2.0.0"
+dependencies = [
+ "bincode 2.0.1",
+ "byteorder",
+ "dynamic-dispatch",
+ "flate2",
+ "ggcat_colors",
+ "ggcat_config",
+ "ggcat_hashes",
+ "ggcat_io",
+ "ggcat_structs",
+ "ggcat_utils",
+ "lz4",
+ "nightly-quirks",
+ "parallel-processor",
+ "parking_lot",
  "streaming-libdeflate-rs",
  "typenum",
 ]

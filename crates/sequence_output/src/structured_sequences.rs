@@ -1,17 +1,25 @@
-use super::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
-use crate::concurrent::temp_reads::extra_data::SequenceExtraData;
+use colors::colors_manager::ColorsManager;
+use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use dynamic_dispatch::dynamic_dispatch;
+use io::compressed_read::CompressedRead;
+use io::concurrent::temp_reads::extra_data::{
+    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+};
+use io::concurrent_filewriter::ConcurrentFileWriter;
+use io::ident_writer::IdentSequenceWriter;
+use io::partial_unitigs_extra_data::PartialUnitigExtraData;
 use parking_lot::{Condvar, Mutex};
 
-use std::io::Write;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
+use crate::indirect_reads_extractor::ReadExtractWorkData;
+
 #[cfg(feature = "support_kmer_counters")]
 use {
-    crate::concurrent::temp_reads::extra_data::HasEmptyExtraBuffer,
-    crate::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint},
     byteorder::ReadBytesExt,
+    io::concurrent::temp_reads::extra_data::HasEmptyExtraBuffer,
+    io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint},
     serde::{Deserialize, Serialize},
     std::io::Read,
 };
@@ -21,44 +29,6 @@ pub mod concurrent;
 pub mod fasta;
 pub mod gfa;
 pub mod stream_finish;
-
-pub trait IdentSequenceWriter: SequenceExtraDataConsecutiveCompression + Sized {
-    fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer);
-    fn write_as_gfa<const VERSION: u32>(
-        &self,
-        k: u64,
-        index: u64,
-        length: u64,
-        stream: &mut impl Write,
-        extra_buffer: &Self::TempBuffer,
-    );
-
-    fn parse_as_ident<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self>;
-
-    fn parse_as_gfa<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self>;
-}
-
-impl IdentSequenceWriter for () {
-    fn write_as_ident(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
-
-    fn write_as_gfa<const VERSION: u32>(
-        &self,
-        _k: u64,
-        _index: u64,
-        _length: u64,
-        _stream: &mut impl Write,
-        _extra_buffer: &Self::TempBuffer,
-    ) {
-    }
-
-    fn parse_as_ident<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
-        Some(())
-    }
-
-    fn parse_as_gfa<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
-        Some(())
-    }
-}
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug, Default)]
 #[cfg(feature = "support_kmer_counters")]
@@ -140,12 +110,12 @@ pub trait StructuredSequenceBackendInit: Sync + Send + Sized {
 
 #[dynamic_dispatch]
 pub trait StructuredSequenceBackendWrapper: 'static + Sync + Send {
-    type Backend<ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression, LinksInfo: IdentSequenceWriter + SequenceExtraData>:
+    type Backend<CX: ColorsManager, LinksInfo: IdentSequenceWriter + SequenceExtraData>:
          StructuredSequenceBackendInit +
-         StructuredSequenceBackend<ColorInfo, LinksInfo>;
+         StructuredSequenceBackend<CX, LinksInfo>;
 }
 
-pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>:
+pub trait StructuredSequenceBackend<CX: ColorsManager, LinksInfo: IdentSequenceWriter>:
     Sync + Send
 {
     type SequenceTempBuffer;
@@ -153,16 +123,16 @@ pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: I
     fn alloc_temp_buffer(k: usize) -> Self::SequenceTempBuffer;
 
     fn write_sequence(
+        extract_workdata: &mut ReadExtractWorkData<CX>,
         k: usize,
         buffer: &mut Self::SequenceTempBuffer,
         sequence_index: u64,
-        sequence: &[u8],
-
-        color_info: ColorInfo,
+        sequence: CompressedRead,
+        extra_info: PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
         links_info: LinksInfo,
-        extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
-
-        #[cfg(feature = "support_kmer_counters")] abundance: SequenceAbundance,
+        extra_buffers: &(<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer, LinksInfo::TempBuffer),
+        indirect_file: Option<&ConcurrentFileWriter>,
+        flush_callback: impl FnMut(&mut Self::SequenceTempBuffer),
     );
 
     fn get_path(&self) -> PathBuf;
@@ -173,22 +143,22 @@ pub trait StructuredSequenceBackend<ColorInfo: IdentSequenceWriter, LinksInfo: I
 }
 
 pub struct StructuredSequenceWriter<
-    ColorInfo: IdentSequenceWriter,
+    CX: ColorsManager,
     LinksInfo: IdentSequenceWriter,
-    Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
+    Backend: StructuredSequenceBackend<CX, LinksInfo>,
 > {
     current_index: Mutex<(u64, u64)>,
     k: usize,
     backend: Mutex<Backend>,
     index_condvar: Condvar,
-    _phantom: PhantomData<(ColorInfo, LinksInfo, Backend)>,
+    _phantom: PhantomData<(CX, LinksInfo, Backend)>,
 }
 
 impl<
-    ColorInfo: IdentSequenceWriter,
+    CX: ColorsManager,
     LinksInfo: IdentSequenceWriter,
-    Backend: StructuredSequenceBackend<ColorInfo, LinksInfo>,
-> StructuredSequenceWriter<ColorInfo, LinksInfo, Backend>
+    Backend: StructuredSequenceBackend<CX, LinksInfo>,
+> StructuredSequenceWriter<CX, LinksInfo, Backend>
 {
     pub fn new(backend: Backend, k: usize) -> Self {
         Self {
@@ -205,9 +175,15 @@ impl<
         buffer: &mut Backend::SequenceTempBuffer,
         first_index: Option<u64>,
         sequences: impl ExactSizeIterator<
-            Item = (&'a [u8], ColorInfo, LinksInfo, SequenceAbundanceType),
+            Item = (
+                CompressedRead<'a>,
+                PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
+                LinksInfo,
+                SequenceAbundanceType,
+            ),
         >,
-        extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
+        extra_buffers: &(<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer, LinksInfo::TempBuffer),
+        indirect_file: Option<&ConcurrentFileWriter>,
     ) -> u64 {
         let sequences_count = sequences.len() as u64;
         assert!(sequences_count > 0);
@@ -223,37 +199,49 @@ impl<
             }
         };
 
+        let mut extract_workdata = ReadExtractWorkData::new();
+
+        let mut flush_lock = None;
+
+        let mut flush_function = |buffer: &mut Backend::SequenceTempBuffer| {
+            if flush_lock.is_none() {
+                flush_lock = Some(loop {
+                    // If we are the first ones that need to write, flush the buffer to file
+                    let mut index_lock = self.current_index.lock();
+
+                    if index_lock.1 == start_sequence_index {
+                        break index_lock;
+                    } else {
+                        self.index_condvar.wait(&mut index_lock);
+                    }
+                });
+            }
+            self.backend.lock().flush_temp_buffer(buffer);
+        };
+
         let mut current_index = start_sequence_index;
         // Write the sequences to a temporary buffer
-        for (sequence, color_info, links_info, _abundance) in sequences {
+        for (sequence, extra_info, links_info, _abundance) in sequences {
             Backend::write_sequence(
+                &mut extract_workdata,
                 self.k,
                 buffer,
                 current_index,
                 sequence,
-                color_info,
+                extra_info,
                 links_info,
                 extra_buffers,
-                #[cfg(feature = "support_kmer_counters")]
-                _abundance,
+                indirect_file,
+                &mut flush_function,
             );
             current_index += 1;
         }
 
-        loop {
-            // If we are the first ones that need to write, flush the buffer to file
-            let mut index_lock = self.current_index.lock();
+        flush_function(buffer);
 
-            if index_lock.1 == start_sequence_index {
-                self.backend.lock().flush_temp_buffer(buffer);
-                index_lock.1 += sequences_count;
-
-                self.index_condvar.notify_all();
-                break;
-            } else {
-                self.index_condvar.wait(&mut index_lock);
-            }
-        }
+        let mut index_lock = flush_lock.unwrap();
+        index_lock.1 += sequences_count;
+        self.index_condvar.notify_all();
 
         start_sequence_index
     }

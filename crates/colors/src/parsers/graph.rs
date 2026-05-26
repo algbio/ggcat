@@ -7,10 +7,10 @@ use crate::managers::multiple::{
 use crate::parsers::{SequenceIdent, SingleSequenceInfo};
 use byteorder::ReadBytesExt;
 use config::{ColorCounterType, ColorIndexType};
-use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataCombiner, SequenceExtraDataTempBufferManagement,
 };
+use io::ident_writer::IdentSequenceWriter;
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use std::cmp::min;
 use std::io::{Read, Write};

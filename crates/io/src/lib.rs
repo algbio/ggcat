@@ -23,6 +23,8 @@ pub mod sequences_stream;
 pub mod structs;
 pub mod varint;
 pub mod concurrent_filewriter;
+pub mod partial_unitigs_extra_data;
+pub mod ident_writer;
 
 pub const DUPLICATES_BUCKET_EXTRA: ExtraBucketData = ExtraBucketData(0xdddd);
 

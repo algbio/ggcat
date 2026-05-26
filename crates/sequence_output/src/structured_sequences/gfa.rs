@@ -1,11 +1,19 @@
-use crate::concurrent::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
-use crate::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataConsecutiveCompression,
-};
+use crate::indirect_reads_extractor::ReadExtractWorkData;
+use crate::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
+use colors::colors_manager::ColorsManager;
+use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE};
 use dynamic_dispatch::dynamic_dispatch;
 use flate2::Compression;
 use flate2::write::GzEncoder;
+use hashes::HashableSequence;
+use io::compressed_read::CompressedRead;
+use io::concurrent::temp_reads::extra_data::{
+    SequenceExtraData, SequenceExtraDataConsecutiveCompression,
+    SequenceExtraDataTempBufferManagement,
+};
+use io::concurrent_filewriter::ConcurrentFileWriter;
+use io::partial_unitigs_extra_data::PartialUnitigExtraData;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -21,44 +29,36 @@ pub struct GFAWriterWrapperV1;
 
 #[dynamic_dispatch]
 impl StructuredSequenceBackendWrapper for GFAWriterWrapperV1 {
-    type Backend<
-        ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
-        LinksInfo: IdentSequenceWriter + SequenceExtraData,
-    > = GFAWriter<ColorInfo, LinksInfo, 1>;
+    type Backend<CX: ColorsManager, LinksInfo: IdentSequenceWriter + SequenceExtraData> =
+        GFAWriter<CX, LinksInfo, 1>;
 }
 
 pub struct GFAWriterWrapperV2;
 
 #[dynamic_dispatch]
 impl StructuredSequenceBackendWrapper for GFAWriterWrapperV2 {
-    type Backend<
-        ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
-        LinksInfo: IdentSequenceWriter + SequenceExtraData,
-    > = GFAWriter<ColorInfo, LinksInfo, 2>;
+    type Backend<CX: ColorsManager, LinksInfo: IdentSequenceWriter + SequenceExtraData> =
+        GFAWriter<CX, LinksInfo, 2>;
 }
 
-pub struct GFAWriter<
-    ColorInfo: IdentSequenceWriter,
-    LinksInfo: IdentSequenceWriter,
-    const VERSION: u32,
-> {
+pub struct GFAWriter<CX: ColorsManager, LinksInfo: IdentSequenceWriter, const VERSION: u32> {
     writer: Box<dyn Write>,
     path: PathBuf,
-    _phantom: PhantomData<(ColorInfo, LinksInfo)>,
+    _phantom: PhantomData<(CX, LinksInfo)>,
 }
 
-unsafe impl<const VERSION: u32, ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> Send
-    for GFAWriter<ColorInfo, LinksInfo, VERSION>
+unsafe impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter> Send
+    for GFAWriter<CX, LinksInfo, VERSION>
 {
 }
 
-unsafe impl<const VERSION: u32, ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> Sync
-    for GFAWriter<ColorInfo, LinksInfo, VERSION>
+unsafe impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter> Sync
+    for GFAWriter<CX, LinksInfo, VERSION>
 {
 }
 
-impl<const VERSION: u32, ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
-    StructuredSequenceBackendInit for GFAWriter<ColorInfo, LinksInfo, VERSION>
+impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
+    StructuredSequenceBackendInit for GFAWriter<CX, LinksInfo, VERSION>
 {
     fn new_compressed_gzip(path: impl AsRef<Path>, level: u32) -> Self {
         let compress_stream = GzEncoder::new(
@@ -110,8 +110,8 @@ impl<const VERSION: u32, ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenc
     }
 }
 
-impl<const VERSION: u32, ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter>
-    StructuredSequenceBackend<ColorInfo, LinksInfo> for GFAWriter<ColorInfo, LinksInfo, VERSION>
+impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
+    StructuredSequenceBackend<CX, LinksInfo> for GFAWriter<CX, LinksInfo, VERSION>
 {
     type SequenceTempBuffer = Vec<u8>;
 
@@ -120,27 +120,34 @@ impl<const VERSION: u32, ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenc
     }
 
     fn write_sequence(
+        extract_workdata: &mut ReadExtractWorkData<CX>,
         k: usize,
         buffer: &mut Self::SequenceTempBuffer,
         sequence_index: u64,
-        sequence: &[u8],
+        sequence: CompressedRead,
 
-        _color_info: ColorInfo,
+        extra_info: PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
         links_info: LinksInfo,
-        extra_buffers: &(ColorInfo::TempBuffer, LinksInfo::TempBuffer),
-
-        #[cfg(feature = "support_kmer_counters")] abundance: SequenceAbundance,
+        extra_buffers: &(<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer, LinksInfo::TempBuffer),
+        indirect_file: Option<&ConcurrentFileWriter>,
+        flush_callback: impl FnMut(&mut Self::SequenceTempBuffer),
     ) {
         // Sequence line
         if VERSION == 1 {
             // S <index> <sequence> LN:i:<length> ...
             write!(buffer, "S\t{}\t", sequence_index).unwrap();
-            buffer.extend_from_slice(sequence);
-            write!(buffer, "\tLN:i:{}", sequence.len()).unwrap();
+            buffer.extend(sequence.as_bases_iter());
+            write!(buffer, "\tLN:i:{}", sequence.bases_count()).unwrap();
         } else if VERSION == 2 {
             // S <index> <len> <sequence> ...
-            write!(buffer, "S\t{}\t{}\t", sequence_index, sequence.len()).unwrap();
-            buffer.extend_from_slice(sequence);
+            write!(
+                buffer,
+                "S\t{}\t{}\t",
+                sequence_index,
+                sequence.bases_count()
+            )
+            .unwrap();
+            buffer.extend(sequence.as_bases_iter());
         }
 
         #[cfg(feature = "support_kmer_counters")]
@@ -163,7 +170,7 @@ impl<const VERSION: u32, ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenc
         links_info.write_as_gfa::<VERSION>(
             k as u64,
             sequence_index,
-            sequence.len() as u64,
+            sequence.bases_count() as u64,
             buffer,
             &extra_buffers.1,
         );
@@ -181,8 +188,8 @@ impl<const VERSION: u32, ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenc
     fn finalize(self) {}
 }
 
-impl<const VERSION: u32, ColorInfo: IdentSequenceWriter, LinksInfo: IdentSequenceWriter> Drop
-    for GFAWriter<ColorInfo, LinksInfo, VERSION>
+impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter> Drop
+    for GFAWriter<CX, LinksInfo, VERSION>
 {
     fn drop(&mut self) {
         self.writer.flush().unwrap();

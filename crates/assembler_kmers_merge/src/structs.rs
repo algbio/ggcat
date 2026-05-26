@@ -5,11 +5,11 @@ use io::concurrent::temp_reads::creads_utils::{
     NoMultiplicity, NoSecondBucket, ToReadData,
 };
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
+use io::partial_unitigs_extra_data::{IndirectReadInfo, PartialUnitigExtraData};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::buckets::{LockFreeBucket, SingleBucket};
 use std::marker::PhantomData;
-use structs::partial_unitigs_extra_data::{IndirectReadInfo, PartialUnitigExtraData};
 use utils::owned_drop::OwnedDrop;
 
 pub struct ResultsBucket<X: SequenceExtraDataConsecutiveCompression> {

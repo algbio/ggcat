@@ -11,11 +11,11 @@ use config::{
 };
 use ggcat_logging::stats;
 use hashes::extremal::{DelayedHashComputation, HashGenerator};
-use hashes::{ExtendableHashTraitType, HashFunctionFactory};
+use hashes::{ExtendableHashTraitType, HashFunctionFactory, HashableSequence};
 use instrumenter::local_setup_instrumenter;
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
-use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
-use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
+use sequence_output::structured_sequences::StructuredSequenceBackendWrapper;
+use sequence_output::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::temp_reads::creads_utils::{
     AlignToMinimizerByteBoundary, AssemblerMinimizerPosition, CompressedReadsBucketData,
     CompressedReadsBucketDataSerializer, DeserializedReadIndependent, NoMultiplicity,
@@ -31,7 +31,7 @@ use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::slice::from_raw_parts;
 use std::sync::Arc;
-use structs::partial_unitigs_extra_data::{PartialUnitigExtraData, PartialUnitigMode};
+use io::partial_unitigs_extra_data::{PartialUnitigExtraData, PartialUnitigMode};
 use typenum::U4;
 
 local_setup_instrumenter!();
@@ -97,12 +97,12 @@ impl<
 > ParallelKmersMergeFinalExecutor<MH, CX, OM, COMPUTE_SIMPLITIGS>
 {
     #[inline]
-    fn output_sequence<'a, 'b, R: ToReadData<'a> + Copy, H: HashGenerator<MH>>(
+    fn output_sequence<'a, H: HashGenerator<MH>>(
         lonely_unitigs: &mut FastaWriterConcurrentBuffer<
-            'b,
-            PartialUnitigsColorStructure<CX>,
+            'a,
+            CX,
             (),
-            OM::Backend<PartialUnitigsColorStructure<CX>, ()>,
+            OM::Backend<CX, ()>,
         >,
         unitigs_tmp: &mut BucketsThreadDispatcher<
             CompressedBinaryWriter,
@@ -116,12 +116,12 @@ impl<
             >,
         >,
         colors_data: &mut UnitigExtensionColorsData<CX>,
-        out_seq: R,
+        out_seq: CompressedRead<'_>,
         forward_linked: Option<H>,
         backward_linked: Option<H>,
         k: usize,
         #[cfg(feature = "support_kmer_counters")]
-        counters: io::concurrent::structured_sequences::SequenceAbundance,
+        counters: sequence_output::structured_sequences::SequenceAbundance,
     ) {
         let colors = color_types::ColorsMergeManagerType::<CX>::encode_part_unitigs_colors(
             &mut colors_data.unitigs_temp_colors,
@@ -130,14 +130,18 @@ impl<
 
         if forward_linked.is_none() && backward_linked.is_none() {
             lonely_unitigs.add_read(
-                out_seq.into_bases_iter(),
+                out_seq,
                 None,
-                colors,
-                &colors_data.temp_color_buffer.0,
+                PartialUnitigExtraData {
+                    colors,
+                    mode: PartialUnitigMode::Inline,
+                    #[cfg(feature = "support_kmer_counters")]
+                    counters,
+                },
+                &colors_data.temp_color_buffer,
                 (),
                 &(),
-                #[cfg(feature = "support_kmer_counters")]
-                counters,
+                None,
             );
         } else {
             let extra_data = PartialUnitigExtraData {
@@ -358,7 +362,7 @@ impl<
                             },
                             global_data.k,
                             #[cfg(feature = "support_kmer_counters")]
-                            io::concurrent::structured_sequences::SequenceAbundance {
+                            sequence_output::structured_sequences::SequenceAbundance {
                                 first: read.multiplicity as u64,
                                 sum: read.multiplicity as u64
                                     * (read.read.bases_count() - global_data.k + 1) as u64,

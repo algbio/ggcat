@@ -49,6 +49,7 @@ members = [
     "crates/kmers_transform",
     "crates/colors",
     "crates/structs",
+    "crates/sequence_output",
 
     # Assembler pipeline
     "crates/assembler_minimizer_bucketing",

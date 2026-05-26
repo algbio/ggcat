@@ -7,7 +7,7 @@ use ggcat_logging::stats;
 use ggcat_logging::stats::KmersMergeBucketReport;
 use hashes::HashFunctionFactory;
 use io::DUPLICATES_BUCKET_EXTRA;
-use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
+use sequence_output::structured_sequences::StructuredSequenceBackendWrapper;
 use io::concurrent::temp_reads::creads_utils::{
     AssemblerMinimizerPosition, DeserializedRead, WithMultiplicity,
 };

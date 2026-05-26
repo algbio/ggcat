@@ -9,9 +9,9 @@ use colors::{
 use config::{KEEP_FILES, MEMORY_THRESHOLD_CLEAR_START_OFFSET, MINIMUM_GLOBAL_MEMORY};
 pub use ggcat_logging::MessageLevel;
 use ggcat_logging::{UnrecoverableErrorLogging, info, warn};
-use io::concurrent::structured_sequences::StructuredSequenceBackendWrapper;
-use io::concurrent::structured_sequences::fasta::FastaWriterWrapper;
-use io::concurrent::structured_sequences::gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2};
+use sequence_output::structured_sequences::StructuredSequenceBackendWrapper;
+use sequence_output::structured_sequences::fasta::FastaWriterWrapper;
+use sequence_output::structured_sequences::gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2};
 use io::sequences_stream::GenericSequencesStream;
 use io::sequences_stream::fasta::FastaFileSequencesStream;
 use parallel_processor::enable_counters_logging;

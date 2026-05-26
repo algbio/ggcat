@@ -1,8 +1,6 @@
 use std::ops::Range;
 
-use byteorder::ReadBytesExt;
-use config::DEFAULT_OUTPUT_BUFFER_SIZE;
-use io::{
+use crate::{
     concurrent::temp_reads::extra_data::{
         SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
     },
@@ -11,6 +9,8 @@ use io::{
         encode_varint_flags,
     },
 };
+use byteorder::ReadBytesExt;
+use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use typenum::U1;
 
 pub const INDIRECT_UNITIG_FLAG_MASK: u8 = 4;
@@ -25,8 +25,7 @@ pub enum PartialUnitigMode {
 }
 
 impl PartialUnitigMode {
-    #[allow(dead_code)]
-    pub fn debug_get_total_length(&self, buffer: &[IndirectReadInfo]) -> usize {
+    pub fn get_total_length(&self, buffer: &[IndirectReadInfo]) -> usize {
         let mut totlen = 0;
         match self {
             PartialUnitigMode::Inline => {}
@@ -45,7 +44,7 @@ impl PartialUnitigMode {
 #[derive(Clone, Debug)]
 pub struct PartialUnitigExtraData<X: SequenceExtraDataConsecutiveCompression> {
     #[cfg(feature = "support_kmer_counters")]
-    pub counters: io::concurrent::structured_sequences::SequenceAbundance,
+    pub counters: sequence_output::structured_sequences::SequenceAbundance,
     pub colors: X,
     pub mode: PartialUnitigMode,
 }
@@ -143,7 +142,7 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
     ) -> Option<Self> {
         let colors = X::decode_extended(&mut buffer.0, reader, last_data, read_flags)?;
         #[cfg(feature = "support_kmer_counters")]
-        let counters = io::concurrent::structured_sequences::SequenceAbundance::decode_extended(
+        let counters = sequence_output::structured_sequences::SequenceAbundance::decode_extended(
             &mut (),
             reader,
             (),

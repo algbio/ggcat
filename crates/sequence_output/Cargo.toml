@@ -1,0 +1,33 @@
+[package]
+name = "ggcat_sequence_output"
+version = "2.0.0"
+edition = "2024"
+[dependencies]
+
+# Config
+config = { package = "ggcat_config", path = "../config" }
+
+# Static dispatch
+dynamic-dispatch = "0.5.4"
+
+# Common libraries
+parallel-processor = "0.2.5"
+streaming-libdeflate-rs = "0.2.3"
+nightly-quirks = "0.1.4"
+
+# Common pipeline libraries
+hashes = { package = "ggcat_hashes", path = "../hashes" }
+io = { package = "ggcat_io", path = "../io" }
+structs = { package = "ggcat_structs", path = "../structs" }
+utils = { package = "ggcat_utils", path = "../utils" }
+colors = { package = "ggcat_colors", path = "../colors" }
+typenum = "1.20.0"
+lz4 = "1.28.1"
+bincode = "2.0.1"
+byteorder = "1.5.0"
+flate2 = "1.1.9"
+parking_lot = "0.12.5"
+
+
+[features]
+support_kmer_counters = []

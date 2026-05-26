@@ -8,9 +8,9 @@ use std::{
     },
 };
 
+#[derive(Clone)]
 pub struct ConcurrentFileWriter {
-    file: Arc<File>,
-    next_offset: AtomicU64,
+    file_and_offset: Arc<(File, AtomicU64)>,
 }
 
 impl ConcurrentFileWriter {
@@ -23,8 +23,7 @@ impl ConcurrentFileWriter {
             .open(path)?;
 
         Ok(Self {
-            file: Arc::new(file),
-            next_offset: AtomicU64::new(0),
+            file_and_offset: Arc::new((file, AtomicU64::new(0))),
         })
     }
 
@@ -38,8 +37,7 @@ impl ConcurrentFileWriter {
         let len = file.metadata()?.len();
 
         Ok(Self {
-            file: Arc::new(file),
-            next_offset: AtomicU64::new(len),
+            file_and_offset: Arc::new((file, AtomicU64::new(len))),
         })
     }
 
@@ -48,9 +46,9 @@ impl ConcurrentFileWriter {
         let len = u64::try_from(buf.len())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "buffer too large"))?;
 
-        let offset = self.next_offset.fetch_add(len, Ordering::Relaxed);
+        let offset = self.file_and_offset.1.fetch_add(len, Ordering::Relaxed);
 
-        write_all_at(&self.file, buf, offset)?;
+        write_all_at(&self.file_and_offset.0, buf, offset)?;
 
         Ok(offset)
     }
@@ -69,7 +67,7 @@ impl ConcurrentFileWriter {
         let mut offset = offset;
 
         while !slice.is_empty() {
-            let read = read_at(&self.file, slice, offset)?;
+            let read = read_at(&self.file_and_offset.0, slice, offset)?;
 
             if read == 0 {
                 return Err(io::Error::new(
@@ -87,7 +85,7 @@ impl ConcurrentFileWriter {
     }
 
     pub fn file(&self) -> &File {
-        &self.file
+        &self.file_and_offset.0
     }
 }
 

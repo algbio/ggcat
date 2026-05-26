@@ -6,10 +6,10 @@ use config::COLORS_BUFFER_DEFAULT_SIZE;
 use config::{ColorCounterType, ColorIndexType};
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
-use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
+use io::ident_writer::IdentSequenceWriter;
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -132,7 +132,10 @@ impl ColorsMergeManager for SingleColorManager {
         panic!("Unsupported!");
     }
 
-    fn pop_base(_target: &mut Self::TempUnitigColorStructure) {
+    fn pop_base(
+        _target: &mut Self::PartialUnitigsColorStructure,
+        _colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) {
         panic!("Unsupported!");
     }
 

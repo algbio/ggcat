@@ -883,6 +883,16 @@ impl<'a> CompressedRead<'a> {
         unsafe { (*self.data.add(index / 4) >> ((index % 4) * 2)) & 0x3 }
     }
 
+    pub fn write_packed_to_vec(
+        &self,
+        vec: &mut Vec<u8>,
+        current_bases_count: &mut usize,
+        rc: bool,
+    ) {
+        self.copy_to_buffer_with_offset(vec, *current_bases_count % 4, rc);
+        *current_bases_count += self.bases_count();
+    }
+
     pub fn write_unpacked_to_vec(&self, vec: &mut Vec<u8>, rc: bool) {
         vec.reserve(self.size);
         let start = vec.len();

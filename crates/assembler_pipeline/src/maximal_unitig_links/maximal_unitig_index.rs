@@ -1,5 +1,5 @@
 use byteorder::ReadBytesExt;
-use io::concurrent::structured_sequences::IdentSequenceWriter;
+use io::ident_writer::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };

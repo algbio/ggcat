@@ -9,10 +9,10 @@ use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
 use hashes::{HashFunction, HashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
-use io::concurrent::structured_sequences::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
+use io::ident_writer::IdentSequenceWriter;
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use itertools::Itertools;
 use nightly_quirks::slice_partition_dedup::SlicePartitionDedup;
@@ -370,11 +370,15 @@ impl ColorsMergeManager for MultipleColorsManager {
         }
     }
 
-    fn pop_base(target: &mut Self::TempUnitigColorStructure) {
-        if let Some(last) = target.colors.back_mut() {
+    fn pop_base(
+        target: &mut Self::PartialUnitigsColorStructure,
+        colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    ) {
+        if target.slice_end - target.slice_start > 0 {
+            let last = &mut colors_buffer.colors[target.slice_end - 1];
             last.counter -= 1;
             if last.counter == 0 {
-                target.colors.pop_back();
+                target.slice_end -= 1;
             }
         }
     }

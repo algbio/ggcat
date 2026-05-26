@@ -24,6 +24,7 @@ assembler_minimizer_bucketing = { package = "ggcat_assembler_minibuck", path = "
 assembler_kmers_merge = { package = "ggcat_assembler_kmerge", path = "../assembler_kmers_merge" }
 assembler_pipeline = { package = "ggcat_assembler_pipeline", path = "../assembler_pipeline" }
 kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
+sequence_output = { package = "ggcat_sequence_output", path = "../sequence_output" }
 
 
 # Common pipeline libraries

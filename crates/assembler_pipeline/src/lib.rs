@@ -11,17 +11,12 @@ use colors::colors_manager::{ColorsManager, color_types::PartialUnitigsColorStru
 use config::{SwapPriority, get_compression_level_info, get_memory_mode};
 use hashes::HashFunctionFactory;
 use io::{
-    concurrent::{
-        structured_sequences::{
-            IdentSequenceWriter, StructuredSequenceBackend, StructuredSequenceBackendInit,
-            StructuredSequenceBackendWrapper, StructuredSequenceWriter,
-            binary::StructSeqBinaryWriter,
-            fasta::FastaWriterWrapper,
-            gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2},
-        },
-        temp_reads::extra_data::{SequenceExtraData, SequenceExtraDataConsecutiveCompression},
+    concurrent::temp_reads::extra_data::{
+        SequenceExtraData, SequenceExtraDataConsecutiveCompression,
     },
+    concurrent_filewriter::ConcurrentFileWriter,
     debug_load_single_buckets, debug_save_single_buckets,
+    ident_writer::IdentSequenceWriter,
     sequences_stream::general::GeneralSequenceBlockData,
 };
 use parallel_processor::{
@@ -32,10 +27,20 @@ use parallel_processor::{
     memory_fs::MemoryFs,
     phase_times_monitor::PHASES_TIMES_MONITOR,
 };
+use sequence_output::structured_sequences::{
+    StructuredSequenceBackend, StructuredSequenceBackendInit, StructuredSequenceBackendWrapper,
+    StructuredSequenceWriter,
+    binary::StructSeqBinaryWriter,
+    fasta::FastaWriterWrapper,
+    gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2},
+};
 use utils::assembler_phases::AssemblerPhase;
 
-use crate::compute_matchtigs::{MatchtigMode, MatchtigsStorageBackend, compute_matchtigs_thread};
 use crate::{compute_matchtigs::MatchtigHelperTrait, eulertigs::build_eulertigs};
+use crate::{
+    compute_matchtigs::{MatchtigMode, MatchtigsStorageBackend, compute_matchtigs_thread},
+    extend_unitigs::INDIRECT_UNITIGS_FILE,
+};
 use crate::{extend_unitigs::extend_unitigs, maximal_unitig_links::build_maximal_unitigs_links};
 
 pub mod compute_matchtigs;
@@ -45,31 +50,24 @@ pub mod maximal_unitig_links;
 
 pub enum OutputFileMode<
     OutputMode: StructuredSequenceBackendWrapper,
-    ColorInfo: IdentSequenceWriter + SequenceExtraDataConsecutiveCompression,
+    CX: ColorsManager,
     LinksInfo: IdentSequenceWriter + SequenceExtraData,
 > {
     Final {
-        output_file: Arc<
-            StructuredSequenceWriter<
-                ColorInfo,
-                LinksInfo,
-                OutputMode::Backend<ColorInfo, LinksInfo>,
-            >,
-        >,
+        output_file:
+            Arc<StructuredSequenceWriter<CX, LinksInfo, OutputMode::Backend<CX, LinksInfo>>>,
     },
     Intermediate {
-        flat_unitigs:
-            Arc<StructuredSequenceWriter<ColorInfo, (), StructSeqBinaryWriter<ColorInfo, ()>>>,
-        circular_unitigs: Option<
-            Arc<StructuredSequenceWriter<ColorInfo, (), StructSeqBinaryWriter<ColorInfo, ()>>>,
-        >,
+        flat_unitigs: Arc<StructuredSequenceWriter<CX, (), StructSeqBinaryWriter<CX, ()>>>,
+        circular_unitigs:
+            Option<Arc<StructuredSequenceWriter<CX, (), StructSeqBinaryWriter<CX, ()>>>>,
     },
 }
 
 pub fn get_final_output_writer<
-    C: IdentSequenceWriter,
+    CX: ColorsManager,
     L: IdentSequenceWriter,
-    W: StructuredSequenceBackend<C, L> + StructuredSequenceBackendInit,
+    W: StructuredSequenceBackend<CX, L> + StructuredSequenceBackendInit,
 >(
     output_file: &Path,
 ) -> W {
@@ -118,11 +116,9 @@ pub fn build_final_unitigs<
     compute_tigs_mode: Option<MatchtigMode>,
     output_file_mode: Box<dyn Any>,
 ) {
-    let output_file_mode = *output_file_mode.downcast::<OutputFileMode<
-        OutputMode,
-        PartialUnitigsColorStructure<AssemblerColorsManager>,
-        (),
-    >>().unwrap();
+    let output_file_mode = *output_file_mode
+        .downcast::<OutputFileMode<OutputMode, AssemblerColorsManager, ()>>()
+        .unwrap();
 
     if step <= AssemblerPhase::UnitigsExtension {
         match &output_file_mode {
@@ -155,6 +151,9 @@ pub fn build_final_unitigs<
     }
 
     if step <= AssemblerPhase::MaximalUnitigsLinks {
+        let indirect_unitigs_file =
+            ConcurrentFileWriter::append_existing(temp_dir.join(INDIRECT_UNITIGS_FILE)).unwrap();
+
         match output_file_mode {
             OutputFileMode::Final { output_file } => {
                 Arc::try_unwrap(output_file)
@@ -189,6 +188,7 @@ pub fn build_final_unitigs<
                         &temp_dir,
                         &final_unitigs_file,
                         k,
+                        &indirect_unitigs_file,
                     );
                 } else if generate_maximal_unitigs_links
                     || compute_tigs_mode.needs_matchtigs_library()
@@ -203,6 +203,7 @@ pub fn build_final_unitigs<
 
                         let matchtigs_receiver = matchtigs_backend.get_receiver();
 
+                        let indirect_unitigs_file_thread = indirect_unitigs_file.clone();
                         let handle = std::thread::Builder::new()
                             .name("greedy_matchtigs".to_string())
                             .spawn(move || {
@@ -212,6 +213,7 @@ pub fn build_final_unitigs<
                                     matchtigs_receiver,
                                     &final_unitigs_file,
                                     compute_tigs_mode,
+                                    &indirect_unitigs_file_thread,
                                 );
                             })
                             .unwrap();
@@ -225,6 +227,7 @@ pub fn build_final_unitigs<
                             &temp_dir,
                             &StructuredSequenceWriter::new(matchtigs_backend, k),
                             k,
+                            &indirect_unitigs_file,
                         );
 
                         handle.join().unwrap();
@@ -242,7 +245,13 @@ pub fn build_final_unitigs<
                             MergingHash,
                             AssemblerColorsManager,
                             OutputMode::Backend<_, _>,
-                        >(temp_path, &temp_dir, &final_unitigs_file, k);
+                        >(
+                            temp_path,
+                            &temp_dir,
+                            &final_unitigs_file,
+                            k,
+                            &indirect_unitigs_file,
+                        );
                         final_unitigs_file.finalize();
                     }
                 }
