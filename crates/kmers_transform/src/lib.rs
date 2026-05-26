@@ -33,6 +33,7 @@ use std::time::{Duration, Instant};
 pub mod debug_bucket_stats;
 pub mod processor;
 mod resplitter;
+pub mod indirect_reads_extractor;
 
 pub trait KmersTransformGlobalExtraData: Sync + Send {
     fn get_k(&self) -> usize;

@@ -1,17 +1,11 @@
-use std::{fs::File, ops::Range};
+use std::ops::Range;
 
 use byteorder::ReadBytesExt;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use io::{
-    compressed_read::CompressedRead,
-    concurrent::temp_reads::{
-        creads_utils::DeserializedRead,
-        extra_data::{
-            SequenceExtraData, SequenceExtraDataConsecutiveCompression,
-            SequenceExtraDataTempBufferManagement,
-        },
+    concurrent::temp_reads::extra_data::{
+        SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
     },
-    concurrent_filewriter::ConcurrentFileWriter,
     varint::{
         VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, decode_varint, decode_varint_flags, encode_varint,
         encode_varint_flags,
@@ -294,56 +288,5 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
                         + (VARINT_MAX_SIZE * 2 + VARINT_FLAGS_MAX_SIZE) * indirections_range.len()
                 }
             }
-    }
-}
-
-pub fn indirect_read_extract_all<'a, X: SequenceExtraDataConsecutiveCompression>(
-    read: CompressedRead<'a>,
-    extra: &PartialUnitigExtraData<X>,
-    input_extra_buffer: &(X::TempBuffer, Vec<IndirectReadInfo>),
-    output_buffer_1: &'a mut Vec<u8>,
-    output_buffer_2: &'a mut Vec<u8>,
-    output_extra_buffer: &mut X::TempBuffer,
-    indirect_file: &ConcurrentFileWriter,
-) -> (CompressedRead<'a>, X) {
-    match extra.mode.clone() {
-        PartialUnitigMode::Inline => (read, extra.colors.clone()),
-        PartialUnitigMode::Indirect {
-            indirection_start,
-            indirections_range,
-        } => {
-            output_buffer_1.clear();
-            output_buffer_2.clear();
-            let mut bases_count = 0;
-            read.sub_slice(0..indirection_start)
-                .copy_to_buffer(output_buffer_2);
-            bases_count += indirection_start;
-            for part_idx in indirections_range {
-                let part = input_extra_buffer.1[part_idx];
-                output_buffer_1.clear();
-                let extra_length = part.get_extra_length();
-                let sequence_length = part.get_sequence_length();
-                let is_rc = part.is_rc();
-                let total_bytes = extra_length + sequence_length.div_ceil(4);
-                indirect_file
-                    .read_all_at(output_buffer_1, part.file_offset as u64, total_bytes)
-                    .unwrap();
-                let part = CompressedRead::from_compressed_reads(
-                    &output_buffer_1[extra_length..],
-                    0,
-                    sequence_length,
-                );
-                part.copy_to_buffer_with_offset(output_buffer_2, bases_count % 4, is_rc);
-                bases_count += part.get_length();
-            }
-            read.sub_slice(indirection_start..read.get_length())
-                .copy_to_buffer_with_offset(output_buffer_2, bases_count % 4, false);
-            bases_count += read.get_length() - indirection_start;
-
-            (
-                CompressedRead::from_compressed_reads(&output_buffer_2[..], 0, bases_count),
-                extra.colors.clone(),
-            )
-        }
     }
 }

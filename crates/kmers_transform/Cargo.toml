@@ -14,6 +14,8 @@ streaming-libdeflate-rs = "0.2.3"
 nightly-quirks = "0.1.4"
 hashes = { package = "ggcat_hashes", path = "../hashes" }
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
+colors = { package = "ggcat_colors", path = "../colors" }
+structs = { package = "ggcat_structs", path = "../structs" }
 
 # Other libraries
 io = { package = "ggcat_io", path = "../io" }

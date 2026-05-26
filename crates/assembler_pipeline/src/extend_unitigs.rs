@@ -32,6 +32,7 @@ use io::concurrent::temp_reads::extra_data::{
 use io::concurrent_filewriter::ConcurrentFileWriter;
 use io::structs::unitig_link::{UnitigFlags, UnitigIndex, UnitigLinkSerializer};
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
+use kmers_transform::indirect_reads_extractor::{ReadExtractWorkData, indirect_read_extract_all};
 use nightly_quirks::branch_pred::unlikely;
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
@@ -53,7 +54,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use structs::partial_unitigs_extra_data::{
-    IndirectReadInfo, PartialUnitigExtraData, PartialUnitigMode, indirect_read_extract_all,
+    IndirectReadInfo, PartialUnitigExtraData, PartialUnitigMode,
 };
 use typenum::U4;
 use utils::fast_rand_bool::FastRandBool;
@@ -330,7 +331,6 @@ fn write_oversize_unitig<MH: HashFunctionFactory, CX: ColorsManager>(
         0
     };
 
-    join_data.oversize_temp_buffer.clear();
     unitig
         .as_reference(&join_data.final_join_buffer)
         .copy_to_buffer(&mut join_data.oversize_temp_buffer);
@@ -1050,8 +1050,7 @@ pub fn extend_unitigs<
                             )
                         });
 
-                    let mut extract_buffer1 = Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes());
-                    let mut extract_buffer2 = Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes());
+                    let mut extract_data = ReadExtractWorkData::new();
                     let mut extract_extra_buffer = PartialUnitigsColorStructure::<CX>::new_temp_buffer();
 
                     let mut join_data = JoinTempData {
@@ -1216,12 +1215,12 @@ pub fn extend_unitigs<
                                                 PartialUnitigMode::Indirect { .. } => {
 
                                                     let mut bases = vec![];
-                                                    let (read, color) = indirect_read_extract_all(
+                                                    let (read, color) = indirect_read_extract_all::<CX>(
+                                                        &mut extract_data,
+                                                        k,
                                                         read, 
                                                         &joined.extra, 
                                                         &join_data.final_extra_buffer, 
-                                                        &mut extract_buffer1, 
-                                                        &mut extract_buffer2,
                                                         &mut extract_extra_buffer, 
                                                         &global_data.oversize_unitigs_file
                                                     );
@@ -1233,7 +1232,7 @@ pub fn extend_unitigs<
                                                         bases.iter().copied(),
                                                         None,
                                                         color,
-                                                        &join_data.final_extra_buffer.0,
+                                                        &extract_extra_buffer,
                                                         (),
                                                         &(),
                                                         #[cfg(feature = "support_kmer_counters")]

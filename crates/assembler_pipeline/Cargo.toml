@@ -24,6 +24,7 @@ hashes = { package = "ggcat_hashes", path = "../hashes" }
 io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
 structs = { package = "ggcat_structs", path = "../structs" }
+kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
 
 
 # Matchtigs support
