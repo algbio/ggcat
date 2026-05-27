@@ -461,6 +461,7 @@ impl<
         );
 
         stats!(stats.assembler.kmers_merge_stats.push(map_struct_packet.detailed_stats.clone()););
+        tmp_final_unitigs_buffer.finalize(None);
 
         map_struct_packet
     }

@@ -22,13 +22,13 @@ use dashmap::DashSet;
 use hashbrown::HashSet;
 use hashes::HashFunctionFactory;
 use hashes::{ExtendableHashTraitType, HashFunction, HashableSequence};
-use io::concurrent::structured_sequences::binary::SequenceDataWithAbundance;
-use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
-use io::concurrent::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
 use io::concurrent::temp_reads::creads_utils::{
     CompressedReadsBucketDataSerializer, DeserializedRead, NoMinimizerPosition, NoMultiplicity,
     NoSecondBucket,
 };
+use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use io::concurrent_filewriter::ConcurrentFileWriter;
+use io::partial_unitigs_extra_data::PartialUnitigExtraData;
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
@@ -40,6 +40,9 @@ use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::prelude::*;
+use sequence_output::structured_sequences::binary::SequenceDataWithLinks;
+use sequence_output::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
+use sequence_output::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
 use std::cmp::max;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -49,16 +52,13 @@ use utils::vec_slice::VecSlice;
 pub fn build_maximal_unitigs_links<
     MH: HashFunctionFactory,
     CX: ColorsManager,
-    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<CX>, DoubleMaximalUnitigLinks>,
+    BK: StructuredSequenceBackend<CX, DoubleMaximalUnitigLinks>,
 >(
     in_file: PathBuf,
     temp_dir: &Path,
-    out_file: &StructuredSequenceWriter<
-        PartialUnitigsColorStructure<CX>,
-        DoubleMaximalUnitigLinks,
-        BK,
-    >,
+    out_file: &StructuredSequenceWriter<CX, DoubleMaximalUnitigLinks, BK>,
     k: usize,
+    indirect_file: &ConcurrentFileWriter,
 ) {
     // TODO: Parametrize depending on the reads count!
     const DEFAULT_BUCKET_HASHES_SIZE_LOG: usize = 8;
@@ -123,7 +123,7 @@ pub fn build_maximal_unitigs_links<
                         |DeserializedRead {
                              read,
                              extra:
-                                 SequenceDataWithAbundance::<PartialUnitigsColorStructure<CX>, ()> {
+                                 SequenceDataWithLinks::<PartialUnitigsColorStructure<CX>, ()> {
                                      index,
                                      ..
                                  },
@@ -362,8 +362,6 @@ pub fn build_maximal_unitigs_links<
                         k,
                     );
 
-                    let mut temp_sequence_buffer = Vec::new();
-
                     let mut current_mapping = Arc::new(MaximalUnitigLinksMapping::empty());
 
                     TypedStreamReader::get_items_parallel::<
@@ -380,18 +378,12 @@ pub fn build_maximal_unitigs_links<
                         |DeserializedRead {
                              read,
                              extra:
-                                 SequenceDataWithAbundance::<_, ()> {
-                                     index,
-                                     color,
-                                     abundance: _abundance,
-                                     ..
+                                 SequenceDataWithLinks::<_, ()> {
+                                     index, extra_data, ..
                                  },
                              ..
                          },
                          extra_buffer| {
-                            temp_sequence_buffer.clear();
-                            temp_sequence_buffer.extend(read.as_bases_iter());
-
                             if !current_mapping.has_mapping(index) {
                                 current_mapping =
                                     mappings_loader.get_mapping_for(index, thread_index);
@@ -401,20 +393,22 @@ pub fn build_maximal_unitigs_links<
                             links.is_self_complemental = self_complemental_unitigs.contains(&index);
 
                             tmp_final_unitigs_buffer.add_read(
-                                temp_sequence_buffer.iter().copied(),
+                                read,
                                 Some(index),
-                                color,
+                                extra_data,
                                 &extra_buffer.0,
                                 links,
                                 links_buffer,
-                                #[cfg(feature = "support_kmer_counters")]
-                                _abundance,
+                                Some(indirect_file),
                             );
+                            SequenceDataWithLinks::<
+                                PartialUnitigsColorStructure<CX>,
+                                (),
+                            >::clear_temp_buffer(extra_buffer);
                         },
                     );
 
-                    tmp_final_unitigs_buffer.finalize();
-
+                    tmp_final_unitigs_buffer.finalize(Some(indirect_file));
                     mappings_loader.notify_thread_ending(thread_index);
                 });
         });

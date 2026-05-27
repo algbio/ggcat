@@ -1,4 +1,4 @@
-use crate::indirect_reads_extractor::ReadExtractWorkData;
+use crate::indirect_reads_extractor::{ReadExtractWorkData, indirect_read_extract_parts};
 use crate::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
@@ -9,8 +9,7 @@ use flate2::write::GzEncoder;
 use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataConsecutiveCompression,
-    SequenceExtraDataTempBufferManagement,
+    SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use io::concurrent_filewriter::ConcurrentFileWriter;
 use io::partial_unitigs_extra_data::PartialUnitigExtraData;
@@ -130,24 +129,52 @@ impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
         links_info: LinksInfo,
         extra_buffers: &(<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer, LinksInfo::TempBuffer),
         indirect_file: Option<&ConcurrentFileWriter>,
-        flush_callback: impl FnMut(&mut Self::SequenceTempBuffer),
+        mut flush_callback: impl FnMut(&mut Self::SequenceTempBuffer),
     ) {
+        let bases_count =
+            sequence.bases_count() + extra_info.mode.get_total_length(&extra_buffers.0.1);
+
+        let mut write_sequence_bases =
+            |buffer: &mut Vec<u8>, flush_callback: &mut dyn FnMut(&mut Vec<u8>)| match extra_info
+                .mode
+            {
+                io::partial_unitigs_extra_data::PartialUnitigMode::Inline => {
+                    buffer.extend(sequence.as_bases_iter());
+                }
+                io::partial_unitigs_extra_data::PartialUnitigMode::Indirect { .. } => {
+                    indirect_read_extract_parts::<CX, false, true>(
+                        &mut extract_workdata.file_buffer,
+                        &mut extract_workdata.file_color_buffer,
+                        k,
+                        sequence,
+                        &extra_info,
+                        &extra_buffers.0,
+                        indirect_file.as_ref().unwrap(),
+                        |part, _, _, is_rc, _| {
+                            if is_rc {
+                                buffer.extend(part.as_reverse_complement_bases_iter());
+                            } else {
+                                buffer.extend(part.as_bases_iter())
+                            }
+
+                            if buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
+                                flush_callback(buffer)
+                            }
+                        },
+                    );
+                }
+            };
+
         // Sequence line
         if VERSION == 1 {
             // S <index> <sequence> LN:i:<length> ...
             write!(buffer, "S\t{}\t", sequence_index).unwrap();
-            buffer.extend(sequence.as_bases_iter());
-            write!(buffer, "\tLN:i:{}", sequence.bases_count()).unwrap();
+            write_sequence_bases(buffer, &mut flush_callback);
+            write!(buffer, "\tLN:i:{}", bases_count).unwrap();
         } else if VERSION == 2 {
             // S <index> <len> <sequence> ...
-            write!(
-                buffer,
-                "S\t{}\t{}\t",
-                sequence_index,
-                sequence.bases_count()
-            )
-            .unwrap();
-            buffer.extend(sequence.as_bases_iter());
+            write!(buffer, "S\t{}\t{}\t", sequence_index, bases_count).unwrap();
+            write_sequence_bases(buffer, &mut flush_callback);
         }
 
         #[cfg(feature = "support_kmer_counters")]

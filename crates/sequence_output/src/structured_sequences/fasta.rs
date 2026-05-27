@@ -1,10 +1,8 @@
-use crate::indirect_reads_extractor::{
-    ReadExtractWorkData, indirect_read_extract_all, indirect_read_extract_parts,
-};
+use crate::indirect_reads_extractor::{ReadExtractWorkData, indirect_read_extract_parts};
 use crate::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
-use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE, MAX_INLINE_UNITIG_SIZE};
+use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE};
 use dynamic_dispatch::dynamic_dispatch;
 use flate2::Compression;
 use flate2::write::GzEncoder;
@@ -12,8 +10,7 @@ use flate2::write::GzEncoder;
 use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataConsecutiveCompression,
-    SequenceExtraDataTempBufferManagement,
+    SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use io::concurrent_filewriter::ConcurrentFileWriter;
 use io::partial_unitigs_extra_data::PartialUnitigExtraData;
