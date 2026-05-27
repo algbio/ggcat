@@ -300,18 +300,14 @@ impl<'a> MinimizerBucketingSeqColorDataIterable<'a, ColorIndexType> for MinBkMul
 
 impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
     fn create(sequence_info: SingleSequenceInfo, buffer: &mut Self::TempBuffer) -> Self {
-        let buffer_start = buffer.colors.len();
-        let colors_subslice = match sequence_info.sequence_ident {
+        let (colors_subslice, colors_count) = match sequence_info.sequence_ident {
             SequenceIdent::FASTA(ident) => UnitigColorData::parse_as_ident(ident, buffer).unwrap(),
             SequenceIdent::GFA { colors } => UnitigColorData::parse_as_gfa(colors, buffer).unwrap(),
         };
 
         Self {
-            buffer_slice: ColorRange::new(buffer_start, buffer.colors.len()),
-            colors_subslice: ColorRange::new(
-                colors_subslice.slice_start,
-                colors_subslice.slice_end,
-            ),
+            buffer_slice: ColorRange::new(colors_subslice.slice_start, colors_subslice.slice_end),
+            colors_subslice: ColorRange::new(0, colors_count),
         }
     }
 

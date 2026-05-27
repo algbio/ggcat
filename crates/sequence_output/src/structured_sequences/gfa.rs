@@ -166,14 +166,20 @@ impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
         // End of the S line
         buffer.push(b'\n');
 
+        let mut links_partial_data = Default::default();
+
         // color_info.write_as_ident(buffer, &extra_buffers.0);
         links_info.write_as_gfa::<VERSION>(
             k as u64,
             sequence_index,
             sequence.bases_count() as u64,
+            &mut links_partial_data,
+            (0, None),
+            false,
             buffer,
             &extra_buffers.1,
         );
+        LinksInfo::flush_partial_as_ident(links_partial_data, buffer);
     }
 
     fn get_path(&self) -> PathBuf {

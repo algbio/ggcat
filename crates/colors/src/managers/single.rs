@@ -266,23 +266,57 @@ impl SequenceExtraData for UnitigColorDataSerializer {
 }
 
 impl IdentSequenceWriter for UnitigColorDataSerializer {
-    fn write_as_ident(&self, _stream: &mut impl Write, _extra_buffer: &Self::TempBuffer) {}
+    type PartialConnectionData = ();
+
+    fn write_as_ident(
+        &self,
+        _partial_data: &mut Self::PartialConnectionData,
+        _write_range: (usize, Option<usize>),
+        _reverse_complement: bool,
+        _stream: &mut impl Write,
+        _extra_buffer: &Self::TempBuffer,
+    ) {
+    }
+
+    fn flush_partial_as_ident(
+        _partial_data: Self::PartialConnectionData,
+        _stream: &mut impl Write,
+    ) {
+    }
 
     fn write_as_gfa<const VERSION: u32>(
         &self,
         _k: u64,
         _index: u64,
         _length: u64,
+        _partial_data: &mut Self::PartialConnectionData,
+        _write_range: (usize, Option<usize>),
+        _reverse_complement: bool,
         _stream: &mut impl Write,
         _extra_buffer: &Self::TempBuffer,
     ) {
     }
 
-    fn parse_as_ident<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+    fn flush_partial_as_gfa<const VERSION: u32>(
+        _k: u64,
+        _index: u64,
+        _length: u64,
+        _partial_data: Self::PartialConnectionData,
+        _stream: &mut impl Write,
+    ) {
+    }
+
+    fn parse_as_ident<'a>(
+        _ident: &[u8],
+        _extra_buffer: &mut Self::TempBuffer,
+    ) -> Option<(Self, usize)> {
         todo!()
     }
 
-    fn parse_as_gfa<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+    fn parse_as_gfa<'a>(
+        _ident: &[u8],
+        _extra_buffer: &mut Self::TempBuffer,
+    ) -> Option<(Self, usize)> {
         todo!()
     }
 }

@@ -7,7 +7,7 @@ use assembler_minimizer_bucketing::rewrite_bucket::RewriteBucketComputeAssembler
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::{
     GlobalColorsTableWriter, MinimizerBucketingMultipleSeqColorDataType,
-    MinimizerBucketingSeqColorDataType, PartialUnitigsColorStructure,
+    MinimizerBucketingSeqColorDataType,
 };
 use config::{
     BucketIndexType, MAX_SUBPARTITION_SIZE, MAX_SUBPARTITIONS_COUNT, MIN_SUBPARTITIONS_COUNT,
@@ -328,7 +328,6 @@ mod tests {
                 RemoveFileMode::Remove {
                     remove_fs: false, // !KEEP_FILES.load(Ordering::Relaxed),
                 },
-                DEFAULT_PREFETCH_AMOUNT,
             );
 
             let data_format = file_index.get_data_format_info::<MinimizerBucketMode>();
@@ -471,6 +470,7 @@ mod tests {
             FLUSH_QUEUE_FACTOR * threads_count,
             max(1, threads_count / 4),
             32768,
+            None,
         );
 
         ggcat_logging::info!("Using m: {} with k: {}", m, k);

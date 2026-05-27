@@ -139,10 +139,33 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
         #[cfg(not(feature = "support_kmer_counters"))]
         write!(buffer, ">{} LN:i:{}", sequence_index, bases_count,).unwrap();
 
+        let mut links_partial_data = Default::default();
+        let mut colors_partial_data = Default::default();
+
         match extra_info.mode {
             io::partial_unitigs_extra_data::PartialUnitigMode::Inline => {
-                extra_info.colors.write_as_ident(buffer, &extra_buffers.0.0);
-                links_info.write_as_ident(buffer, &extra_buffers.1);
+                extra_info.colors.write_as_ident(
+                    &mut colors_partial_data,
+                    (0, None),
+                    false,
+                    buffer,
+                    &extra_buffers.0.0,
+                );
+                PartialUnitigsColorStructure::<CX>::flush_partial_as_ident(
+                    colors_partial_data,
+                    buffer,
+                );
+
+                let mut links_partial_data = Default::default();
+                links_info.write_as_ident(
+                    &mut links_partial_data,
+                    (0, None),
+                    false,
+                    buffer,
+                    &extra_buffers.1,
+                );
+                LinksInfo::flush_partial_as_ident(links_partial_data, buffer);
+
                 buffer.extend_from_slice(b"\n");
                 buffer.extend(sequence.as_bases_iter());
                 buffer.extend_from_slice(b"\n");
@@ -158,13 +181,32 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
                     indirect_file.as_ref().unwrap(),
                     |_, color, color_range, is_rc, color_buffer| {
                         // TODO: FIX COLORS
-                        color.write_as_ident(buffer, color_buffer);
+                        color.write_as_ident(
+                            &mut colors_partial_data,
+                            color_range,
+                            is_rc,
+                            buffer,
+                            color_buffer,
+                        );
                         if buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
                             flush_callback(buffer)
                         }
                     },
                 );
-                links_info.write_as_ident(buffer, &extra_buffers.1);
+
+                PartialUnitigsColorStructure::<CX>::flush_partial_as_ident(
+                    colors_partial_data,
+                    buffer,
+                );
+
+                links_info.write_as_ident(
+                    &mut links_partial_data,
+                    (0, None),
+                    false,
+                    buffer,
+                    &extra_buffers.1,
+                );
+                LinksInfo::flush_partial_as_ident(links_partial_data, buffer);
                 buffer.extend_from_slice(b"\n");
                 indirect_read_extract_parts::<CX, false, true>(
                     &mut extract_workdata.file_buffer,

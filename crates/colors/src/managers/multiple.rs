@@ -571,13 +571,99 @@ impl SequenceExtraData for UnitigColorData {
     }
 }
 
+impl UnitigColorData {
+    #[inline]
+    fn iter_runs_with_range(
+        &self,
+        write_range: (usize, Option<usize>),
+        reverse_complement: bool,
+        extra_buffer: &UnitigsSerializerTempBuffer,
+        mut callback: impl FnMut(KmerSerializedColor),
+    ) {
+        let skip = write_range.0;
+        let mut remaining_take = write_range.1.unwrap_or(usize::MAX);
+        let mut remaining_skip = skip;
+
+        if reverse_complement {
+            for i in (self.slice_start..self.slice_end).rev() {
+                let run = extra_buffer.colors[i];
+                let run_len = run.counter as usize;
+                if remaining_skip >= run_len {
+                    remaining_skip -= run_len;
+                } else {
+                    let available = run_len - remaining_skip;
+                    let to_take = available.min(remaining_take);
+                    remaining_skip = 0;
+                    remaining_take -= to_take;
+
+                    callback(KmerSerializedColor {
+                        color: run.color,
+                        counter: to_take as ColorCounterType,
+                    });
+                }
+
+                if remaining_take == 0 {
+                    break;
+                }
+            }
+        } else {
+            for i in self.slice_start..self.slice_end {
+                let run = extra_buffer.colors[i];
+                let run_len = run.counter as usize;
+                if remaining_skip >= run_len {
+                    remaining_skip -= run_len;
+                } else {
+                    let available = run_len - remaining_skip;
+                    let to_take = available.min(remaining_take);
+                    remaining_skip = 0;
+                    remaining_take -= to_take;
+
+                    callback(KmerSerializedColor {
+                        color: run.color,
+                        counter: to_take as ColorCounterType,
+                    });
+                }
+
+                if remaining_take == 0 {
+                    break;
+                }
+            }
+        }
+    }
+}
+
 impl IdentSequenceWriter for UnitigColorData {
-    fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
-        for i in self.slice_start..self.slice_end {
+    type PartialConnectionData = Option<KmerSerializedColor>;
+
+    fn write_as_ident(
+        &self,
+        partial_data: &mut Self::PartialConnectionData,
+        write_range: (usize, Option<usize>),
+        reverse_complement: bool,
+        stream: &mut impl Write,
+        extra_buffer: &Self::TempBuffer,
+    ) {
+        self.iter_runs_with_range(write_range, reverse_complement, extra_buffer, |run| {
+            if let Some(prev) = partial_data {
+                if prev.color == run.color {
+                    prev.counter += run.counter;
+                    return;
+                }
+            }
+
+            if let Some(prev) = partial_data.take() {
+                write!(stream, " C:{:x}:{}", prev.color, prev.counter).unwrap();
+            }
+            *partial_data = Some(run);
+        });
+    }
+
+    fn flush_partial_as_ident(partial_data: Self::PartialConnectionData, stream: &mut impl Write) {
+        if let Some(partial_data) = partial_data {
             write!(
                 stream,
                 " C:{:x}:{}",
-                extra_buffer.colors[i].color, extra_buffer.colors[i].counter
+                partial_data.color, partial_data.counter
             )
             .unwrap();
         }
@@ -589,26 +675,55 @@ impl IdentSequenceWriter for UnitigColorData {
         _k: u64,
         _index: u64,
         _length: u64,
+        partial_data: &mut Self::PartialConnectionData,
+        write_range: (usize, Option<usize>),
+        reverse_complement: bool,
         stream: &mut impl Write,
         extra_buffer: &Self::TempBuffer,
     ) {
-        if (self.slice_end - self.slice_start) > 0 {
-            write!(stream, "CS",).unwrap();
-        }
+        let mut wrote_any = false;
 
-        for i in self.slice_start..self.slice_end {
-            write!(
-                stream,
-                ":{:x}:{}",
-                extra_buffer.colors[i].color, extra_buffer.colors[i].counter
-            )
-            .unwrap();
+        self.iter_runs_with_range(write_range, reverse_complement, extra_buffer, |run| {
+            if !wrote_any {
+                wrote_any = true;
+                if partial_data.is_none() {
+                    write!(stream, "CS").unwrap();
+                }
+            }
+
+            if let Some(prev) = partial_data {
+                if prev.color == run.color {
+                    prev.counter += run.counter;
+                    return;
+                }
+            }
+
+            if let Some(prev) = partial_data.take() {
+                write!(stream, ":{:x}:{}", prev.color, prev.counter).unwrap();
+            }
+            *partial_data = Some(run);
+        });
+    }
+
+    fn flush_partial_as_gfa<const VERSION: u32>(
+        _k: u64,
+        _index: u64,
+        _length: u64,
+        partial_data: Self::PartialConnectionData,
+        stream: &mut impl Write,
+    ) {
+        if let Some(partial_data) = partial_data {
+            write!(stream, ":{:x}:{}", partial_data.color, partial_data.counter).unwrap();
         }
     }
 
     #[allow(unused_variables)]
-    fn parse_as_ident<'a>(ident: &[u8], colors_buffer: &mut Self::TempBuffer) -> Option<Self> {
+    fn parse_as_ident<'a>(
+        ident: &[u8],
+        colors_buffer: &mut Self::TempBuffer,
+    ) -> Option<(Self, usize)> {
         let mut colors_count = 0;
+        let slice_start = colors_buffer.colors.len();
         for col_pos in ident.find_iter(b"C:") {
             let (color_index, next_pos) = ColorIndexType::from_radix_16(&ident[(col_pos + 2)..]);
 
@@ -623,15 +738,22 @@ impl IdentSequenceWriter for UnitigColorData {
             ggcat_logging::error!("Error: 0 colors for {:?}", std::str::from_utf8(ident));
         }
 
-        Some(UnitigColorData {
-            slice_start: 0,
-            slice_end: colors_count,
-        })
+        Some((
+            UnitigColorData {
+                slice_start,
+                slice_end: colors_buffer.colors.len(),
+            },
+            colors_count,
+        ))
     }
 
     #[allow(unused_variables)]
-    fn parse_as_gfa<'a>(ident: &[u8], extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+    fn parse_as_gfa<'a>(
+        ident: &[u8],
+        extra_buffer: &mut Self::TempBuffer,
+    ) -> Option<(Self, usize)> {
         let mut colors_count = 0;
+        let slice_start = extra_buffer.colors.len();
         if let Some(mut col_pos) = ident.find(b"CA:") {
             col_pos += 3;
 
@@ -649,9 +771,12 @@ impl IdentSequenceWriter for UnitigColorData {
             ggcat_logging::error!("Error: 0 colors for {:?}", std::str::from_utf8(ident));
         }
 
-        Some(UnitigColorData {
-            slice_start: 0,
-            slice_end: colors_count,
-        })
+        Some((
+            UnitigColorData {
+                slice_start,
+                slice_end: extra_buffer.colors.len(),
+            },
+            colors_count,
+        ))
     }
 }

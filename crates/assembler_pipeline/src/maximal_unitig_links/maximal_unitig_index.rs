@@ -1,8 +1,8 @@
 use byteorder::ReadBytesExt;
-use io::ident_writer::IdentSequenceWriter;
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
+use io::ident_writer::IdentSequenceWriter;
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use std::fmt;
@@ -296,7 +296,16 @@ impl SequenceExtraData for DoubleMaximalUnitigLinks {
 }
 
 impl IdentSequenceWriter for DoubleMaximalUnitigLinks {
-    fn write_as_ident(&self, stream: &mut impl Write, extra_buffer: &Self::TempBuffer) {
+    type PartialConnectionData = ();
+
+    fn write_as_ident(
+        &self,
+        _partial_data: &mut Self::PartialConnectionData,
+        _write_range: (usize, Option<usize>),
+        _reverse_complement: bool,
+        stream: &mut impl Write,
+        extra_buffer: &Self::TempBuffer,
+    ) {
         for entries in &self.links {
             let entries = entries.entries.get_slice(extra_buffer);
             for entry in entries {
@@ -312,12 +321,21 @@ impl IdentSequenceWriter for DoubleMaximalUnitigLinks {
         }
     }
 
+    fn flush_partial_as_ident(
+        _partial_data: Self::PartialConnectionData,
+        _stream: &mut impl Write,
+    ) {
+    }
+
     #[allow(unused_variables)]
     fn write_as_gfa<const VERSION: u32>(
         &self,
         k: u64,
         index: u64,
         length: u64,
+        _partial_data: &mut Self::PartialConnectionData,
+        _write_range: (usize, Option<usize>),
+        _reverse_complement: bool,
         stream: &mut impl Write,
         extra_buffer: &Self::TempBuffer,
     ) {
@@ -372,11 +390,26 @@ impl IdentSequenceWriter for DoubleMaximalUnitigLinks {
         }
     }
 
-    fn parse_as_ident<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+    fn flush_partial_as_gfa<const VERSION: u32>(
+        _k: u64,
+        _index: u64,
+        _length: u64,
+        _partial_data: Self::PartialConnectionData,
+        _stream: &mut impl Write,
+    ) {
+    }
+
+    fn parse_as_ident<'a>(
+        _ident: &[u8],
+        _extra_buffer: &mut Self::TempBuffer,
+    ) -> Option<(Self, usize)> {
         unimplemented!()
     }
 
-    fn parse_as_gfa<'a>(_ident: &[u8], _extra_buffer: &mut Self::TempBuffer) -> Option<Self> {
+    fn parse_as_gfa<'a>(
+        _ident: &[u8],
+        _extra_buffer: &mut Self::TempBuffer,
+    ) -> Option<(Self, usize)> {
         unimplemented!()
     }
 }
