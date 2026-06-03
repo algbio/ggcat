@@ -115,7 +115,7 @@ pub fn build_maximal_unitigs_links<
                             NoSecondBucket,
                             NoMultiplicity,
                             NoMinimizerPosition,
-                            typenum::consts::U0,
+                            typenum::consts::U1,
                         >,
                     >(
                         k,
@@ -370,7 +370,7 @@ pub fn build_maximal_unitigs_links<
                             NoSecondBucket,
                             NoMultiplicity,
                             NoMinimizerPosition,
-                            typenum::consts::U0,
+                            typenum::consts::U1,
                         >,
                     >(
                         k,

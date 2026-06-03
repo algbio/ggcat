@@ -38,6 +38,8 @@ pub trait SequenceExtraDataTempBufferManagement: Sized + Sync + Send + Debug + C
     fn copy_extra_from(extra: Self, src: &Self::TempBuffer, dst: &mut Self::TempBuffer) -> Self;
 }
 
+pub type TempBuffer<T> = <T as SequenceExtraDataTempBufferManagement>::TempBuffer;
+
 pub trait HasEmptyExtraBuffer: Sized + Sync + Send + Debug + Clone {}
 impl<T: HasEmptyExtraBuffer> SequenceExtraDataTempBufferManagement for T {
     type TempBuffer = ();
@@ -122,7 +124,7 @@ pub trait SequenceExtraDataCombiner: SequenceExtraDataConsecutiveCompression {
     fn to_single(
         &self,
         in_buffer: &Self::TempBuffer,
-        out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        out_buffer: &mut TempBuffer<Self::SingleDataType>,
     ) -> Self::SingleDataType;
 
     fn prepare_for_serialization(&mut self, buffer: &mut Self::TempBuffer);
@@ -130,7 +132,7 @@ pub trait SequenceExtraDataCombiner: SequenceExtraDataConsecutiveCompression {
     fn from_single_entry<'a>(
         out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
-        in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        in_buffer: &'a mut TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer);
 }
 

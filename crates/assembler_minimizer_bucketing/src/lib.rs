@@ -12,7 +12,7 @@ use hashes::HashFunction;
 use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
-use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use io::concurrent::temp_reads::extra_data::TempBuffer;
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
@@ -44,7 +44,7 @@ pub struct AssemblerMinimizerBucketingExecutor<CD: MinimizerBucketingSeqColorDat
 
 pub struct AssemblerPreprocessInfo<CD: MinimizerBucketingSeqColorData> {
     color_info: CD,
-    color_info_buffer: <CD as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    color_info_buffer: TempBuffer<CD>,
     include_first: bool,
     include_last: bool,
 }
@@ -53,7 +53,7 @@ impl<CD: MinimizerBucketingSeqColorData> Default for AssemblerPreprocessInfo<CD>
     fn default() -> Self {
         Self {
             color_info: CD::default(),
-            color_info_buffer: <CD as SequenceExtraDataTempBufferManagement>::new_temp_buffer(),
+            color_info_buffer: CD::new_temp_buffer(),
             include_first: false,
             include_last: false,
         }
@@ -155,7 +155,7 @@ impl<CD: MinimizerBucketingSeqColorData>
         &mut self,
         flags: u8,
         extra_data: &CD,
-        extra_data_buffer: &<CD as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        extra_data_buffer: &TempBuffer<CD>,
         preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         CD::clear_temp_buffer(&mut preprocess_info.color_info_buffer);

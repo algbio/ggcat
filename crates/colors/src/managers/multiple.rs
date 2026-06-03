@@ -10,7 +10,7 @@ use hashes::ExtendableHashTraitType;
 use hashes::{HashFunction, HashFunctionFactory};
 use io::compressed_read::CompressedReadIndipendent;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
+    SequenceExtraData, SequenceExtraDataTempBufferManagement, TempBuffer,
 };
 use io::ident_writer::IdentSequenceWriter;
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
@@ -18,6 +18,7 @@ use itertools::Itertools;
 use nightly_quirks::slice_partition_dedup::SlicePartitionDedup;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
+use std::ops::Range;
 use std::path::Path;
 use std::slice::from_raw_parts;
 use structs::map_entry::MapEntry;
@@ -318,9 +319,9 @@ impl ColorsMergeManager for MultipleColorsManager {
     }
 
     fn join_structures<const REVERSE: bool>(
-        dest: &mut Self::TempUnitigColorStructure,
+        dest: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
         src: &Self::PartialUnitigsColorStructure,
-        src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        src_buffer: &TempBuffer<Self::PartialUnitigsColorStructure>,
         mut skip: ColorCounterType,
         count: Option<usize>,
     ) {
@@ -355,13 +356,13 @@ impl ColorsMergeManager for MultipleColorsManager {
                 skip = 0;
                 if dest
                     .colors
-                    .back()
+                    .last()
                     .map(|x| x.color == color.color)
                     .unwrap_or(false)
                 {
-                    dest.colors.back_mut().unwrap().counter += left;
+                    dest.colors.last_mut().unwrap().counter += left;
                 } else {
-                    dest.colors.push_back(KmerSerializedColor {
+                    dest.colors.push(KmerSerializedColor {
                         color: color.color,
                         counter: left,
                     });
@@ -372,7 +373,7 @@ impl ColorsMergeManager for MultipleColorsManager {
 
     fn pop_base(
         target: &mut Self::PartialUnitigsColorStructure,
-        colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        colors_buffer: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
     ) {
         if target.slice_end - target.slice_start > 0 {
             let last = &mut colors_buffer.colors[target.slice_end - 1];
@@ -383,9 +384,77 @@ impl ColorsMergeManager for MultipleColorsManager {
         }
     }
 
+    fn remove_colors_range(
+        target: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
+        range: Range<usize>,
+    ) {
+        let start = range.start;
+        let end = range.end;
+
+        let mut read_pos = 0usize;
+        let mut write_idx = 0usize;
+        let original_len = target.colors.len();
+
+        let mut write_run = |out: &mut Vec<KmerSerializedColor>, run: KmerSerializedColor| {
+            if run.counter == 0 {
+                return;
+            }
+
+            if write_idx > 0 && out[write_idx - 1].color == run.color {
+                out[write_idx - 1].counter += run.counter;
+            } else {
+                out[write_idx] = run;
+                write_idx += 1;
+            }
+        };
+
+        for read_idx in 0..original_len {
+            let run = target.colors[read_idx];
+            let run_start = read_pos;
+            let run_end = run_start + run.counter as usize;
+            read_pos = run_end;
+
+            if run_end <= start || run_start >= end {
+                write_run(&mut target.colors, run);
+                continue;
+            }
+
+            if run_start < start {
+                write_run(
+                    &mut target.colors,
+                    KmerSerializedColor {
+                        color: run.color,
+                        counter: (start - run_start) as ColorCounterType,
+                    },
+                );
+            }
+
+            if run_end > end {
+                write_run(
+                    &mut target.colors,
+                    KmerSerializedColor {
+                        color: run.color,
+                        counter: (run_end - end) as ColorCounterType,
+                    },
+                );
+            }
+        }
+
+        target.colors.truncate(write_idx);
+    }
+
+    fn get_color_from_fully_joined_buffer(
+        colors_buffer: &TempBuffer<Self::PartialUnitigsColorStructure>,
+    ) -> Self::PartialUnitigsColorStructure {
+        UnitigColorData {
+            slice_start: 0,
+            slice_end: colors_buffer.colors.len(),
+        }
+    }
+
     fn encode_part_unitigs_colors(
         ts: &mut Self::TempUnitigColorStructure,
-        colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        colors_buffer: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
     ) -> Self::PartialUnitigsColorStructure {
         colors_buffer.colors.clear();
         colors_buffer.colors.extend(ts.colors.iter());
@@ -413,7 +482,7 @@ impl ColorsMergeManager for MultipleColorsManager {
     fn debug_colors<MH: HashFunctionFactory>(
         data: &Self::ColorsBufferTempStructure,
         color: &Self::PartialUnitigsColorStructure,
-        colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        colors_buffer: &TempBuffer<Self::PartialUnitigsColorStructure>,
         seq: &[u8],
         hmap: &HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
     ) {
@@ -778,5 +847,55 @@ impl IdentSequenceWriter for UnitigColorData {
             },
             colors_count,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::colors_manager::ColorsMergeManager;
+
+    use super::{KmerSerializedColor, MultipleColorsManager, UnitigsSerializerTempBuffer};
+
+    fn run_remove(range: std::ops::Range<usize>, runs: &[(u32, usize)]) -> Vec<(u32, usize)> {
+        let mut buffer = UnitigsSerializerTempBuffer {
+            colors: runs
+                .iter()
+                .map(|(color, counter)| KmerSerializedColor {
+                    color: *color,
+                    counter: *counter as _,
+                })
+                .collect(),
+        };
+
+        MultipleColorsManager::remove_colors_range(&mut buffer, range);
+
+        buffer
+            .colors
+            .into_iter()
+            .map(|run| (run.color, run.counter as usize))
+            .collect()
+    }
+
+    #[test]
+    fn remove_colors_range_uses_half_open_offsets() {
+        assert_eq!(run_remove(2..5, &[(1, 2), (2, 3), (3, 2)]), vec![(1, 2), (3, 2)]);
+    }
+
+    #[test]
+    fn remove_colors_range_merges_adjacent_runs_after_splice() {
+        assert_eq!(run_remove(2..4, &[(1, 2), (2, 2), (1, 3)]), vec![(1, 5)]);
+    }
+
+    #[test]
+    fn remove_colors_range_leaves_buffer_unchanged_for_empty_range() {
+        assert_eq!(
+            run_remove(3..3, &[(1, 2), (2, 2), (3, 1)]),
+            vec![(1, 2), (2, 2), (3, 1)]
+        );
+    }
+
+    #[test]
+    fn remove_colors_range_preserves_both_sides_when_splitting_one_run() {
+        assert_eq!(run_remove(2..4, &[(1, 6)]), vec![(1, 4)]);
     }
 }

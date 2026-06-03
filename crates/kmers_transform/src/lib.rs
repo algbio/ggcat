@@ -7,8 +7,7 @@ use ggcat_logging::{generate_stat_id, info};
 use io::DUPLICATES_BUCKET_EXTRA;
 use io::concurrent::temp_reads::creads_utils::DeserializedRead;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
-    SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression, TempBuffer,
 };
 use minimizer_bucketing::MinimizerBucketingExecutorFactory;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
@@ -101,11 +100,13 @@ pub trait KmersTransformMapProcessor<F: KmersTransformExecutorFactory>:
     fn process_group_sequences(
         &mut self,
         sequences_count: u64,
-        process_reads_callback: impl FnOnce(&mut Self::ProcessSequencesContext, fn(
+        process_reads_callback: impl FnOnce(
+            &mut Self::ProcessSequencesContext,
+            fn(
                 context: &mut Self::ProcessSequencesContext,
                 read: &DeserializedRead<'_, F::AssociatedExtraDataWithMultiplicity>,
-                extra_buffer: &<F::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer
-            )
+                extra_buffer: &TempBuffer<F::AssociatedExtraDataWithMultiplicity>,
+            ),
         ),
     );
     fn get_stats(&self) -> GroupProcessStats;

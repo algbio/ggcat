@@ -6,9 +6,9 @@ use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::HashFunctionFactory;
 use hashes::extremal::DelayedHashComputation;
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
-use sequence_output::structured_sequences::SequenceAbundanceType;
 use io::concurrent::temp_reads::creads_utils::DeserializedReadIndependent;
-use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use io::concurrent::temp_reads::extra_data::TempBuffer;
+use io::partial_unitigs_extra_data::SequenceAbundanceType;
 use nightly_quirks::branch_pred::unlikely;
 use std::{iter::repeat, mem::take, ops::Range};
 
@@ -258,8 +258,8 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                     if EVEN_K {
                         contains_problematic |= self.supertigs[next_idx].is_problematic()
                             | self.supertigs[prev_idx].is_problematic();
-                    } 
-                    
+                    }
+
                     // Link supertigs
                     self.supertigs[next_idx].flags |= IS_LINKED;
                     self.supertigs[prev_idx].next = next_idx;
@@ -360,7 +360,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
         &mut self,
         colors_data: &mut UnitigExtensionColorsData<CX>,
         reads: &[DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>],
-        extra_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        extra_buffer: &TempBuffer<MinimizerBucketingMultipleSeqColorDataType<CX>>,
         superkmers_storage: &'a [u8],
         range: Range<usize>,
         k: usize,
@@ -646,7 +646,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
         &mut self,
         colors_data: &mut UnitigExtensionColorsData<CX>,
         reads: &mut [DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>],
-        extra_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        extra_buffer: &TempBuffer<MinimizerBucketingMultipleSeqColorDataType<CX>>,
         superkmers_storage: &[u8],
         k: usize,
         abundance_cutoff: usize,

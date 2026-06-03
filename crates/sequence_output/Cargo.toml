@@ -27,6 +27,7 @@ bincode = "2.0.1"
 byteorder = "1.5.0"
 flate2 = "1.1.9"
 parking_lot = "0.12.5"
+serde = "1.0.228"
 
 
 [features]

@@ -727,7 +727,8 @@ impl<'a> CompressedRead<'a> {
                 self.copy_to_buffer(buffer);
             }
         } else {
-            let last_byte = buffer.pop().unwrap();
+            let last_byte_mask = 0xFF >> (8 - required_offset * 2);
+            let last_byte = buffer.pop().unwrap() & last_byte_mask;
             let last_byte_pos = buffer.len();
 
             let required_len = buffer.len() + (self.bases_count() + required_offset).div_ceil(4);
@@ -992,10 +993,7 @@ mod tests {
     use std::{cmp::Ordering, io::Cursor};
 
     use crate::{
-        compressed_read::{
-            ALIGNMENT_WORD_SIZE, CompressedRead, CompressedReadIndipendent,
-            get_hash_repr_aligned_overflow16,
-        },
+        compressed_read::{ALIGNMENT_WORD_SIZE, CompressedRead, CompressedReadIndipendent},
         concurrent::temp_reads::creads_utils::{
             AssemblerMinimizerPosition, CompressedReadsBucketData, NoAlignment, ReadData,
         },

@@ -6,12 +6,8 @@ use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE};
 use dynamic_dispatch::dynamic_dispatch;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-#[cfg(not(feature = "support_kmer_counters"))]
-use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
-use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
-};
+use io::concurrent::temp_reads::extra_data::{SequenceExtraData, TempBuffer};
 use io::concurrent_filewriter::ConcurrentFileWriter;
 use io::partial_unitigs_extra_data::PartialUnitigExtraData;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
@@ -22,8 +18,6 @@ use std::path::{Path, PathBuf};
 
 use super::stream_finish::SequencesWriterWrapper;
 
-#[cfg(feature = "support_kmer_counters")]
-use super::SequenceAbundance;
 use super::{StructuredSequenceBackendInit, StructuredSequenceBackendWrapper};
 
 pub struct FastaWriterWrapper;
@@ -115,12 +109,15 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
 
         extra_info: PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
         links_info: LinksInfo,
-        extra_buffers: &(<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer, LinksInfo::TempBuffer),
+        extra_buffers: &(
+            TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
+            LinksInfo::TempBuffer,
+        ),
         indirect_file: Option<&ConcurrentFileWriter>,
         mut flush_callback: impl FnMut(&mut Self::SequenceTempBuffer),
     ) {
         let bases_count =
-            sequence.bases_count() + extra_info.mode.get_total_length(&extra_buffers.0.1);
+            sequence.get_length() + extra_info.mode.get_total_length(&extra_buffers.0.1);
 
         #[cfg(feature = "support_kmer_counters")]
         write!(
@@ -128,8 +125,8 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
             ">{} LN:i:{} KC:i:{} km:f:{:.1}",
             sequence_index,
             bases_count,
-            abundance.sum,
-            abundance.sum as f64 / (sequence.len() - _k + 1) as f64
+            extra_info.counters.sum,
+            extra_info.counters.sum as f64 / (sequence.get_length() - k + 1) as f64
         )
         .unwrap();
 

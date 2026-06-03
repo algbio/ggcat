@@ -5,10 +5,7 @@ use io::concurrent::temp_reads::{
         AlignModeOption, AssemblerMinimizerPosition, DeserializedRead, NoMultiplicity,
         NoSecondBucket, WithMultiplicity, helpers::helper_read_bucket,
     },
-    extra_data::{
-        SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
-        SequenceExtraDataTempBufferManagement,
-    },
+    extra_data::{SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression, TempBuffer},
 };
 use parallel_processor::buckets::readers::typed_binary_reader::AsyncReaderThread;
 
@@ -21,13 +18,10 @@ pub fn decode_sequences<
     AlignMode: AlignModeOption,
 >(
     reader_thread: Option<Arc<AsyncReaderThread>>,
-    tmp_mult_buffer: &mut <MultipleData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    tmp_mult_buffer: &mut TempBuffer<MultipleData>,
     splitted_bucket: &mut SplittedBucket,
     k: usize,
-    mut callback: impl FnMut(
-        DeserializedRead<MultipleData>,
-        &mut <MultipleData as SequenceExtraDataTempBufferManagement>::TempBuffer,
-    ),
+    mut callback: impl FnMut(DeserializedRead<MultipleData>, &mut TempBuffer<MultipleData>),
 ) {
     let single_chunks = take(&mut splitted_bucket.single_chunks);
     let multi_chunks = take(&mut splitted_bucket.multi_chunks);

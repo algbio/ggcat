@@ -13,7 +13,60 @@ use byteorder::ReadBytesExt;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use typenum::U1;
 
-pub const INDIRECT_UNITIG_FLAG_MASK: u8 = 4;
+pub const INDIRECT_UNITIG_FLAG_MASK: u8 = 1;
+pub const HASH_ENDING_FLAG_MASK: u8 = 2;
+pub const OTHER_END_FLAG_MASK: u8 = 4;
+
+#[derive(Copy, Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
+#[cfg(feature = "support_kmer_counters")]
+pub struct SequenceAbundance {
+    pub first: u64,
+    pub sum: u64,
+    pub last: u64,
+}
+
+#[cfg(feature = "support_kmer_counters")]
+impl crate::concurrent::temp_reads::extra_data::HasEmptyExtraBuffer for SequenceAbundance {}
+
+#[cfg(feature = "support_kmer_counters")]
+impl crate::concurrent::temp_reads::extra_data::SequenceExtraData for SequenceAbundance {
+    fn decode_extended(_: &mut Self::TempBuffer, reader: &mut impl std::io::Read) -> Option<Self> {
+        let first = decode_varint(|| reader.read_u8().ok())?;
+        let sum = decode_varint(|| reader.read_u8().ok())?;
+        let last = decode_varint(|| reader.read_u8().ok())?;
+        Some(Self { first, sum, last })
+    }
+
+    fn encode_extended(
+        &self,
+        _: &Self::TempBuffer,
+        writer: &mut impl std::io::Write,
+        _sequence_length: usize,
+        reverse_complement: bool,
+        _read_flags: u8,
+    ) {
+        let (first, last) = if reverse_complement {
+            (self.last, self.first)
+        } else {
+            (self.first, self.last)
+        };
+
+        encode_varint(|b| writer.write(b).ok(), first).unwrap();
+        encode_varint(|b| writer.write(b).ok(), self.sum).unwrap();
+        encode_varint(|b| writer.write(b).ok(), last).unwrap();
+    }
+
+    #[inline(always)]
+    fn max_size(&self) -> usize {
+        3 * VARINT_MAX_SIZE
+    }
+}
+
+#[cfg(feature = "support_kmer_counters")]
+pub type SequenceAbundanceType = SequenceAbundance;
+
+#[cfg(not(feature = "support_kmer_counters"))]
+pub type SequenceAbundanceType = ();
 
 #[derive(Clone, Debug)]
 pub enum PartialUnitigMode {
@@ -44,7 +97,7 @@ impl PartialUnitigMode {
 #[derive(Clone, Debug)]
 pub struct PartialUnitigExtraData<X: SequenceExtraDataConsecutiveCompression> {
     #[cfg(feature = "support_kmer_counters")]
-    pub counters: sequence_output::structured_sequences::SequenceAbundance,
+    pub counters: SequenceAbundance,
     pub colors: X,
     pub mode: PartialUnitigMode,
 }
@@ -79,6 +132,10 @@ impl IndirectReadInfo {
 
     pub fn is_rc(&self) -> bool {
         self.sequence_length & 0x1 != 0
+    }
+
+    pub fn flip_rc(&mut self) {
+        self.sequence_length ^= 0x1;
     }
 }
 
@@ -142,12 +199,7 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
     ) -> Option<Self> {
         let colors = X::decode_extended(&mut buffer.0, reader, last_data, read_flags)?;
         #[cfg(feature = "support_kmer_counters")]
-        let counters = sequence_output::structured_sequences::SequenceAbundance::decode_extended(
-            &mut (),
-            reader,
-            (),
-            read_flags,
-        )?;
+        let counters = SequenceAbundance::decode_extended(&mut (), reader, (), read_flags)?;
 
         Some(Self {
             colors,

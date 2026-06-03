@@ -1421,6 +1421,7 @@ dependencies = [
  "nightly-quirks",
  "parallel-processor",
  "parking_lot",
+ "serde",
  "streaming-libdeflate-rs",
  "typenum",
 ]

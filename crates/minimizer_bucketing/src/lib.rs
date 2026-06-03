@@ -23,8 +23,7 @@ use io::concurrent::temp_reads::creads_utils::{
     NoMultiplicity, WithSecondBucket,
 };
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
-    SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression, TempBuffer,
 };
 use io::sequences_reader::DnaSequence;
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
@@ -108,7 +107,7 @@ pub struct PushSequenceInfo<'a, S, F: MinimizerBucketingExecutorFactory> {
     pub second_bucket: BucketIndexType,
     pub sequence: S,
     pub extra_data: F::ReadExtraData,
-    pub temp_buffer: &'a <F::ReadExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    pub temp_buffer: &'a TempBuffer<F::ReadExtraData>,
     pub minimizer_pos: u16,
     pub flags: u8,
     pub rc: bool,
@@ -146,7 +145,7 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
         &mut self,
         flags: u8,
         intermediate_data: &Factory::ReadExtraData,
-        intermediate_data_buffer: &<Factory::ReadExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        intermediate_data_buffer: &TempBuffer<Factory::ReadExtraData>,
         preprocess_info: &mut Factory::PreprocessInfo,
     );
 

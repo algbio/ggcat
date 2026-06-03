@@ -8,7 +8,7 @@ use crate::parsers::{SequenceIdent, SingleSequenceInfo};
 use byteorder::ReadBytesExt;
 use config::{ColorCounterType, ColorIndexType};
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataCombiner, SequenceExtraDataTempBufferManagement,
+    SequenceExtraData, SequenceExtraDataCombiner, SequenceExtraDataTempBufferManagement, TempBuffer,
 };
 use io::ident_writer::IdentSequenceWriter;
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
@@ -348,7 +348,7 @@ impl SequenceExtraDataCombiner for MinBkMultipleColors {
     fn to_single(
         &self,
         _in_buffer: &Self::TempBuffer,
-        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _out_buffer: &mut TempBuffer<Self::SingleDataType>,
     ) -> Self::SingleDataType {
         unimplemented!()
     }
@@ -359,7 +359,7 @@ impl SequenceExtraDataCombiner for MinBkMultipleColors {
     fn from_single_entry<'a>(
         out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
-        in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        in_buffer: &'a mut TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer) {
         let multiple = Self::copy_extra_from(single, in_buffer, out_buffer);
         (multiple, out_buffer)
@@ -382,6 +382,7 @@ mod tests {
     use crate::managers::multiple::UnitigsSerializerTempBuffer;
     use crate::parsers::graph::MinBkMultipleColors;
     use crate::parsers::{SequenceIdent, SingleSequenceInfo};
+    use config::ColorIndexType;
     use io::concurrent::temp_reads::extra_data::SequenceExtraData;
     use std::io::Cursor;
 
@@ -410,7 +411,7 @@ mod tests {
                 let mut encoded_buffer = Vec::new();
                 let mut cursor = Cursor::new(&mut encoded_buffer);
 
-                subset.encode_extended(&extra_buffer, &mut cursor);
+                subset.encode_extended(&extra_buffer, &mut cursor, 0, false, 0);
 
                 let mut decoded_extra_buffer = UnitigsSerializerTempBuffer { colors: vec![] };
 
@@ -428,10 +429,16 @@ mod tests {
                     end
                 );
 
-                let original = subset.get_iterator(&extra_buffer).collect::<Vec<_>>();
-                let decoded = decoded
-                    .get_iterator(&decoded_extra_buffer)
-                    .collect::<Vec<_>>();
+                let original = <MinBkMultipleColors as MinimizerBucketingSeqColorDataIterable<
+                    '_,
+                    ColorIndexType,
+                >>::get_iterator(&subset, &extra_buffer)
+                .collect::<Vec<_>>();
+                let decoded = <MinBkMultipleColors as MinimizerBucketingSeqColorDataIterable<
+                    '_,
+                    ColorIndexType,
+                >>::get_iterator(&decoded, &decoded_extra_buffer)
+                .collect::<Vec<_>>();
 
                 assert_eq!(original, decoded);
             }

@@ -8,7 +8,7 @@ use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
-    SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataTempBufferManagement, TempBuffer,
 };
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
@@ -110,7 +110,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Copy + FastS
     fn to_single(
         &self,
         in_buffer: &Self::TempBuffer,
-        out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        out_buffer: &mut TempBuffer<Self::SingleDataType>,
     ) -> Self::SingleDataType {
         Self::copy_extra_from(*self, in_buffer, out_buffer)
     }
@@ -120,14 +120,14 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Copy + FastS
     fn from_single_entry<'a>(
         _out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
-        in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        in_buffer: &'a mut TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer) {
         (single, in_buffer)
     }
 }
 
 pub struct ReadTypeBuffered<CX: ColorsManager> {
-    colors_buffer: (<MinimizerBucketingSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,),
+    colors_buffer: (TempBuffer<MinimizerBucketingSeqColorDataType<CX>>,),
     read_data: Option<ReadData<CX>>,
 }
 
@@ -258,7 +258,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
         &mut self,
         _flags: u8,
         _extra_data: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ReadExtraData,
-        _extra_data_buffer: &<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ReadExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _extra_data_buffer: &TempBuffer<<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ReadExtraData>,
         _preprocess_info: &mut <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         unimplemented!()

@@ -15,11 +15,13 @@ use io::concurrent::temp_reads::creads_utils::{
 };
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataConsecutiveCompression,
-    SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataTempBufferManagement, TempBuffer,
 };
 use io::concurrent_filewriter::ConcurrentFileWriter;
 use io::ident_writer::IdentSequenceWriter;
-use io::partial_unitigs_extra_data::PartialUnitigExtraData;
+use io::partial_unitigs_extra_data::{
+    INDIRECT_UNITIG_FLAG_MASK, PartialUnitigExtraData, PartialUnitigMode,
+};
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
@@ -102,15 +104,9 @@ pub struct SequenceDataWithLinks<CX: SequenceExtraDataConsecutiveCompression, LX
 impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraDataTempBufferManagement>
     SequenceExtraDataTempBufferManagement for SequenceDataWithLinks<CX, LX>
 {
-    type TempBuffer = (
-        <PartialUnitigExtraData<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        LX::TempBuffer,
-    );
+    type TempBuffer = (TempBuffer<PartialUnitigExtraData<CX>>, LX::TempBuffer);
 
-    fn new_temp_buffer() -> (
-        <PartialUnitigExtraData<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-        LX::TempBuffer,
-    ) {
+    fn new_temp_buffer() -> (TempBuffer<PartialUnitigExtraData<CX>>, LX::TempBuffer) {
         (
             PartialUnitigExtraData::<CX>::new_temp_buffer(),
             LX::new_temp_buffer(),
@@ -124,10 +120,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraDataTempBuffe
 
     fn copy_temp_buffer(
         dest: &mut Self::TempBuffer,
-        src: &(
-            <PartialUnitigExtraData<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-            LX::TempBuffer,
-        ),
+        src: &(TempBuffer<PartialUnitigExtraData<CX>>, LX::TempBuffer),
     ) {
         PartialUnitigExtraData::<CX>::copy_temp_buffer(&mut dest.0, &src.0);
         LX::copy_temp_buffer(&mut dest.1, &src.1);
@@ -135,10 +128,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraDataTempBuffe
 
     fn copy_extra_from(
         extra: Self,
-        src: &(
-            <PartialUnitigExtraData<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
-            LX::TempBuffer,
-        ),
+        src: &(TempBuffer<PartialUnitigExtraData<CX>>, LX::TempBuffer),
         dst: &mut Self::TempBuffer,
     ) -> Self {
         let extra_data =
@@ -227,7 +217,7 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter + SequenceExtraData>
             NoSecondBucket,
             NoMultiplicity,
             NoMinimizerPosition,
-            typenum::U0,
+            typenum::U1,
         >,
     );
 
@@ -247,12 +237,24 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter + SequenceExtraData>
 
         extra_info: PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
         links_info: LinksInfo,
-        extra_buffers: &(<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer, LinksInfo::TempBuffer),
+        extra_buffers: &(
+            TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
+            LinksInfo::TempBuffer,
+        ),
         _indirect_file: Option<&ConcurrentFileWriter>,
         _flush_callback: impl FnMut(&mut Self::SequenceTempBuffer),
     ) {
         buffer.1.write_to(
-            &CompressedReadsBucketData::new(sequence, 0, 0, 0),
+            &CompressedReadsBucketData::new(
+                sequence,
+                if matches!(extra_info.mode, PartialUnitigMode::Indirect { .. }) {
+                    INDIRECT_UNITIG_FLAG_MASK
+                } else {
+                    0
+                },
+                0,
+                0,
+            ),
             &mut buffer.0,
             &SequenceDataWithLinks {
                 index: sequence_index,

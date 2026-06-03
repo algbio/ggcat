@@ -12,16 +12,14 @@ use hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
     extremal::PrecomputedHash,
 };
+use io::partial_unitigs_extra_data::SequenceAbundanceType;
 use io::{
     compressed_read::CompressedRead,
-    concurrent::temp_reads::{
-        creads_utils::DeserializedRead, extra_data::SequenceExtraDataTempBufferManagement,
-    },
+    concurrent::temp_reads::{creads_utils::DeserializedRead, extra_data::TempBuffer},
     varint::{decode_varint, encode_varint},
 };
 use kmers_transform::GroupProcessStats;
 use rustc_hash::{FxBuildHasher, FxHashMap};
-use sequence_output::structured_sequences::SequenceAbundanceType;
 use structs::map_entry::MapEntry;
 use utils::Utils;
 
@@ -185,7 +183,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> HashMapUnitigsExtender<MH, CX> 
         ),
         #[cfg(feature = "support_kmer_counters")] is_forward: bool,
         #[cfg(feature = "support_kmer_counters")]
-        counters: &mut sequence_output::structured_sequences::SequenceAbundance,
+        counters: &mut io::partial_unitigs_extra_data::SequenceAbundance,
     ) -> Option<MH::HashTypeExtendable> {
         let mut temp_data = (hash, 0);
         let mut current_hash;
@@ -363,7 +361,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
     fn add_sequence(
         &mut self,
         sequence: &DeserializedRead<'_, MinimizerBucketingMultipleSeqColorDataType<CX>>,
-        extra_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        extra_buffer: &TempBuffer<MinimizerBucketingMultipleSeqColorDataType<CX>>,
     ) {
         let read = sequence.read;
 
@@ -508,7 +506,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             let first_count = rhentry.get_kmer_multiplicity() as u64;
 
             #[cfg(feature = "support_kmer_counters")]
-            let mut counters = sequence_output::structured_sequences::SequenceAbundance {
+            let mut counters = io::partial_unitigs_extra_data::SequenceAbundance {
                 first: first_count,
                 sum: first_count,
                 last: first_count,

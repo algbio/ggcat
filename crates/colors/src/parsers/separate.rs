@@ -6,7 +6,7 @@ use byteorder::ReadBytesExt;
 use config::{ColorIndexType, DEFAULT_PER_CPU_BUFFER_SIZE};
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
-    SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataTempBufferManagement, TempBuffer,
 };
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use std::io::{Read, Write};
@@ -276,7 +276,7 @@ impl SequenceExtraDataCombiner for MinBkMultipleColors {
     fn to_single(
         &self,
         in_buffer: &Self::TempBuffer,
-        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _out_buffer: &mut TempBuffer<Self::SingleDataType>,
     ) -> Self::SingleDataType {
         MinBkSingleColor(in_buffer.slice_vec(&self.0)[0])
     }
@@ -305,7 +305,7 @@ impl SequenceExtraDataCombiner for MinBkMultipleColors {
     fn from_single_entry<'a>(
         out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
-        _in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _in_buffer: &'a mut TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer) {
         let mut self_ = Self(InlineVec::new());
         out_buffer.push_vec(&mut self_.0, single.0);

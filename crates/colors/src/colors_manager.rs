@@ -4,8 +4,7 @@ use dynamic_dispatch::dynamic_dispatch;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
-    SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression, TempBuffer,
 };
 use io::ident_writer::IdentSequenceWriter;
 use nightly_quirks::prelude::*;
@@ -202,17 +201,17 @@ pub trait ColorsMergeManager: Sized {
     );
 
     fn join_structures<const REVERSE: bool>(
-        dest: &mut Self::TempUnitigColorStructure,
+        dest: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
         src: &Self::PartialUnitigsColorStructure,
-        src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        src_buffer: &TempBuffer<Self::PartialUnitigsColorStructure>,
         skip: ColorCounterType,
         count: Option<usize>,
     );
 
     fn join_structures_rc(
-        dest: &mut Self::TempUnitigColorStructure,
+        dest: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
         src: &Self::PartialUnitigsColorStructure,
-        src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        src_buffer: &TempBuffer<Self::PartialUnitigsColorStructure>,
         total_bases: usize,
         fwd_range: Range<usize>,
         is_rc: bool,
@@ -233,20 +232,29 @@ pub trait ColorsMergeManager: Sized {
 
     fn pop_base(
         target: &mut Self::PartialUnitigsColorStructure,
-        colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        colors_buffer: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
     );
+
+    fn remove_colors_range(
+        target: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
+        range: Range<usize>,
+    );
+
+    fn get_color_from_fully_joined_buffer(
+        colors_buffer: &TempBuffer<Self::PartialUnitigsColorStructure>,
+    ) -> Self::PartialUnitigsColorStructure;
 
     /// Encodes partial unitig colors into the extra data structure
     fn encode_part_unitigs_colors(
         ts: &mut Self::TempUnitigColorStructure,
-        colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        colors_buffer: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
     ) -> Self::PartialUnitigsColorStructure;
 
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]);
     fn debug_colors<MH: HashFunctionFactory>(
         data: &Self::ColorsBufferTempStructure,
         color: &Self::PartialUnitigsColorStructure,
-        colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        colors_buffer: &TempBuffer<Self::PartialUnitigsColorStructure>,
         seq: &[u8],
         hmap: &HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
     );

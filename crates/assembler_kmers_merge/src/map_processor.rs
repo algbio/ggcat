@@ -7,11 +7,10 @@ use ggcat_logging::stats;
 use ggcat_logging::stats::KmersMergeBucketReport;
 use hashes::HashFunctionFactory;
 use io::DUPLICATES_BUCKET_EXTRA;
-use sequence_output::structured_sequences::StructuredSequenceBackendWrapper;
 use io::concurrent::temp_reads::creads_utils::{
     AssemblerMinimizerPosition, DeserializedRead, WithMultiplicity,
 };
-use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use io::concurrent::temp_reads::extra_data::{SequenceExtraDataTempBufferManagement, TempBuffer};
 use io::memstorage::memstorage_encode_read;
 use kmers_transform::{
     GroupProcessStats, KmersTransformExecutorFactory, KmersTransformMapProcessor,
@@ -23,6 +22,7 @@ use parallel_processor::mt_debug_counters::counter::{AtomicCounter, AvgMode, Max
 use parallel_processor::mt_debug_counters::{declare_avg_counter_i64, declare_counter_i64};
 use parking_lot::RwLock;
 use rustc_hash::FxHasher;
+use sequence_output::structured_sequences::StructuredSequenceBackendWrapper;
 use std::hash::Hasher;
 use std::mem::size_of;
 use std::ops::DerefMut;
@@ -45,7 +45,7 @@ pub struct ParallelKmersMergeMapPacket<
 
     pub minimizer_superkmers: FuzzyHashmap<u8, 0>,
     pub superkmers_extra_buffer:
-        <<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        TempBuffer<<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>,
 
     pub is_duplicate: bool,
     pub is_resplitted: bool,
@@ -78,7 +78,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, OM: StructuredSequenceBackendWr
 
     fn reset(&mut self) {
         self.extender.reset();
-        <<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>
+        <ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity
             ::clear_temp_buffer(&mut self.superkmers_extra_buffer);
     }
 }
@@ -132,7 +132,7 @@ fn add_read<
 >(
     map_packet: &mut ParallelKmersMergeMapPacket<MH, CX, OM>,
     read: &DeserializedRead<'_, <ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>,
-    extra_buffer: &<<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    extra_buffer: &TempBuffer<<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>,
 ) {
     let minimizer_pos = read.minimizer_pos as usize;
 
@@ -212,7 +212,7 @@ impl<
         process_reads_callback: impl FnOnce(&mut Self::MapStruct, fn(
                     context: &mut Self::MapStruct,
                     read: &DeserializedRead<'_, <ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>,
-                    extra_buffer: &<<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer
+                    extra_buffer: &TempBuffer<<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>
                 )
             ),
     ) {

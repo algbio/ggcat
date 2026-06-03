@@ -24,6 +24,9 @@ fn bincode_serialize_ref<S: Write, D: Serialize>(ser: &mut S, data: &D) {
 pub struct ColorIndexSerializer;
 impl ColorIndexSerializer {
     pub fn serialize_colors(writer: &mut impl Write, colors: &[ColorIndexType]) {
+        debug_assert!(!colors.is_empty());
+        debug_assert!(colors.windows(2).all(|window| window[0] < window[1]));
+
         encode_varint(|b| writer.write_all(b), (colors[0] as u64) + 2).unwrap();
 
         let mut last_color = colors[0];
@@ -325,7 +328,7 @@ mod tests {
         color_subset_encoding(&[1, 100, 200, 300, 400, 800]);
 
         color_subset_encoding(&[
-            3, 6, 9, 12, 70, 71, 62, 63, 64, 88, 95, 100, 105, 110, 198, 384,
+            3, 6, 9, 12, 70, 71, 72, 73, 74, 88, 95, 100, 105, 110, 198, 384,
         ]);
     }
 }

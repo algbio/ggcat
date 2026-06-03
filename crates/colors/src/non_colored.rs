@@ -8,8 +8,7 @@ use dynamic_dispatch::dynamic_dispatch;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::{
-    HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataCombiner,
-    SequenceExtraDataTempBufferManagement,
+    HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataCombiner, TempBuffer,
 };
 use io::ident_writer::IdentSequenceWriter;
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
@@ -127,7 +126,7 @@ impl SequenceExtraDataCombiner for NonColoredManager {
     fn to_single(
         &self,
         _in_buffer: &Self::TempBuffer,
-        _out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _out_buffer: &mut TempBuffer<Self::SingleDataType>,
     ) -> Self::SingleDataType {
         NonColoredManager
     }
@@ -138,7 +137,7 @@ impl SequenceExtraDataCombiner for NonColoredManager {
     fn from_single_entry<'a>(
         out_buffer: &'a mut Self::TempBuffer,
         _color: Self::SingleDataType,
-        _in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _in_buffer: &'a mut TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer) {
         (Self, out_buffer)
     }
@@ -317,9 +316,9 @@ impl ColorsMergeManager for NonColoredManager {
 
     #[inline(always)]
     fn join_structures<const REVERSE: bool>(
-        _dest: &mut Self::TempUnitigColorStructure,
+        _dest: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
         _src: &Self::PartialUnitigsColorStructure,
-        _src_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _src_buffer: &TempBuffer<Self::PartialUnitigsColorStructure>,
         _skip: ColorCounterType,
         _count: Option<usize>,
     ) {
@@ -328,14 +327,26 @@ impl ColorsMergeManager for NonColoredManager {
     #[inline(always)]
     fn pop_base(
         _target: &mut Self::PartialUnitigsColorStructure,
-        _colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _colors_buffer: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
     ) {
+    }
+
+    fn remove_colors_range(
+        _target: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
+        _range: Range<usize>,
+    ) {
+    }
+
+    fn get_color_from_fully_joined_buffer(
+        _colors_buffer: &TempBuffer<Self::PartialUnitigsColorStructure>,
+    ) -> Self::PartialUnitigsColorStructure {
+        NonColoredManager
     }
 
     #[inline(always)]
     fn encode_part_unitigs_colors(
         _ts: &mut Self::TempUnitigColorStructure,
-        _colors_buffer: &mut <Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _colors_buffer: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
     ) -> Self::PartialUnitigsColorStructure {
         NonColoredManager
     }
@@ -344,7 +355,7 @@ impl ColorsMergeManager for NonColoredManager {
     fn debug_colors<MH: HashFunctionFactory>(
         _data: &Self::ColorsBufferTempStructure,
         _color: &Self::PartialUnitigsColorStructure,
-        _colors_buffer: &<Self::PartialUnitigsColorStructure as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        _colors_buffer: &TempBuffer<Self::PartialUnitigsColorStructure>,
         _seq: &[u8],
         _hmap: &HashMap<MH::HashTypeUnextendable, MapEntry<Self::HashMapTempColorIndex>>,
     ) {

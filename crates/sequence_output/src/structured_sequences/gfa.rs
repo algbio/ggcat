@@ -8,9 +8,7 @@ use flate2::Compression;
 use flate2::write::GzEncoder;
 use hashes::HashableSequence;
 use io::compressed_read::CompressedRead;
-use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
-};
+use io::concurrent::temp_reads::extra_data::{SequenceExtraData, TempBuffer};
 use io::concurrent_filewriter::ConcurrentFileWriter;
 use io::partial_unitigs_extra_data::PartialUnitigExtraData;
 use lz4::{BlockMode, BlockSize, ContentChecksum};
@@ -19,8 +17,6 @@ use std::io::{BufWriter, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
-#[cfg(feature = "support_kmer_counters")]
-use super::SequenceAbundance;
 use super::stream_finish::SequencesWriterWrapper;
 use super::{StructuredSequenceBackendInit, StructuredSequenceBackendWrapper};
 
@@ -127,7 +123,10 @@ impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
 
         extra_info: PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
         links_info: LinksInfo,
-        extra_buffers: &(<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer, LinksInfo::TempBuffer),
+        extra_buffers: &(
+            TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
+            LinksInfo::TempBuffer,
+        ),
         indirect_file: Option<&ConcurrentFileWriter>,
         mut flush_callback: impl FnMut(&mut Self::SequenceTempBuffer),
     ) {
@@ -181,11 +180,11 @@ impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
         {
             // Continuation of the S line
             // ... KC:i:<kmer_count>    km:f:<kmer_coverage>
-            write!(buffer, "\tKC:i:{}", abundance.sum).unwrap();
+            write!(buffer, "\tKC:i:{}", extra_info.counters.sum).unwrap();
             write!(
                 buffer,
                 "\tkm:f:{:.1}",
-                abundance.sum as f64 / (sequence.len() - k + 1) as f64
+                extra_info.counters.sum as f64 / (sequence.get_length() - k + 1) as f64
             )
             .unwrap();
         }

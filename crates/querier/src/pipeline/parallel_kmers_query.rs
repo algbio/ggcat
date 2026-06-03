@@ -22,7 +22,7 @@ use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::DeserializedRead;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
-    SequenceExtraDataTempBufferManagement,
+    SequenceExtraDataTempBufferManagement, TempBuffer,
 };
 use io::varint::{decode_varint, encode_varint};
 use kmers_transform::{
@@ -177,7 +177,7 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataCombiner for QueryKmer
     fn to_single(
         &self,
         in_buffer: &Self::TempBuffer,
-        out_buffer: &mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        out_buffer: &mut TempBuffer<Self::SingleDataType>,
     ) -> Self::SingleDataType {
         Self::copy_extra_from(*self, in_buffer, out_buffer)
     }
@@ -187,7 +187,7 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataCombiner for QueryKmer
     fn from_single_entry<'a>(
         out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
-        in_buffer: &'a mut <Self::SingleDataType as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        in_buffer: &'a mut TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer) {
         Self::copy_extra_from(single, in_buffer, out_buffer);
         (single, out_buffer)
@@ -365,7 +365,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager>
         process_reads_callback: impl FnOnce(&mut Self, fn(
                 context: &mut Self,
                     read: &DeserializedRead<'_, <ParallelKmersQueryFactory<MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>,
-                    extra_buffer: &<<ParallelKmersQueryFactory<MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer
+                    extra_buffer: &TempBuffer<<ParallelKmersQueryFactory<MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>
                 )
             ),
     ) {

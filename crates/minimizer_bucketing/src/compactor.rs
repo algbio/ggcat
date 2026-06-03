@@ -1,5 +1,3 @@
-pub mod extra_data;
-
 use std::{
     cmp::Reverse,
     marker::PhantomData,
@@ -31,8 +29,7 @@ use io::{
             WithFixedMultiplicity, WithMultiplicity, WithSecondBucket, helpers::helper_read_bucket,
         },
         extra_data::{
-            SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
-            SequenceExtraDataTempBufferManagement,
+            SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression, TempBuffer,
         },
     },
     memstorage::{
@@ -85,7 +82,7 @@ pub struct BucketsCompactor<
     super_kmers_hashmap: FuzzyHashmap<u8, 0>,
 
     // The single sub-bucket extra buffer with multiplicity
-    super_kmers_extra_buffer: <MultipleData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    super_kmers_extra_buffer: TempBuffer<MultipleData>,
 
     // The uncompacted sk buffer
     uncompacted_super_kmers_buffer: Vec<
@@ -99,8 +96,7 @@ pub struct BucketsCompactor<
     >,
 
     // The uncompacted extra buffer
-    uncompacted_super_kmers_extra_buffer:
-        <MultipleData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    uncompacted_super_kmers_extra_buffer: TempBuffer<MultipleData>,
 
     k: usize,
     target_chunk_size: u64,
@@ -117,13 +113,11 @@ impl<
         Self {
             read_thread: AsyncReaderThread::new(DEFAULT_OUTPUT_BUFFER_SIZE, 4),
             super_kmers_hashmap: FuzzyHashmap::new(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS),
-            super_kmers_extra_buffer:
-                <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer(),
+            super_kmers_extra_buffer: MultipleData::new_temp_buffer(),
             uncompacted_super_kmers_buffer: (0..second_buckets.total_buckets_count)
                 .map(|_| ReadMemStorage::new(ResizableVec::new()))
                 .collect(),
-            uncompacted_super_kmers_extra_buffer:
-                <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer(),
+            uncompacted_super_kmers_extra_buffer: MultipleData::new_temp_buffer(),
             k,
             target_chunk_size,
             _phantom: PhantomData,
@@ -418,10 +412,8 @@ impl<
             FlagsCount,
         >::new(self.k);
 
-        let mut single_to_multiple_extra_buffer =
-            <MultipleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer();
-        let mut multiple_to_single_extra_buffer =
-            <SingleData as SequenceExtraDataTempBufferManagement>::new_temp_buffer();
+        let mut single_to_multiple_extra_buffer = MultipleData::new_temp_buffer();
+        let mut multiple_to_single_extra_buffer = SingleData::new_temp_buffer();
 
         let sub_buckets = SplittedBucket::generate(
             compacted_chosen_chunks.iter().map(|c| &c.path),

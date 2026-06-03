@@ -14,24 +14,27 @@ use hashes::extremal::{DelayedHashComputation, HashGenerator};
 use hashes::{ExtendableHashTraitType, HashFunctionFactory, HashableSequence};
 use instrumenter::local_setup_instrumenter;
 use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
-use sequence_output::structured_sequences::StructuredSequenceBackendWrapper;
-use sequence_output::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use io::concurrent::temp_reads::creads_utils::{
     AlignToMinimizerByteBoundary, AssemblerMinimizerPosition, CompressedReadsBucketData,
     CompressedReadsBucketDataSerializer, DeserializedReadIndependent, NoMultiplicity,
     NoSecondBucket, ToReadData, WithMultiplicity,
 };
-use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use io::concurrent::temp_reads::extra_data::{SequenceExtraDataTempBufferManagement, TempBuffer};
 use io::memstorage::memstorage_decode_reads;
+use io::partial_unitigs_extra_data::{
+    HASH_ENDING_FLAG_MASK, INDIRECT_UNITIG_FLAG_MASK, OTHER_END_FLAG_MASK, PartialUnitigExtraData,
+    PartialUnitigMode,
+};
 use kmers_transform::{KmersTransformExecutorFactory, KmersTransformFinalExecutor};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::execution_manager::packet::Packet;
+use sequence_output::structured_sequences::StructuredSequenceBackendWrapper;
+use sequence_output::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::slice::from_raw_parts;
 use std::sync::Arc;
-use io::partial_unitigs_extra_data::{PartialUnitigExtraData, PartialUnitigMode};
 use typenum::U4;
 
 local_setup_instrumenter!();
@@ -80,9 +83,10 @@ impl<
             colors_data: UnitigExtensionColorsData {
                 colors_global_table: global_data.colors_global_table.clone(),
                 unitigs_temp_colors: CX::ColorsMergeManagerType::alloc_unitig_color_structure(),
-                temp_color_buffer: <PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::new_temp_buffer()
+                temp_color_buffer:
+                    PartialUnitigExtraData::<PartialUnitigsColorStructure<CX>>::new_temp_buffer(),
             },
-            _phantom: PhantomData
+            _phantom: PhantomData,
         }
     }
 }
@@ -98,12 +102,7 @@ impl<
 {
     #[inline]
     fn output_sequence<'a, H: HashGenerator<MH>>(
-        lonely_unitigs: &mut FastaWriterConcurrentBuffer<
-            'a,
-            CX,
-            (),
-            OM::Backend<CX, ()>,
-        >,
+        lonely_unitigs: &mut FastaWriterConcurrentBuffer<'a, CX, (), OM::Backend<CX, ()>>,
         unitigs_tmp: &mut BucketsThreadDispatcher<
             CompressedBinaryWriter,
             CompressedReadsBucketDataSerializer<
@@ -121,7 +120,7 @@ impl<
         backward_linked: Option<H>,
         k: usize,
         #[cfg(feature = "support_kmer_counters")]
-        counters: sequence_output::structured_sequences::SequenceAbundance,
+        counters: io::partial_unitigs_extra_data::SequenceAbundance,
     ) {
         let colors = color_types::ColorsMergeManagerType::<CX>::encode_part_unitigs_colors(
             &mut colors_data.unitigs_temp_colors,
@@ -148,7 +147,7 @@ impl<
                 colors,
                 #[cfg(feature = "support_kmer_counters")]
                 counters,
-                mode: PartialUnitigMode::Inline
+                mode: PartialUnitigMode::Inline,
             };
 
             let both_ends = forward_linked.is_some() && backward_linked.is_some();
@@ -214,7 +213,11 @@ impl<
                     multiplicity: 0,
                     minimizer_pos: last_align as u16,
                     extra_bucket: 0,
-                    flags: (!hash_beginning ^ should_rc) as u8 | ((both_ends as u8) << 1),
+                    flags: if !hash_beginning ^ should_rc {
+                        HASH_ENDING_FLAG_MASK
+                    } else {
+                        0
+                    } | if both_ends { OTHER_END_FLAG_MASK } else { 0 },
                 },
             );
         }
@@ -279,7 +282,7 @@ impl<
             let mut process_fn = |minimizer_elements: &mut [DeserializedReadIndependent<<
                 ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>],
                 superkmers_storage: &[u8],
-                superkmers_extra_buffer: &<<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity as SequenceExtraDataTempBufferManagement>::TempBuffer| {
+                superkmers_extra_buffer: &TempBuffer<<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>| {
                     if minimizer_elements.len() <= 1
                     {
                         if (minimizer_elements[0].multiplicity as usize) < global_data.min_multiplicity {
@@ -290,8 +293,8 @@ impl<
                         if EVEN_K && minimizer_elements[0].flags & BOTH_FLAGS == 0 {
 
                             check_problematic_self_complemental_kmer::<MH>(
-                                map_struct.k, 
-                                &minimizer_elements[0].read.as_reference(superkmers_storage), 
+                                map_struct.k,
+                                &minimizer_elements[0].read.as_reference(superkmers_storage),
                                 |bws, fws| {
 
                                     let half_pass= minimizer_elements[0].multiplicity as usize / 2 >= global_data.min_multiplicity;
@@ -362,7 +365,7 @@ impl<
                             },
                             global_data.k,
                             #[cfg(feature = "support_kmer_counters")]
-                            sequence_output::structured_sequences::SequenceAbundance {
+                            io::partial_unitigs_extra_data::SequenceAbundance {
                                 first: read.multiplicity as u64,
                                 sum: read.multiplicity as u64
                                     * (read.read.bases_count() - global_data.k + 1) as u64,

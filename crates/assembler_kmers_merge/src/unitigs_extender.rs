@@ -8,15 +8,12 @@ use colors::colors_manager::{
     },
 };
 use hashes::{HashFunctionFactory, extremal::PrecomputedHash};
-use io::partial_unitigs_extra_data::IndirectReadInfo;
+use io::partial_unitigs_extra_data::SequenceAbundanceType;
+use io::{compressed_read::CompressedRead, concurrent::temp_reads::creads_utils::DeserializedRead};
 use io::{
-    compressed_read::CompressedRead,
-    concurrent::temp_reads::{
-        creads_utils::DeserializedRead, extra_data::SequenceExtraDataTempBufferManagement,
-    },
+    concurrent::temp_reads::extra_data::TempBuffer, partial_unitigs_extra_data::IndirectReadInfo,
 };
 use kmers_transform::GroupProcessStats;
-use sequence_output::structured_sequences::SequenceAbundanceType;
 
 pub mod hashmap;
 pub mod sorting;
@@ -32,7 +29,7 @@ pub struct UnitigExtensionColorsData<CX: ColorsManager> {
     pub colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
     pub unitigs_temp_colors: TempUnitigColorStructure<CX>,
     pub temp_color_buffer: (
-        <PartialUnitigsColorStructure<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        TempBuffer<PartialUnitigsColorStructure<CX>>,
         Vec<IndirectReadInfo>,
     ),
 }
@@ -53,7 +50,7 @@ pub trait UnitigsExtenderTrait<MH: HashFunctionFactory, CX: ColorsManager> {
     fn add_sequence(
         &mut self,
         sequence: &DeserializedRead<'_, MinimizerBucketingMultipleSeqColorDataType<CX>>,
-        extra_buffer: &<MinimizerBucketingMultipleSeqColorDataType<CX> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        extra_buffer: &TempBuffer<MinimizerBucketingMultipleSeqColorDataType<CX>>,
     );
     fn get_stats(&self) -> GroupProcessStats;
     fn compute_unitigs<const COMPUTE_SIMPLITIGS: bool>(

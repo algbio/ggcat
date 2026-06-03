@@ -3,15 +3,13 @@ use hashes::HashableSequence;
 
 use io::{
     compressed_read::{CompressedRead, CompressedReadIndipendent},
-    concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement,
+    concurrent::temp_reads::extra_data::{SequenceExtraDataTempBufferManagement, TempBuffer},
     concurrent_filewriter::ConcurrentFileWriter,
     ident_writer::IdentSequenceWriter,
     partial_unitigs_extra_data::PartialUnitigExtraData,
 };
 
 use crate::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
-
-use super::SequenceAbundanceType;
 
 pub struct FastaWriterConcurrentBuffer<
     'a,
@@ -24,11 +22,10 @@ pub struct FastaWriterConcurrentBuffer<
         CompressedReadIndipendent,
         PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
         LinksInfo,
-        SequenceAbundanceType,
     )>,
     seq_buf: Vec<u8>,
     extra_buffers: (
-        <PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
         LinksInfo::TempBuffer,
     ),
     temp_buffer: Backend::SequenceTempBuffer,
@@ -73,9 +70,7 @@ impl<
             self.current_index.map(|c| c - self.sequences.len() as u64),
             self.sequences
                 .drain(..)
-                .map(|(slice, extra, link, abundance)| {
-                    (slice.as_reference(&self.seq_buf), extra, link, abundance)
-                }),
+                .map(|(slice, extra, link)| (slice.as_reference(&self.seq_buf), extra, link)),
             &self.extra_buffers,
             indirect_file,
         );
@@ -99,7 +94,7 @@ impl<
         sequence: CompressedRead,
         sequence_index: Option<u64>,
         extra_data: PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
-        extra_buffer: &<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        extra_buffer: &TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
         links: LinksInfo,
         links_extra_buffer: &LinksInfo::TempBuffer,
         indirect_file: Option<&ConcurrentFileWriter>,
@@ -132,17 +127,7 @@ impl<
             LinksInfo::copy_extra_from(links, &links_extra_buffer, &mut self.extra_buffers.1);
 
         let sequence = CompressedReadIndipendent::from_read::<false>(&sequence, &mut self.seq_buf);
-        self.sequences.push((
-            sequence,
-            extra_data,
-            links,
-            match () {
-                #[cfg(feature = "support_kmer_counters")]
-                () => extra_data.counters,
-                #[cfg(not(feature = "support_kmer_counters"))]
-                () => (),
-            },
-        ));
+        self.sequences.push((sequence, extra_data, links));
 
         if let Some(current_index) = &mut self.current_index {
             *current_index += 1;

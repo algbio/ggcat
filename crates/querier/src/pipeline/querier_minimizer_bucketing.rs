@@ -6,7 +6,7 @@ use hashes::HashFunction;
 use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
-use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use io::concurrent::temp_reads::extra_data::{SequenceExtraDataTempBufferManagement, TempBuffer};
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::fasta::FastaFileSequencesStream;
@@ -39,7 +39,7 @@ impl Default for FileType {
 }
 
 pub struct ReadTypeBuffered<CX: ColorsManager> {
-    colors_buffer: <QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer,
+    colors_buffer: TempBuffer<QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>>,
     read_type: ReadType<CX>,
 }
 
@@ -163,7 +163,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
         &mut self,
         _flags: u8,
         extra_data: &<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ReadExtraData,
-        extra_data_buffer: &<<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ReadExtraData as SequenceExtraDataTempBufferManagement>::TempBuffer,
+        extra_data_buffer: &TempBuffer<<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::ReadExtraData>,
         preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::copy_temp_buffer(

@@ -2,12 +2,10 @@ use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use dynamic_dispatch::dynamic_dispatch;
 use io::compressed_read::CompressedRead;
-use io::concurrent::temp_reads::extra_data::{
-    SequenceExtraData, SequenceExtraDataTempBufferManagement,
-};
+use io::concurrent::temp_reads::extra_data::{SequenceExtraData, TempBuffer};
 use io::concurrent_filewriter::ConcurrentFileWriter;
 use io::ident_writer::IdentSequenceWriter;
-use io::partial_unitigs_extra_data::PartialUnitigExtraData;
+use io::partial_unitigs_extra_data::{PartialUnitigExtraData, SequenceAbundanceType};
 use parking_lot::{Condvar, Mutex};
 
 use std::marker::PhantomData;
@@ -30,61 +28,10 @@ pub mod fasta;
 pub mod gfa;
 pub mod stream_finish;
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug, Default)]
-#[cfg(feature = "support_kmer_counters")]
-pub struct SequenceAbundance {
-    pub first: u64,
-    pub sum: u64,
-    pub last: u64,
-}
-
-#[cfg(feature = "support_kmer_counters")]
-impl HasEmptyExtraBuffer for SequenceAbundance {}
-
-#[cfg(feature = "support_kmer_counters")]
-impl SequenceExtraData for SequenceAbundance {
-    fn decode_extended(_: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
-        let first = decode_varint(|| reader.read_u8().ok())?;
-        let sum = decode_varint(|| reader.read_u8().ok())?;
-        let last = decode_varint(|| reader.read_u8().ok())?;
-        Some(Self { first, sum, last })
-    }
-
-    fn encode_extended(
-        &self,
-        _: &Self::TempBuffer,
-        writer: &mut impl Write,
-        _sequence_length: usize,
-        reverse_complement: bool,
-        _read_flags: u8,
-    ) {
-        let (first, last) = if reverse_complement {
-            (self.last, self.first)
-        } else {
-            (self.first, self.last)
-        };
-
-        encode_varint(|b| writer.write(b).ok(), first).unwrap();
-        encode_varint(|b| writer.write(b).ok(), self.sum).unwrap();
-        encode_varint(|b| writer.write(b).ok(), last).unwrap();
-    }
-
-    #[inline(always)]
-    fn max_size(&self) -> usize {
-        3 * VARINT_MAX_SIZE
-    }
-}
-
-#[cfg(feature = "support_kmer_counters")]
-pub type SequenceAbundanceType = SequenceAbundance;
-
-#[cfg(not(feature = "support_kmer_counters"))]
-pub type SequenceAbundanceType = ();
-
 pub fn new_sequence_abundance(_multiplicity: usize, _kmers: usize) -> SequenceAbundanceType {
     match () {
         #[cfg(feature = "support_kmer_counters")]
-        () => SequenceAbundance {
+        () => SequenceAbundanceType {
             first: _multiplicity as u64,
             sum: (_multiplicity * _kmers) as u64,
             last: _multiplicity as u64,
@@ -130,7 +77,10 @@ pub trait StructuredSequenceBackend<CX: ColorsManager, LinksInfo: IdentSequenceW
         sequence: CompressedRead,
         extra_info: PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
         links_info: LinksInfo,
-        extra_buffers: &(<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer, LinksInfo::TempBuffer),
+        extra_buffers: &(
+            TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
+            LinksInfo::TempBuffer,
+        ),
         indirect_file: Option<&ConcurrentFileWriter>,
         flush_callback: impl FnMut(&mut Self::SequenceTempBuffer),
     );
@@ -179,10 +129,12 @@ impl<
                 CompressedRead<'a>,
                 PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
                 LinksInfo,
-                SequenceAbundanceType,
             ),
         >,
-        extra_buffers: &(<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>> as SequenceExtraDataTempBufferManagement>::TempBuffer, LinksInfo::TempBuffer),
+        extra_buffers: &(
+            TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
+            LinksInfo::TempBuffer,
+        ),
         indirect_file: Option<&ConcurrentFileWriter>,
     ) -> u64 {
         let sequences_count = sequences.len() as u64;
@@ -221,7 +173,7 @@ impl<
 
         let mut current_index = start_sequence_index;
         // Write the sequences to a temporary buffer
-        for (sequence, extra_info, links_info, _abundance) in sequences {
+        for (sequence, extra_info, links_info) in sequences {
             Backend::write_sequence(
                 &mut extract_workdata,
                 self.k,

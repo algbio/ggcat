@@ -9,17 +9,21 @@ use genome_graph::bigraph::traitgraph::implementation::petgraph_impl::PetGraph;
 use genome_graph::bigraph::traitgraph::interface::ImmutableGraphContainer;
 use genome_graph::bigraph::traitgraph::interface::MutableGraphContainer;
 use genome_graph::generic::{GenericEdge, GenericNode};
-use io::compressed_read::CompressedReadIndipendent;
-use io::concurrent::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
-use io::concurrent::structured_sequences::{
-    IdentSequenceWriter, SequenceAbundanceType, StructuredSequenceBackend, StructuredSequenceWriter,
-};
-use io::concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement;
+use hashes::HashableSequence;
+use io::compressed_read::{CompressedRead, CompressedReadIndipendent};
+use io::concurrent::temp_reads::extra_data::{SequenceExtraDataTempBufferManagement, TempBuffer};
+use io::concurrent_filewriter::ConcurrentFileWriter;
+use io::ident_writer::IdentSequenceWriter;
+use io::partial_unitigs_extra_data::PartialUnitigExtraData;
 use libmatchtigs::{
     EulertigAlgorithm, EulertigAlgorithmConfiguration, MatchtigEdgeData, PathtigAlgorithm,
 };
 use libmatchtigs::{GreedytigAlgorithm, GreedytigAlgorithmConfiguration, TigAlgorithm};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use sequence_output::indirect_reads_extractor::ReadExtractWorkData;
+use sequence_output::sequences_joiner::IndirectSequencesJoiner;
+use sequence_output::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
+use sequence_output::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
 use std::fmt::Debug;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -27,33 +31,29 @@ use std::sync::Arc;
 use traitgraph_algo::dijkstra::DijkstraWeightedEdgeData;
 
 #[cfg(feature = "support_kmer_counters")]
-use io::concurrent::structured_sequences::SequenceAbundance;
+use io::partial_unitigs_extra_data::SequenceAbundance;
 
 const DUMMY_EDGE_VALUE: usize = usize::MAX;
 
 #[derive(Clone)]
-struct SequenceHandle<ColorInfo: IdentSequenceWriter>(
-    Option<Arc<StructuredUnitigsStorage<ColorInfo>>>,
-    usize,
-);
+struct SequenceHandle<CX: ColorsManager>(Option<Arc<StructuredUnitigsStorage<CX>>>, usize);
 
-impl<ColorInfo: IdentSequenceWriter> Debug for SequenceHandle<ColorInfo> {
+impl<CX: ColorsManager> Debug for SequenceHandle<CX> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("SequenceHandle").field(&self.1).finish()
     }
 }
 
-impl<ColorInfo: IdentSequenceWriter> SequenceHandle<ColorInfo> {
+impl<CX: ColorsManager> SequenceHandle<CX> {
     fn get_sequence_handle(
         &self,
     ) -> Option<(
         &(
             CompressedReadIndipendent,
-            ColorInfo,
-            SequenceAbundanceType,
+            PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
             DoubleMaximalUnitigLinks,
         ),
-        &StructuredUnitigsStorage<ColorInfo>,
+        &StructuredUnitigsStorage<CX>,
     )> {
         self.0
             .as_ref()
@@ -61,29 +61,29 @@ impl<ColorInfo: IdentSequenceWriter> SequenceHandle<ColorInfo> {
     }
 }
 
-impl<ColorInfo: IdentSequenceWriter> Default for SequenceHandle<ColorInfo> {
+impl<CX: ColorsManager> Default for SequenceHandle<CX> {
     fn default() -> Self {
         Self(None, DUMMY_EDGE_VALUE)
     }
 }
 
-impl<ColorInfo: IdentSequenceWriter> PartialEq for SequenceHandle<ColorInfo> {
+impl<CX: ColorsManager> PartialEq for SequenceHandle<CX> {
     fn eq(&self, other: &Self) -> bool {
         self.1 == other.1
     }
 }
-impl<ColorInfo: IdentSequenceWriter> Eq for SequenceHandle<ColorInfo> {}
+impl<CX: ColorsManager> Eq for SequenceHandle<CX> {}
 
 // Declare types for the graph. It may or may not make sense to have this be the same type as the iterator outputs.
 #[derive(Clone, Debug)]
-struct UnitigEdgeData<ColorInfo: IdentSequenceWriter> {
-    sequence_handle: SequenceHandle<ColorInfo>,
+struct UnitigEdgeData<CX: ColorsManager> {
+    sequence_handle: SequenceHandle<CX>,
     forwards: bool,
     weight: usize,
     dummy_edge_id: usize,
 }
 
-impl<ColorInfo: IdentSequenceWriter> PartialEq for UnitigEdgeData<ColorInfo> {
+impl<CX: ColorsManager> PartialEq for UnitigEdgeData<CX> {
     fn eq(&self, other: &Self) -> bool {
         self.sequence_handle == other.sequence_handle
             && self.forwards == other.forwards
@@ -92,9 +92,9 @@ impl<ColorInfo: IdentSequenceWriter> PartialEq for UnitigEdgeData<ColorInfo> {
     }
 }
 
-impl<ColorInfo: IdentSequenceWriter> Eq for UnitigEdgeData<ColorInfo> {}
+impl<CX: ColorsManager> Eq for UnitigEdgeData<CX> {}
 
-impl<ColorInfo: IdentSequenceWriter> BidirectedData for UnitigEdgeData<ColorInfo> {
+impl<CX: ColorsManager> BidirectedData for UnitigEdgeData<CX> {
     fn mirror(&self) -> Self {
         Self {
             sequence_handle: self.sequence_handle.clone(),
@@ -105,17 +105,15 @@ impl<ColorInfo: IdentSequenceWriter> BidirectedData for UnitigEdgeData<ColorInfo
     }
 }
 
-/*impl<ColorInfo: IdentSequenceWriter> BidirectedData for UnitigEdgeData<ColorInfo> {
+/*impl<CX: ColorsManager> BidirectedData for UnitigEdgeData<CX> {
 
 }
 
-impl<ColorInfo: IdentSequenceWriter> DijkstraWeightedEdgeData<usize> for UnitigEdgeData<ColorInfo> {
+impl<CX: ColorsManager> DijkstraWeightedEdgeData<usize> for UnitigEdgeData<CX> {
 
 }*/
 // SequenceHandle is the type that points to a sequence, e.g. just an integer.
-impl<ColorInfo: IdentSequenceWriter> MatchtigEdgeData<SequenceHandle<ColorInfo>>
-    for UnitigEdgeData<ColorInfo>
-{
+impl<CX: ColorsManager> MatchtigEdgeData<SequenceHandle<CX>> for UnitigEdgeData<CX> {
     fn is_dummy(&self) -> bool {
         self.dummy_edge_id != 0
     }
@@ -126,7 +124,7 @@ impl<ColorInfo: IdentSequenceWriter> MatchtigEdgeData<SequenceHandle<ColorInfo>>
     }
 
     fn new(
-        sequence_handle: SequenceHandle<ColorInfo>,
+        sequence_handle: SequenceHandle<CX>,
         forwards: bool,
         weight: usize,
         dummy_edge_id: usize,
@@ -140,78 +138,80 @@ impl<ColorInfo: IdentSequenceWriter> MatchtigEdgeData<SequenceHandle<ColorInfo>>
     }
 }
 
-impl<ColorInfo: IdentSequenceWriter> DijkstraWeightedEdgeData<usize> for UnitigEdgeData<ColorInfo> {
+impl<CX: ColorsManager> DijkstraWeightedEdgeData<usize> for UnitigEdgeData<CX> {
     fn weight(&self) -> usize {
         self.weight
     }
 }
 
-pub struct StructuredUnitigsStorage<ColorInfo: IdentSequenceWriter> {
+pub struct StructuredUnitigsStorage<CX: ColorsManager> {
     first_sequence_index: usize,
     sequences: Vec<(
         CompressedReadIndipendent,
-        ColorInfo,
-        SequenceAbundanceType,
+        PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
         DoubleMaximalUnitigLinks,
     )>,
 
     sequences_buffer: Vec<u8>,
-    links_buffer: <DoubleMaximalUnitigLinks as SequenceExtraDataTempBufferManagement>::TempBuffer,
-    color_buffer: ColorInfo::TempBuffer,
+    links_buffer: TempBuffer<DoubleMaximalUnitigLinks>,
+    extra_buffer: TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
 }
 
-impl<ColorInfo: IdentSequenceWriter> StructuredUnitigsStorage<ColorInfo> {
+impl<CX: ColorsManager> StructuredUnitigsStorage<CX> {
     fn new() -> Self {
         Self {
             first_sequence_index: usize::MAX,
             sequences: vec![],
             sequences_buffer: vec![],
             links_buffer: DoubleMaximalUnitigLinks::new_temp_buffer(),
-            color_buffer: ColorInfo::new_temp_buffer(),
+            extra_buffer:
+                PartialUnitigExtraData::<PartialUnitigsColorStructure<CX>>::new_temp_buffer(),
         }
     }
 }
 
-pub struct MatchtigsStorageBackend<ColorInfo: IdentSequenceWriter> {
+pub struct MatchtigsStorageBackend<CX: ColorsManager> {
     sequences_channel: (
-        Sender<Arc<StructuredUnitigsStorage<ColorInfo>>>,
-        Receiver<Arc<StructuredUnitigsStorage<ColorInfo>>>,
+        Sender<Arc<StructuredUnitigsStorage<CX>>>,
+        Receiver<Arc<StructuredUnitigsStorage<CX>>>,
     ),
 }
 
-impl<ColorInfo: IdentSequenceWriter> MatchtigsStorageBackend<ColorInfo> {
+impl<CX: ColorsManager> MatchtigsStorageBackend<CX> {
     pub fn new() -> Self {
         Self {
             sequences_channel: crossbeam::channel::unbounded(),
         }
     }
 
-    pub fn get_receiver(&self) -> Receiver<Arc<StructuredUnitigsStorage<ColorInfo>>> {
+    pub fn get_receiver(&self) -> Receiver<Arc<StructuredUnitigsStorage<CX>>> {
         self.sequences_channel.1.clone()
     }
 }
 
-impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, DoubleMaximalUnitigLinks>
-    for MatchtigsStorageBackend<ColorInfo>
+impl<CX: ColorsManager> StructuredSequenceBackend<CX, DoubleMaximalUnitigLinks>
+    for MatchtigsStorageBackend<CX>
 {
-    type SequenceTempBuffer = StructuredUnitigsStorage<ColorInfo>;
+    type SequenceTempBuffer = StructuredUnitigsStorage<CX>;
 
     fn alloc_temp_buffer(_: usize) -> Self::SequenceTempBuffer {
         StructuredUnitigsStorage::new()
     }
 
     fn write_sequence(
+        _extract_workdata: &mut ReadExtractWorkData<CX>,
         _k: usize,
         buffer: &mut Self::SequenceTempBuffer,
         sequence_index: u64,
-        sequence: &[u8],
-        color_info: ColorInfo,
+        sequence: CompressedRead,
+        extra_info: PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
         links_info: DoubleMaximalUnitigLinks,
         extra_buffers: &(
-            ColorInfo::TempBuffer,
-            <DoubleMaximalUnitigLinks as SequenceExtraDataTempBufferManagement>::TempBuffer,
+            TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
+            TempBuffer<DoubleMaximalUnitigLinks>,
         ),
-        #[cfg(feature = "support_kmer_counters")] abundance: SequenceAbundanceType,
+        _indirect_file: Option<&ConcurrentFileWriter>,
+        _flush_callback: impl FnMut(&mut Self::SequenceTempBuffer),
     ) {
         if buffer.first_sequence_index == usize::MAX {
             buffer.first_sequence_index = sequence_index as usize;
@@ -223,26 +223,20 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
         }
 
         let sequence =
-            CompressedReadIndipendent::from_plain(sequence, &mut buffer.sequences_buffer);
-        let color_info =
-            ColorInfo::copy_extra_from(color_info, &extra_buffers.0, &mut buffer.color_buffer);
+            CompressedReadIndipendent::from_read::<false>(&sequence, &mut buffer.sequences_buffer);
+        let extra_info =
+            PartialUnitigExtraData::<PartialUnitigsColorStructure<CX>>::copy_extra_from(
+                extra_info,
+                &extra_buffers.0,
+                &mut buffer.extra_buffer,
+            );
         let links_info = DoubleMaximalUnitigLinks::copy_extra_from(
             links_info,
             &extra_buffers.1,
             &mut buffer.links_buffer,
         );
 
-        buffer.sequences.push((
-            sequence,
-            color_info,
-            match () {
-                #[cfg(feature = "support_kmer_counters")]
-                () => abundance,
-                #[cfg(not(feature = "support_kmer_counters"))]
-                () => (),
-            },
-            links_info,
-        ));
+        buffer.sequences.push((sequence, extra_info, links_info));
     }
 
     fn get_path(&self) -> PathBuf {
@@ -262,7 +256,7 @@ impl<ColorInfo: IdentSequenceWriter> StructuredSequenceBackend<ColorInfo, Double
     fn finalize(self) {}
 }
 
-impl<ColorInfo: IdentSequenceWriter + 'static> GenericNode for UnitigEdgeData<ColorInfo> {
+impl<CX: ColorsManager + 'static> GenericNode for UnitigEdgeData<CX> {
     fn id(&self) -> usize {
         self.sequence_handle.1
     }
@@ -270,7 +264,7 @@ impl<ColorInfo: IdentSequenceWriter + 'static> GenericNode for UnitigEdgeData<Co
     fn is_self_complemental(&self) -> bool {
         self.sequence_handle
             .get_sequence_handle()
-            .map(|s| s.0.3.is_self_complemental)
+            .map(|s| s.0.2.is_self_complemental)
             .unwrap_or(false)
     }
 
@@ -278,7 +272,7 @@ impl<ColorInfo: IdentSequenceWriter + 'static> GenericNode for UnitigEdgeData<Co
         let links = self
             .sequence_handle
             .get_sequence_handle()
-            .map(|h| h.0.3.clone())
+            .map(|h| h.0.2.clone())
             .unwrap_or(DoubleMaximalUnitigLinks::EMPTY);
         let storage = self.sequence_handle.0.clone();
 
@@ -348,15 +342,13 @@ impl MatchtigHelperTrait for Option<MatchtigMode> {
     }
 }
 
-pub fn compute_matchtigs_thread<
-    CX: ColorsManager,
-    BK: StructuredSequenceBackend<PartialUnitigsColorStructure<CX>, ()>,
->(
+pub fn compute_matchtigs_thread<CX: ColorsManager, BK: StructuredSequenceBackend<CX, ()>>(
     k: usize,
     threads_count: usize,
-    input_data: Receiver<Arc<StructuredUnitigsStorage<PartialUnitigsColorStructure<CX>>>>,
-    out_file: &StructuredSequenceWriter<PartialUnitigsColorStructure<CX>, (), BK>,
+    input_data: Receiver<Arc<StructuredUnitigsStorage<CX>>>,
+    out_file: &StructuredSequenceWriter<CX, (), BK>,
     mode: MatchtigMode,
+    indirect_file: &ConcurrentFileWriter,
 ) {
     let iterator = input_data
         .into_iter()
@@ -446,7 +438,7 @@ pub fn compute_matchtigs_thread<
     let mut output_buffer =
         FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
 
-    let mut read_buffer = Vec::new();
+    let mut sequence_buffer = IndirectSequencesJoiner::<CX>::new(k, indirect_file.clone());
 
     let mut final_unitig_color =
         color_types::ColorsMergeManagerType::<CX>::alloc_unitig_color_structure();
@@ -471,36 +463,19 @@ pub fn compute_matchtigs_thread<
             None => continue,
         };
 
-        read_buffer.clear();
+        sequence_buffer.reset();
 
         let first_sequence = handle.0.as_reference(&storage.sequences_buffer);
 
         // Update the sequence and its colors
-        if first_data.is_forwards() {
-            read_buffer.extend(first_sequence.as_bases_iter());
-            CX::ColorsMergeManagerType::join_structures::<false>(
-                &mut final_unitig_color,
-                &handle.1,
-                &storage.color_buffer,
-                0,
-                None,
-            );
-        } else {
-            read_buffer.extend(first_sequence.as_reverse_complement_bases_iter());
-            CX::ColorsMergeManagerType::join_structures::<true>(
-                &mut final_unitig_color,
-                &handle.1,
-                &storage.color_buffer,
-                0,
-                None,
-            );
-        }
-        #[cfg(feature = "support_kmer_counters")]
-        let mut abundance = SequenceAbundance {
-            first: handle.2.first,
-            sum: handle.2.sum,
-            last: handle.2.last,
-        };
+        sequence_buffer.append_sequence(
+            first_sequence,
+            &handle.1,
+            0,
+            first_data.is_forwards(),
+            &storage.extra_buffer,
+            None,
+        );
 
         let mut previous_data = first_data;
         for edge in walk.iter().skip(1) {
@@ -530,61 +505,33 @@ pub fn compute_matchtigs_thread<
 
             assert!(!edge_data.is_dummy());
 
-            let kmer_offset = 0;
             let bases_offset = k - 1 - extra_bases;
 
             // print sequence of edge, starting from character at index offset, forwards or reverse complemented, depending on edge_data.is_forwards()
             let next_sequence = handle.0.as_reference(&storage.sequences_buffer);
 
-            if edge_data.is_forwards() {
-                read_buffer.extend(next_sequence.as_bases_iter().skip(bases_offset));
-                CX::ColorsMergeManagerType::join_structures::<false>(
-                    &mut final_unitig_color,
-                    &handle.1,
-                    &storage.color_buffer,
-                    kmer_offset,
-                    None,
-                );
-                #[cfg(feature = "support_kmer_counters")]
-                {
-                    abundance.sum += handle.2.sum;
-                    abundance.last = handle.2.last;
-                }
-            } else {
-                read_buffer.extend(
-                    next_sequence
-                        .as_reverse_complement_bases_iter()
-                        .skip(bases_offset),
-                );
-                CX::ColorsMergeManagerType::join_structures::<true>(
-                    &mut final_unitig_color,
-                    &handle.1,
-                    &storage.color_buffer,
-                    kmer_offset,
-                    None,
-                );
-                #[cfg(feature = "support_kmer_counters")]
-                {
-                    abundance.sum += handle.2.sum;
-                    abundance.last = handle.2.last;
-                }
-            }
+            sequence_buffer.append_sequence(
+                next_sequence,
+                &handle.1,
+                bases_offset,
+                first_data.is_forwards(),
+                &storage.extra_buffer,
+                None,
+            );
         }
 
-        let writable_color = color_types::ColorsMergeManagerType::<CX>::encode_part_unitigs_colors(
-            &mut final_unitig_color,
-            &mut final_color_extra_buffer,
-        );
+        let joined_sequence = sequence_buffer.get_sequence();
 
         output_buffer.add_read(
-            read_buffer.iter().copied(),
+            joined_sequence.sequence,
             None,
-            writable_color,
-            &final_color_extra_buffer,
+            joined_sequence.extra,
+            joined_sequence.extra_buffer,
             (),
             &(),
-            #[cfg(feature = "support_kmer_counters")]
-            abundance,
+            Some(&indirect_file),
         );
     }
+
+    output_buffer.finalize(Some(indirect_file));
 }
