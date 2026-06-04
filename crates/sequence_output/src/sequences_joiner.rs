@@ -200,7 +200,7 @@ pub struct IndirectSequencesJoiner<CX: ColorsManager> {
         Vec<IndirectReadInfo>,
     ),
     #[cfg(feature = "support_kmer_counters")]
-    counters: io::partial_unitigs_extra_data::SequenceAbundance,
+    pub counters: io::partial_unitigs_extra_data::SequenceAbundance,
     oversize_buffers: OversizeTempData<CX>,
 }
 
@@ -234,6 +234,42 @@ impl<CX: ColorsManager> IndirectSequencesJoiner<CX> {
         PartialUnitigsColorStructure::<CX>::clear_temp_buffer(&mut self.extra_buffer.0);
     }
 
+    pub fn handle_inline_append(&mut self) {
+        let joined_sequence_bases_count = self.sequence.bases_count;
+        let is_indirect = self.extra_buffer.1.len() > 0;
+        let indirection_threshold = (self.k * 4).max(MAX_INLINE_UNITIG_SIZE);
+
+        let right_size = self.sequence.bases_count - self.indirection_start;
+        let splice_start = if is_indirect {
+            self.indirection_start
+        } else {
+            self.k
+        };
+
+        let splice_end_colors_offset =
+            (joined_sequence_bases_count - self.k) - if is_indirect { self.k - 1 } else { 0 };
+
+        // INDIRECTION:
+        // right is inline: join and check if threshold reached, in case make the unitig indirect
+        if right_size > indirection_threshold {
+            // Add another indirection
+            let indirect_reference = splice_join_operation::<CX>(
+                &self.oversize_unitigs_file,
+                &mut self.oversize_buffers,
+                self.k,
+                &mut self.sequence,
+                splice_start,
+                joined_sequence_bases_count - self.k,
+                splice_end_colors_offset,
+                &mut self.extra_buffer.0,
+            );
+
+            self.extra_buffer.1.push(indirect_reference);
+        }
+
+        self.indirection_start = splice_start;
+    }
+
     pub fn append_sequence(
         &mut self,
         sequence: CompressedRead,
@@ -264,7 +300,6 @@ impl<CX: ColorsManager> IndirectSequencesJoiner<CX> {
         // only one inline: join and update the indirect data, make another indirection if inline size exceeds threshold
         // both indirect: make an indirection of the middle part, create a single indirect unitig.
 
-        let indirection_threshold = (self.k * 4).max(MAX_INLINE_UNITIG_SIZE);
         let left_read_bases_count = self.sequence.bases_count;
         let right_sequence = if is_rc {
             sequence.sub_slice(0..sequence.bases_count() - overlapping_characters)
@@ -299,141 +334,100 @@ impl<CX: ColorsManager> IndirectSequencesJoiner<CX> {
             );
         }
 
-        let joined_sequence_bases_count = self.sequence.bases_count;
-
-        match (self.extra_buffer.1.len(), extra.mode.clone()) {
-            (0, PartialUnitigMode::Inline) => {
-                let total_bases_count = self.sequence.bases_count;
-
-                // INDIRECTION:
-                // both inline: join and check if threshold reached, in case make the unitig indirect
-                if total_bases_count > indirection_threshold {
-                    // Splice the current read middle part
-                    let indirect_reference = splice_join_operation::<CX>(
-                        &self.oversize_unitigs_file,
-                        &mut self.oversize_buffers,
-                        self.k,
-                        &mut self.sequence,
-                        self.k,
-                        joined_sequence_bases_count - self.k,
-                        joined_sequence_bases_count - self.k,
-                        &mut self.extra_buffer.0,
-                    );
-
-                    self.extra_buffer.1.push(indirect_reference);
-                    self.indirection_start = self.k;
-                }
+        match extra.mode.clone() {
+            PartialUnitigMode::Inline => {
+                self.handle_inline_append();
             }
-            (
-                0,
-                PartialUnitigMode::Indirect {
-                    indirection_start,
-                    indirections_range,
-                },
-            ) => {
-                let indirection_start = if is_rc {
-                    sequence.bases_count() - indirection_start //sequence.bases_count() - indirection_start
-                } else {
-                    indirection_start
-                } - overlapping_characters;
 
-                let new_indirection_start = indirection_start + left_read_bases_count;
-                if new_indirection_start > indirection_threshold {
-                    // Add another left indirection
-                    let indirect_reference = splice_join_operation::<CX>(
-                        &self.oversize_unitigs_file,
-                        &mut self.oversize_buffers,
-                        self.k,
-                        &mut self.sequence,
-                        self.k,
-                        new_indirection_start,
-                        new_indirection_start - self.k + 1,
-                        &mut self.extra_buffer.0,
-                    );
+            PartialUnitigMode::Indirect {
+                indirection_start,
+                indirections_range,
+            } => {
+                let indirection_threshold = (self.k * 4).max(MAX_INLINE_UNITIG_SIZE);
 
-                    self.extra_buffer.1.push(indirect_reference);
-                    let right_range_start = self.extra_buffer.1.len();
-                    self.extra_buffer
-                        .1
-                        .extend_from_slice(&extra_buffer.1[indirections_range.clone()]);
-                    if is_rc {
-                        self.extra_buffer.1[right_range_start..].reverse();
-                        self.extra_buffer.1[right_range_start..]
-                            .iter_mut()
-                            .for_each(|ic| ic.flip_rc());
-                    }
+                let is_indirect = self.extra_buffer.1.len() > 0;
+                if is_indirect {
+                    let right_indirection_start = indirection_start;
+                    let right_indirections_range = indirections_range;
 
-                    self.indirection_start = self.k;
-                } else {
-                    self.indirection_start = new_indirection_start;
+                    let new_indirection_start = left_read_bases_count
+                        + if is_rc {
+                            sequence.bases_count() - right_indirection_start //sequence.bases_count() - indirection_start
+                        } else {
+                            right_indirection_start
+                        }
+                        - overlapping_characters;
 
-                    let right_range_start = self.extra_buffer.1.len();
-                    self.extra_buffer
-                        .1
-                        .extend_from_slice(&extra_buffer.1[indirections_range.clone()]);
-                    if is_rc {
-                        self.extra_buffer.1[right_range_start..].reverse();
-                        self.extra_buffer.1[right_range_start..]
-                            .iter_mut()
-                            .for_each(|ic| ic.flip_rc());
-                    }
-                }
-            }
-            (_, PartialUnitigMode::Inline) => {
-                let right_size = self.sequence.bases_count - self.indirection_start;
-
-                if right_size > indirection_threshold {
-                    // Add another indirection
                     let indirect_reference = splice_join_operation::<CX>(
                         &self.oversize_unitigs_file,
                         &mut self.oversize_buffers,
                         self.k,
                         &mut self.sequence,
                         self.indirection_start,
-                        joined_sequence_bases_count - self.k,
-                        (joined_sequence_bases_count - self.k) - self.k + 1,
+                        new_indirection_start,
+                        new_indirection_start - self.k * 2 + 2,
                         &mut self.extra_buffer.0,
                     );
 
                     self.extra_buffer.1.push(indirect_reference);
-                }
-            }
-            (
-                _,
-                PartialUnitigMode::Indirect {
-                    indirection_start: right_indirection_start,
-                    indirections_range: right_indirections_range,
-                },
-            ) => {
-                let new_indirection_start = left_read_bases_count
-                    + if is_rc {
-                        sequence.bases_count() - right_indirection_start //sequence.bases_count() - indirection_start
-                    } else {
-                        right_indirection_start
+                    let right_range_start = self.extra_buffer.1.len();
+                    self.extra_buffer
+                        .1
+                        .extend_from_slice(&extra_buffer.1[right_indirections_range.clone()]);
+                    if is_rc {
+                        self.extra_buffer.1[right_range_start..].reverse();
+                        self.extra_buffer.1[right_range_start..]
+                            .iter_mut()
+                            .for_each(|ic| ic.flip_rc());
                     }
-                    - overlapping_characters;
+                } else {
+                    let indirection_start = if is_rc {
+                        sequence.bases_count() - indirection_start //sequence.bases_count() - indirection_start
+                    } else {
+                        indirection_start
+                    } - overlapping_characters;
 
-                let indirect_reference = splice_join_operation::<CX>(
-                    &self.oversize_unitigs_file,
-                    &mut self.oversize_buffers,
-                    self.k,
-                    &mut self.sequence,
-                    self.indirection_start,
-                    new_indirection_start,
-                    new_indirection_start - self.k * 2 + 2,
-                    &mut self.extra_buffer.0,
-                );
+                    let new_indirection_start = indirection_start + left_read_bases_count;
+                    if new_indirection_start > indirection_threshold {
+                        // Add another left indirection
+                        let indirect_reference = splice_join_operation::<CX>(
+                            &self.oversize_unitigs_file,
+                            &mut self.oversize_buffers,
+                            self.k,
+                            &mut self.sequence,
+                            self.k,
+                            new_indirection_start,
+                            new_indirection_start - self.k + 1,
+                            &mut self.extra_buffer.0,
+                        );
 
-                self.extra_buffer.1.push(indirect_reference);
-                let right_range_start = self.extra_buffer.1.len();
-                self.extra_buffer
-                    .1
-                    .extend_from_slice(&extra_buffer.1[right_indirections_range.clone()]);
-                if is_rc {
-                    self.extra_buffer.1[right_range_start..].reverse();
-                    self.extra_buffer.1[right_range_start..]
-                        .iter_mut()
-                        .for_each(|ic| ic.flip_rc());
+                        self.extra_buffer.1.push(indirect_reference);
+                        let right_range_start = self.extra_buffer.1.len();
+                        self.extra_buffer
+                            .1
+                            .extend_from_slice(&extra_buffer.1[indirections_range.clone()]);
+                        if is_rc {
+                            self.extra_buffer.1[right_range_start..].reverse();
+                            self.extra_buffer.1[right_range_start..]
+                                .iter_mut()
+                                .for_each(|ic| ic.flip_rc());
+                        }
+
+                        self.indirection_start = self.k;
+                    } else {
+                        self.indirection_start = new_indirection_start;
+
+                        let right_range_start = self.extra_buffer.1.len();
+                        self.extra_buffer
+                            .1
+                            .extend_from_slice(&extra_buffer.1[indirections_range.clone()]);
+                        if is_rc {
+                            self.extra_buffer.1[right_range_start..].reverse();
+                            self.extra_buffer.1[right_range_start..]
+                                .iter_mut()
+                                .for_each(|ic| ic.flip_rc());
+                        }
+                    }
                 }
             }
         };
