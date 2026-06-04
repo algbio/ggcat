@@ -88,6 +88,7 @@ pub fn colormap_reading<CD: ColorsSerializerTrait>(
             None,
             (),
             file_index.into_chunks(),
+            true,
             |h, _| {
                 counters_vec.push(h);
             },

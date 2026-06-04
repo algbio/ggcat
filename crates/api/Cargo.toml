@@ -25,7 +25,7 @@ utils = { package = "ggcat_utils", path = "../utils" }
 sequence_output = { package = "ggcat_sequence_output", path = "../sequence_output" }
 
 fdlimit = "0.3.0"
-parallel-processor = "0.2.5"
+parallel-processor = "0.2.6"
 rayon = "1.10.0"
 dynamic-dispatch = "0.5.4"
 parking_lot = "0.12.3"

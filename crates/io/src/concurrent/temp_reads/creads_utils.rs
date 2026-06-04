@@ -542,7 +542,7 @@ pub mod helpers {
                 FlagsCount,
                 AlignMode,
             >,
-        >(reader_thread, k, chunks, |item, extra_buffer| {
+        >(reader_thread, k, chunks, true, |item, extra_buffer| {
             data_callback(item, extra_buffer);
             E::clear_temp_buffer(extra_buffer);
         });

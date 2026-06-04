@@ -144,6 +144,7 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
                     None,
                     (),
                     file_index.into_chunks(),
+                    true,
                     |counters, _| {
                         for query in counters.queries {
                             let (entry_epoch, colors_map_index) = &mut queries_results

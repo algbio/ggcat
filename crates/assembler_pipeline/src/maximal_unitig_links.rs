@@ -276,6 +276,7 @@ pub fn build_maximal_unitigs_links<
                 None,
                 (),
                 file_index.into_chunks(),
+                true,
                 |h, _| {
                     hashes_vec.push(h);
                 },

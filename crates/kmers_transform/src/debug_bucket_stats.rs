@@ -61,22 +61,28 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
             AssemblerMinimizerPosition,
             typenum::U2,
         >,
-    >(None, k, bucket_file_index.into_chunks(), |read_info, _| {
-        let orig_bucket = get_sequence_bucket::<()>(
-            k,
-            m,
-            &read_info,
-            buckets_count.ilog2() as usize,
-            second_buckets_log,
-        ) as usize;
+    >(
+        None,
+        k,
+        bucket_file_index.into_chunks(),
+        true,
+        |read_info, _| {
+            let orig_bucket = get_sequence_bucket::<()>(
+                k,
+                m,
+                &read_info,
+                buckets_count.ilog2() as usize,
+                second_buckets_log,
+            ) as usize;
 
-        let hashes = MH::new(read_info.read, k);
+            let hashes = MH::new(read_info.read, k);
 
-        for hash in hashes.iter() {
-            total_counters[orig_bucket] += 1;
-            hash_maps[orig_bucket].insert(hash.to_unextendable());
-        }
-    });
+            for hash in hashes.iter() {
+                total_counters[orig_bucket] += 1;
+                hash_maps[orig_bucket].insert(hash.to_unextendable());
+            }
+        },
+    );
 
     let counters_string = hash_maps
         .iter()

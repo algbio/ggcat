@@ -700,6 +700,7 @@ pub fn extend_unitigs<
                                 },
                             )
                             .into_chunks(),
+                            true,
                             |DeserializedRead {
                                  read,
                                  extra,
@@ -919,6 +920,7 @@ pub fn extend_unitigs<
 
                     additional_buffer.put_back(additional_buckets.finalize().0);
                     subpartition_buffer.put_back(next_subpartition_buckets.finalize().0);
+                    tmp_final_circular_unitigs_buffer.map(|b| b.finalize(Some(&global_data.oversize_unitigs_file)));
                     tmp_final_unitigs_buffer.finalize(Some(&global_data.oversize_unitigs_file));
                 });
 

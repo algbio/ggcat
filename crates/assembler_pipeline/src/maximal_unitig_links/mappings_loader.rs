@@ -57,6 +57,7 @@ impl MaximalUnitigLinksMapping {
             None,
             (),
             file_index.into_chunks(),
+            false,
             |(mappings_data, item), _| {
                 let index = item.index() - self_.start_index;
 

@@ -22,8 +22,7 @@ use io::concurrent::temp_reads::creads_utils::{
 use io::concurrent::temp_reads::extra_data::{SequenceExtraDataTempBufferManagement, TempBuffer};
 use io::memstorage::memstorage_decode_reads;
 use io::partial_unitigs_extra_data::{
-    HASH_ENDING_FLAG_MASK, INDIRECT_UNITIG_FLAG_MASK, OTHER_END_FLAG_MASK, PartialUnitigExtraData,
-    PartialUnitigMode,
+    HASH_ENDING_FLAG_MASK, OTHER_END_FLAG_MASK, PartialUnitigExtraData, PartialUnitigMode,
 };
 use kmers_transform::{KmersTransformExecutorFactory, KmersTransformFinalExecutor};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
