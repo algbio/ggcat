@@ -126,7 +126,7 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
             sequence_index,
             bases_count,
             extra_info.counters.sum,
-            extra_info.counters.sum as f64 / (sequence.get_length() - k + 1) as f64
+            extra_info.counters.sum as f64 / (bases_count - k + 1) as f64
         )
         .unwrap();
 

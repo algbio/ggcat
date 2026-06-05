@@ -184,7 +184,7 @@ impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
             write!(
                 buffer,
                 "\tkm:f:{:.1}",
-                extra_info.counters.sum as f64 / (sequence.get_length() - k + 1) as f64
+                extra_info.counters.sum as f64 / (bases_count - k + 1) as f64
             )
             .unwrap();
         }
