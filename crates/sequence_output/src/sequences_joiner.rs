@@ -286,13 +286,14 @@ impl<CX: ColorsManager> IndirectSequencesJoiner<CX> {
             } else {
                 (extra.counters.first, extra.counters.last)
             };
+            let overlapping_kmers = (overlapping_characters >= self.k) as u64;
 
             self.counters.first = if self.sequence.bases_count == 0 {
                 other_first
             } else {
                 self.counters.first
             };
-            self.counters.sum += extra.counters.sum - other_first;
+            self.counters.sum += extra.counters.sum - (other_first * overlapping_kmers);
             self.counters.last = other_last;
         }
 
@@ -473,19 +474,27 @@ mod tests {
     };
 
     use super::IndirectSequencesJoiner;
+    #[cfg(feature = "support_kmer_counters")]
+    use io::partial_unitigs_extra_data::SequenceAbundance;
     use io::partial_unitigs_extra_data::{PartialUnitigExtraData, PartialUnitigMode};
 
-    fn inline_extra() -> PartialUnitigExtraData<NonColoredManager> {
+    fn inline_extra_with_multiplicity(
+        multiplicity: u64,
+    ) -> PartialUnitigExtraData<NonColoredManager> {
         PartialUnitigExtraData {
             colors: NonColoredManager,
             mode: PartialUnitigMode::Inline,
             #[cfg(feature = "support_kmer_counters")]
-            counters: sequence_output::structured_sequences::SequenceAbundance {
-                first: 1,
-                sum: 1,
-                last: 1,
+            counters: SequenceAbundance {
+                first: multiplicity,
+                sum: multiplicity,
+                last: multiplicity,
             },
         }
+    }
+
+    fn inline_extra() -> PartialUnitigExtraData<NonColoredManager> {
+        inline_extra_with_multiplicity(1)
     }
 
     fn new_temp_path(prefix: &str) -> PathBuf {
@@ -505,6 +514,29 @@ mod tests {
         let mut storage = Vec::new();
         let read = CompressedReadIndipendent::from_plain(seq.as_bytes(), &mut storage);
         let extra = inline_extra();
+        let extra_buffer = <PartialUnitigExtraData<NonColoredManager>>::new_temp_buffer();
+        joiner.append_sequence(
+            read.as_reference(&storage),
+            &extra,
+            overlap,
+            is_rc,
+            &extra_buffer,
+            None,
+        );
+    }
+
+    #[cfg(feature = "support_kmer_counters")]
+    fn append_plain_with_multiplicity(
+        joiner: &mut IndirectSequencesJoiner<NonColoredManager>,
+        seq: &str,
+        overlap: usize,
+        is_rc: bool,
+        multiplicity: u64,
+    ) {
+        let mut storage = Vec::new();
+        let read = CompressedReadIndipendent::from_plain(seq.as_bytes(), &mut storage);
+        let mut extra = inline_extra_with_multiplicity(multiplicity);
+        extra.counters.sum = multiplicity * (seq.len() - joiner.k + 1) as u64;
         let extra_buffer = <PartialUnitigExtraData<NonColoredManager>>::new_temp_buffer();
         joiner.append_sequence(
             read.as_reference(&storage),
@@ -561,6 +593,48 @@ mod tests {
         assert!(matches!(joined.extra.mode, PartialUnitigMode::Inline));
         assert!(joined.extra_buffer.1.is_empty());
         assert_eq!(writer.file().metadata().unwrap().len(), 0);
+
+        fs::remove_file(&temp_path).unwrap();
+    }
+
+    #[cfg(feature = "support_kmer_counters")]
+    #[test]
+    fn abundance_keeps_all_kmers_for_k_minus_one_overlap() {
+        let k = 5;
+        let temp_path = new_temp_path("joiner_abundance_k_minus_one_overlap");
+        let writer = ConcurrentFileWriter::create(&temp_path).unwrap();
+        let mut joiner = IndirectSequencesJoiner::<NonColoredManager>::new(k, writer.clone());
+
+        append_plain_with_multiplicity(&mut joiner, "AACCTGGA", 0, false, 2);
+        append_plain_with_multiplicity(&mut joiner, "TGGAACCC", k - 1, false, 5);
+
+        let joined = joiner.get_sequence();
+
+        assert_eq!(joined.sequence.to_string(), "AACCTGGAACCC");
+        assert_eq!(joined.extra.counters.first, 2);
+        assert_eq!(joined.extra.counters.last, 5);
+        assert_eq!(joined.extra.counters.sum, 28);
+
+        fs::remove_file(&temp_path).unwrap();
+    }
+
+    #[cfg(feature = "support_kmer_counters")]
+    #[test]
+    fn abundance_drops_one_kmer_for_exact_k_overlap() {
+        let k = 5;
+        let temp_path = new_temp_path("joiner_abundance_k_overlap");
+        let writer = ConcurrentFileWriter::create(&temp_path).unwrap();
+        let mut joiner = IndirectSequencesJoiner::<NonColoredManager>::new(k, writer.clone());
+
+        append_plain_with_multiplicity(&mut joiner, "AAACCCCTA", 0, false, 2);
+        append_plain_with_multiplicity(&mut joiner, "CCCTAT", k, false, 5);
+
+        let joined = joiner.get_sequence();
+
+        assert_eq!(joined.sequence.to_string(), "AAACCCCTAT");
+        assert_eq!(joined.extra.counters.first, 2);
+        assert_eq!(joined.extra.counters.last, 5);
+        assert_eq!(joined.extra.counters.sum, 15);
 
         fs::remove_file(&temp_path).unwrap();
     }

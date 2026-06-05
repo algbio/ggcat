@@ -232,6 +232,8 @@ mod tests {
         bundles::multifile_building::ColorBundleMultifileBuilding,
         colors_manager::color_types::PartialUnitigsColorStructure,
     };
+    #[cfg(feature = "support_kmer_counters")]
+    use io::partial_unitigs_extra_data::SequenceAbundance;
     use io::{
         compressed_read::CompressedReadIndipendent,
         concurrent::temp_reads::extra_data::{
@@ -288,7 +290,7 @@ mod tests {
                 colors,
                 mode: PartialUnitigMode::Inline,
                 #[cfg(feature = "support_kmer_counters")]
-                counters: sequence_output::structured_sequences::SequenceAbundance {
+                counters: SequenceAbundance {
                     first: 1,
                     sum: runs.iter().map(|(_, count)| *count as u64).sum(),
                     last: 1,

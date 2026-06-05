@@ -134,9 +134,16 @@ impl CircularUnitig {
         let children_count = self.base_children.len();
 
         #[cfg(feature = "support_kmer_counters")]
+        let mut counted_orig_indexes = std::collections::HashSet::with_capacity(children_count);
+
+        #[cfg(feature = "support_kmer_counters")]
         {
             let first_unitig_entry = unitigs.get(&self.base_children[0].orig_index).unwrap();
-            _out_abundance.first = first_unitig_entry.2.first;
+            _out_abundance.first = if self.base_children[0].rc {
+                first_unitig_entry.2.last
+            } else {
+                first_unitig_entry.2.first
+            };
         }
 
         for child in self.base_children.iter().take(children_count - 1) {
@@ -146,7 +153,9 @@ impl CircularUnitig {
 
             #[cfg(feature = "support_kmer_counters")]
             {
-                _out_abundance.sum += _abundance.sum;
+                if counted_orig_indexes.insert(child.orig_index) {
+                    _out_abundance.sum += _abundance.sum;
+                }
             }
 
             let should_rc = child.rc;
@@ -178,7 +187,9 @@ impl CircularUnitig {
         #[cfg(feature = "support_kmer_counters")]
         {
             let abundance = &last_part_entry.2;
-            _out_abundance.sum += abundance.sum;
+            if counted_orig_indexes.insert(last.orig_index) {
+                _out_abundance.sum += abundance.sum;
+            }
             _out_abundance.last = if last.rc {
                 abundance.first
             } else {
@@ -909,6 +920,11 @@ mod tests {
     use hashes::cn_seqhash::u128::CanonicalSeqHashFactory;
     use io::compressed_read::CompressedRead;
 
+    #[cfg(feature = "support_kmer_counters")]
+    fn build_abundance(first: u64, sum: u64, last: u64) -> SequenceAbundanceType {
+        SequenceAbundanceType { first, sum, last }
+    }
+
     #[test]
     fn test_rc_rotation() {
         let k = 31;
@@ -983,5 +999,61 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[cfg(feature = "support_kmer_counters")]
+    #[test]
+    fn rotated_circular_unitig_counts_split_abundance_once() {
+        let k = 5;
+        let mut stream = Vec::new();
+        let sequence = b"AACCGGTTAAC";
+        CompressedRead::compress_from_plain(sequence, |b| stream.extend_from_slice(b));
+        let read = CompressedRead::new_from_compressed(&stream, sequence.len());
+
+        let unitigs_hashmap = DashMap::new();
+        unitigs_hashmap.insert(
+            0,
+            (
+                CompressedReadIndipendent::from_read_inplace(&read, &stream),
+                NonColoredManager,
+                build_abundance(3, 21, 7),
+            ),
+        );
+
+        let mut circular_unitig = CircularUnitig::new();
+        circular_unitig.base_children.push(CircularUnitigPart {
+            orig_index: 0,
+            start_pos: 0,
+            length: sequence.len() - (k - 1),
+            rc: false,
+        });
+
+        circular_unitig.rotate_with_rc(0, 3, false);
+        assert_eq!(
+            circular_unitig
+                .base_children
+                .iter()
+                .filter(|part| part.orig_index == 0)
+                .count(),
+            2
+        );
+
+        let mut writer = AlignedDynamicCompressedRead::new();
+        let dummy_buffer = color_types::PartialUnitigsColorStructure::<NonColoredManager>::new_temp_buffer();
+        let mut colors_buffer = color_types::PartialUnitigsColorStructure::<NonColoredManager>::new_temp_buffer();
+        let mut abundance = SequenceAbundanceType::default();
+
+        circular_unitig.write_packed::<CanonicalSeqHashFactory, NonColoredManager>(
+            &stream,
+            &unitigs_hashmap,
+            &mut writer,
+            &dummy_buffer,
+            &mut colors_buffer,
+            k,
+            true,
+            &mut abundance,
+        );
+
+        assert_eq!(abundance.sum, 21);
     }
 }

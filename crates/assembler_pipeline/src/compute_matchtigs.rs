@@ -514,7 +514,7 @@ pub fn compute_matchtigs_thread<CX: ColorsManager, BK: StructuredSequenceBackend
                 next_sequence,
                 &handle.1,
                 bases_offset,
-                first_data.is_forwards(),
+                edge_data.is_forwards(),
                 &storage.extra_buffer,
                 None,
             );
