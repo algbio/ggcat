@@ -1,5 +1,5 @@
 use rand::rngs::ThreadRng;
-use rand::{thread_rng, RngCore};
+use rand::{RngCore, thread_rng};
 
 // Increasing PROB_ITERS decreases the probability that a true value happens,
 // by combining with and multiple random values

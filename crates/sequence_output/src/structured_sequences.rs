@@ -13,15 +13,6 @@ use std::path::{Path, PathBuf};
 
 use crate::indirect_reads_extractor::ReadExtractWorkData;
 
-#[cfg(feature = "support_kmer_counters")]
-use {
-    byteorder::ReadBytesExt,
-    io::concurrent::temp_reads::extra_data::HasEmptyExtraBuffer,
-    io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint},
-    serde::{Deserialize, Serialize},
-    std::io::Read,
-};
-
 pub mod binary;
 pub mod concurrent;
 pub mod fasta;

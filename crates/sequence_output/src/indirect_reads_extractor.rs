@@ -18,8 +18,8 @@ use io::{
 pub struct ReadExtractWorkData<CX: ColorsManager> {
     pub file_buffer: Vec<u8>,
     pub file_color_buffer: TempBuffer<PartialUnitigsColorStructure<CX>>,
-    output_buffer: Vec<u8>,
-    output_extra_buffer: TempBuffer<PartialUnitigsColorStructure<CX>>,
+    pub output_buffer: Vec<u8>,
+    pub output_extra_buffer: TempBuffer<PartialUnitigsColorStructure<CX>>,
 }
 
 impl<CX: ColorsManager> ReadExtractWorkData<CX> {
@@ -55,12 +55,18 @@ pub fn indirect_read_extract_parts<
         (usize, Option<usize>),
         bool,
         &TempBuffer<PartialUnitigsColorStructure<CX>>,
+        bool,
     ),
 ) {
     match extra.mode.clone() {
-        PartialUnitigMode::Inline => {
-            parts_callback(read, extra.colors, (0, None), false, &input_extra_buffer.0)
-        }
+        PartialUnitigMode::Inline => parts_callback(
+            read,
+            extra.colors,
+            (0, None),
+            false,
+            &input_extra_buffer.0,
+            true,
+        ),
         PartialUnitigMode::Indirect {
             indirection_start,
             indirections_range,
@@ -73,6 +79,7 @@ pub fn indirect_read_extract_parts<
                 (0, Some(indirection_start - k + 1)),
                 false,
                 &input_extra_buffer.0,
+                false,
             );
 
             for part_idx in indirections_range {
@@ -121,7 +128,7 @@ pub fn indirect_read_extract_parts<
                     CompressedRead::new_offset(&[], 0, 0)
                 };
 
-                parts_callback(part, color, (0, None), is_rc, &file_color_buffer);
+                parts_callback(part, color, (0, None), is_rc, &file_color_buffer, false);
             }
 
             let suffix = read.sub_slice(indirection_start..read.get_length());
@@ -131,6 +138,7 @@ pub fn indirect_read_extract_parts<
                 (indirection_start - k + 1, None),
                 false,
                 &input_extra_buffer.0,
+                true,
             );
         }
     }
@@ -169,7 +177,7 @@ pub fn indirect_read_extract_all<'a, 'b, CX: ColorsManager>(
                 extra,
                 input_extra_buffer,
                 indirect_file,
-                |read, color, color_range, is_rc, color_buffer| {
+                |read, color, color_range, is_rc, color_buffer, _| {
                     read.copy_to_buffer_with_offset(
                         &mut workdata.output_buffer,
                         bases_count % 4,
@@ -316,6 +324,7 @@ mod tests {
             overlap,
             false,
             &extra_buffer,
+            None,
         );
     }
 
@@ -365,6 +374,7 @@ mod tests {
             0,
             false,
             &left_extra_buffer,
+            None,
         );
 
         let mut right_storage = Vec::new();
@@ -377,6 +387,7 @@ mod tests {
             k,
             false,
             &right_extra_buffer,
+            None,
         );
 
         let joined = joiner.get_sequence();
@@ -512,6 +523,7 @@ mod tests {
             0,
             false,
             left_joined.extra_buffer,
+            None,
         );
         merged_joiner.append_sequence(
             right_joined.sequence,
@@ -519,6 +531,7 @@ mod tests {
             k,
             false,
             right_joined.extra_buffer,
+            None,
         );
 
         assert_eq!(

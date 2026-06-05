@@ -878,7 +878,10 @@ mod tests {
 
     #[test]
     fn remove_colors_range_uses_half_open_offsets() {
-        assert_eq!(run_remove(2..5, &[(1, 2), (2, 3), (3, 2)]), vec![(1, 2), (3, 2)]);
+        assert_eq!(
+            run_remove(2..5, &[(1, 2), (2, 3), (3, 2)]),
+            vec![(1, 2), (3, 2)]
+        );
     }
 
     #[test]

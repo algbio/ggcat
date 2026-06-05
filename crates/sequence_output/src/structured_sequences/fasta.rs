@@ -173,7 +173,7 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
                     &extra_info,
                     &extra_buffers.0,
                     indirect_file.as_ref().unwrap(),
-                    |_, color, color_range, is_rc, color_buffer| {
+                    |_, color, color_range, is_rc, color_buffer, _| {
                         // TODO: FIX COLORS
                         color.write_as_ident(
                             &mut colors_partial_data,
@@ -210,7 +210,7 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
                     &extra_info,
                     &extra_buffers.0,
                     indirect_file.as_ref().unwrap(),
-                    |part, _, _, is_rc, _| {
+                    |part, _, _, is_rc, _, _| {
                         if is_rc {
                             buffer.extend(part.as_reverse_complement_bases_iter());
                         } else {

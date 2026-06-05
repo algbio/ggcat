@@ -149,7 +149,7 @@ impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
                         &extra_info,
                         &extra_buffers.0,
                         indirect_file.as_ref().unwrap(),
-                        |part, _, _, is_rc, _| {
+                        |part, _, _, is_rc, _, _| {
                             if is_rc {
                                 buffer.extend(part.as_reverse_complement_bases_iter());
                             } else {

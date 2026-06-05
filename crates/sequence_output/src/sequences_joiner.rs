@@ -229,7 +229,7 @@ impl<CX: ColorsManager> IndirectSequencesJoiner<CX> {
         self.extra_buffer.1.clear();
         #[cfg(feature = "support_kmer_counters")]
         {
-            self.counter = Default::default();
+            self.counters = Default::default();
         }
         PartialUnitigsColorStructure::<CX>::clear_temp_buffer(&mut self.extra_buffer.0);
     }

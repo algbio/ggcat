@@ -1,6 +1,6 @@
 use colors::colors_manager::ColorsManager;
-use colors::storage::deserializer::ColorsDeserializer;
 use colors::storage::ColorsSerializerTrait;
+use colors::storage::deserializer::ColorsDeserializer;
 use config::ColorIndexType;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;

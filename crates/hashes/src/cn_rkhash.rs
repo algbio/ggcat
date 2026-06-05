@@ -29,7 +29,7 @@ pub mod u64 {
 
     #[cfg(test)]
     mod tests_reverse {
-        use crate::{cn_seqhash::u64::CanonicalSeqHashFactory, HashFunctionFactory};
+        use crate::{HashFunctionFactory, cn_seqhash::u64::CanonicalSeqHashFactory};
 
         #[test]
         fn cn_seqhash_reverse() {

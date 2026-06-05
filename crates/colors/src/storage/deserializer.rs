@@ -1,6 +1,6 @@
 use crate::colors_manager::ColorMapReader;
-use crate::storage::serializer::{ColorsFileHeader, ColorsIndexEntry, ColorsIndexMap};
 use crate::storage::ColorsSerializerTrait;
+use crate::storage::serializer::{ColorsFileHeader, ColorsIndexEntry, ColorsIndexMap};
 use config::ColorIndexType;
 use desse::Desse;
 use desse::DesseSized;
