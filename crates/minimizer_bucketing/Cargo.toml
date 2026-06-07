@@ -1,6 +1,6 @@
 [package]
 name = "ggcat_minimizer_bucketing"
-version = "2.0.0"
+version = "2.1.0"
 edition = "2024"
 [dependencies]
 
@@ -19,7 +19,7 @@ io = { package = "ggcat_io", path = "../io" }
 # Other libraries
 replace_with = "0.1.7"
 parking_lot = "0.12.3"
-ggcat-logging = { version = "2.0.0", path = "../logging" }
+ggcat-logging = { version = "2.1.0", path = "../logging" }
 tokio = "1.38.0"
 
 # Utils

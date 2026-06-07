@@ -47,7 +47,7 @@ pub mod debug {
     pub static DEBUG_ASSEMBLER_FIRST_STEP: Mutex<AssemblerPhase> =
         Mutex::new(AssemblerPhase::MinimizerBucketing);
     pub static DEBUG_ASSEMBLER_LAST_STEP: Mutex<AssemblerPhase> =
-        Mutex::new(AssemblerPhase::MaximalUnitigsLinks);
+        Mutex::new(AssemblerPhase::FinalStep);
 
     pub static DEBUG_QUERIER_FIRST_STEP: Mutex<QuerierStartingStep> =
         Mutex::new(QuerierStartingStep::MinimizerBucketing);

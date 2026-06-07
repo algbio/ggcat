@@ -42,8 +42,8 @@ std::string GGCATInstance::build_graph_from_files(
     bool colors,
     Slice<std::string> color_names,
     size_t minimizer_length,
-    uint32_t gfa_output_version,
-    bool enable_disk_optimization)
+    uint32_t gfa_output_version
+)
 {
     std::vector<rust::String> ffi_input_files;
 
@@ -70,8 +70,8 @@ std::string GGCATInstance::build_graph_from_files(
                                            colors,
                                            min_multiplicity,
                                            extra_elab,
-                                           gfa_output_version,
-                                           enable_disk_optimization);
+                                           gfa_output_version
+                                        );
     return std::string(rust_str.c_str());
 }
 
@@ -86,8 +86,8 @@ std::string GGCATInstance::build_graph_internal_ffi(
     bool colors,
     Slice<std::string> color_names,
     size_t minimizer_length,
-    bool output_gfa,
-    bool enable_disk_optimization)
+    bool output_gfa
+)
 {
     std::vector<InputStreamFFI> ffi_input_streams;
 
@@ -119,8 +119,8 @@ std::string GGCATInstance::build_graph_internal_ffi(
                                              colors,
                                              min_multiplicity,
                                              extra_elab,
-                                             output_gfa,
-                                             enable_disk_optimization);
+                                             output_gfa
+                                            );
     return std::string(rust_str.c_str());
 }
 
