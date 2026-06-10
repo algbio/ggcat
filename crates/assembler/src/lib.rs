@@ -277,6 +277,7 @@ pub fn run_assembler<
                     ),
                     buckets,
                     output_file.clone(),
+                    None,
                     global_colors_table.clone(),
                     buckets_count,
                     second_buckets_count,
@@ -290,7 +291,7 @@ pub fn run_assembler<
             }
             OutputFileMode::Intermediate {
                 flat_unitigs,
-                circular_unitigs: _,
+                circular_unitigs,
             } => assembler_kmers_merge::dynamic_dispatch::kmers_merge(
                 (
                     MergingHash::dynamic_dispatch_id(),
@@ -299,6 +300,7 @@ pub fn run_assembler<
                 ),
                 buckets,
                 flat_unitigs.clone(),
+                circular_unitigs.clone().map(|a| a as _),
                 global_colors_table.clone(),
                 buckets_count,
                 second_buckets_count,

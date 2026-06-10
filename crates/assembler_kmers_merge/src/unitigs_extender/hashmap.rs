@@ -10,7 +10,7 @@ use colors::colors_manager::{
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
-    extremal::PrecomputedHash,
+    extremal::{DelayedHashComputation, HashGenerator, PrecomputedHash},
 };
 use io::partial_unitigs_extra_data::SequenceAbundanceType;
 use io::{
@@ -447,8 +447,10 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
             CompressedRead,
             Option<PrecomputedHash<MH>>,
             Option<PrecomputedHash<MH>>,
+            bool,
             SequenceAbundanceType,
         ),
+        compute_circular: bool,
     ) {
         if CX::COLORS_ENABLED {
             CX::ColorsMergeManagerType::process_colors::<MH>(
@@ -556,6 +558,27 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                 &backward_seq[..]
             };
 
+            let is_circular = compute_circular
+                && if fw_hash.is_none() && bw_hash.is_none() {
+                    let fw_hash = HashGenerator::<MH>::get_extremal_hash(
+                        &DelayedHashComputation,
+                        out_seq,
+                        self.params.k - 1,
+                        false,
+                    );
+
+                    let bw_hash = HashGenerator::<MH>::get_extremal_hash(
+                        &DelayedHashComputation,
+                        out_seq,
+                        self.params.k - 1,
+                        true,
+                    );
+
+                    fw_hash.to_unextendable() == bw_hash.to_unextendable()
+                } else {
+                    false
+                };
+
             compressed_seq_buffer.clear();
             CompressedRead::compress_from_plain(out_seq, |b| {
                 compressed_seq_buffer.extend_from_slice(b);
@@ -566,6 +589,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                 CompressedRead::new_from_compressed(&compressed_seq_buffer, out_seq.len()),
                 fw_hash.map(PrecomputedHash),
                 bw_hash.map(PrecomputedHash),
+                is_circular,
                 match () {
                     #[cfg(feature = "support_kmer_counters")]
                     () => counters,

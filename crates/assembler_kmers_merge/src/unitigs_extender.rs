@@ -61,8 +61,10 @@ pub trait UnitigsExtenderTrait<MH: HashFunctionFactory, CX: ColorsManager> {
             CompressedRead,
             Option<PrecomputedHash<MH>>,
             Option<PrecomputedHash<MH>>,
+            bool,
             SequenceAbundanceType,
         ),
+        compute_circular: bool,
     );
     fn set_suggested_sizes(&mut self, hashmap_size: u64, sequences_size: u64);
 }
