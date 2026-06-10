@@ -29,28 +29,65 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 enum QueryOutputFileWriter {
-    Plain(File),
-    LZ4Compressed(lz4::Encoder<File>),
-    GzipCompressed(flate2::write::GzEncoder<File>),
-    ZstdCompressed(zstd::stream::write::Encoder<'static, File>),
+    Plain(Option<File>),
+    LZ4Compressed(Option<lz4::Encoder<File>>),
+    GzipCompressed(Option<flate2::write::GzEncoder<File>>),
+    ZstdCompressed(Option<zstd::stream::write::Encoder<'static, File>>),
+    BZ2Compressed(Option<bzip2::write::BzEncoder<File>>),
+    XZCompressed(Option<xz2::write::XzEncoder<File>>),
 }
 
 impl Write for QueryOutputFileWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
-            QueryOutputFileWriter::Plain(w) => w.write(buf),
-            QueryOutputFileWriter::LZ4Compressed(w) => w.write(buf),
-            QueryOutputFileWriter::GzipCompressed(w) => w.write(buf),
-            QueryOutputFileWriter::ZstdCompressed(w) => w.write(buf),
+            QueryOutputFileWriter::Plain(w) => w.as_mut().unwrap().write(buf),
+            QueryOutputFileWriter::LZ4Compressed(w) => w.as_mut().unwrap().write(buf),
+            QueryOutputFileWriter::GzipCompressed(w) => w.as_mut().unwrap().write(buf),
+            QueryOutputFileWriter::ZstdCompressed(w) => w.as_mut().unwrap().write(buf),
+            QueryOutputFileWriter::BZ2Compressed(w) => w.as_mut().unwrap().write(buf),
+            QueryOutputFileWriter::XZCompressed(w) => w.as_mut().unwrap().write(buf),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
-            QueryOutputFileWriter::Plain(w) => w.flush(),
-            QueryOutputFileWriter::LZ4Compressed(w) => w.flush(),
-            QueryOutputFileWriter::GzipCompressed(w) => w.flush(),
-            QueryOutputFileWriter::ZstdCompressed(w) => w.flush(),
+            QueryOutputFileWriter::Plain(w) => w.as_mut().unwrap().flush(),
+            QueryOutputFileWriter::LZ4Compressed(w) => w.as_mut().unwrap().flush(),
+            QueryOutputFileWriter::GzipCompressed(w) => w.as_mut().unwrap().flush(),
+            QueryOutputFileWriter::ZstdCompressed(w) => w.as_mut().unwrap().flush(),
+            QueryOutputFileWriter::BZ2Compressed(w) => w.as_mut().unwrap().flush(),
+            QueryOutputFileWriter::XZCompressed(w) => w.as_mut().unwrap().flush(),
+        }
+    }
+}
+
+impl Drop for QueryOutputFileWriter {
+    fn drop(&mut self) {
+        match self {
+            QueryOutputFileWriter::Plain(writer) => {
+                writer.as_mut().unwrap().flush().unwrap();
+            }
+            QueryOutputFileWriter::LZ4Compressed(writer) => {
+                let (mut file, err) = writer.take().unwrap().finish();
+                err.unwrap();
+                file.flush().unwrap();
+            }
+            QueryOutputFileWriter::GzipCompressed(writer) => {
+                let mut file = writer.take().unwrap().finish().unwrap();
+                file.flush().unwrap();
+            }
+            QueryOutputFileWriter::ZstdCompressed(writer) => {
+                let mut file = writer.take().unwrap().finish().unwrap();
+                file.flush().unwrap();
+            }
+            QueryOutputFileWriter::BZ2Compressed(writer) => {
+                let mut file = writer.take().unwrap().finish().unwrap();
+                file.flush().unwrap();
+            }
+            QueryOutputFileWriter::XZCompressed(writer) => {
+                let mut file = writer.take().unwrap().finish().unwrap();
+                file.flush().unwrap();
+            }
         }
     }
 }
@@ -93,26 +130,37 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
     let query_output = Mutex::new((
         BufWriter::new(
             match output_file.extension().map(|e| e.to_str()).flatten() {
-                Some("lz4") => QueryOutputFileWriter::LZ4Compressed(
+                Some("lz4") => QueryOutputFileWriter::LZ4Compressed(Some(
                     lz4::EncoderBuilder::new()
                         .level(output_compression_level.min(16))
                         .build(query_output_file)
                         .unwrap(),
-                ),
+                )),
                 Some("gz") => {
-                    QueryOutputFileWriter::GzipCompressed(flate2::GzBuilder::new().write(
-                        query_output_file,
-                        Compression::new(output_compression_level.min(9)),
+                    QueryOutputFileWriter::GzipCompressed(Some(
+                        flate2::GzBuilder::new().write(
+                            query_output_file,
+                            Compression::new(output_compression_level.min(9)),
+                        ),
                     ))
                 }
-                Some("zst") | Some("zstd") => QueryOutputFileWriter::ZstdCompressed(
+                Some("zst") | Some("zstd") => QueryOutputFileWriter::ZstdCompressed(Some(
                     zstd::stream::write::Encoder::new(
                         query_output_file,
                         output_compression_level.min(22) as i32,
                     )
                     .unwrap(),
-                ),
-                _ => QueryOutputFileWriter::Plain(query_output_file),
+                )),
+                Some("bz2") => QueryOutputFileWriter::BZ2Compressed(Some(
+                    bzip2::write::BzEncoder::new(
+                        query_output_file,
+                        bzip2::Compression::new(output_compression_level.min(9)),
+                    ),
+                )),
+                Some("xz") => QueryOutputFileWriter::XZCompressed(Some(
+                    xz2::write::XzEncoder::new(query_output_file, output_compression_level.min(9)),
+                )),
+                _ => QueryOutputFileWriter::Plain(Some(query_output_file)),
             },
         ),
         0,

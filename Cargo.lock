@@ -403,6 +403,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bzip2"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c"
+dependencies = [
+ "libbz2-rs-sys",
+]
+
+[[package]]
 name = "bzip2-sys"
 version = "0.1.13+1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1336,7 +1345,7 @@ dependencies = [
  "bitbound",
  "bstr",
  "byteorder",
- "bzip2",
+ "bzip2 0.4.4",
  "dynamic-dispatch",
  "flate2",
  "ggcat-logging",
@@ -1407,6 +1416,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "byteorder",
+ "bzip2 0.6.1",
  "csv",
  "dynamic-dispatch",
  "flate2",
@@ -1427,6 +1437,7 @@ dependencies = [
  "rayon",
  "streaming-libdeflate-rs",
  "typenum",
+ "xz2",
  "zstd",
 ]
 
@@ -1436,6 +1447,7 @@ version = "2.1.0"
 dependencies = [
  "bincode 2.0.1",
  "byteorder",
+ "bzip2 0.6.1",
  "dynamic-dispatch",
  "flate2",
  "ggcat_colors",
@@ -1451,6 +1463,7 @@ dependencies = [
  "serde",
  "streaming-libdeflate-rs",
  "typenum",
+ "xz2",
  "zstd",
 ]
 
@@ -1706,6 +1719,12 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+
+[[package]]
+name = "libbz2-rs-sys"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34b357333733e8260735ba5894eb928c02ecc69c78715f01a8019e7fa7f2db4c"
 
 [[package]]
 name = "libc"

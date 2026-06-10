@@ -29,6 +29,8 @@ flate2 = "1.1.9"
 parking_lot = "0.12.5"
 serde = "1.0.228"
 zstd = "0.13.3"
+bzip2 = "0.6.1"
+xz2 = "0.1.7"
 
 
 [features]

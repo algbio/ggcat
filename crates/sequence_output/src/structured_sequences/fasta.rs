@@ -1,10 +1,11 @@
 use crate::indirect_reads_extractor::{ReadExtractWorkData, indirect_read_extract_parts};
 use crate::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
+use bzip2::Compression as BzipCompression;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use config::{DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE};
 use dynamic_dispatch::dynamic_dispatch;
-use flate2::Compression;
+use flate2::Compression as FlateCompression;
 use flate2::write::GzEncoder;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{SequenceExtraData, TempBuffer};
@@ -44,7 +45,7 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
     fn new_compressed_gzip(path: impl AsRef<Path>, level: u32) -> Self {
         let compress_stream = GzEncoder::new(
             BufWriter::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE, File::create(&path).unwrap()),
-            Compression::new(level),
+            FlateCompression::new(level),
         );
 
         FastaWriter {
@@ -85,6 +86,38 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
             level as i32,
         )
         .unwrap();
+
+        FastaWriter {
+            writer: Box::new(SequencesWriterWrapper::new(BufWriter::with_capacity(
+                DEFAULT_OUTPUT_BUFFER_SIZE,
+                compress_stream,
+            ))),
+            path: path.as_ref().to_path_buf(),
+            _phantom: PhantomData,
+        }
+    }
+
+    fn new_compressed_bz2(path: impl AsRef<Path>, level: u32) -> Self {
+        let compress_stream = bzip2::write::BzEncoder::new(
+            BufWriter::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE, File::create(&path).unwrap()),
+            BzipCompression::new(level),
+        );
+
+        FastaWriter {
+            writer: Box::new(SequencesWriterWrapper::new(BufWriter::with_capacity(
+                DEFAULT_OUTPUT_BUFFER_SIZE,
+                compress_stream,
+            ))),
+            path: path.as_ref().to_path_buf(),
+            _phantom: PhantomData,
+        }
+    }
+
+    fn new_compressed_xz(path: impl AsRef<Path>, level: u32) -> Self {
+        let compress_stream = xz2::write::XzEncoder::new(
+            BufWriter::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE, File::create(&path).unwrap()),
+            level,
+        );
 
         FastaWriter {
             writer: Box::new(SequencesWriterWrapper::new(BufWriter::with_capacity(

@@ -81,6 +81,8 @@ pub fn get_final_output_writer<
             "zst" | "zstd" => {
                 W::new_compressed_zstd(&output_file, output_compression_level.min(22))
             }
+            "bz2" => W::new_compressed_bz2(&output_file, output_compression_level.min(9)),
+            "xz" => W::new_compressed_xz(&output_file, output_compression_level.min(9)),
             _ => W::new_plain(&output_file),
         },
         None => W::new_plain(&output_file),

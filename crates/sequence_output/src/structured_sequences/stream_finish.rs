@@ -1,8 +1,10 @@
+use bzip2::write::BzEncoder;
 use flate2::write::GzEncoder;
 use std::{
     fs::File,
     io::{BufWriter, Write},
 };
+use xz2::write::XzEncoder;
 
 pub(crate) trait SequencesFileFinish: Write {
     fn finalize(self);
@@ -28,6 +30,18 @@ impl<W: SequencesFileFinish> SequencesFileFinish for lz4::Encoder<W> {
     }
 }
 impl<W: SequencesFileFinish> SequencesFileFinish for GzEncoder<W> {
+    fn finalize(self) {
+        let w = self.finish().unwrap();
+        w.finalize();
+    }
+}
+impl<W: SequencesFileFinish> SequencesFileFinish for BzEncoder<W> {
+    fn finalize(self) {
+        let w = self.finish().unwrap();
+        w.finalize();
+    }
+}
+impl<W: SequencesFileFinish> SequencesFileFinish for XzEncoder<W> {
     fn finalize(self) {
         let w = self.finish().unwrap();
         w.finalize();

@@ -45,6 +45,14 @@ pub trait StructuredSequenceBackendInit: Sync + Send + Sized {
         unimplemented!()
     }
 
+    fn new_compressed_bz2(_path: impl AsRef<Path>, _level: u32) -> Self {
+        unimplemented!()
+    }
+
+    fn new_compressed_xz(_path: impl AsRef<Path>, _level: u32) -> Self {
+        unimplemented!()
+    }
+
     fn new_plain(_path: impl AsRef<Path>) -> Self {
         unimplemented!()
     }
