@@ -1238,6 +1238,7 @@ dependencies = [
  "serde",
  "serde_json",
  "siphasher",
+ "zstd",
 ]
 
 [[package]]
@@ -1426,6 +1427,7 @@ dependencies = [
  "rayon",
  "streaming-libdeflate-rs",
  "typenum",
+ "zstd",
 ]
 
 [[package]]
@@ -1449,6 +1451,7 @@ dependencies = [
  "serde",
  "streaming-libdeflate-rs",
  "typenum",
+ "zstd",
 ]
 
 [[package]]

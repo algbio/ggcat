@@ -11,6 +11,7 @@ use colors::DefaultColorsSerializer;
 use colors::colors_manager::ColorMapReader;
 use colors::storage::deserializer::ColorsDeserializer;
 use config::ColorIndexType;
+use config::OUTPUT_COMPRESSION_LEVEL;
 use ggcat_api::{ExtraElaboration, GGCATConfig, GGCATInstance, GfaVersion};
 use ggcat_logging::UnrecoverableErrorLogging;
 use io::sequences_stream::general::GeneralSequenceBlockData;
@@ -135,6 +136,10 @@ struct CommonArgs {
         help_heading = "Advanced Options"
     )]
     pub intermediate_compression_level: Option<u32>,
+
+    /// Compression level for final output files (applies to .lz4/.gz/.zst/.zstd outputs)
+    #[arg(long = "output-compression-level", default_value = "2")]
+    pub output_compression_level: u32,
 
     #[arg(hide = true, long = "only-bstats")]
     pub only_bstats: bool,
@@ -313,6 +318,7 @@ fn initialize(args: &CommonArgs, out_file: &PathBuf) -> &'static GGCATInstance {
     ggcat_api::debug::DEBUG_KEEP_FILES.store(args.keep_temp_files, Ordering::Relaxed);
     *ggcat_api::debug::BUCKETS_COUNT_LOG_FORCE.lock() = args.buckets_count_log;
     ggcat_api::debug::DEBUG_ONLY_BSTATS.store(args.only_bstats, Ordering::Relaxed);
+    OUTPUT_COMPRESSION_LEVEL.store(args.output_compression_level, Ordering::Relaxed);
     *ggcat_api::debug::DEBUG_HASH_TYPE.lock() = match args.hash_type {
         HashType::Auto => ggcat_api::HashType::Auto,
         HashType::SeqHash => ggcat_api::HashType::SeqHash,
