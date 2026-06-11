@@ -1049,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat-api"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "dynamic-dispatch",
@@ -1072,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat-cpp-bindings"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "cxx",
  "cxx-build",
@@ -1082,7 +1082,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat-logging"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "parking_lot",
  "serde",
@@ -1091,7 +1091,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_assembler"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -1124,7 +1124,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_assembler_kmerge"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "binary-heap-plus",
  "bitbound",
@@ -1155,7 +1155,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_assembler_minibuck"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "dynamic-dispatch",
  "ggcat_colors",
@@ -1171,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_assembler_pipeline"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_cmdline"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "ahash",
  "atoi",
@@ -1252,7 +1252,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_colors"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "atoi",
@@ -1288,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_config"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "parallel-processor",
  "parking_lot",
@@ -1323,7 +1323,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_hashes"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "ahash",
  "bincode 2.0.1",
@@ -1338,7 +1338,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_io"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -1367,7 +1367,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_kmers_transform"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "ggcat-logging",
  "ggcat_colors",
@@ -1389,7 +1389,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_minimizer_bucketing"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "bincode 2.0.1",
  "byteorder",
@@ -1443,7 +1443,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_sequence_output"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "bincode 2.0.1",
  "byteorder",
@@ -1469,7 +1469,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_structs"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "bincode 1.3.3",
  "byteorder",
@@ -1482,7 +1482,7 @@ dependencies = [
 
 [[package]]
 name = "ggcat_utils"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "hashbrown 0.15.5",
  "parallel-processor",

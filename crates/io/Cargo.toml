@@ -1,6 +1,6 @@
 [package]
 name = "ggcat_io"
-version = "2.1.0"
+version = "2.2.0"
 authors = ["Andrea Cracco <guilucand@gmail.com>"]
 edition = "2024"
 categories = []
@@ -31,7 +31,7 @@ xz2 = "0.1.7"
 zstd = "0.13.2"
 flate2 = "1.0.30"
 bstr = "1.9.1"
-ggcat-logging = { version = "2.1.0", path = "../logging" }
+ggcat-logging = { version = "2.2.0", path = "../logging" }
 anyhow = "1.0.89"
 dynamic-dispatch = "0.5.4"
 rustc-hash = "2.1.1"

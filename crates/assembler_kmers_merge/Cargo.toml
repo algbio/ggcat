@@ -1,6 +1,6 @@
 [package]
 name = "ggcat_assembler_kmerge"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2024"
 [dependencies]
 
@@ -33,7 +33,7 @@ crossbeam = "0.8.4"
 # Profiler
 instrumenter = "0.1.3"
 parking_lot = "0.12.3"
-ggcat-logging = { version = "2.1.0", path = "../logging" }
+ggcat-logging = { version = "2.2.0", path = "../logging" }
 rustc-hash = "2.1.0"
 typenum = "1.18.0"
 dynamic-dispatch = "0.5.4"
