@@ -194,6 +194,15 @@ impl SequencesReader {
             source,
             |line: &[u8], partial, finished| {
                 if unlikely(finished) {
+                    if intermediate[SEQ_STATE].len() > 0 {
+                        Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
+                        func(DnaSequence {
+                            ident_data: &intermediate[IDENT_STATE],
+                            seq: &intermediate[SEQ_STATE],
+                            format: DnaSequencesFileType::FASTQ,
+                        });
+                    }
+
                     return;
                 }
 
@@ -205,20 +214,11 @@ impl SequencesReader {
                         return;
                     }
 
-                    // if get_quality {
-                    //     intermediate[state].extend_from_slice(line);
-                    // }
-
                     if !partial {
                         Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
                         func(DnaSequence {
                             ident_data: &intermediate[IDENT_STATE],
                             seq: &intermediate[SEQ_STATE],
-                            // qual: if get_quality {
-                            //     Some(&intermediate[QUAL_STATE])
-                            // } else {
-                            //     None
-                            // },
                             format: DnaSequencesFileType::FASTQ,
                         });
 
