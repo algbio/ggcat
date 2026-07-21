@@ -205,15 +205,6 @@ rustup toolchain install stable
 Follow the instructions at the site:
 https://rustup.rs/
 
-### Features list
-
-GGCAT ships with some features enabled by default. These default features can be disabled by specifying --no-default-features in the command line while building/installing GGCAT.
-Individual features can be enabled by specifying them (ex. --features "feature1,feature2") in the command line while building/installing GGCAT.
-
-| Feature name    | Default | Description |
-| -------- | ------- | ------- |
-| **kmer-counters** | Yes | Adds kmer abundance for each unitig, in a BCALM2 compatible format. Disable to reduce memory usage while building colored graphs. |
-
 ### Building
 
 Then the tool can be installed with the commands:
@@ -227,6 +218,15 @@ cargo install --path crates/cmdline/ --locked
 the binary is automatically copied to `$HOME/.cargo/bin`
 
 To launch the tool directly from the command line, the above directory should be added to the `$PATH` variable.
+
+### Features list
+
+GGCAT ships with some features enabled by default. These default features can be disabled by specifying --no-default-features in the command line while building/installing GGCAT.
+Individual features can be enabled by specifying them (ex. --features "feature1,feature2") in the command line while building/installing GGCAT.
+
+| Feature name    | Default | Description |
+| -------- | ------- | ------- |
+| **kmer-counters** | Yes | Adds kmer abundance for each unitig, in a BCALM2 compatible format. Disable to reduce memory usage while building colored graphs. |
 
 ## API usage
 
