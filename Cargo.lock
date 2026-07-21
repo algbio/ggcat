@@ -1352,6 +1352,7 @@ dependencies = [
  "ggcat_config",
  "ggcat_hashes",
  "ggcat_utils",
+ "liblzma",
  "lz4",
  "nightly-quirks",
  "parallel-processor",
@@ -1361,7 +1362,6 @@ dependencies = [
  "serde",
  "streaming-libdeflate-rs",
  "typenum",
- "xz2",
  "zstd",
 ]
 
@@ -1430,6 +1430,7 @@ dependencies = [
  "ggcat_structs",
  "ggcat_utils",
  "hashbrown 0.15.5",
+ "liblzma",
  "lz4",
  "nightly-quirks",
  "parallel-processor",
@@ -1437,7 +1438,6 @@ dependencies = [
  "rayon",
  "streaming-libdeflate-rs",
  "typenum",
- "xz2",
  "zstd",
 ]
 
@@ -1456,6 +1456,7 @@ dependencies = [
  "ggcat_io",
  "ggcat_structs",
  "ggcat_utils",
+ "liblzma",
  "lz4",
  "nightly-quirks",
  "parallel-processor",
@@ -1463,7 +1464,6 @@ dependencies = [
  "serde",
  "streaming-libdeflate-rs",
  "typenum",
- "xz2",
  "zstd",
 ]
 
@@ -1733,6 +1733,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
 
 [[package]]
+name = "liblzma"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45aec2360b3933207e27908049d8e4df4e476b58180afb1e56b2a4fb72efe4ba"
+dependencies = [
+ "liblzma-sys",
+]
+
+[[package]]
+name = "liblzma-sys"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a046c7f353ba30f810545151e04f63545833803f5b86ee3ddf1517247fe560a5"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "libm"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1794,17 +1814,6 @@ checksum = "6bd8c0d6c6ed0cd30b3652886bb8711dc4bb01d637a68105a3d5158039b418e6"
 dependencies = [
  "cc",
  "libc",
-]
-
-[[package]]
-name = "lzma-sys"
-version = "0.1.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fda04ab3764e6cde78b9974eec4f779acaba7c4e84b36eca3cf77c581b85d27"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
 ]
 
 [[package]]
@@ -3420,15 +3429,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
-]
-
-[[package]]
-name = "xz2"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "388c44dc09d76f1536602ead6d325eb532f5c122f17782bd57fb47baeeb767e2"
-dependencies = [
- "lzma-sys",
 ]
 
 [[package]]
