@@ -63,7 +63,7 @@ clap = { version = "4.5.50", features = ["derive"] }
 
 
 [features]
-default = ["full"]
+default = ["full", "kmer-counters"]
 memory-guards = ["parallel-processor/memory-guards"]
 mem-analysis = ["parallel-processor/track-usage"]
 no-stats = ["parallel-processor/no-stats"]

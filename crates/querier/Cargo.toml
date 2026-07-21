@@ -35,7 +35,7 @@ lz4 = "1.25.0"
 flate2 = "1.0.30"
 zstd = "0.13.2"
 bzip2 = "0.6.1"
-xz2 = "0.1.7"
+liblzma = "0.4.7"
 ggcat-logging = { version = "2.2.0", path = "../logging" }
 anyhow = "1.0.89"
 typenum = "1.18.0"

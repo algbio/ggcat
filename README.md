@@ -198,19 +198,12 @@ To build the tool the Rust stable (>= 1.75) toolchain is required, and can be do
 ```
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup toolchain install stable
-
 ```
 
 ### Windows
 
 Follow the instructions at the site:
 https://rustup.rs/
-
-### Additional opt-in features
-
-Additional features can be enabled by specifying them in the command line while building/installing GGCAT (ex. --features "feature1,feature2"):
-
-- **kmer-counters**: Adds kmer abundance for each unitig, in a BCALM2 compatible format. If enabled GGCAT uses more memory while building colored graphs
 
 ### Building
 
@@ -225,6 +218,15 @@ cargo install --path crates/cmdline/ --locked
 the binary is automatically copied to `$HOME/.cargo/bin`
 
 To launch the tool directly from the command line, the above directory should be added to the `$PATH` variable.
+
+### Features list
+
+GGCAT ships with some features enabled by default. These default features can be disabled by specifying --no-default-features in the command line while building/installing GGCAT.
+Individual features can be enabled by specifying them (ex. --features "feature1,feature2") in the command line while building/installing GGCAT.
+
+| Feature name    | Default | Description |
+| -------- | ------- | ------- |
+| **kmer-counters** | Yes | Adds kmer abundance for each unitig, in a BCALM2 compatible format. Disable to reduce memory usage while building colored graphs. |
 
 ## API usage
 

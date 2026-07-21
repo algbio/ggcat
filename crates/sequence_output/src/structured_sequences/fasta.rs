@@ -114,7 +114,7 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
     }
 
     fn new_compressed_xz(path: impl AsRef<Path>, level: u32) -> Self {
-        let compress_stream = xz2::write::XzEncoder::new(
+        let compress_stream = liblzma::write::XzEncoder::new(
             BufWriter::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE, File::create(&path).unwrap()),
             level,
         );
