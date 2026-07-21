@@ -100,7 +100,7 @@ impl LinesReader {
                     );
                 });
         } else if path.as_ref().extension().filter(|x| *x == "xz").is_some() {
-            let file = xz2::read::XzDecoder::new(
+            let file = liblzma::read::XzDecoder::new(
                 File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display())),
             );
             self.read_stream_buffered(file, callback)

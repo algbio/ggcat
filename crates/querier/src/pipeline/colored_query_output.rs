@@ -34,7 +34,7 @@ enum QueryOutputFileWriter {
     GzipCompressed(Option<flate2::write::GzEncoder<File>>),
     ZstdCompressed(Option<zstd::stream::write::Encoder<'static, File>>),
     BZ2Compressed(Option<bzip2::write::BzEncoder<File>>),
-    XZCompressed(Option<xz2::write::XzEncoder<File>>),
+    XZCompressed(Option<liblzma::write::XzEncoder<File>>),
 }
 
 impl Write for QueryOutputFileWriter {
@@ -137,12 +137,10 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
                         .unwrap(),
                 )),
                 Some("gz") => {
-                    QueryOutputFileWriter::GzipCompressed(Some(
-                        flate2::GzBuilder::new().write(
-                            query_output_file,
-                            Compression::new(output_compression_level.min(9)),
-                        ),
-                    ))
+                    QueryOutputFileWriter::GzipCompressed(Some(flate2::GzBuilder::new().write(
+                        query_output_file,
+                        Compression::new(output_compression_level.min(9)),
+                    )))
                 }
                 Some("zst") | Some("zstd") => QueryOutputFileWriter::ZstdCompressed(Some(
                     zstd::stream::write::Encoder::new(
@@ -151,15 +149,18 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
                     )
                     .unwrap(),
                 )),
-                Some("bz2") => QueryOutputFileWriter::BZ2Compressed(Some(
-                    bzip2::write::BzEncoder::new(
+                Some("bz2") => {
+                    QueryOutputFileWriter::BZ2Compressed(Some(bzip2::write::BzEncoder::new(
                         query_output_file,
                         bzip2::Compression::new(output_compression_level.min(9)),
-                    ),
-                )),
-                Some("xz") => QueryOutputFileWriter::XZCompressed(Some(
-                    xz2::write::XzEncoder::new(query_output_file, output_compression_level.min(9)),
-                )),
+                    )))
+                }
+                Some("xz") => {
+                    QueryOutputFileWriter::XZCompressed(Some(liblzma::write::XzEncoder::new(
+                        query_output_file,
+                        output_compression_level.min(9),
+                    )))
+                }
                 _ => QueryOutputFileWriter::Plain(Some(query_output_file)),
             },
         ),

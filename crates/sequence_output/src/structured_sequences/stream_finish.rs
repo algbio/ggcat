@@ -1,10 +1,10 @@
 use bzip2::write::BzEncoder;
 use flate2::write::GzEncoder;
+use liblzma::write::XzEncoder;
 use std::{
     fs::File,
     io::{BufWriter, Write},
 };
-use xz2::write::XzEncoder;
 
 pub(crate) trait SequencesFileFinish: Write {
     fn finalize(self);
