@@ -16,8 +16,8 @@ utils = { package = "ggcat_utils", path = "../utils" }
 
 
 # Common libraries
-parallel-processor = "0.2.6"
-streaming-libdeflate-rs = "0.2.3"
+parallel-processor = "0.2.7"
+streaming-libdeflate-rs = "0.2.4"
 nightly-quirks = "0.1.4"
 
 # Pipeline libraries

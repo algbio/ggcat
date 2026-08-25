@@ -1814,6 +1814,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8ca8afbe8af1785e09636acb5a41e08a765f5f0340568716c18a8700ba3c0d3"
 
 [[package]]
+name = "maligned"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e88c3cbe8288f77f293e48a28b3232e3defd203a6d839fa7f68ea4329e83464"
+
+[[package]]
 name = "matchtigs"
 version = "2.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2062,9 +2068,9 @@ dependencies = [
 
 [[package]]
 name = "parallel-processor"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "656ad87efeb807da4d1d1082a338b012e0e6f071b6cb571c4f337af6fa0e6f15"
+checksum = "3ac575cebc53e26ec5570922db6d061dc767e8bfbade165c948dd27268a0fb1d"
 dependencies = [
  "arc-swap",
  "backtrace",
@@ -2690,12 +2696,13 @@ dependencies = [
 
 [[package]]
 name = "streaming-libdeflate-rs"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a415b818d65263e67a4f59cc1ac05aafed5ee2ea61b229b43e02bdafb9f48dca"
+checksum = "e7796214c411beca5a7b980e968e43f1b087fb23c8624915b1b58d2b7a0b549e"
 dependencies = [
  "crc32fast",
  "filebuffer",
+ "maligned",
  "nightly-quirks",
  "static_assertions",
  "structopt",
