@@ -124,7 +124,7 @@ impl<CD: MinimizerBucketingSeqColorData>
         stream_info: &<AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::StreamInfo,
         sequence_info: SequenceInfo,
         _read_index: u64,
-        sequence: &DnaSequence,
+        sequence: &DnaSequence<&[u8]>,
         preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         CD::clear_temp_buffer(&mut preprocess_info.color_info_buffer);

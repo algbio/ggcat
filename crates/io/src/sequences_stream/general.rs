@@ -9,7 +9,7 @@ pub trait DynamicSequencesStream: Sync + Send + 'static {
         block: usize,
         copy_ident_data: bool,
         partial_read_copyback: Option<usize>,
-        callback: &mut dyn FnMut(DnaSequence, SequenceInfo),
+        callback: &mut dyn FnMut(DnaSequence<'_, &[u8]>, SequenceInfo),
     );
 
     fn estimated_base_count(&self, block: usize) -> u64;
@@ -18,7 +18,7 @@ pub trait DynamicSequencesStream: Sync + Send + 'static {
 pub enum GeneralSequenceBlockData {
     FASTA(<FastaFileSequencesStream as GenericSequencesStream>::SequenceBlockData),
     GFA(),
-    Dynamic((Arc<dyn DynamicSequencesStream>, usize)),
+    Dynamic((Arc<dyn for<'a> DynamicSequencesStream>, usize)),
 }
 
 impl GeneralSequenceBlockData {
@@ -55,7 +55,7 @@ impl GenericSequencesStream for GeneralSequencesStream {
         block: &Self::SequenceBlockData,
         copy_ident_data: bool,
         partial_read_copyback: Option<usize>,
-        mut callback: impl FnMut(DnaSequence, SequenceInfo),
+        mut callback: impl FnMut(DnaSequence<&[u8]>, SequenceInfo),
     ) {
         match block {
             GeneralSequenceBlockData::FASTA(block) => {

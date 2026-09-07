@@ -801,6 +801,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "deko"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83c5c3f0ad826f7b26482496465352171d43af06a0d4b7b8ad3680169a6ec7cb"
+dependencies = [
+ "bzip2 0.6.1",
+ "flate2",
+ "liblzma",
+ "zstd",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1346,6 +1358,7 @@ dependencies = [
  "bstr",
  "byteorder",
  "bzip2 0.4.4",
+ "deko",
  "dynamic-dispatch",
  "flate2",
  "ggcat-logging",
@@ -1354,6 +1367,8 @@ dependencies = [
  "ggcat_utils",
  "liblzma",
  "lz4",
+ "maligned",
+ "memchr",
  "nightly-quirks",
  "parallel-processor",
  "parking_lot",
@@ -1861,9 +1876,9 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.7.6"
+version = "2.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
+checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "memory-stats"

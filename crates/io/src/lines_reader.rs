@@ -5,7 +5,7 @@ use parallel_processor::mt_debug_counters::{declare_avg_counter_i64, declare_cou
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use streaming_libdeflate_rs::decompress_file_buffered;
+use streaming_libdeflate_rs::decompress_file_buffered_callback;
 
 pub struct LinesReader {
     buffer: Vec<u8>,
@@ -23,7 +23,7 @@ static COUNTER_THREADS_READ_BYTES_AVG: AtomicCounter<AvgMode> =
     declare_avg_counter_i64!("line_read_bytes_avg", false);
 
 impl LinesReader {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             buffer: vec![0; DEFAULT_OUTPUT_BUFFER_SIZE],
         }
@@ -62,7 +62,7 @@ impl LinesReader {
         remove: bool,
     ) {
         if path.as_ref().extension().filter(|x| *x == "gz").is_some() {
-            if let Err(_err) = decompress_file_buffered(
+            if let Err(_err) = decompress_file_buffered_callback(
                 &path,
                 |data| {
                     callback(data);

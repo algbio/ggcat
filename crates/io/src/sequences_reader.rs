@@ -1,5 +1,6 @@
 use crate::lines_reader::LinesReader;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
+use hashes::HashableSequence;
 use nightly_quirks::branch_pred::unlikely;
 use std::cmp::max;
 use std::path::Path;
@@ -17,9 +18,9 @@ pub enum DnaSequencesFileType {
 }
 
 #[derive(Copy, Clone)]
-pub struct DnaSequence<'a> {
+pub struct DnaSequence<'a, S: HashableSequence + 'a> {
     pub ident_data: &'a [u8],
-    pub seq: &'a [u8],
+    pub seq: S,
     pub format: DnaSequencesFileType,
 }
 
@@ -53,7 +54,7 @@ impl SequencesReader {
         }
     }
 
-    pub fn process_file_extended<F: FnMut(DnaSequence)>(
+    pub fn process_file_extended<F: for<'a> FnMut(DnaSequence<'a, &'a [u8]>)>(
         &mut self,
         source: impl AsRef<Path>,
         func: F,
@@ -106,7 +107,7 @@ impl SequencesReader {
     fn process_fasta(
         &mut self,
         source: impl AsRef<Path>,
-        mut func: impl FnMut(DnaSequence),
+        mut func: impl for<'a> FnMut(DnaSequence<'a, &'a [u8]>),
         line_split_copyback: Option<usize>,
         copy_ident: bool,
         remove_file: bool,
@@ -181,7 +182,7 @@ impl SequencesReader {
     fn process_fastq(
         &mut self,
         source: impl AsRef<Path>,
-        mut func: impl FnMut(DnaSequence),
+        mut func: impl for<'a> FnMut(DnaSequence<'a, &'a [u8]>),
         // get_quality: bool,
         remove_file: bool,
     ) {

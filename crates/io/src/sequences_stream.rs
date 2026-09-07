@@ -19,6 +19,6 @@ pub trait GenericSequencesStream: Sync + Send + 'static {
         block: &Self::SequenceBlockData,
         copy_ident_data: bool,
         partial_read_copyback: Option<usize>,
-        callback: impl FnMut(DnaSequence, SequenceInfo),
+        callback: impl FnMut(DnaSequence<&[u8]>, SequenceInfo),
     );
 }

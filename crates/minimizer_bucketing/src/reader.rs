@@ -9,7 +9,6 @@ use parallel_processor::execution_manager::executor::{
 };
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use replace_with::replace_with_or_abort;
-use std::cmp::max;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::sync::atomic::Ordering;
@@ -54,8 +53,6 @@ impl<Factory: MinimizerBucketingExecutorFactory, SequencesStream: GenericSequenc
 
             context.current_file.fetch_add(1, Ordering::Relaxed);
 
-            let mut max_len = 0;
-
             stats!(
                 let mut stat_start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
             );
@@ -70,8 +67,6 @@ impl<Factory: MinimizerBucketingExecutorFactory, SequencesStream: GenericSequenc
                     if x.seq.len() < context.common.ignored_length {
                         return;
                     }
-
-                    max_len = max(max_len, x.ident_data.len() + x.seq.len());
 
                     if unlikely(!data.push_sequences(x, seq_info)) {
                         assert!(

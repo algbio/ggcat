@@ -17,11 +17,13 @@ use parallel_processor::{
 pub mod compressed_read;
 pub mod concurrent;
 pub mod concurrent_filewriter;
+pub mod gzip_wrapper;
 pub mod ident_writer;
 pub mod lines_reader;
 pub mod memstorage;
 pub mod partial_unitigs_extra_data;
 pub mod sequences_reader;
+pub mod sequences_splitter;
 pub mod sequences_stream;
 pub mod structs;
 pub mod varint;

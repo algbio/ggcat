@@ -28,5 +28,3 @@ rand = "0.8.5"
 utils = { package = "ggcat_utils", path = "../utils" }
 io = { package = "ggcat_io", path = "../io" }
 criterion = "0.5.1"
-
-

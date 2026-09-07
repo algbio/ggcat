@@ -2,10 +2,10 @@ use crate::pipeline::parallel_kmers_query::QueryKmersReferenceData;
 use colors::colors_manager::color_types::MinimizerBucketingSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
-use hashes::HashFunction;
 use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
+use hashes::{HashFunction, HashableSequence};
 use io::concurrent::temp_reads::extra_data::{SequenceExtraDataTempBufferManagement, TempBuffer};
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
@@ -106,7 +106,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
         stream_info: &<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
         sequence_info: SequenceInfo,
         read_index: u64,
-        sequence: &DnaSequence,
+        sequence: &DnaSequence<'_, &[u8]>,
         preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
@@ -137,12 +137,12 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
                 );
 
                 if CX::COLORS_ENABLED
-                    && (color.debug_count() != sequence.seq.len() - self.global_data.k + 1)
+                    && (color.debug_count() != sequence.seq.bases_count() - self.global_data.k + 1)
                 {
                     ggcat_logging::error!(
                         "WARN: Sequence does not have enough colors, please check matching k size:\n{}\n{}",
                         std::str::from_utf8(sequence.ident_data).unwrap(),
-                        std::str::from_utf8(sequence.seq).unwrap()
+                        sequence.seq.debug_to_string()
                     );
                 }
 

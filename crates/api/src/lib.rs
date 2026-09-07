@@ -466,7 +466,7 @@ impl GGCATInstance {
                 &(graph_input.as_ref().to_path_buf(), None),
                 false,
                 Some(kmer_length - 1),
-                |seq, _info| {
+                |seq, __info| {
                     output_function(seq.ident_data, &[], false);
                 },
             );

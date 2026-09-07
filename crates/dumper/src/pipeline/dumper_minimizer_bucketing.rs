@@ -6,6 +6,7 @@ use colors::colors_manager::{
 };
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
+use hashes::HashableSequence;
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement, TempBuffer,
@@ -209,7 +210,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
         _stream_info: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
         sequence_info: SequenceInfo,
         _read_index: u64,
-        sequence: &DnaSequence,
+        sequence: &DnaSequence<'_, &[u8]>,
         preprocess_info: &mut <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
@@ -240,12 +241,12 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
                 );
 
                 if CX::COLORS_ENABLED
-                    && (color.debug_count() != sequence.seq.len() - self.global_data.k + 1)
+                    && (color.debug_count() != sequence.seq.bases_count() - self.global_data.k + 1)
                 {
                     ggcat_logging::error!(
                         "WARN: Sequence does not have enough colors, please check matching k size:\n{}\n{}",
                         std::str::from_utf8(sequence.ident_data).unwrap(),
-                        std::str::from_utf8(sequence.seq).unwrap()
+                        sequence.seq.debug_to_string()
                     );
                 }
 

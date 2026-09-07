@@ -247,12 +247,9 @@ mod tests {
             target.iter().copied().map(|t| (t, ())),
             0,
             0,
-            |index, s, last, dupl| {
+            |index, s, last| {
                 // if s.0 == 1027188445256888837 || s.0 == 1027188445256888836 {
-                println!(
-                    "Index = {}, s = {:?}, last = {:?}, dupl = {:?}",
-                    index, s, last, dupl
-                );
+                println!("Index = {}, s = {:?}, last = {:?}", index, s, last);
                 // }
             },
         );
@@ -322,7 +319,7 @@ mod tests {
             items.iter().copied().map(|v| (v, ())),
             0,
             0,
-            |_idx, s, _, _| {
+            |_idx, s, _| {
                 res = res.wrapping_add(s.0);
             },
         );
@@ -334,7 +331,7 @@ mod tests {
         fast_queue.get_minimizers::<_, true>(
             items.iter().copied().map(|v| (v, ())),
             0,
-            |item, _, _| {
+            |item, _| {
                 let minimizer_mask = !BatchMinQueue::<()>::unique_flag::<true>();
 
                 let min_count = items[index..index + MINWINDOW]

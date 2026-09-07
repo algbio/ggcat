@@ -3,17 +3,15 @@ pub mod decode_helper;
 mod queue_data;
 mod reader;
 pub mod resplit_bucket;
-mod sequences_splitter;
 pub mod split_buckets;
 
 use crate::compactor::BucketsCompactor;
 use crate::queue_data::MinimizerBucketingQueueData;
 use crate::reader::MinimizerBucketingFilesReader;
-use crate::sequences_splitter::SequencesSplitter;
 use bincode::{Decode, Encode};
 use config::{
-    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
-    READ_INTERMEDIATE_CHUNKS_SIZE, SwapPriority,
+    BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE,
+    MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, READ_INTERMEDIATE_CHUNKS_SIZE, SwapPriority,
 };
 use ggcat_logging::stats;
 use hashes::HashableSequence;
@@ -26,6 +24,7 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression, TempBuffer,
 };
 use io::sequences_reader::DnaSequence;
+use io::sequences_splitter::split_and_compress_sequences;
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::{
@@ -75,7 +74,7 @@ pub trait MinimizerInputSequence: HashableSequence + Copy {
 
 impl<'a> MinimizerInputSequence for CompressedRead<'a> {
     fn get_subslice(&self, range: Range<usize>) -> Self {
-        self.sub_slice(range)
+        self.sub_slice(range.into())
     }
 
     fn seq_len(&self) -> usize {
@@ -137,7 +136,7 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
         stream_info: &Factory::StreamInfo,
         sequence_info: SequenceInfo,
         read_index: u64,
-        sequence: &DnaSequence,
+        sequence: &DnaSequence<'_, &[u8]>,
         preprocess_info: &mut Factory::PreprocessInfo,
     );
 
@@ -220,7 +219,6 @@ pub struct MinimizerBucketingExecutionContext<
     pub seq_count: AtomicU64,
     pub last_total_count: AtomicU64,
     pub tot_bases_count: AtomicU64,
-    pub valid_bases_count: AtomicU64,
 
     pub target_chunk_size: u64,
 
@@ -293,9 +291,10 @@ impl<
             let thread_id = ggcat_logging::generate_stat_id!();
         );
 
+        let mut compress_buffer = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
+
         while let Some(input_packet) = ops.receive_packet() {
             let mut total_bases = 0;
-            let mut sequences_splitter = SequencesSplitter::new(context.common.k);
             let mut buckets_processor = Executor::new(&context.common);
 
             let mut sequences_count = 0;
@@ -317,60 +316,67 @@ impl<
                     &mut preprocess_info,
                 );
 
-                sequences_splitter.process_sequences(&x, &mut |sequence: &[u8], range| {
-                    buckets_processor.process_sequence::<_, _, true>(
-                        &preprocess_info,
-                        sequence,
-                        range,
-                        0,
-                        context.common.buckets_count.normal_buckets_count_log,
-                        context.common.second_buckets_count.normal_buckets_count_log,
-                        |info| {
-                            let PushSequenceInfo {
-                                bucket,
-                                second_bucket,
-                                sequence,
-                                minimizer_pos,
-                                flags,
-                                extra_data,
-                                temp_buffer,
-                                rc,
-                            } = info;
-
-                            let chunking_status = tmp_reads_buffer.add_element_extended(
-                                bucket,
-                                &extra_data,
-                                temp_buffer,
-                                &CompressedReadsBucketData::new_plain_opt_rc(
+                split_and_compress_sequences(
+                    &mut compress_buffer,
+                    context.common.k,
+                    &x,
+                    &mut |sequence: CompressedRead, range: std::range::Range<usize>| {
+                        buckets_processor.process_sequence::<_, _, true>(
+                            &preprocess_info,
+                            sequence,
+                            range.into(),
+                            0,
+                            context.common.buckets_count.normal_buckets_count_log,
+                            context.common.second_buckets_count.normal_buckets_count_log,
+                            |info| {
+                                let PushSequenceInfo {
+                                    bucket,
+                                    second_bucket,
                                     sequence,
-                                    flags,
-                                    second_bucket as u8,
-                                    rc,
                                     minimizer_pos,
-                                ),
-                            );
+                                    flags,
+                                    extra_data,
+                                    temp_buffer,
+                                    rc,
+                                } = info;
 
-                            // A new chunk was produced, compact it
-                            if let ChunkingStatus::NewChunk = chunking_status {
-                                if compactor.is_none() {
-                                    compactor = Some(BucketsCompactor::new(
-                                        context.common.k,
-                                        &context.common.second_buckets_count,
-                                        context.target_chunk_size,
-                                    ));
-                                }
-                                let compactor = unsafe { compactor.as_mut().unwrap_unchecked() };
-
-                                compactor.compact_buckets(
-                                    &uncompacted_buckets.get_stored_buckets()[bucket as usize],
-                                    &context.compacted_buckets.as_ref().unwrap()[bucket as usize],
-                                    bucket as usize,
-                                    &context.output_path,
+                                let chunking_status = tmp_reads_buffer.add_element_extended(
+                                    bucket,
+                                    &extra_data,
+                                    temp_buffer,
+                                    &CompressedReadsBucketData::new_packed_opt_rc(
+                                        sequence,
+                                        flags,
+                                        second_bucket as u8,
+                                        rc,
+                                        minimizer_pos,
+                                    ),
                                 );
-                            }
-                        },
-                    );
-                });
+
+                                // A new chunk was produced, compact it
+                                if let ChunkingStatus::NewChunk = chunking_status {
+                                    if compactor.is_none() {
+                                        compactor = Some(BucketsCompactor::new(
+                                            context.common.k,
+                                            &context.common.second_buckets_count,
+                                            context.target_chunk_size,
+                                        ));
+                                    }
+                                    let compactor =
+                                        unsafe { compactor.as_mut().unwrap_unchecked() };
+
+                                    compactor.compact_buckets(
+                                        &uncompacted_buckets.get_stored_buckets()[bucket as usize],
+                                        &context.compacted_buckets.as_ref().unwrap()
+                                            [bucket as usize],
+                                        bucket as usize,
+                                        &context.output_path,
+                                    );
+                                }
+                            },
+                        );
+                    },
+                );
 
                 sequences_count += 1;
             }
@@ -382,9 +388,6 @@ impl<
                 .tot_bases_count
                 .fetch_add(total_bases, Ordering::Relaxed)
                 + total_bases;
-            context
-                .valid_bases_count
-                .fetch_add(sequences_splitter.valid_bases, Ordering::Relaxed);
 
             stats!(
                 let end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
@@ -417,12 +420,9 @@ impl<
                 let processed_files = context.processed_files.load(Ordering::Relaxed);
 
                 ggcat_logging::info!(
-                    "Elaborated {} sequences! [{} | {:.2}% qb] ({}[{}]/{} => {:.2}%) {}",
+                    "Elaborated {} sequences! [{}bp] ({}[{}]/{} => {:.2}%) {}",
                     context.seq_count.load(Ordering::Relaxed),
-                    context.valid_bases_count.load(Ordering::Relaxed),
-                    (context.valid_bases_count.load(Ordering::Relaxed) as f64)
-                        / (max(1, context.tot_bases_count.load(Ordering::Relaxed)) as f64)
-                        * 100.0,
+                    context.tot_bases_count.load(Ordering::Relaxed),
                     processed_files,
                     current_file,
                     context.total_files,
@@ -614,7 +614,6 @@ impl GenericMinimizerBucketing {
             seq_count: AtomicU64::new(0),
             last_total_count: AtomicU64::new(0),
             tot_bases_count: AtomicU64::new(0),
-            valid_bases_count: AtomicU64::new(0),
 
             target_chunk_size,
 

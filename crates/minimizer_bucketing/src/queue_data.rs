@@ -31,7 +31,7 @@ impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> 
         self.data.len()
     }
 
-    pub fn push_sequences(&mut self, seq: DnaSequence, seq_info: SequenceInfo) -> bool {
+    pub fn push_sequences(&mut self, seq: DnaSequence<&[u8]>, seq_info: SequenceInfo) -> bool {
         let ident_len = seq.ident_data.len();
         let seq_len = seq.seq.len();
 
@@ -51,7 +51,7 @@ impl<F: Clone + Sync + Send + Default + 'static> MinimizerBucketingQueueData<F> 
         true
     }
 
-    pub fn iter_sequences(&self) -> impl Iterator<Item = (DnaSequence<'_>, SequenceInfo)> {
+    pub fn iter_sequences(&self) -> impl Iterator<Item = (DnaSequence<'_, &[u8]>, SequenceInfo)> {
         self.sequences
             .iter()
             .map(move |&(start, id_len, seq_len, format, seq_info)| {

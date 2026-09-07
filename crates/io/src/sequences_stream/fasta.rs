@@ -19,7 +19,9 @@ impl FastaFileSequencesStream {
 
         let file_bases_count = if file
             .extension()
-            .map(|x| x == "gz" || x == "lz4" || x == "bz2" || x == "xz" || x == "zst" || x == "zstd")
+            .map(|x| {
+                x == "gz" || x == "lz4" || x == "bz2" || x == "xz" || x == "zst" || x == "zstd"
+            })
             .unwrap_or(false)
         {
             (length as f64 * COMPRESSED_READS_RATIO) as u64
@@ -44,7 +46,7 @@ impl GenericSequencesStream for FastaFileSequencesStream {
         block: &Self::SequenceBlockData,
         copy_ident_data: bool,
         partial_read_copyback: Option<usize>,
-        mut callback: impl FnMut(DnaSequence, SequenceInfo),
+        mut callback: impl FnMut(DnaSequence<&[u8]>, SequenceInfo),
     ) {
         self.sequences_reader.process_file_extended(
             &block.0,
