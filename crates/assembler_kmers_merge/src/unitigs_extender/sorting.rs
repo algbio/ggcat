@@ -1011,8 +1011,10 @@ impl<CX: ColorsManager> SortingExtender<CX> {
 
                         #[cfg(feature = "support_kmer_counters")]
                         {
-                            _abundance.sum +=
-                                (supertig.multiplicity * (supertig.read.bases_count() - k)) as u64;
+                            // Segments overlap by k - 1 bases, so every k-mer
+                            // in the appended segment contributes to the total.
+                            _abundance.sum += supertig.multiplicity as u64
+                                * (supertig.read.bases_count() - k + 1) as u64;
                             _abundance.last = supertig.multiplicity as u64;
                         }
 
@@ -1055,6 +1057,62 @@ mod tests {
     use io::compressed_read::CompressedReadIndipendent;
 
     use super::*;
+
+    #[test]
+    #[cfg(feature = "support_kmer_counters")]
+    fn linked_supertigs_preserve_kmer_abundance() {
+        use colors::non_colored::NonColoredManager;
+        use std::sync::Arc;
+
+        let mut storage = Vec::new();
+        // Each segment has constant abundance and overlaps its neighbor
+        // by k - 1 bases: AAC (2), ACG (7), CGTT (5 per k-mer).
+        let mut extender = SortingExtender::<NonColoredManager>::default();
+        let sequence = CompressedReadIndipendent::from_plain(b"AACGTT", &mut storage);
+        extender.supertigs = vec![
+            Supertig {
+                read: sequence.sub_slice(0..3),
+                color: NonColoredManager,
+                multiplicity: 2,
+                next: 1,
+                flags: 0,
+            },
+            Supertig {
+                read: sequence.sub_slice(1..4),
+                color: NonColoredManager,
+                multiplicity: 7,
+                next: 2,
+                flags: IS_LINKED,
+            },
+            Supertig {
+                read: sequence.sub_slice(2..6),
+                color: NonColoredManager,
+                multiplicity: 5,
+                next: usize::MAX,
+                flags: IS_LINKED,
+            },
+        ];
+        let mut colors_data = UnitigExtensionColorsData::<NonColoredManager> {
+            colors_global_table: Arc::new(()),
+            unitigs_temp_colors: NonColoredManager,
+            temp_color_buffer: ((), Vec::new()),
+        };
+        let mut output = Vec::new();
+        extender.process_reads::<hashes::default::MNHFactory, false, false>(
+            &mut colors_data,
+            &mut [],
+            &(),
+            &storage,
+            3,
+            2,
+            |_, read, _, _, abundance| output.push((read.to_string(), abundance)),
+        );
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0].0, "AACGTT");
+        assert_eq!(output[0].1.first, 2);
+        assert_eq!(output[0].1.last, 5);
+        assert_eq!(output[0].1.sum, 19);
+    }
 
     fn create_read(
         read: &[u8],
