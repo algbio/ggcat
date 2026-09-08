@@ -1,5 +1,6 @@
 pub mod fasta;
 pub mod general;
+pub mod tar;
 
 use crate::sequences_reader::DnaSequence;
 use config::ColorIndexType;

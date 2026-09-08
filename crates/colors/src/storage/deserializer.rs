@@ -79,7 +79,20 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
             )?
         };
 
-        let first_chunk = colors_index.pairs[0];
+        anyhow::ensure!(
+            !colors_index.pairs.is_empty() || colors_index.subsets_count == 0,
+            "Colors file has subsets but no index entries"
+        );
+        // Empty inputs have names but no subset chunks (or no names either).
+        // The decoder remains unused until a valid subset is requested.
+        let first_chunk = colors_index
+            .pairs
+            .first()
+            .copied()
+            .unwrap_or(ColorsIndexEntry {
+                start_index: 0,
+                file_offset: header.index_offset,
+            });
         file.seek(SeekFrom::Start(first_chunk.file_offset))
             .log_unrecoverable_error_with_data("Cannot seek color map", path.as_ref().display())?;
 
@@ -148,6 +161,10 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
     }
 
     pub fn get_color_mappings(&mut self, color: ColorIndexType, out_vec: &mut Vec<ColorIndexType>) {
+        assert!(
+            (color as u64) < self.colors_index.subsets_count,
+            "Color subset index out of bounds"
+        );
         self.maybe_change_block(color);
 
         while self.current_index < color {

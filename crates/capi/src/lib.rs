@@ -247,7 +247,7 @@ fn ggcat_build_from_streams(
             block: usize,
             copy_ident_data: bool,
             partial_read_copyback: Option<usize>,
-            mut callback: &mut dyn FnMut(DnaSequence, SequenceInfo),
+            mut callback: &mut dyn FnMut(DnaSequence<'_, &[u8]>, SequenceInfo),
         ) {
             extern "C" fn callback_wrapper(
                 callback_ptr: usize,
@@ -255,7 +255,7 @@ fn ggcat_build_from_streams(
                 info: SequenceInfoFFI,
             ) {
                 let callback = unsafe {
-                    &mut *(callback_ptr as *mut &mut dyn FnMut(DnaSequence, SequenceInfo))
+                    &mut *(callback_ptr as *mut &mut dyn FnMut(DnaSequence<'_, &[u8]>, SequenceInfo))
                 };
                 callback(
                     DnaSequence {

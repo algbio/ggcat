@@ -33,6 +33,7 @@ pub use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 pub use io::sequences_stream::{
     SequenceInfo,
     general::{DynamicSequencesStream, GeneralSequenceBlockData},
+    tar::TarSequenceBlock,
 };
 pub use querier::ColoredQueryOutputFormat;
 
@@ -213,7 +214,9 @@ impl GGCATInstance {
         return Ok(instance.unwrap());
     }
 
-    /// Builds a new graph from the given input streams, with the specified parameters
+    /// Builds a new graph from the given input streams, with the specified parameters.
+    /// File blocks also accept tar archives, optionally compressed with gzip, bzip2,
+    /// xz, zstd, or lz4.
     pub fn build_graph(
         &self,
         // The input streams

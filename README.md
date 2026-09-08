@@ -52,7 +52,31 @@ Then the graph can be built with the command:
 
 ```
 ggcat build -k <k_value> -j <threads_count> -c -d color_mapping.in -o <output_file>
+
 ```
+
+#### Tar sequence inputs (with optional colors)
+
+Build inputs may be FASTA/FASTQ files or tar archives, supplied directly or through
+input lists. Supported archive extensions are `.tar`, `.tar.gz`, `.tar.bz2`,
+`.tar.xz`, `.tar.zst`, `.tar.zstd`, and `.tar.lz4`, plus `.tgz`, `.tbz2`, and `.txz`.
+Sequence members may also use gzip, bzip2, xz, zstd, or lz4 compression.
+
+With `--colors`, each discovered sequence member gets a color named
+`<archive-path>:<member-path>`, including empty sequence members. Paths are the
+resolved input archive path and the path within the archive. Repeated member paths
+share a color. Numeric IDs may depend on discovery order when reading several
+archives concurrently. Ordinary-file color names retain their existing behavior.
+
+Colored input lists (`-d`) accept the following tab-separated mappings:
+
+```text
+shared-color	reads.tar.gz
+special-color	reads.tar.gz:samples/sample.fa
+```
+
+A member mapping overrides an archive-wide mapping. Members without either mapping
+get their own archive-qualified colors.
 
 #### Building links
 

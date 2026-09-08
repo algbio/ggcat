@@ -278,6 +278,7 @@ impl<CD: MinimizerBucketingSeqColorData>
 ])]
 pub fn minimizer_bucketing<CX: ColorsManager>(
     input_blocks: Vec<GeneralSequenceBlockData>,
+    input_sizes: Vec<u64>,
     output_path: &Path,
     buckets_count: BucketsCount,
     second_buckets_count: BucketsCount,
@@ -294,26 +295,31 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         .write()
         .start_phase("phase: reads bucketing".to_string());
 
-    let mut input_files: Vec<_> = input_blocks
+    assert_eq!(input_blocks.len(), input_sizes.len());
+    let mut input_files: Vec<(
+        u64,
+        MinimzerBucketingFilesReaderInputPacket<
+            AssemblerMinimizerBucketingExecutorFactory<MinimizerBucketingSeqColorDataType<CX>>,
+            GeneralSequencesStream,
+        >,
+    )> = input_blocks
         .into_iter()
+        .zip(input_sizes)
         .enumerate()
-        .map(|(i, f)| MinimzerBucketingFilesReaderInputPacket {
-            sequences: f,
-            stream_info: InputFileInfo {
-                file_color: i as ColorIndexType,
-            },
+        .map(|(i, (sequences, size))| {
+            (
+                size,
+                MinimzerBucketingFilesReaderInputPacket {
+                    sequences,
+                    stream_info: InputFileInfo {
+                        file_color: i as ColorIndexType,
+                    },
+                },
+            )
         })
         .collect();
 
-    input_files.sort_by_cached_key(
-        |f: &MinimzerBucketingFilesReaderInputPacket<
-            AssemblerMinimizerBucketingExecutorFactory<MinimizerBucketingSeqColorDataType<CX>>,
-            GeneralSequencesStream,
-        >| {
-            let bases_count = f.sequences.estimated_bases_count().unwrap();
-            bases_count
-        },
-    );
+    input_files.sort_by_key(|(size, _)| *size);
     input_files.reverse();
 
     GenericMinimizerBucketing::do_bucketing::<
@@ -322,7 +328,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         AssemblerMinimizerBucketingExecutorFactory<MinimizerBucketingSeqColorDataType<CX>>,
         GeneralSequencesStream,
     >(
-        input_files.into_iter(),
+        input_files.into_iter().map(|(_, packet)| packet),
         output_path,
         buckets_count,
         second_buckets_count,

@@ -1,4 +1,4 @@
-use crate::lines_reader::LinesReader;
+use crate::lines_reader::{LinesReader, LinesSource};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use hashes::HashableSequence;
 use nightly_quirks::branch_pred::unlikely;
@@ -62,31 +62,69 @@ impl SequencesReader {
         copy_ident: bool,
         remove_file: bool,
     ) {
-        const FASTQ_EXTS: &[&str] = &["fq", "fastq"];
-        const FASTA_EXTS: &[&str] = &["fa", "fasta", "fna", "ffn"];
+        self.process_source_extended(
+            LinesSource::File(source.as_ref()),
+            func,
+            line_split_copyback,
+            copy_ident,
+            remove_file,
+        );
+    }
 
-        let mut file_type = None;
-        let mut tmp = source.as_ref().file_name().unwrap().to_str().unwrap();
-        let mut path: &Path = tmp.as_ref();
+    /// Parse a borrowed, already decompressed stream without extracting it to disk.
+    pub fn process_reader_extended(
+        &mut self,
+        reader: &mut dyn std::io::Read,
+        name: &Path,
+        func: impl for<'a> FnMut(DnaSequence<'a, &'a [u8]>),
+        line_split_copyback: Option<usize>,
+        copy_ident: bool,
+    ) {
+        self.process_source_extended(
+            LinesSource::Stream(reader, name),
+            func,
+            line_split_copyback,
+            copy_ident,
+            false,
+        );
+    }
 
-        while let Some(ext) = path.extension() {
-            if FASTQ_EXTS.contains(&ext.to_str().unwrap()) {
-                file_type = Some(DnaSequencesFileType::FASTQ);
-                break;
-            }
-            if FASTA_EXTS.contains(&ext.to_str().unwrap()) {
-                file_type = Some(DnaSequencesFileType::FASTA);
-                break;
-            }
-            tmp = &tmp[0..tmp.len() - ext.len() - 1];
-            path = tmp.as_ref()
+    pub fn archive_file_type(path: &Path) -> Option<DnaSequencesFileType> {
+        let name = path.file_name()?.to_str()?;
+        let name = crate::sequences_stream::tar::strip_compression_suffix(name);
+        match Path::new(name).extension()?.to_str()? {
+            "fq" | "fastq" => Some(DnaSequencesFileType::FASTQ),
+            "fa" | "fasta" | "fna" | "ffn" => Some(DnaSequencesFileType::FASTA),
+            _ => None,
         }
+    }
 
+    pub fn file_type(path: &Path) -> Option<DnaSequencesFileType> {
+        let mut name = path.file_name()?.to_str()?;
+        while let Some((stem, extension)) = name.rsplit_once('.') {
+            match extension {
+                "fq" | "fastq" => return Some(DnaSequencesFileType::FASTQ),
+                "fa" | "fasta" | "fna" | "ffn" => return Some(DnaSequencesFileType::FASTA),
+                _ => name = stem,
+            }
+        }
+        None
+    }
+
+    fn process_source_extended(
+        &mut self,
+        source: LinesSource<'_>,
+        func: impl for<'a> FnMut(DnaSequence<'a, &'a [u8]>),
+        line_split_copyback: Option<usize>,
+        copy_ident: bool,
+        remove_file: bool,
+    ) {
+        let path = match &source {
+            LinesSource::File(path) | LinesSource::Stream(_, path) => *path,
+        };
+        let file_type = Self::file_type(path);
         match file_type {
-            None => panic!(
-                "Cannot recognize file type of '{}'",
-                source.as_ref().display()
-            ),
+            None => panic!("Cannot recognize file type of '{}'", path.display()),
             Some(ftype) => match ftype {
                 DnaSequencesFileType::FASTA => {
                     self.process_fasta(source, func, line_split_copyback, copy_ident, remove_file);
@@ -106,7 +144,7 @@ impl SequencesReader {
 
     fn process_fasta(
         &mut self,
-        source: impl AsRef<Path>,
+        source: LinesSource<'_>,
         mut func: impl for<'a> FnMut(DnaSequence<'a, &'a [u8]>),
         line_split_copyback: Option<usize>,
         copy_ident: bool,
@@ -122,7 +160,7 @@ impl SequencesReader {
             line_split_copyback.unwrap_or(0) * 2,
         );
 
-        self.lines_reader.process_lines(
+        self.lines_reader.process_source(
             source,
             |line: &[u8], partial, finished| {
                 if on_comment {
@@ -181,7 +219,7 @@ impl SequencesReader {
 
     fn process_fastq(
         &mut self,
-        source: impl AsRef<Path>,
+        source: LinesSource<'_>,
         mut func: impl for<'a> FnMut(DnaSequence<'a, &'a [u8]>),
         // get_quality: bool,
         remove_file: bool,
@@ -191,7 +229,7 @@ impl SequencesReader {
 
         let mut intermediate = [Vec::new(), Vec::new(), Vec::new()];
 
-        self.lines_reader.process_lines(
+        self.lines_reader.process_source(
             source,
             |line: &[u8], partial, finished| {
                 if unlikely(finished) {

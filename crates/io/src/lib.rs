@@ -19,6 +19,7 @@ pub mod concurrent;
 pub mod concurrent_filewriter;
 pub mod gzip_wrapper;
 pub mod ident_writer;
+pub mod input_size;
 pub mod lines_reader;
 pub mod memstorage;
 pub mod partial_unitigs_extra_data;
@@ -59,6 +60,7 @@ pub fn debug_load_buckets(temp_dir: &Path, file: &str) -> anyhow::Result<Vec<Mul
     Ok(buckets)
 }
 
+#[derive(bincode::Encode, bincode::Decode)]
 pub struct FilesStatsInfo {
     pub best_buckets_count_log: usize,
     pub best_second_buckets_count_log: usize,
@@ -69,10 +71,16 @@ pub struct FilesStatsInfo {
 pub fn compute_stats_from_input_blocks(
     blocks: &[GeneralSequenceBlockData],
 ) -> anyhow::Result<FilesStatsInfo> {
-    let mut bases_count = 0;
-    for block in blocks {
-        bases_count += block.estimated_bases_count()?;
-    }
+    Ok(compute_stats_from_input_sizes(
+        &input_size::estimate_blocks(blocks)?,
+    ))
+}
+
+/// Reuse the same estimates for sizing and scheduling, without reopening inputs.
+pub fn compute_stats_from_input_sizes(sizes: &[u64]) -> FilesStatsInfo {
+    let bases_count = sizes
+        .iter()
+        .fold(0u64, |total, size| total.saturating_add(*size));
 
     let buckets_count = {
         let min_buckets_count = bases_count / MAX_BUCKET_SIZE;
@@ -133,10 +141,10 @@ pub fn compute_stats_from_input_blocks(
     //     ExtraBuckets::None,
     // );
 
-    Ok(FilesStatsInfo {
+    FilesStatsInfo {
         best_buckets_count_log: buckets_count.ilog2() as usize,
         best_second_buckets_count_log: second_buckets_count.ilog2() as usize,
         bucket_size_compaction_threshold,
         target_chunk_size,
-    })
+    }
 }

@@ -30,7 +30,7 @@ use io::debug_save_buckets;
 use io::debug_save_single_buckets;
 use io::ident_writer::IdentSequenceWriter;
 use io::sequences_stream::general::GeneralSequenceBlockData;
-use io::{DUPLICATES_BUCKET_EXTRA, compute_stats_from_input_blocks};
+use io::{DUPLICATES_BUCKET_EXTRA, compute_stats_from_input_sizes};
 use parallel_processor::buckets::ExtraBucketData;
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
@@ -107,7 +107,32 @@ pub fn run_assembler<
 
     stats!(let stats.start_time = Instant::now());
 
-    let file_stats = compute_stats_from_input_blocks(&input_blocks)?;
+    let (input_blocks, input_colors) =
+        io::sequences_stream::tar::prepare_inputs(input_blocks, color_names)?;
+    let checkpoint_path = temp_dir.join("minimizer-inputs.debug");
+    let (file_stats, input_sizes) =
+        if step > AssemblerPhase::MinimizerBucketing && checkpoint_path.exists() {
+            let bytes = std::fs::read(&checkpoint_path)?;
+            let ((version, names, stats), _): ((u32, Vec<String>, io::FilesStatsInfo), _) =
+                bincode::decode_from_slice(&bytes, parallel_processor::DEFAULT_BINCODE_CONFIG)?;
+            anyhow::ensure!(
+                version == 1,
+                "Unsupported input checkpoint version {}",
+                version
+            );
+            input_colors.lock().names = names;
+            (stats, Vec::new())
+        } else {
+            anyhow::ensure!(
+                step <= AssemblerPhase::MinimizerBucketing
+                    || !input_blocks
+                        .iter()
+                        .any(|block| matches!(block, GeneralSequenceBlockData::TAR(_))),
+                "Resuming archive inputs requires the minimizer-inputs.debug checkpoint"
+            );
+            let sizes = io::input_size::estimate_blocks(&input_blocks)?;
+            (compute_stats_from_input_sizes(&sizes), sizes)
+        };
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
     let second_buckets_count_log = file_stats.best_second_buckets_count_log;
@@ -129,15 +154,6 @@ pub fn run_assembler<
 
     let colormap_threads_count = (threads_count / 2).max(1).min(MAX_COLORMAP_WRITING_THREADS);
 
-    let global_colors_table = Arc::new(
-        AssemblerColorsManager::ColorsMergeManagerType::create_colors_table(
-            output_file.with_extension("colors.dat"),
-            color_names,
-            colormap_threads_count,
-            true,
-        )?,
-    );
-
     stats!(
         stats.assembler.preprocess_time = ggcat_logging::get_stat_opt!(stats.start_time)
             .elapsed()
@@ -158,6 +174,7 @@ pub fn run_assembler<
         assembler_minimizer_bucketing::dynamic_dispatch::minimizer_bucketing(
             (AssemblerColorsManager::dynamic_dispatch_id(),),
             input_blocks,
+            input_sizes,
             temp_dir.as_path(),
             first_phase_buckets_count,
             second_buckets_count,
@@ -171,6 +188,31 @@ pub fn run_assembler<
     } else {
         debug_load_buckets(&temp_dir, "minimizer-bucketing.debug").unwrap()
     };
+
+    let color_names = {
+        let registry = input_colors.lock();
+        anyhow::ensure!(registry.errors.is_empty(), "{}", registry.errors.join("\n"));
+        registry.names.clone()
+    };
+
+    if KEEP_FILES.load(Ordering::Relaxed) || last_step < AssemblerPhase::FinalStep {
+        std::fs::write(
+            &checkpoint_path,
+            bincode::encode_to_vec(
+                (1u32, &color_names, &file_stats),
+                parallel_processor::DEFAULT_BINCODE_CONFIG,
+            )?,
+        )?;
+    }
+
+    let global_colors_table = Arc::new(
+        AssemblerColorsManager::ColorsMergeManagerType::create_colors_table(
+            output_file.with_extension("colors.dat"),
+            &color_names,
+            colormap_threads_count,
+            true,
+        )?,
+    );
 
     let fs_stats = MemoryFs::get_stats();
 

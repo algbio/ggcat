@@ -17,6 +17,7 @@ pub trait DynamicSequencesStream: Sync + Send + 'static {
 
 pub enum GeneralSequenceBlockData {
     FASTA(<FastaFileSequencesStream as GenericSequencesStream>::SequenceBlockData),
+    TAR(super::tar::TarSequenceBlock),
     GFA(),
     Dynamic((Arc<dyn for<'a> DynamicSequencesStream>, usize)),
 }
@@ -26,6 +27,9 @@ impl GeneralSequenceBlockData {
         match self {
             GeneralSequenceBlockData::FASTA(block) => {
                 FastaFileSequencesStream::get_estimated_bases_count(&block.0)
+            }
+            GeneralSequenceBlockData::TAR(block) => {
+                FastaFileSequencesStream::get_estimated_bases_count(&block.path)
             }
             GeneralSequenceBlockData::GFA() => {
                 todo!()
@@ -68,6 +72,21 @@ impl GenericSequencesStream for GeneralSequencesStream {
                     partial_read_copyback,
                     callback,
                 );
+            }
+            GeneralSequenceBlockData::TAR(block) => {
+                let mut reader = crate::sequences_reader::SequencesReader::new();
+                if let Err(error) = block.read(
+                    &mut reader,
+                    copy_ident_data,
+                    partial_read_copyback,
+                    callback,
+                ) {
+                    block
+                        .registry
+                        .lock()
+                        .errors
+                        .push(format!("Archive {}: {error:#}", block.path.display()));
+                }
             }
             GeneralSequenceBlockData::GFA() => {
                 unimplemented!();

@@ -148,7 +148,7 @@ struct CommonArgs {
 #[derive(Parser, Debug)]
 #[command(group = ArgGroup::new("output-mode").required(false))]
 struct AssemblerArgs {
-    /// The input files
+    /// Input FASTA/FASTQ files or tar archives (gzip, bzip2, xz, zstd, lz4 supported)
     pub input: Vec<PathBuf>,
 
     /// The lists of input files
@@ -162,7 +162,8 @@ struct AssemblerArgs {
     #[arg(short, long)]
     pub colors: bool,
 
-    /// The lists of input files with colors in format <COLOR_NAME><TAB><FILE_PATH>
+    /// Color mappings: <COLOR_NAME><TAB><FILE_PATH>. Use archive.tar:member.fa
+    /// for a member override, or archive.tar for all members. Every archive is read in full.
     #[arg(short = 'd', long = "colored-input-lists")]
     pub colored_input_lists: Vec<PathBuf>,
 
@@ -395,10 +396,14 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
 
     let color_names: Vec<_> = if args.colored_input_lists.is_empty() {
         // Standard colors (input file names)
-        inputs
-            .iter()
-            .map(|f| f.0.file_name().unwrap().to_string_lossy().to_string())
-            .collect()
+        let mut names = Vec::new();
+        for (path, color) in &mut inputs {
+            if io::sequences_stream::tar::split_archive_member(path).is_none() {
+                *color = Some(u32::try_from(names.len()).expect("Too many input colors"));
+                names.push(path.file_name().unwrap().to_string_lossy().to_string());
+            }
+        }
+        names
     } else {
         // Mapped colors
         let mut colors = HashMap::default();

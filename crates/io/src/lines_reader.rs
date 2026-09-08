@@ -7,6 +7,11 @@ use std::io::Read;
 use std::path::Path;
 use streaming_libdeflate_rs::decompress_file_buffered_callback;
 
+pub(crate) enum LinesSource<'a> {
+    File(&'a Path),
+    Stream(&'a mut dyn Read, &'a Path),
+}
+
 pub struct LinesReader {
     buffer: Vec<u8>,
 }
@@ -37,7 +42,15 @@ impl LinesReader {
     ) -> Result<(), ()> {
         COUNTER_THREADS_BUSY_READING.inc();
 
-        while let Ok(count) = stream.read(self.buffer.as_mut_slice()) {
+        loop {
+            let count = match stream.read(self.buffer.as_mut_slice()) {
+                Ok(count) => count,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    COUNTER_THREADS_BUSY_READING.sub(1);
+                    return Err(());
+                }
+            };
             COUNTER_THREADS_READ_BYTES.inc_by(count as i64);
             COUNTER_THREADS_READ_BYTES_AVG.add_value(count as i64);
             COUNTER_THREADS_BUSY_READING.sub(1);
@@ -52,7 +65,6 @@ impl LinesReader {
             COUNTER_THREADS_PROCESSING_READS.sub(1);
             COUNTER_THREADS_BUSY_READING.inc();
         }
-        Err(())
     }
 
     fn read_binary_file(
@@ -176,45 +188,56 @@ impl LinesReader {
     pub fn process_lines(
         &mut self,
         file: impl AsRef<Path>,
-        mut callback: impl FnMut(
+        callback: impl FnMut(
             &[u8],
             bool, /* partial (line continues on next call) */
             bool, /* finished (last line) */
         ),
         remove: bool,
     ) {
+        self.process_source(LinesSource::File(file.as_ref()), callback, remove);
+    }
+
+    pub(crate) fn process_source(
+        &mut self,
+        source: LinesSource<'_>,
+        mut callback: impl FnMut(&[u8], bool, bool),
+        remove: bool,
+    ) {
+        let file = match &source {
+            LinesSource::File(path) | LinesSource::Stream(_, path) => *path,
+        };
         let mut line_pending = false;
-
-        self.read_binary_file(
-            file.as_ref(),
-            |mut buffer: &[u8]| {
-                // File finished
-                if buffer.len() == 0 {
+        let mut buffers = |mut buffer: &[u8]| {
+            if buffer.is_empty() {
+                if line_pending {
+                    ggcat_logging::error!(
+                        "WARNING: No newline at ending of file '{}'",
+                        file.display()
+                    );
+                }
+                callback(&[], false, true);
+                return;
+            }
+            loop {
+                let (full, line) = Self::split_line(&mut buffer);
+                if full {
+                    callback(line, false, false);
+                } else {
+                    line_pending = !line.is_empty();
                     if line_pending {
-                        ggcat_logging::error!(
-                            "WARNING: No newline at ending of file '{}'",
-                            file.as_ref().display()
-                        );
+                        callback(line, true, false);
                     }
-                    callback(&[], false, true);
-                    return;
+                    break;
                 }
-
-                loop {
-                    let (full, line) = Self::split_line(&mut buffer);
-
-                    if full {
-                        callback(line, false, false);
-                    } else {
-                        line_pending = line.len() > 0;
-                        if line_pending {
-                            callback(line, true, false);
-                        }
-                        break;
-                    }
-                }
-            },
-            remove,
-        );
+            }
+        };
+        match source {
+            LinesSource::File(path) => self.read_binary_file(path, buffers, remove),
+            LinesSource::Stream(reader, _) => {
+                self.read_stream_buffered(reader, &mut buffers)
+                    .unwrap_or_else(|_| panic!("Error while reading {}", file.display()));
+            }
+        }
     }
 }
