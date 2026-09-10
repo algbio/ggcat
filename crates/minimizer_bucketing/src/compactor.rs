@@ -1,4 +1,5 @@
 use std::{
+    any::TypeId,
     cmp::Reverse,
     marker::PhantomData,
     path::{Path, PathBuf},
@@ -12,10 +13,11 @@ use crate::{
     MinimizerBucketMode, MinimizerBucketingExecutorFactory, decode_helper::decode_sequences,
     split_buckets::SplittedBucket,
 };
+use colors::non_colored::NonColoredManager;
 use config::{
     BucketIndexType, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS, DEFAULT_OUTPUT_BUFFER_SIZE,
-    KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, MultiplicityCounterType, SwapPriority,
-    get_memory_mode,
+    KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE, MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
+    MultiplicityCounterType, SwapPriority, get_compression_level_info, get_memory_mode,
 };
 use ggcat_logging::stats;
 use hashes::HashableSequence;
@@ -42,7 +44,10 @@ use parallel_processor::{
     buckets::{
         BucketsCount, LockFreeBucket, MultiChunkBucket,
         readers::typed_binary_reader::AsyncReaderThread,
-        writers::lock_free_binary_writer::LockFreeBinaryWriter,
+        writers::{
+            compressed_binary_writer::CompressedBinaryWriter,
+            lock_free_binary_writer::LockFreeBinaryWriter,
+        },
     },
     memory_fs::RemoveFileMode,
 };
@@ -202,6 +207,44 @@ impl<
         compacted_bucket: &Mutex<MultiChunkBucket>,
         _bucket_index: usize,
         output_path: &Path,
+    ) {
+        let file_mode = get_memory_mode(SwapPriority::MinimizerBuckets);
+        let plain_init = (file_mode, MINIMIZER_BUCKETS_CHECKPOINT_SIZE);
+        let compressed_init = (
+            file_mode,
+            MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
+            get_compression_level_info(),
+        );
+        if TypeId::of::<SingleData>() == TypeId::of::<NonColoredManager>() {
+            self.compact_buckets_with_writers::<LockFreeBinaryWriter, LockFreeBinaryWriter>(
+                uncompacted_bucket,
+                compacted_bucket,
+                output_path,
+                _bucket_index,
+                &plain_init,
+                &plain_init,
+            );
+        } else {
+            // Layer LZ4 over both colored outputs, including run-length encoded color sets.
+            self.compact_buckets_with_writers::<CompressedBinaryWriter, CompressedBinaryWriter>(
+                uncompacted_bucket,
+                compacted_bucket,
+                output_path,
+                _bucket_index,
+                &compressed_init,
+                &compressed_init,
+            );
+        }
+    }
+
+    fn compact_buckets_with_writers<MultiWriter: LockFreeBucket, SingleWriter: LockFreeBucket>(
+        &mut self,
+        uncompacted_bucket: &Mutex<MultiChunkBucket>,
+        compacted_bucket: &Mutex<MultiChunkBucket>,
+        output_path: &Path,
+        _bucket_index: usize,
+        multi_writer_init: &MultiWriter::InitData,
+        single_writer_init: &SingleWriter::InitData,
     ) {
         static COMPACTED_INDEX: AtomicUsize = AtomicUsize::new(0);
 
@@ -375,23 +418,17 @@ impl<
         let new_path_single = output_path.join(format!("comp-single-{}.dat", compact_index));
 
         let new_bucket_multi = new_path_multi.as_ref().map(|new_path_multi| {
-            LockFreeBinaryWriter::new(
+            MultiWriter::new(
                 &new_path_multi,
-                &(
-                    get_memory_mode(SwapPriority::MinimizerBuckets),
-                    MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-                ),
+                multi_writer_init,
                 0,
                 &MinimizerBucketMode::Compacted,
             )
         });
 
-        let new_bucket_single = LockFreeBinaryWriter::new(
+        let new_bucket_single = SingleWriter::new(
             &new_path_single,
-            &(
-                get_memory_mode(SwapPriority::MinimizerBuckets),
-                MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
-            ),
+            single_writer_init,
             0,
             &MinimizerBucketMode::SingleGrouped,
         );
