@@ -23,7 +23,7 @@ use minimizer_bucketing::{
 use parallel_processor::buckets::{BucketsCount, MultiChunkBucket};
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
-use std::io::{Read, Write};
+use std::io::{BufRead, Write};
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -49,7 +49,7 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Clone + Fast
     #[inline(always)]
     fn decode_extended(
         _buffer: &mut Self::TempBuffer,
-        reader: &mut impl Read,
+        reader: &mut impl BufRead,
         last_data: CX::LastData,
         read_flags: u8,
     ) -> Option<Self> {

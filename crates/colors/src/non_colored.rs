@@ -13,7 +13,7 @@ use io::concurrent::temp_reads::extra_data::{
 use io::ident_writer::IdentSequenceWriter;
 use parallel_processor::fast_smart_bucket_sort::FastSortable;
 use std::fmt::Debug;
-use std::io::{Read, Write};
+use std::io::{BufRead, Write};
 use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::MapEntry;
@@ -43,7 +43,7 @@ impl HasEmptyExtraBuffer for NonColoredManager {}
 
 impl SequenceExtraData for NonColoredManager {
     #[inline(always)]
-    fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl Read) -> Option<Self> {
+    fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl BufRead) -> Option<Self> {
         Some(NonColoredManager)
     }
 

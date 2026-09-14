@@ -5,15 +5,17 @@ use crate::managers::multiple::{
     KmerSerializedColor, UnitigColorData, UnitigsSerializerTempBuffer,
 };
 use crate::parsers::{SequenceIdent, SingleSequenceInfo};
-use byteorder::ReadBytesExt;
 use config::{ColorCounterType, ColorIndexType};
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataCombiner, SequenceExtraDataTempBufferManagement, TempBuffer,
 };
 use io::ident_writer::IdentSequenceWriter;
-use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
+use io::varint::{
+    BufVarintSource, PointerVarintSource, SliceVarintSource, VARINT_MAX_SIZE, VarintSource,
+    encode_varint,
+};
 use std::cmp::min;
-use std::io::{Read, Write};
+use std::io::{BufRead, Write};
 use std::marker::PhantomData;
 use std::ops::Range;
 
@@ -95,16 +97,16 @@ impl<'a> Iterator for MinBkColorsIterator<'a> {
 #[inline(always)]
 fn decode_minbk_color(
     buffer: &mut UnitigsSerializerTempBuffer,
-    mut get_byte_fn: impl FnMut() -> Option<u8>,
+    source: &mut impl VarintSource,
 ) -> Option<MinBkMultipleColors> {
-    let color_groups_count = decode_varint(&mut get_byte_fn)? as ColorCounterType;
+    let color_groups_count = source.next_varint()? as ColorCounterType;
     let mut colors_count = 0;
 
     buffer.colors.reserve(color_groups_count);
     let buffer_start = buffer.colors.len();
     for _ in 0..color_groups_count {
-        let color = decode_varint(&mut get_byte_fn)? as ColorIndexType;
-        let counter = decode_varint(&mut get_byte_fn)? as ColorCounterType;
+        let color = source.next_varint()? as ColorIndexType;
+        let counter = source.next_varint()? as ColorCounterType;
         buffer.colors.push(KmerSerializedColor { color, counter });
         colors_count += counter;
     }
@@ -173,27 +175,18 @@ impl SequenceExtraDataTempBufferManagement for MinBkMultipleColors {
 
 impl SequenceExtraData for MinBkMultipleColors {
     fn decode_from_slice_extended(buffer: &mut Self::TempBuffer, slice: &[u8]) -> Option<Self> {
-        let mut index = 0;
-        decode_minbk_color(buffer, || {
-            let data = slice[index];
-            index += 1;
-            Some(data)
-        })
+        decode_minbk_color(buffer, &mut SliceVarintSource::new(slice))
     }
 
     unsafe fn decode_from_pointer_extended(
         buffer: &mut Self::TempBuffer,
-        mut ptr: *const u8,
+        ptr: *const u8,
     ) -> Option<Self> {
-        decode_minbk_color(buffer, || unsafe {
-            let data = *ptr;
-            ptr = ptr.add(1);
-            Some(data)
-        })
+        decode_minbk_color(buffer, &mut unsafe { PointerVarintSource::new(ptr) })
     }
 
-    fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
-        decode_minbk_color(buffer, || reader.read_u8().ok())
+    fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl BufRead) -> Option<Self> {
+        decode_minbk_color(buffer, &mut BufVarintSource::new(reader))
     }
 
     fn encode_extended(

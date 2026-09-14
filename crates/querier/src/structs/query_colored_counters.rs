@@ -1,9 +1,8 @@
-use byteorder::ReadBytesExt;
 use colors::storage::run_length::ColorIndexSerializer;
 use config::ColorIndexType;
-use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
+use io::varint::{BufVarintSource, VARINT_MAX_SIZE, VarintSource, encode_varint};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
-use std::io::Read;
+use std::io::BufRead;
 use std::ops::Range;
 
 #[derive(Debug, Clone)]
@@ -74,7 +73,7 @@ impl BucketItemSerializer for QueryColoredCountersSerializer {
         ColorIndexSerializer::serialize_colors(bucket, &element.colors);
     }
 
-    fn read_from<'b, S: Read>(
+    fn read_from<'b, S: BufRead>(
         &mut self,
         mut stream: S,
         read_buffer: &'b mut Self::ReadBuffer,
@@ -83,14 +82,15 @@ impl BucketItemSerializer for QueryColoredCountersSerializer {
         read_buffer.0.clear();
         read_buffer.1.clear();
 
-        let queries_count = decode_varint(|| stream.read_u8().ok())?;
+        let mut source = BufVarintSource::new(&mut stream);
+        let queries_count = source.next_varint()?;
         for _ in 0..queries_count {
-            let query_index = decode_varint(|| stream.read_u8().ok())?;
-            let count = decode_varint(|| stream.read_u8().ok())?;
+            let query_index = source.next_varint()?;
+            let count = source.next_varint()?;
             read_buffer.0.push(QueryColorDesc { query_index, count });
         }
 
-        ColorIndexSerializer::deserialize_colors(stream, &mut read_buffer.1)?;
+        ColorIndexSerializer::deserialize_colors(&mut source, &mut read_buffer.1)?;
         Some(QueryColoredCounters {
             queries: &read_buffer.0,
             colors: &read_buffer.1,

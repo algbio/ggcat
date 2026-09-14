@@ -12,7 +12,10 @@ use std::marker::PhantomData;
 use std::path::Path;
 
 pub struct ColorsDeserializer<DS: ColorsSerializerTrait> {
-    colormap_file: lz4::Decoder<BufReader<File>>,
+    /// Buffered on top of the decoder so the varint decoder can look a word
+    /// ahead: a colour subset is a run of varints, and reading one byte at a
+    /// time through lz4 costs a decoder call per byte.
+    colormap_file: BufReader<lz4::Decoder<BufReader<File>>>,
     color_names: Vec<String>,
     json_escaped_color_names: Vec<String>,
     colors_index: ColorsIndexMap,
@@ -109,7 +112,7 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
             .collect();
 
         Ok(Self {
-            colormap_file: lz4::Decoder::new(BufReader::new(file)).unwrap(),
+            colormap_file: BufReader::new(lz4::Decoder::new(BufReader::new(file)).unwrap()),
             color_names,
             json_escaped_color_names,
             colors_index,
@@ -150,12 +153,13 @@ impl<DS: ColorsSerializerTrait> ColorsDeserializer<DS> {
             self.current_index = self.current_chunk.start_index;
 
             replace_with_or_abort(&mut self.colormap_file, |colormap_file| {
-                let mut buffered_file = colormap_file.finish().0;
+                // Whatever is still buffered belongs to the chunk being left.
+                let mut buffered_file = colormap_file.into_inner().finish().0;
                 assert_ne!(self.current_chunk.file_offset, 0);
                 buffered_file
                     .seek(SeekFrom::Start(self.current_chunk.file_offset))
                     .unwrap();
-                lz4::Decoder::new(buffered_file).unwrap()
+                BufReader::new(lz4::Decoder::new(buffered_file).unwrap())
             });
         }
     }

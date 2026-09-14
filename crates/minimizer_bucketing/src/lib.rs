@@ -254,13 +254,9 @@ impl<
         &self,
         context: &WriterContext<Executor>,
         ops: &ExecutorAddressOperations<Self>,
-        receiver: &ExecutorReceiver<Self>,
+        compactor: &mut Option<BucketsCompactor<SingleData, MultipleData, Executor::FlagsCount>>,
     ) {
         let context = context.global.deref();
-
-        let mut compactor: Option<
-            BucketsCompactor<SingleData, MultipleData, Executor::FlagsCount>,
-        > = None;
 
         let uncompacted_buckets_lock = context.uncompacted_buckets.lock();
         let uncompacted_buckets = uncompacted_buckets_lock.as_ref().unwrap().clone();
@@ -356,7 +352,7 @@ impl<
                                 // A new chunk was produced, compact it
                                 if let ChunkingStatus::NewChunk = chunking_status {
                                     if compactor.is_none() {
-                                        compactor = Some(BucketsCompactor::new(
+                                        *compactor = Some(BucketsCompactor::new(
                                             context.common.k,
                                             &context.common.second_buckets_count,
                                             context.target_chunk_size,
@@ -436,8 +432,19 @@ impl<
 
         tmp_reads_buffer.finalize();
         drop(uncompacted_buckets);
+    }
 
-        // Handle the final compaction step
+    /// The rendezvous that finalizes the buckets, kept out of [`Self::execute`]
+    /// because the barrier counts every thread of the pool. A thread that never
+    /// obtained the shared address still has to arrive here, or the threads
+    /// that did would wait for it forever.
+    fn finalize_buckets(
+        &self,
+        context: &WriterContext<Executor>,
+        receiver: &ExecutorReceiver<Self>,
+        compactor: &mut Option<BucketsCompactor<SingleData, MultipleData, Executor::FlagsCount>>,
+    ) {
+        let context = context.global.deref();
         {
             let status = receiver.wait_for_executors();
             if status.is_leader() {
@@ -458,7 +465,7 @@ impl<
                     drop(uncompacted_lock);
 
                     if compactor.is_none() {
-                        compactor = Some(BucketsCompactor::new(
+                        *compactor = Some(BucketsCompactor::new(
                             context.common.k,
                             &context.common.second_buckets_count,
                             context.target_chunk_size,
@@ -505,9 +512,21 @@ impl<
         params: &'a Self::GlobalParams,
         mut receiver: ExecutorReceiver<Self>,
     ) {
-        if let Ok(address) = receiver.obtain_address() {
-            self.execute(params, &address, &receiver);
+        let mut compactor = None;
+
+        // Held across the finalization below, as it was when that code lived
+        // inside `execute`: releasing the address deactivates the packet queue,
+        // which is what stops other threads from picking the work up.
+        let address = receiver.obtain_address().ok();
+        if let Some(address) = &address {
+            self.execute(params, address, &mut compactor);
         }
+
+        // Unconditional: the finalization barrier counts the whole pool, and
+        // the shared address runs out as soon as the readers are done, so some
+        // threads routinely get here without having obtained one.
+        self.finalize_buckets(params, &receiver, &mut compactor);
+        drop(address);
 
         // No more packets should arrive
         while let Ok(address) = receiver.obtain_address() {

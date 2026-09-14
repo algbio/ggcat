@@ -1,12 +1,12 @@
 use crate::concurrent::temp_reads::extra_data::{HasEmptyExtraBuffer, SequenceExtraData};
-use crate::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
+use crate::varint::{BufVarintSource, VARINT_MAX_SIZE, VarintSource, encode_varint};
 use byteorder::ReadBytesExt;
 use config::BucketIndexType;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
-use std::io::{Read, Write};
+use std::io::{BufRead, Write};
 use utils::vec_slice::VecSlice;
 
 #[repr(transparent)]
@@ -164,9 +164,10 @@ impl PartialEq for UnitigIndex {
 
 impl HasEmptyExtraBuffer for UnitigIndex {}
 impl SequenceExtraData for UnitigIndex {
-    fn decode_extended(_: &mut (), reader: &mut impl Read) -> Option<Self> {
-        let bucket = decode_varint(|| reader.read_u8().ok())? as BucketIndexType;
-        let index = decode_varint(|| reader.read_u8().ok())?;
+    fn decode_extended(_: &mut (), reader: &mut impl BufRead) -> Option<Self> {
+        let mut source = BufVarintSource::new(reader);
+        let bucket = source.next_varint()? as BucketIndexType;
+        let index = source.next_varint()?;
         Some(UnitigIndex::new_raw(bucket, index as usize))
     }
 
@@ -321,21 +322,22 @@ impl BucketItemSerializer for UnitigLinkSerializer {
         }
     }
 
-    fn read_from<'a, S: Read>(
+    fn read_from<'a, S: BufRead>(
         &mut self,
         mut stream: S,
         read_buffer: &'a mut Self::ReadBuffer,
         _: &mut (),
     ) -> Option<Self::ReadType<'a>> {
-        let entry = decode_varint(|| stream.read_u8().ok())?;
+        let entry = BufVarintSource::new(&mut stream).next_varint()?;
         let flags = stream.read_u8().ok()?;
 
-        let len = decode_varint(|| stream.read_u8().ok())? as usize;
+        let mut source = BufVarintSource::new(&mut stream);
+        let len = source.next_varint()? as usize;
 
         let start = read_buffer.len();
         for _i in 0..len {
-            let bucket = decode_varint(|| stream.read_u8().ok())? as BucketIndexType;
-            let index = decode_varint(|| stream.read_u8().ok())?;
+            let bucket = source.next_varint()? as BucketIndexType;
+            let index = source.next_varint()?;
             read_buffer.push(UnitigIndex::new_raw(bucket, index as usize));
         }
 

@@ -1,11 +1,14 @@
 use crate::compressed_read::{CompressedRead, CompressedReadIndipendent};
-use crate::varint::{VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, decode_varint, encode_varint};
+use crate::varint::{
+    BufVarintSource, VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, VarintSource, encode_varint,
+    encode_varint_to_vec,
+};
 use bincode::{Decode, Encode};
 use byteorder::ReadBytesExt;
 use config::{BucketIndexType, HASH_MAX_OVERREAD, MultiplicityCounterType};
 use hashes::HashableSequence;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
-use std::io::Read;
+use std::io::BufRead;
 use std::marker::PhantomData;
 
 use super::extra_data::SequenceExtraDataConsecutiveCompression;
@@ -404,7 +407,7 @@ impl<
         }
 
         if MultiplicityMode::ENABLED {
-            encode_varint(|b| bucket.extend_from_slice(b), element.multiplicity as u64);
+            encode_varint_to_vec(bucket, element.multiplicity as u64);
         }
 
         let is_rc = matches!(element.read, ReadData::PlainRc(_))
@@ -443,7 +446,7 @@ impl<
             }
         }
 
-        extra_data.encode_extended(
+        extra_data.encode_to_vec_extended(
             extra_data_buffer,
             bucket,
             self.last_data,
@@ -455,7 +458,7 @@ impl<
     }
 
     #[inline]
-    fn read_from<'b, S: Read>(
+    fn read_from<'b, S: BufRead>(
         &mut self,
         mut stream: S,
         read_buffer: &'b mut Self::ReadBuffer,
@@ -468,7 +471,7 @@ impl<
         };
 
         let multiplicity = if MultiplicityMode::ENABLED {
-            decode_varint(|| stream.read_u8().ok())?
+            BufVarintSource::new(&mut stream).next_varint()?
         } else {
             1
         };

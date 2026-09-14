@@ -1,15 +1,12 @@
+use crate::varint::{BufVarintSource, VarintSource};
 use std::ops::Range;
 
 use crate::{
     concurrent::temp_reads::extra_data::{
         SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
     },
-    varint::{
-        VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, decode_varint, decode_varint_flags, encode_varint,
-        encode_varint_flags,
-    },
+    varint::{VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, encode_varint, encode_varint_flags},
 };
-use byteorder::ReadBytesExt;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use typenum::U1;
 
@@ -30,10 +27,14 @@ impl crate::concurrent::temp_reads::extra_data::HasEmptyExtraBuffer for Sequence
 
 #[cfg(feature = "support_kmer_counters")]
 impl crate::concurrent::temp_reads::extra_data::SequenceExtraData for SequenceAbundance {
-    fn decode_extended(_: &mut Self::TempBuffer, reader: &mut impl std::io::Read) -> Option<Self> {
-        let first = decode_varint(|| reader.read_u8().ok())?;
-        let sum = decode_varint(|| reader.read_u8().ok())?;
-        let last = decode_varint(|| reader.read_u8().ok())?;
+    fn decode_extended(
+        _: &mut Self::TempBuffer,
+        reader: &mut impl std::io::BufRead,
+    ) -> Option<Self> {
+        let mut source = BufVarintSource::new(reader);
+        let first = source.next_varint()?;
+        let sum = source.next_varint()?;
+        let last = source.next_varint()?;
         Some(Self { first, sum, last })
     }
 
@@ -193,7 +194,7 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
 
     fn decode_extended(
         buffer: &mut Self::TempBuffer,
-        reader: &mut impl std::io::Read,
+        reader: &mut impl std::io::BufRead,
         last_data: Self::LastData,
         read_flags: u8,
     ) -> Option<Self> {
@@ -206,16 +207,16 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataConsecutiveCom
             #[cfg(feature = "support_kmer_counters")]
             counters,
             mode: if read_flags & INDIRECT_UNITIG_FLAG_MASK != 0 {
-                let indirection_start = decode_varint(|| reader.read_u8().ok())? as usize;
-                let elcount = decode_varint(|| reader.read_u8().ok())? as usize;
+                let mut source = BufVarintSource::new(reader);
+                let indirection_start = source.next_varint()? as usize;
+                let elcount = source.next_varint()? as usize;
 
                 let range_start = buffer.1.len();
 
                 for _ in 0..elcount {
-                    let file_offset = decode_varint(|| reader.read_u8().ok())? as usize;
-                    let extra_length = decode_varint(|| reader.read_u8().ok())? as u32;
-                    let (sequence_length, is_rc) =
-                        decode_varint_flags::<_, U1>(|| reader.read_u8().ok())?;
+                    let file_offset = source.next_varint()? as usize;
+                    let extra_length = source.next_varint()? as u32;
+                    let (sequence_length, is_rc) = source.next_varint_flags::<U1>()?;
                     buffer.1.push(IndirectReadInfo {
                         file_offset,
                         extra_length,

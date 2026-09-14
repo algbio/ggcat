@@ -2,18 +2,17 @@ use crate::storage::ColorsSerializerTrait;
 use crate::storage::serializer::COLORMAP_STORAGE_VERSION;
 use crate::storage::serializer::ColorsFileHeader;
 use crate::storage::serializer::ColorsFlushProcessing;
-use byteorder::ReadBytesExt;
 use config::COLORS_SINGLE_INDEX_DEFAULT_COLORS;
 use config::ColorIndexType;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use desse::Desse;
-use io::varint::{decode_varint, encode_varint};
+use io::varint::{BufVarintSource, VarintSource, encode_varint};
 use parking_lot::Condvar;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::io::Seek;
 use std::io::SeekFrom;
-use std::io::{Read, Write};
+use std::io::{BufRead, Write};
 use std::ops::DerefMut;
 use utils::resize_containers::ResizableVec;
 
@@ -75,20 +74,23 @@ impl ColorIndexSerializer {
         encode_varint(|b| writer.write_all(b), 0).unwrap();
     }
 
+    /// Takes a [`VarintSource`] rather than a `Read` so that a caller holding a
+    /// buffered stream gets the word-at-a-time varint decode; a caller with
+    /// nothing but a stream still works, one byte at a time.
     #[inline(always)]
     pub fn deserialize_colors_diffs(
-        mut reader: impl Read,
+        source: &mut impl VarintSource,
         mut add_color: impl FnMut(ColorIndexType),
     ) -> Option<()> {
-        add_color((decode_varint(|| reader.read_u8().ok())? - 2) as ColorIndexType);
+        add_color((source.next_varint()? - 2) as ColorIndexType);
         loop {
-            let result = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
+            let result = source.next_varint()? as ColorIndexType;
             if result == 0 {
                 break;
             } else if result == 1 {
                 // 2nd order encoding
-                let value = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
-                let count = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
+                let value = source.next_varint()? as ColorIndexType;
+                let count = source.next_varint()? as ColorIndexType;
 
                 for _ in 0..count {
                     add_color(value);
@@ -100,10 +102,13 @@ impl ColorIndexSerializer {
         Some(())
     }
 
-    pub fn deserialize_colors(reader: impl Read, colors: &mut Vec<ColorIndexType>) -> Option<()> {
+    pub fn deserialize_colors(
+        source: &mut impl VarintSource,
+        colors: &mut Vec<ColorIndexType>,
+    ) -> Option<()> {
         colors.clear();
 
-        Self::deserialize_colors_diffs(reader, |c| colors.push(c))?;
+        Self::deserialize_colors_diffs(source, |c| colors.push(c))?;
 
         let mut last_color = colors[0];
         for i in 1..colors.len() {
@@ -142,13 +147,14 @@ impl ColorsSerializerTrait for RunLengthColorsSerializer {
     type CompressedCheckpointBuffer = ResizableVec<u8, DEFAULT_OUTPUT_BUFFER_SIZE>;
     type CheckpointWriter<'a> = RunLengthCheckpointWriter<'a>;
 
-    fn decode_color(mut reader: impl Read, out_vec: Option<&mut Vec<u32>>) {
+    fn decode_color(reader: &mut impl BufRead, out_vec: Option<&mut Vec<u32>>) {
+        let mut source = BufVarintSource::new(reader);
         match out_vec {
             None => {
-                ColorIndexSerializer::deserialize_colors_diffs(&mut reader, |_| {});
+                ColorIndexSerializer::deserialize_colors_diffs(&mut source, |_| {});
             }
             Some(out_vec) => {
-                ColorIndexSerializer::deserialize_colors(&mut reader, out_vec);
+                ColorIndexSerializer::deserialize_colors(&mut source, out_vec);
             }
         }
     }
@@ -300,19 +306,35 @@ impl ColorsSerializerTrait for RunLengthColorsSerializer {
 mod tests {
     use super::ColorIndexSerializer;
     use config::ColorIndexType;
-    use std::io::Cursor;
+    use io::varint::{BufVarintSource, ReadVarintSource, SliceVarintSource};
+    use std::io::BufReader;
 
+    /// Every source has to decode the same subset. The buffered one is checked
+    /// at capacities that cut the buffer mid-varint, so its byte fallback is
+    /// exercised as well as its word path.
     fn color_subset_encoding(colors: &[ColorIndexType]) {
         let mut buffer = Vec::new();
 
         ColorIndexSerializer::serialize_colors(&mut buffer, colors);
 
-        ggcat_logging::info!("Buffer size: {}", buffer.len());
-        let mut cursor = Cursor::new(buffer);
-
         let mut des_colors = Vec::new();
+        let mut source = SliceVarintSource::new(&buffer);
+        ColorIndexSerializer::deserialize_colors(&mut source, &mut des_colors);
+        assert_eq!(colors, des_colors.as_slice());
+        assert_eq!(source.position(), buffer.len());
 
-        ColorIndexSerializer::deserialize_colors(&mut cursor, &mut des_colors);
+        for capacity in [1, 3, 8, 64] {
+            let mut buffered = BufReader::with_capacity(capacity, buffer.as_slice());
+            let mut source = BufVarintSource::new(&mut buffered);
+            let mut des_colors = Vec::new();
+            ColorIndexSerializer::deserialize_colors(&mut source, &mut des_colors);
+            assert_eq!(colors, des_colors.as_slice(), "at capacity {capacity}");
+        }
+
+        let mut stream = buffer.as_slice();
+        let mut source = ReadVarintSource::new(&mut stream);
+        let mut des_colors = Vec::new();
+        ColorIndexSerializer::deserialize_colors(&mut source, &mut des_colors);
         assert_eq!(colors, des_colors.as_slice());
     }
 

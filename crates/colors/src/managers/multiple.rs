@@ -4,7 +4,6 @@ use crate::colors_manager::ColorsMergeManager;
 use crate::colors_memmap_writer::ColorsMemMapWriter;
 use atoi::{FromRadix10, FromRadix16};
 use bstr::ByteSlice;
-use byteorder::ReadBytesExt;
 use config::{ColorCounterType, ColorIndexType, DEFAULT_OUTPUT_BUFFER_SIZE};
 use hashbrown::HashMap;
 use hashes::ExtendableHashTraitType;
@@ -14,10 +13,10 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement, TempBuffer,
 };
 use io::ident_writer::IdentSequenceWriter;
-use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
+use io::varint::{BufVarintSource, VARINT_MAX_SIZE, VarintSource, encode_varint};
 use itertools::Itertools;
 use std::collections::VecDeque;
-use std::io::{Read, Write};
+use std::io::{BufRead, Write};
 use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::MapEntry;
@@ -135,9 +134,7 @@ impl ColorsMergeManager for MultipleColorsManager {
                     // Shared with another k-mer, so branch before diverging
                     let old_handle = old_colors.colors;
                     old_colors.tracking_counter_or_color -= 1;
-                    let new_colors = data
-                        .colors_buffer
-                        .branch_extended(&old_handle, kmer_color);
+                    let new_colors = data.colors_buffer.branch_extended(&old_handle, kmer_color);
                     *entry_color = data.colors_list.len();
                     data.colors_list.push(ColorEntry {
                         tracking_counter_or_color: 1,
@@ -555,15 +552,16 @@ impl SequenceExtraDataTempBufferManagement for UnitigColorData {
 }
 
 impl SequenceExtraData for UnitigColorData {
-    fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
+    fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl BufRead) -> Option<Self> {
         let start = buffer.colors.len();
 
-        let colors_count = decode_varint(|| reader.read_u8().ok())?;
+        let mut source = BufVarintSource::new(reader);
+        let colors_count = source.next_varint()?;
 
         for _ in 0..colors_count {
             buffer.colors.push(KmerSerializedColor {
-                color: decode_varint(|| reader.read_u8().ok())? as ColorIndexType,
-                counter: decode_varint(|| reader.read_u8().ok())? as ColorCounterType,
+                color: source.next_varint()? as ColorIndexType,
+                counter: source.next_varint()? as ColorCounterType,
             });
         }
         Some(Self {

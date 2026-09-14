@@ -1,8 +1,7 @@
-use crate::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
-use byteorder::ReadBytesExt;
+use crate::varint::{BufVarintSource, VARINT_MAX_SIZE, VarintSource, encode_varint};
 use config::ColorIndexType;
 use core::fmt::Debug;
-use std::io::{Cursor, Read, Write};
+use std::io::{BufRead, Cursor, Read, Write};
 
 struct PointerDecoder {
     ptr: *const u8,
@@ -25,6 +24,21 @@ impl Read for PointerDecoder {
             self.ptr = self.ptr.add(buf.len());
         }
         Ok(())
+    }
+}
+
+impl BufRead for PointerDecoder {
+    #[inline(always)]
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        // Where the record ends is not known here, so only ever offer the byte
+        // under the pointer: enough to decode with, never enough to read past
+        // what was asked for. A look-ahead decoder falls back to bytes.
+        Ok(unsafe { std::slice::from_raw_parts(self.ptr, 1) })
+    }
+
+    #[inline(always)]
+    fn consume(&mut self, amount: usize) {
+        self.ptr = unsafe { self.ptr.add(amount) };
     }
 }
 
@@ -87,7 +101,7 @@ pub trait SequenceExtraDataConsecutiveCompression: SequenceExtraDataTempBufferMa
 
     fn decode_extended(
         buffer: &mut Self::TempBuffer,
-        reader: &mut impl Read,
+        reader: &mut impl BufRead,
         last_data: Self::LastData,
         read_flags: u8,
     ) -> Option<Self>;
@@ -100,6 +114,29 @@ pub trait SequenceExtraDataConsecutiveCompression: SequenceExtraDataTempBufferMa
         reverse_complement: bool,
         read_flags: u8,
     );
+
+    /// Encodes into a buffer that the caller has already sized with
+    /// [`Self::max_size`], the counterpart of [`Self::decode_from_slice_extended`].
+    /// An implementation that can exploit the reserved capacity overrides this.
+    #[inline(always)]
+    fn encode_to_vec_extended(
+        &self,
+        buffer: &Self::TempBuffer,
+        out: &mut Vec<u8>,
+        last_data: Self::LastData,
+        sequence_length: usize,
+        reverse_complement: bool,
+        read_flags: u8,
+    ) {
+        self.encode_extended(
+            buffer,
+            out,
+            last_data,
+            sequence_length,
+            reverse_complement,
+            read_flags,
+        );
+    }
 
     fn obtain_last_data(
         &self,
@@ -152,7 +189,7 @@ pub trait SequenceExtraData: SequenceExtraDataTempBufferManagement {
         Self::decode_extended(buffer, &mut stream)
     }
 
-    fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self>;
+    fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl BufRead) -> Option<Self>;
     fn encode_extended(
         &self,
         buffer: &Self::TempBuffer,
@@ -174,7 +211,7 @@ pub trait SequenceExtraDataOwned: SequenceExtraDataConsecutiveCompression {
         read_flags: u8,
     ) -> Option<Self>;
 
-    fn decode(reader: &mut impl Read, last_data: Self::LastData) -> Option<Self>;
+    fn decode(reader: &mut impl BufRead, last_data: Self::LastData) -> Option<Self>;
     fn encode(&self, writer: &mut impl Write, last_data: Self::LastData);
 }
 impl<T: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> SequenceExtraDataOwned for T {
@@ -192,7 +229,7 @@ impl<T: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> SequenceExtraD
         unsafe { Self::decode_from_pointer_extended(&mut (), ptr, last_data, read_flags) }
     }
 
-    fn decode(reader: &mut impl Read, last_data: Self::LastData) -> Option<Self> {
+    fn decode(reader: &mut impl BufRead, last_data: Self::LastData) -> Option<Self> {
         Self::decode_extended(&mut (), reader, last_data, 0)
     }
 
@@ -207,7 +244,7 @@ impl<T: SequenceExtraData> SequenceExtraDataConsecutiveCompression for T {
     #[inline(always)]
     fn decode_extended(
         buffer: &mut Self::TempBuffer,
-        reader: &mut impl Read,
+        reader: &mut impl BufRead,
         _last_data: Self::LastData,
         _read_flags: u8,
     ) -> Option<Self> {
@@ -251,7 +288,7 @@ impl<T: SequenceExtraData> SequenceExtraDataConsecutiveCompression for T {
 impl HasEmptyExtraBuffer for () {}
 impl SequenceExtraData for () {
     #[inline(always)]
-    fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl Read) -> Option<Self> {
+    fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl BufRead) -> Option<Self> {
         Some(())
     }
 
@@ -274,8 +311,10 @@ impl SequenceExtraData for () {
 
 impl HasEmptyExtraBuffer for ColorIndexType {}
 impl SequenceExtraData for ColorIndexType {
-    fn decode_extended(_: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
-        decode_varint(|| reader.read_u8().ok()).map(|x| x as ColorIndexType)
+    fn decode_extended(_: &mut Self::TempBuffer, reader: &mut impl BufRead) -> Option<Self> {
+        BufVarintSource::new(reader)
+            .next_varint()
+            .map(|x| x as ColorIndexType)
     }
 
     fn encode_extended(

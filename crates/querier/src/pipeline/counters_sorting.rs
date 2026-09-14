@@ -1,4 +1,3 @@
-use byteorder::ReadBytesExt;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::SingleKmerColorDataType;
 use config::{
@@ -8,7 +7,7 @@ use config::{
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataConsecutiveCompression, SequenceExtraDataOwned,
 };
-use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
+use io::varint::{BufVarintSource, VARINT_MAX_SIZE, VarintSource, encode_varint};
 use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
@@ -22,7 +21,7 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use std::io::Read;
+use std::io::BufRead;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -77,14 +76,15 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()>> BucketItemSer
         self.0 = extra_data.obtain_last_data(self.0, false);
     }
 
-    fn read_from<'a, S: Read>(
+    fn read_from<'a, S: BufRead>(
         &mut self,
         mut stream: S,
         _read_buffer: &'a mut Self::ReadBuffer,
         _: &mut Self::ExtraDataBuffer,
     ) -> Option<Self::ReadType<'a>> {
-        let query_index = decode_varint(|| stream.read_u8().ok())?;
-        let counter = decode_varint(|| stream.read_u8().ok())?;
+        let mut source = BufVarintSource::new(&mut stream);
+        let query_index = source.next_varint()?;
+        let counter = source.next_varint()?;
         let color = CX::decode(&mut stream, self.0)?;
         self.0 = color.obtain_last_data(self.0, false);
         Some((

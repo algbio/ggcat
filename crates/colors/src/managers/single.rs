@@ -1,7 +1,6 @@
 use crate::DefaultColorsSerializer;
 use crate::colors_manager::ColorsMergeManager;
 use crate::storage::deserializer::ColorsDeserializer;
-use byteorder::ReadBytesExt;
 use config::COLORS_BUFFER_DEFAULT_SIZE;
 use config::{ColorCounterType, ColorIndexType};
 use hashbrown::HashMap;
@@ -10,9 +9,9 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraData, SequenceExtraDataTempBufferManagement, TempBuffer,
 };
 use io::ident_writer::IdentSequenceWriter;
-use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
+use io::varint::{BufVarintSource, VARINT_MAX_SIZE, VarintSource, encode_varint};
 use std::collections::VecDeque;
-use std::io::{Read, Write};
+use std::io::{BufRead, Write};
 use std::ops::Range;
 use std::path::Path;
 use structs::map_entry::MapEntry;
@@ -237,15 +236,16 @@ impl SequenceExtraDataTempBufferManagement for UnitigColorDataSerializer {
 }
 
 impl SequenceExtraData for UnitigColorDataSerializer {
-    fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl Read) -> Option<Self> {
+    fn decode_extended(buffer: &mut Self::TempBuffer, reader: &mut impl BufRead) -> Option<Self> {
         let start = buffer.colors.len();
 
-        let colors_count = decode_varint(|| reader.read_u8().ok())?;
+        let mut source = BufVarintSource::new(reader);
+        let colors_count = source.next_varint()?;
 
         for _ in 0..colors_count {
             buffer.colors.push((
-                decode_varint(|| reader.read_u8().ok())? as ColorIndexType,
-                decode_varint(|| reader.read_u8().ok())?,
+                source.next_varint()? as ColorIndexType,
+                source.next_varint()?,
             ));
         }
         Some(Self {
