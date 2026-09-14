@@ -605,3 +605,175 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
         self.suggested_sequences_size = sequences_size;
     }
 }
+
+#[cfg(test)]
+mod canonical_color_tests {
+    use super::*;
+    use colors::{
+        DefaultColorsSerializer, bucket_colors::ColorArena,
+        bundles::multifile_building::ColorBundleMultifileBuilding,
+        managers::multiple::MultipleColorsManager, parsers::separate::MinBkMultipleColors,
+        storage::deserializer::ColorsDeserializer,
+    };
+    use hashes::cn_seqhash::u64::CanonicalSeqHashFactory;
+    use io::{
+        concurrent::temp_reads::extra_data::{
+            SequenceExtraDataConsecutiveCompression, SequenceExtraDataTempBufferManagement,
+        },
+        ident_writer::IdentSequenceWriter,
+    };
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        sync::Arc,
+    };
+
+    fn canonical(seq: &[u8]) -> Vec<u8> {
+        let reverse: Vec<_> = seq
+            .iter()
+            .rev()
+            .map(|b| match b {
+                b'A' => b'T',
+                b'C' => b'G',
+                b'G' => b'C',
+                _ => b'A',
+            })
+            .collect();
+        seq.to_vec().min(reverse)
+    }
+
+    /// The bucket encoding of a color set, as the bucketing phase writes it.
+    fn encoded(colors: &[u32]) -> Vec<u8> {
+        let mut arena = ColorArena::default();
+        let handle = arena.from_colors(colors);
+        let mut bytes = Vec::new();
+        arena.write_to(&handle, &mut bytes);
+        bytes
+    }
+
+    #[test]
+    fn hashmap_assembly_unions_ranges_with_shared_color_entries() {
+        type H = CanonicalSeqHashFactory;
+        type C = ColorBundleMultifileBuilding;
+        type M = MultipleColorsManager;
+        H::initialize(15);
+        let mut seed = 811u64;
+        let sequence: Vec<_> = (0..300)
+            .map(|_| {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                b"ACGT"[(seed >> 62) as usize]
+            })
+            .collect();
+        let a = &[1u32, 2][..];
+        let b = &[3u32, 4][..];
+        let c = &[9u32, 10, 11, 12][..];
+        let records = [
+            (&sequence[..], a),
+            (&sequence[..], b),
+            (&sequence[30..230], c),
+            (&sequence[..], a),
+        ];
+        let mut expected: BTreeMap<Vec<u8>, BTreeSet<u32>> = BTreeMap::new();
+        for (seq, colors) in &records {
+            for kmer in seq.windows(15) {
+                expected
+                    .entry(canonical(kmer))
+                    .or_default()
+                    .extend(colors.iter().copied());
+            }
+        }
+        for reverse in [false, true] {
+            let path = std::env::temp_dir().join(format!(
+                "canonical-hash-{}-{reverse}.colors.dat",
+                std::process::id()
+            ));
+            let names: Vec<_> = (0..16).map(|i| i.to_string()).collect();
+            let table = Arc::new(M::create_colors_table(&path, &names, 1, false).unwrap());
+            let mut extender = HashMapUnitigsExtender::<H, C>::new(&GlobalExtenderParams {
+                k: 15,
+                m: 7,
+                min_multiplicity: 1,
+            });
+            let mut arena = MinBkMultipleColors::new_temp_buffer();
+            for i in 0..records.len() {
+                let (seq, colors) = records[if reverse { records.len() - 1 - i } else { i }];
+                let extra = MinBkMultipleColors::decode_extended(
+                    &mut arena,
+                    &mut encoded(colors).as_slice(),
+                    (),
+                    0,
+                )
+                .unwrap();
+                let mut packed = Vec::new();
+                CompressedRead::compress_from_plain(seq, |b| packed.extend_from_slice(b));
+                extender.add_sequence(
+                    &DeserializedRead {
+                        read: CompressedRead::new_from_compressed(&packed, seq.len()),
+                        extra,
+                        flags: READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END,
+                        multiplicity: 1,
+                        minimizer_pos: 0,
+                        second_bucket: 0,
+                    },
+                    &arena,
+                );
+            }
+            let mut data = UnitigExtensionColorsData::<C> {
+                colors_global_table: table.clone(),
+                unitigs_temp_colors: M::alloc_unitig_color_structure(),
+                interning_colors: Default::default(),
+                temp_color_buffer: Default::default(),
+            };
+            let mut output = Vec::new();
+            extender.compute_unitigs::<false>(
+                &mut data,
+                |colors, seq, _, _, _, _| {
+                    let extra = colors.get_colors();
+                    let mut header = Vec::new();
+                    let mut partial = None;
+                    extra.write_as_ident(
+                        &mut partial,
+                        (0, None),
+                        false,
+                        &mut header,
+                        &colors.temp_color_buffer.0,
+                    );
+                    colors::managers::multiple::UnitigColorData::flush_partial_as_ident(
+                        partial,
+                        &mut header,
+                    );
+                    output.push((
+                        seq.to_string().into_bytes(),
+                        String::from_utf8(header).unwrap(),
+                    ));
+                },
+                true,
+            );
+            drop(data);
+            drop(table);
+            let mut reader =
+                ColorsDeserializer::<DefaultColorsSerializer>::new(&path, false).unwrap();
+            let mut actual = BTreeMap::new();
+            for (seq, header) in output {
+                let mut offset = 0;
+                for run in header.split_whitespace() {
+                    let fields: Vec<_> = run.split(':').collect();
+                    let id = u32::from_str_radix(fields[1], 16).unwrap();
+                    let count: usize = fields[2].parse().unwrap();
+                    let mut colors = Vec::new();
+                    reader.get_color_mappings(id, &mut colors);
+                    for pos in offset..offset + count {
+                        actual.insert(
+                            canonical(&seq[pos..pos + 15]),
+                            colors.iter().copied().collect::<BTreeSet<_>>(),
+                        );
+                    }
+                    offset += count;
+                }
+                assert_eq!(offset, seq.len() - 14);
+            }
+            assert_eq!(actual, expected);
+            drop(reader);
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+}

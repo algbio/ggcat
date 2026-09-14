@@ -82,6 +82,7 @@ impl<
             colors_data: UnitigExtensionColorsData {
                 colors_global_table: global_data.colors_global_table.clone(),
                 unitigs_temp_colors: CX::ColorsMergeManagerType::alloc_unitig_color_structure(),
+                interning_colors: Default::default(),
                 temp_color_buffer:
                     PartialUnitigExtraData::<PartialUnitigsColorStructure<CX>>::new_temp_buffer(),
             },
@@ -306,7 +307,6 @@ impl<
             });
 
         let mut sorting_extender = SortingExtender::<CX>::default();
-        let mut single_entry_colors = vec![];
 
         if !map_struct.is_duplicate && !map_struct.is_outlier {
             let mut process_fn = |minimizer_elements: &mut [DeserializedReadIndependent<<
@@ -362,14 +362,14 @@ impl<
                                 &mut self.colors_data.unitigs_temp_colors,
                             );
 
-                            single_entry_colors.clear();
-                            single_entry_colors.extend_from_slice(
-                                read.extra
-                                    .get_unique_color(superkmers_extra_buffer),
-                            );
+                            let colors_data = &mut self.colors_data;
+                            colors_data.interning_colors.clear();
+                            colors_data
+                                .interning_colors
+                                .append_colors(read.extra.get_unique_color(superkmers_extra_buffer));
                             let color = CX::ColorsMergeManagerType::assign_color(
-                                &self.colors_data.colors_global_table,
-                                &mut single_entry_colors,
+                                &colors_data.colors_global_table,
+                                colors_data.interning_colors.finish(),
                             );
                             CX::ColorsMergeManagerType::extend_forward_with_color(
                                 &mut self.colors_data.unitigs_temp_colors,

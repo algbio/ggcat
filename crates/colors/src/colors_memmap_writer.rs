@@ -66,3 +66,37 @@ impl<C: ColorsSerializerTrait> Drop for ColorsMemMapWriter<C> {
         unsafe { ManuallyDrop::take(&mut self.colors_storage).finalize() };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        DefaultColorsSerializer, colors_manager::ColorMapReader,
+        storage::deserializer::ColorsDeserializer,
+    };
+
+    /// Equal sets must intern to one id, and the stored color map must give
+    /// each id its colors back.
+    #[test]
+    fn interning_is_by_content_and_round_trips_through_the_color_map() {
+        let path = std::env::temp_dir().join(format!("interner-{}.colors.dat", std::process::id()));
+        let names: Vec<_> = (0..16).map(|i| format!("color_{i}")).collect();
+        let writer =
+            ColorsMemMapWriter::<DefaultColorsSerializer>::new(&path, &names, 1, false).unwrap();
+        let id = writer.get_id(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(writer.get_id(&[0, 1, 2, 3, 4, 5, 6, 7]), id);
+        let other = writer.get_id(&[9, 10, 11, 12]);
+        assert_ne!(id, other);
+        drop(writer);
+
+        let mut reader = ColorsDeserializer::<DefaultColorsSerializer>::new(&path, true).unwrap();
+        assert_eq!(reader.colors_subsets_count(), 2);
+        let mut colors = Vec::new();
+        reader.get_color_mappings(id, &mut colors);
+        assert_eq!(colors, [0, 1, 2, 3, 4, 5, 6, 7]);
+        reader.get_color_mappings(other, &mut colors);
+        assert_eq!(colors, [9, 10, 11, 12]);
+        drop(reader);
+        std::fs::remove_file(path).unwrap();
+    }
+}

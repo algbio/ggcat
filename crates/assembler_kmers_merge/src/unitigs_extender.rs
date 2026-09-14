@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use colors::bucket_colors::ColorAccumulator;
 use colors::colors_manager::{
     ColorsManager, ColorsMergeManager,
     color_types::{
@@ -28,6 +29,9 @@ pub struct GlobalExtenderParams {
 pub struct UnitigExtensionColorsData<CX: ColorsManager> {
     pub colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
     pub unitigs_temp_colors: TempUnitigColorStructure<CX>,
+    /// Gathers the colors of a unitig before the global colors table interns
+    /// them. Reused across entries, so it costs no allocation.
+    pub interning_colors: ColorAccumulator,
     pub temp_color_buffer: (
         TempBuffer<PartialUnitigsColorStructure<CX>>,
         Vec<IndirectReadInfo>,

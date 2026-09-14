@@ -154,7 +154,11 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
     #[inline]
     pub fn reserve_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>, count: usize) -> *mut T {
         let ptr = if !Self::SUPPORTS_LOCAL || (vec.size + count > LOCAL_FITTING) {
-            let npt = vec.size.next_power_of_two();
+            let npt = if !Self::SUPPORTS_LOCAL && vec.size == 0 {
+                0
+            } else {
+                vec.size.next_power_of_two()
+            };
             if vec.size + count > npt {
                 let mut old_data = vec.data.clone();
 
@@ -232,7 +236,7 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
     }
 
     pub fn free_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>) {
-        if !Self::SUPPORTS_LOCAL || vec.size > LOCAL_FITTING {
+        if vec.size > 0 && (!Self::SUPPORTS_LOCAL || vec.size > LOCAL_FITTING) {
             self.free(vec.data, vec.size.next_power_of_two());
         }
         vec.data = AllocatedData::ZERO;
@@ -354,11 +358,11 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
     pub fn copy_from(&mut self, src: &Allocator<T, LOCAL_FITTING>) {
         self.data.clear();
         self.data.reserve(src.data.len());
-        self.data.copy_from_slice(&src.data);
+        self.data.extend_from_slice(&src.data);
 
         for (dst, src) in self.freelist.iter_mut().zip(src.freelist.iter()) {
             dst.clear();
-            dst.copy_from_slice(&src);
+            dst.extend_from_slice(src);
         }
     }
 }
@@ -366,6 +370,7 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
 #[cfg(test)]
 mod tests {
     use std::fmt::Debug;
+    use std::sync::{Mutex, MutexGuard};
 
     use super::{Allocator, InlineVec};
 
@@ -382,6 +387,7 @@ mod tests {
         count: usize,
         size: usize,
     ) {
+        let _guard = exclusive();
         let start = std::time::Instant::now();
 
         let mut allocator = Allocator::<T, LOCAL_FITTING>::new(size);
@@ -436,36 +442,62 @@ mod tests {
         );
     }
 
+    /// The cases below allocate a few hundred megabytes each. Cargo runs tests
+    /// in parallel, so without this lock their peaks add up: a full-size run of
+    /// the whole module once drove the user session into `systemd-oomd`, which
+    /// kills the largest cgroup rather than the allocating process. Holding it
+    /// for the body of each case keeps the peak at one case's worth.
+    static EXCLUSIVE: Mutex<()> = Mutex::new(());
+
+    fn exclusive() -> MutexGuard<'static, ()> {
+        // A panicking case must not disable the others.
+        EXCLUSIVE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Two inline slots, the width `AllocatorU32` uses.
     #[test]
     fn test_inlinevec_u32() {
-        test_inlinevec::<u32, 2>(10000000, 10000000);
+        test_inlinevec::<u32, 2>(1000000, 1000000);
+    }
+
+    /// One inline slot with a four-byte element: what the color arenas use, and
+    /// the width where an element shares the union with the heap flag.
+    #[test]
+    fn test_inlinevec_u32_single_slot() {
+        test_inlinevec::<u32, 1>(1000000, 1000000);
     }
 
     #[test]
     fn test_inlinevec_u64() {
-        test_inlinevec::<u64, 1>(10000000, 10000000);
+        test_inlinevec::<u64, 1>(1000000, 1000000);
     }
 
+    /// No inline slot, and an element far wider than a pointer, so every vector
+    /// is slab-backed. Sized down further because `Huge` is 128 bytes.
     #[test]
     fn test_inlinevec_huge() {
-        test_inlinevec::<Huge, 0>(10000000, 10000000);
+        test_inlinevec::<Huge, 0>(100000, 100000);
     }
 
+    /// Repeatedly regrowing one vector must recycle the slab through the
+    /// freelist instead of leaving the freed blocks stranded.
     #[test]
     fn test_multiple_realloc() {
+        let _guard = exclusive();
         let mut allocator = Allocator::<u32, 2>::new(1024 * 1024 * 64);
 
         let mut vec = allocator.new_vec(193);
-        for i in 0..1000000000 {
+        for i in 0..1000000 {
             allocator.extend_vec(&mut vec, &[i, i + 1]);
-
-            if allocator.used_capacity() > 10000000 {
-                println!(
-                    "Used capacity: {} len: {}",
-                    allocator.used_capacity(),
-                    vec.len()
-                );
-            }
         }
+
+        // Growth doubles and the old block is freed, so the slab holds at most
+        // the geometric sum of the blocks allocated along the way.
+        assert!(
+            allocator.used_capacity() <= 4 * vec.len(),
+            "Slab grew to {} for a vector of {} elements",
+            allocator.used_capacity(),
+            vec.len()
+        );
     }
 }

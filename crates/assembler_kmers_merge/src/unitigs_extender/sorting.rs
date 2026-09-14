@@ -1,4 +1,5 @@
 use binary_heap_plus::BinaryHeap;
+use colors::bucket_colors::ColorAccumulator;
 use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::color_types::MinimizerBucketingMultipleSeqColorDataType;
 use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorDataIterable};
@@ -135,7 +136,7 @@ pub struct SortingExtender<CX: ColorsManager> {
     /// Storage holding the current unitig
     unitig_storage: Vec<u8>,
 
-    unitig_colors: Vec<CX::SingleKmerColorDataType>,
+    unitig_colors: ColorAccumulator,
 }
 
 impl<CX: ColorsManager> Default for SortingExtender<CX> {
@@ -454,7 +455,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                 let mut multiplicity = reference.multiplicity as usize;
                 if CX::COLORS_ENABLED {
                     self.unitig_colors
-                        .extend_from_slice(reference.extra.get_unique_color(extra_buffer));
+                        .append_colors(reference.extra.get_unique_color(extra_buffer));
                 }
 
                 let mut km1mer_break = true;
@@ -479,7 +480,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                     multiplicity += next_read.multiplicity as usize;
                     if CX::COLORS_ENABLED {
                         self.unitig_colors
-                            .extend_from_slice(next_read.extra.get_unique_color(extra_buffer));
+                            .append_colors(next_read.extra.get_unique_color(extra_buffer));
                     }
 
                     element_target_index += 1;
@@ -561,16 +562,19 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                     if read.bases_count() >= k {
                         let supertig_index = self.supertigs.len();
 
+                        // Completing the accumulated set needs the accumulator
+                        // mutably, so it cannot happen inside the push.
+                        let color = if CX::COLORS_ENABLED {
+                            CX::ColorsMergeManagerType::assign_color(
+                                &colors_data.colors_global_table,
+                                self.unitig_colors.finish(),
+                            )
+                        } else {
+                            Default::default()
+                        };
                         self.supertigs.push(Supertig {
                             read,
-                            color: if CX::COLORS_ENABLED {
-                                CX::ColorsMergeManagerType::assign_color(
-                                    &colors_data.colors_global_table,
-                                    &mut self.unitig_colors,
-                                )
-                            } else {
-                                Default::default()
-                            },
+                            color,
                             #[cfg(feature = "support_kmer_counters")]
                             multiplicity,
                             next: usize::MAX,
@@ -1095,6 +1099,7 @@ mod tests {
         let mut colors_data = UnitigExtensionColorsData::<NonColoredManager> {
             colors_global_table: Arc::new(()),
             unitigs_temp_colors: NonColoredManager,
+            interning_colors: Default::default(),
             temp_color_buffer: ((), Vec::new()),
         };
         let mut output = Vec::new();

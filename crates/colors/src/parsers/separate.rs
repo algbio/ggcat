@@ -1,3 +1,4 @@
+use crate::bucket_colors::{ColorArena, ColorHandle};
 use crate::colors_manager::{
     ColorsParser, MinimizerBucketingSeqColorData, MinimizerBucketingSeqColorDataIterable,
 };
@@ -11,7 +12,6 @@ use io::concurrent::temp_reads::extra_data::{
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use std::io::{Read, Write};
 use std::ops::Range;
-use utils::inline_vec::{AllocatorU32, InlineVec};
 
 /*
  * This file contains the color parsing and management for super-kmers where each kmer shares the exact same set of colors
@@ -28,7 +28,7 @@ pub struct MinBkSingleColor(ColorIndexType);
 /// The decoder accepts old delta-only sets too. Buckets containing ranges must
 /// be read with the updated codec; final graph/color-map formats are unaffected.
 #[derive(Copy, Clone, Debug)]
-pub struct MinBkMultipleColors(InlineVec<ColorIndexType, 2>);
+pub struct MinBkMultipleColors(ColorHandle);
 
 impl Default for MinBkSingleColor {
     fn default() -> Self {
@@ -38,7 +38,7 @@ impl Default for MinBkSingleColor {
 
 impl Default for MinBkMultipleColors {
     fn default() -> Self {
-        Self(InlineVec::default())
+        Self(ColorHandle::default())
     }
 }
 
@@ -160,199 +160,95 @@ impl<'a> MinimizerBucketingSeqColorDataIterable<'a, ColorIndexType> for MinBkSin
 }
 
 impl SequenceExtraDataTempBufferManagement for MinBkMultipleColors {
-    type TempBuffer = AllocatorU32;
-
+    type TempBuffer = ColorArena;
     fn new_temp_buffer() -> Self::TempBuffer {
-        AllocatorU32::new(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes())
+        ColorArena::new(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes())
     }
-
     fn clear_temp_buffer(buffer: &mut Self::TempBuffer) {
         buffer.reset();
     }
-
     fn copy_temp_buffer(dest: &mut Self::TempBuffer, src: &Self::TempBuffer) {
         dest.copy_from(src);
     }
-
     fn copy_extra_from(extra: Self, src: &Self::TempBuffer, dst: &mut Self::TempBuffer) -> Self {
-        let src_slice = src.slice_vec(&extra.0);
-        let mut new_vec = dst.new_vec(src_slice.len());
-        let dst_slice = dst.slice_vec_mut(&mut new_vec);
-        dst_slice.copy_from_slice(src_slice);
-        Self(new_vec)
+        Self(dst.copy_entry(src, &extra.0))
     }
 }
 
 impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
     type LastData = ();
-
     fn decode_extended(
         buffer: &mut Self::TempBuffer,
         reader: &mut impl Read,
-        _last_data: Self::LastData,
-        _read_flags: u8,
+        _: (),
+        _: u8,
     ) -> Option<Self> {
-        let len = usize::try_from(decode_varint(|| reader.read_u8().ok())?)
-            .ok()?
-            .checked_add(1)?;
-        let mut vec = buffer.new_vec(len);
-        let slice = buffer.slice_vec_mut(&mut vec);
-
-        let mut last = ColorIndexType::try_from(decode_varint(|| reader.read_u8().ok())?).ok()?;
-        slice[0] = last;
-        let mut i = 1;
-        while i < len {
-            let delta = ColorIndexType::try_from(decode_varint(|| reader.read_u8().ok())?).ok()?;
-            if delta != 0 {
-                last = last.checked_add(delta)?;
-                slice[i] = last;
-                i += 1;
-            } else {
-                // Zero cannot be a delta in a deduplicated set. It introduces
-                // the remaining colors of a run whose first color was emitted.
-                let additional = decode_varint(|| reader.read_u8().ok())?.checked_add(3)?;
-                let additional = usize::try_from(additional).ok()?;
-                if additional > len - i {
-                    return None;
-                }
-                let first = last.checked_add(1)?;
-                last = last.checked_add(ColorIndexType::try_from(additional).ok()?)?;
-                for (offset, color) in slice[i..i + additional].iter_mut().enumerate() {
-                    *color = first + offset as ColorIndexType;
-                }
-                i += additional;
-            }
-        }
-
-        Some(Self(vec))
+        buffer.decode(reader).map(Self)
     }
-
     fn encode_extended(
         &self,
         buffer: &Self::TempBuffer,
         writer: &mut impl Write,
-        _last_data: Self::LastData,
-        _sequence_length: usize,
-        _reverse_complement: bool,
-        _read_flags: u8,
+        _: (),
+        _: usize,
+        _: bool,
+        _: u8,
     ) {
-        let slice = buffer.slice_vec(&self.0);
-        debug_assert!(slice.windows(2).all(|pair| pair[0] < pair[1]));
-        debug_assert_ne!(slice.len(), 0);
-
-        // Keep the expanded length and absolute first color. Subsequent positive
-        // varints are deltas; zero followed by (run length - 4) replaces three
-        // or more unit deltas. Short/sparse sets retain the old byte encoding.
-        encode_varint(|b| writer.write_all(b), (slice.len() - 1) as u64).unwrap();
-        let mut last = 0;
-        let mut start = 0;
-        while start < slice.len() {
-            encode_varint(|b| writer.write_all(b), (slice[start] - last) as u64).unwrap();
-            let mut end = start + 1;
-            while end < slice.len() && slice[end] - slice[end - 1] == 1 {
-                end += 1;
-            }
-            let run_len = end - start;
-            if run_len >= 4 {
-                writer.write_all(&[0]).unwrap();
-                encode_varint(|b| writer.write_all(b), (run_len - 4) as u64).unwrap();
-            } else {
-                // At most two unit deltas, written together.
-                writer.write_all(&[1, 1][..run_len - 1]).unwrap();
-            }
-            last = slice[end - 1];
-            start = end;
-        }
+        buffer.write_to(&self.0, writer);
     }
-
-    fn obtain_last_data(
-        &self,
-        last_data: Self::LastData,
-        _reverse_complement: bool,
-    ) -> Self::LastData {
-        last_data
-    }
-
+    fn obtain_last_data(&self, _: (), _: bool) {}
     fn max_size(&self) -> usize {
-        // Length prefix plus at most one varint per expanded color.
-        (self.0.len() + 1) * VARINT_MAX_SIZE
+        self.0.encoded_len()
     }
 }
 
 impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
-    fn create(sequence_info: SingleSequenceInfo, extra_buffer: &mut AllocatorU32) -> Self {
-        let mut vector = extra_buffer.new_vec(1);
-        extra_buffer.push_vec(&mut vector, sequence_info.static_color);
-        Self(vector)
+    fn create(sequence_info: SingleSequenceInfo, buffer: &mut ColorArena) -> Self {
+        Self(buffer.singleton(sequence_info.static_color))
     }
-
-    fn get_subslice(&self, _range: Range<usize>, _reverse: bool) -> Self {
+    fn get_subslice(&self, _: Range<usize>, _: bool) -> Self {
         *self
     }
 }
 
+/// Every k-mer of a superkmer shares the superkmer's colors.
 impl<'a> MinimizerBucketingSeqColorDataIterable<'a, &'a [ColorIndexType]> for MinBkMultipleColors {
     type KmerColorIterator = std::iter::Repeat<&'a [ColorIndexType]>;
-
-    fn get_iterator(&'a self, extra_buffer: &'a AllocatorU32) -> Self::KmerColorIterator {
-        std::iter::repeat(extra_buffer.slice_vec(&self.0))
+    fn get_iterator(&'a self, buffer: &'a ColorArena) -> Self::KmerColorIterator {
+        std::iter::repeat(buffer.colors(&self.0))
     }
-
-    fn get_unique_color(&'a self, extra_buffer: &'a Self::TempBuffer) -> &'a [ColorIndexType] {
-        extra_buffer.slice_vec(&self.0)
+    fn get_unique_color(&'a self, buffer: &'a ColorArena) -> &'a [ColorIndexType] {
+        buffer.colors(&self.0)
     }
 }
 
 impl SequenceExtraDataCombiner for MinBkMultipleColors {
     type SingleDataType = MinBkSingleColor;
     const ALLOW_COMBINE: bool = true;
-
     fn combine_entries(
         &mut self,
         out_buffer: &mut Self::TempBuffer,
         color: Self,
         in_buffer: &Self::TempBuffer,
     ) {
-        out_buffer.extend_vec(&mut self.0, in_buffer.slice_vec(&color.0));
+        out_buffer.append_from(&mut self.0, in_buffer, &color.0);
     }
-
     fn to_single(
         &self,
-        in_buffer: &Self::TempBuffer,
-        _out_buffer: &mut TempBuffer<Self::SingleDataType>,
+        buffer: &Self::TempBuffer,
+        _: &mut TempBuffer<Self::SingleDataType>,
     ) -> Self::SingleDataType {
-        MinBkSingleColor(in_buffer.slice_vec(&self.0)[0])
+        MinBkSingleColor(buffer.unique_color(&self.0))
     }
-
     fn prepare_for_serialization(&mut self, buffer: &mut Self::TempBuffer) {
-        let slice = buffer.slice_vec_mut(&mut self.0);
-        slice.sort_unstable();
-        let mut size = 1;
-        while size < slice.len() && slice[size - 1] != slice[size] {
-            size += 1;
-        }
-
-        for i in size..slice.len() {
-            if slice[size - 1] != slice[i] {
-                slice[size] = slice[i];
-                size += 1;
-            }
-        }
-
-        unsafe {
-            self.0.set_len(size);
-        }
+        buffer.prepare(&mut self.0);
     }
-
-    #[inline(always)]
     fn from_single_entry<'a>(
-        out_buffer: &'a mut Self::TempBuffer,
+        buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
-        _in_buffer: &'a mut TempBuffer<Self::SingleDataType>,
+        _: &'a mut TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer) {
-        let mut self_ = Self(InlineVec::new());
-        out_buffer.push_vec(&mut self_.0, single.0);
-        (self_, out_buffer)
+        (Self(buffer.singleton(single.0)), buffer)
     }
 }
 

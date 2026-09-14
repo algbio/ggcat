@@ -1,4 +1,5 @@
 use crate::DefaultColorsSerializer;
+use crate::bucket_colors::{ColorArena, ColorHandle};
 use crate::colors_manager::ColorsMergeManager;
 use crate::colors_memmap_writer::ColorsMemMapWriter;
 use atoi::{FromRadix10, FromRadix16};
@@ -15,19 +16,16 @@ use io::concurrent::temp_reads::extra_data::{
 use io::ident_writer::IdentSequenceWriter;
 use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
 use itertools::Itertools;
-use nightly_quirks::slice_partition_dedup::SlicePartitionDedup;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::ops::Range;
 use std::path::Path;
-use std::slice::from_raw_parts;
 use structs::map_entry::MapEntry;
-use utils::inline_vec::{AllocatorU32, InlineVec};
 use utils::resize_containers::ResizableVec;
 
 struct ColorEntry {
     tracking_counter_or_color: u64,
-    colors: InlineVec<ColorIndexType, 2>,
+    colors: ColorHandle,
 }
 
 impl ColorEntry {
@@ -46,7 +44,7 @@ impl ColorEntry {
 
 /// This manager handles the case where each kmer of a sequence has the same set of explicit colors
 pub struct MultipleColorsManager {
-    colors_buffer: AllocatorU32,
+    colors_buffer: ColorArena,
     colors_list: ResizableVec<ColorEntry, DEFAULT_OUTPUT_BUFFER_SIZE>,
     last_color_index: usize,
     last_switch_color_index: usize,
@@ -84,16 +82,18 @@ impl ColorsMergeManager for MultipleColorsManager {
 
     fn allocate_temp_buffer_structure() -> Self::ColorsBufferTempStructure {
         Self {
-            colors_buffer: AllocatorU32::new(DEFAULT_OUTPUT_BUFFER_SIZE),
+            colors_buffer: ColorArena::new(DEFAULT_OUTPUT_BUFFER_SIZE),
             colors_list: ResizableVec::new(),
-            last_color_index: 0,
-            last_switch_color_index: 0,
+            last_color_index: usize::MAX,
+            last_switch_color_index: usize::MAX,
         }
     }
 
     fn reinit_temp_buffer_structure(data: &mut Self::ColorsBufferTempStructure) {
         data.colors_buffer.reset();
         data.colors_list.clear();
+        data.last_color_index = usize::MAX;
+        data.last_switch_color_index = usize::MAX;
     }
 
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
@@ -109,7 +109,7 @@ impl ColorsMergeManager for MultipleColorsManager {
                 let old_colors = &mut data.colors_list[data.last_switch_color_index];
                 old_colors.tracking_counter_or_color -= 1;
                 if *entry_color != data.last_color_index && old_colors.get_counter() == 0 {
-                    data.colors_buffer.free_vec(&mut old_colors.colors);
+                    data.colors_buffer.free(&mut old_colors.colors);
                 }
             }
             *entry_color = data.last_color_index;
@@ -118,9 +118,7 @@ impl ColorsMergeManager for MultipleColorsManager {
             data.last_switch_color_index = *entry_color;
             // No color assigned, create a new one
             if *entry_color == usize::MAX {
-                let mut new_colors = data.colors_buffer.new_vec(kmer_color.len());
-                let new_slice = data.colors_buffer.slice_vec_mut(&mut new_colors);
-                new_slice.copy_from_slice(kmer_color);
+                let new_colors = data.colors_buffer.from_colors(kmer_color);
                 *entry_color = data.colors_list.len();
                 data.colors_list.push(ColorEntry {
                     tracking_counter_or_color: 1,
@@ -130,25 +128,16 @@ impl ColorsMergeManager for MultipleColorsManager {
                 let old_colors = &mut data.colors_list[*entry_color];
 
                 if old_colors.get_counter() == 1 {
-                    // It is the last reference, take ownership and extend the vector
+                    // It is the last reference, take ownership and extend the set
                     data.colors_buffer
-                        .extend_vec(&mut old_colors.colors, kmer_color);
+                        .extend(&mut old_colors.colors, kmer_color);
                 } else {
-                    // Reduce tracking counter and optionally free the vector
+                    // Shared with another k-mer, so branch before diverging
+                    let old_handle = old_colors.colors;
                     old_colors.tracking_counter_or_color -= 1;
-
-                    // Allocate a new buffer to store the colors
-                    let mut new_colors = data
+                    let new_colors = data
                         .colors_buffer
-                        .new_vec(old_colors.colors.len() + kmer_color.len());
-
-                    let old_colors_slice =
-                        unsafe { data.colors_buffer.slice_vec_static(&old_colors.colors) };
-                    let new_slice = data.colors_buffer.slice_vec_mut(&mut new_colors);
-                    new_slice[..old_colors.colors.len()].copy_from_slice(old_colors_slice);
-                    new_slice[old_colors.colors.len()..].copy_from_slice(kmer_color);
-
-                    // Add the new color
+                        .branch_extended(&old_handle, kmer_color);
                     *entry_color = data.colors_list.len();
                     data.colors_list.push(ColorEntry {
                         tracking_counter_or_color: 1,
@@ -176,39 +165,20 @@ impl ColorsMergeManager for MultipleColorsManager {
         global_colors_table: &Self::GlobalColorsTableWriter,
         data: &mut Self::ColorsBufferTempStructure,
     ) {
-        let mut last_partition = &[][..];
+        let mut last_partition: Option<ColorHandle> = None;
         let mut last_color = 0;
-
         for color_entry in data.colors_list.iter_mut() {
             if !color_entry.reached_multiplicity() {
                 continue;
             }
-
-            // Assign the final color
-            let colors_range = data.colors_buffer.slice_vec_mut(&mut color_entry.colors);
-
-            if colors_range.len() == 0 {
-                println!(
-                    "Colors range: {} with counter: {}",
-                    colors_range.len(),
-                    color_entry.tracking_counter_or_color
-                );
+            data.colors_buffer.prepare(&mut color_entry.colors);
+            let colors = data.colors_buffer.colors(&color_entry.colors);
+            // Adjacent entries frequently share a set, so the previous one is
+            // compared before it is interned again.
+            if last_partition.map(|h| data.colors_buffer.colors(&h)) != Some(colors) {
+                last_color = global_colors_table.get_id(colors);
+                last_partition = Some(color_entry.colors);
             }
-
-            colors_range.sort_unstable();
-
-            // Get the final colors count
-            let colors_count = colors_range.nq_partition_dedup().0.len();
-
-            let unique_colors = &colors_range[..colors_count];
-
-            // Assign the subset color index to the current kmer
-            if unique_colors != last_partition {
-                last_color = global_colors_table.get_id(unique_colors);
-                last_partition =
-                    unsafe { from_raw_parts(unique_colors.as_ptr(), unique_colors.len()) };
-            }
-
             color_entry.tracking_counter_or_color = last_color as u64;
         }
         data.colors_buffer.reset();
@@ -216,15 +186,9 @@ impl ColorsMergeManager for MultipleColorsManager {
 
     fn assign_color(
         global_colors_table: &Self::GlobalColorsTableWriter,
-        colors: &mut [Self::SingleKmerColorDataType],
+        colors: &[ColorIndexType],
     ) -> Self::TableColorEntry {
-        colors.sort_unstable();
-        let colors_count = colors.nq_partition_dedup().0.len();
-        let unique_colors = &colors[..colors_count];
-
-        // Assign the subset color index to the current kmer
-        let color = global_colors_table.get_id(unique_colors);
-        color
+        global_colors_table.get_id(colors)
     }
 
     type PartialUnitigsColorStructure = UnitigColorData;
