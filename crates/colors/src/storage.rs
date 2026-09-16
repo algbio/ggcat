@@ -1,3 +1,4 @@
+use crate::bucket_colors::ColorRun;
 use crate::storage::serializer::ColorsFlushProcessing;
 use config::ColorIndexType;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
@@ -31,7 +32,7 @@ pub trait ColorsSerializerTrait: Sized + Sync + Send + 'static {
     ) -> (Self, Self::CheckpointTracker);
 
     // Preserialize the colors into a temporary buffer to be sent to another processing thread
-    fn preserialize_colors(pre_serializer: &mut Self::PreSerializer, colors: &[ColorIndexType]);
+    fn preserialize_colors(pre_serializer: &mut Self::PreSerializer, colors: &[ColorRun]);
 
     // Write a new color subset to a temporary checkpoint buffer (single-threaded)
     fn write_color_subset<'a>(

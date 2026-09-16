@@ -455,7 +455,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                 let mut multiplicity = reference.multiplicity as usize;
                 if CX::COLORS_ENABLED {
                     self.unitig_colors
-                        .append_colors(reference.extra.get_unique_color(extra_buffer));
+                        .append_runs(reference.extra.get_unique_color(extra_buffer));
                 }
 
                 let mut km1mer_break = true;
@@ -480,7 +480,7 @@ impl<CX: ColorsManager> SortingExtender<CX> {
                     multiplicity += next_read.multiplicity as usize;
                     if CX::COLORS_ENABLED {
                         self.unitig_colors
-                            .append_colors(next_read.extra.get_unique_color(extra_buffer));
+                            .append_runs(next_read.extra.get_unique_color(extra_buffer));
                     }
 
                     element_target_index += 1;

@@ -1,3 +1,4 @@
+use crate::bucket_colors::ColorRun;
 use crate::storage::ColorsSerializerTrait;
 use config::{COLORS_SINGLE_BATCH_SIZE, ColorIndexType};
 use crossbeam::channel::Sender;
@@ -175,7 +176,7 @@ impl<SI: ColorsSerializerTrait> ColorsSerializer<SI> {
     }
 
     #[inline(always)]
-    pub fn serialize_colors(&self, colors: &[ColorIndexType]) -> ColorIndexType {
+    pub fn serialize_colors(&self, colors: &[ColorRun]) -> ColorIndexType {
         let mut colors_buffer = self.buffers_pool.alloc_object();
         SI::preserialize_colors(&mut colors_buffer, colors);
         let mut colors_subset_count = self.colors_subset_count.lock();

@@ -1,5 +1,5 @@
 use crate::DefaultColorsSerializer;
-use crate::bucket_colors::{ColorArena, ColorHandle};
+use crate::bucket_colors::{ColorArena, ColorHandle, ColorRun};
 use crate::colors_manager::ColorsMergeManager;
 use crate::colors_memmap_writer::ColorsMemMapWriter;
 use atoi::{FromRadix10, FromRadix16};
@@ -97,7 +97,7 @@ impl ColorsMergeManager for MultipleColorsManager {
 
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         data: &mut Self::ColorsBufferTempStructure,
-        kmer_color: &[ColorIndexType],
+        kmer_color: &[ColorRun],
         entry_color: &mut Self::HashMapTempColorIndex,
         same_color: bool,
         reached_threshold: bool,
@@ -117,7 +117,7 @@ impl ColorsMergeManager for MultipleColorsManager {
             data.last_switch_color_index = *entry_color;
             // No color assigned, create a new one
             if *entry_color == usize::MAX {
-                let new_colors = data.colors_buffer.from_colors(kmer_color);
+                let new_colors = data.colors_buffer.from_runs(kmer_color);
                 *entry_color = data.colors_list.len();
                 data.colors_list.push(ColorEntry {
                     tracking_counter_or_color: 1,
@@ -169,11 +169,21 @@ impl ColorsMergeManager for MultipleColorsManager {
                 continue;
             }
             data.colors_buffer.prepare(&mut color_entry.colors);
-            let colors = data.colors_buffer.colors(&color_entry.colors);
             // Adjacent entries frequently share a set, so the previous one is
-            // compared before it is interned again.
-            if last_partition.map(|h| data.colors_buffer.colors(&h)) != Some(colors) {
-                last_color = global_colors_table.get_id(colors);
+            // compared before it is interned again. The previous handle stays in
+            // a binding rather than passing through a closure: a one-run set
+            // lives in the handle itself, so runs borrowed from a temporary
+            // would outlive what they point at.
+            let repeats_last = match &last_partition {
+                Some(previous) => {
+                    data.colors_buffer.runs(previous)
+                        == data.colors_buffer.runs(&color_entry.colors)
+                }
+                None => false,
+            };
+            if !repeats_last {
+                last_color =
+                    global_colors_table.get_id(data.colors_buffer.runs(&color_entry.colors));
                 last_partition = Some(color_entry.colors);
             }
             color_entry.tracking_counter_or_color = last_color as u64;
@@ -183,7 +193,7 @@ impl ColorsMergeManager for MultipleColorsManager {
 
     fn assign_color(
         global_colors_table: &Self::GlobalColorsTableWriter,
-        colors: &[ColorIndexType],
+        colors: &[ColorRun],
     ) -> Self::TableColorEntry {
         global_colors_table.get_id(colors)
     }

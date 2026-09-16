@@ -17,9 +17,22 @@ impl<T: Copy, const LOCAL_FITTING: usize> AllocatedData<T, LOCAL_FITTING> {
 
 const DEFAULT_ALLOCATOR_SIZE: usize = 1024 * 1024 * 8;
 
+/// One freelist per power-of-two block size. Every block a vector can own has a
+/// class here, so [`Allocator::free_block`] never drops one on the floor.
+const SIZE_CLASSES: usize = usize::BITS as usize;
+
+/// [`InlineVec::size`] packs the length with the size class of the heap block
+/// the vector owns. Storing the class is what lets a block be returned to the
+/// list it came from even after `set_len` has shrunk the length below it, and
+/// it keeps the whole union free for payload: nothing is stolen from a value's
+/// high bit any more, so an element may use all of its bits.
+const CLASS_BITS: u32 = 7;
+const LENGTH_BITS: u32 = usize::BITS - CLASS_BITS;
+const LENGTH_MASK: usize = (1usize << LENGTH_BITS) - 1;
+
 pub struct Allocator<T, const LOCAL_FITTING: usize> {
     data: ResizableVec<MaybeUninit<T>, DEFAULT_ALLOCATOR_SIZE>,
-    freelist: [Vec<usize>; 32],
+    freelist: [Vec<usize>; SIZE_CLASSES],
 }
 
 impl<T: Copy, const LOCAL_FITTING: usize> Default for Allocator<T, LOCAL_FITTING> {
@@ -40,9 +53,9 @@ pub struct InlineVec<T: Copy, const LOCAL_FITTING: usize> {
 impl<T: Copy + Debug, const LOCAL_FITTING: usize> Debug for InlineVec<T, LOCAL_FITTING> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut debug_struct = f.debug_struct("InlineVec");
-        debug_struct.field("size", &self.size);
-        if self.size <= LOCAL_FITTING {
-            let data = unsafe { &self.data.data[0..self.size] };
+        debug_struct.field("size", &self.len());
+        if !self.is_heap() {
+            let data = unsafe { &self.data.data[0..self.len()] };
             debug_struct.field("inline_data", &data);
         }
 
@@ -52,7 +65,7 @@ impl<T: Copy + Debug, const LOCAL_FITTING: usize> Debug for InlineVec<T, LOCAL_F
 
 impl<T: Copy + PartialEq, const LOCAL_FITTING: usize> PartialEq for InlineVec<T, LOCAL_FITTING> {
     fn eq(&self, other: &Self) -> bool {
-        self.size == other.size
+        self.len() == other.len()
     }
 }
 
@@ -65,17 +78,58 @@ impl<T: Copy, const LOCAL_FITTING: usize> InlineVec<T, LOCAL_FITTING> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.size == 0
+        self.len() == 0
     }
 
+    #[inline(always)]
     pub fn len(&self) -> usize {
-        self.size
+        self.size & LENGTH_MASK
     }
 
+    /// Sets the length, leaving the size class of the owned block alone.
+    ///
+    /// # Safety
+    /// `size` must not exceed the capacity the vector was last grown to; the
+    /// elements below it must be initialized.
+    #[inline(always)]
     pub unsafe fn set_len(&mut self, size: usize) {
-        self.size = size;
+        debug_assert!(size <= LENGTH_MASK);
+        self.size = (self.size & !LENGTH_MASK) | size;
     }
 
+    /// Zero while the elements live in the union, otherwise one more than the
+    /// base-two logarithm of the owned block's element count.
+    #[inline(always)]
+    fn size_class(&self) -> usize {
+        self.size >> LENGTH_BITS
+    }
+
+    #[inline(always)]
+    fn is_heap(&self) -> bool {
+        self.size_class() != 0
+    }
+
+    #[inline(always)]
+    fn set_size_class(&mut self, class: usize) {
+        debug_assert!(class < (1 << CLASS_BITS));
+        self.size = (self.size & LENGTH_MASK) | (class << LENGTH_BITS);
+    }
+
+    /// How many elements fit before the vector has to move to a larger block.
+    /// Public so a caller can compact its own contents on the growth boundary
+    /// rather than after the slab has already doubled.
+    #[inline(always)]
+    pub fn capacity(&self) -> usize {
+        let class = self.size_class();
+        if class == 0 {
+            LOCAL_FITTING
+        } else {
+            1usize << (class - 1)
+        }
+    }
+
+    /// A real vector never reaches this: a size class is at most
+    /// `usize::BITS`, well below the all-ones pattern.
     pub fn is_poisoned(&self) -> bool {
         self.size == usize::MAX
     }
@@ -87,28 +141,20 @@ impl<T: Copy, const LOCAL_FITTING: usize> InlineVec<T, LOCAL_FITTING> {
 
 impl<T: Copy, const LOCAL_FITTING: usize> Default for InlineVec<T, LOCAL_FITTING> {
     fn default() -> Self {
-        InlineVec {
-            data: AllocatedData::ZERO,
-            size: 0,
-        }
+        InlineVec::new()
     }
 }
 
 impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
     pub const LOCAL_FITTING: usize = LOCAL_FITTING;
-    const PTR_FLAG: usize = if Self::SUPPORTS_LOCAL {
-        0x8000000000000000
-    } else {
-        0
-    };
 
     const SUPPORTS_LOCAL: bool = LOCAL_FITTING > 0;
 
     pub fn new(capacity: usize) -> Self {
         Allocator {
             data: ResizableVec::new(),
-            freelist: (0..32)
-                .map(|i| Vec::with_capacity(capacity / 32 / (1 << i)))
+            freelist: (0..SIZE_CLASSES)
+                .map(|i| Vec::with_capacity(capacity / SIZE_CLASSES / (1 << i.min(31))))
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap(),
@@ -138,221 +184,169 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
 
     #[inline]
     pub fn new_vec(&mut self, size: usize) -> InlineVec<T, LOCAL_FITTING> {
-        if size <= LOCAL_FITTING {
-            InlineVec {
-                data: AllocatedData::ZERO,
-                size,
-            }
-        } else {
-            InlineVec {
-                data: self.alloc(size.next_power_of_two()),
-                size,
-            }
+        let mut vec = InlineVec::new();
+        if size > LOCAL_FITTING {
+            let (index, class) = self.alloc_block(size.next_power_of_two());
+            vec.data = AllocatedData { index };
+            vec.set_size_class(class);
         }
+        unsafe { vec.set_len(size) };
+        vec
     }
 
     #[inline]
     pub fn reserve_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>, count: usize) -> *mut T {
-        let ptr = if !Self::SUPPORTS_LOCAL || (vec.size + count > LOCAL_FITTING) {
-            let npt = if !Self::SUPPORTS_LOCAL && vec.size == 0 {
-                0
-            } else {
-                vec.size.next_power_of_two()
-            };
-            if vec.size + count > npt {
-                let mut old_data = vec.data.clone();
+        let len = vec.len();
+        let new_len = len + count;
 
-                let new_size = (vec.size + count).next_power_of_two();
-                vec.data = self.alloc(new_size);
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        self.get_mut_ptr(&mut old_data),
-                        self.get_mut_ptr(&mut vec.data),
-                        vec.size,
-                    );
-                }
-                self.free(old_data, npt);
-            }
-            self.get_mut(&mut vec.data, vec.size) as *mut _
-        } else {
-            unsafe { vec.data.data.as_mut_ptr().add(vec.size) }
-        };
+        if new_len > vec.capacity() {
+            self.grow(vec, new_len);
+        }
 
-        vec.size += count;
-        ptr
+        unsafe {
+            vec.set_len(new_len);
+            self.vec_ptr_mut(vec).add(len)
+        }
     }
 
+    /// Moves a vector into a block large enough for `needed` elements. Always
+    /// allocates: the caller has already found the current capacity too small.
+    #[cold]
+    fn grow(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>, needed: usize) {
+        let len = vec.len();
+        let was_heap = vec.is_heap();
+        let old_class = vec.size_class();
+        let old_data = vec.data;
+
+        // Allocating can move the slab, so no pointer into it is taken before.
+        let (index, class) = self.alloc_block(needed.next_power_of_two());
+        unsafe {
+            let destination = self.heap_ptr_mut(index);
+            let source = if was_heap {
+                self.heap_ptr(old_data.index)
+            } else {
+                old_data.data.as_ptr()
+            };
+            std::ptr::copy_nonoverlapping(source, destination, len);
+        }
+        if was_heap {
+            self.free_block(unsafe { old_data.index }, old_class);
+        }
+
+        vec.data = AllocatedData { index };
+        vec.set_size_class(class);
+    }
+
+    /// Appends a slice. `values` must not borrow from this allocator: growing
+    /// the vector can move the slab out from under it.
     #[inline]
     pub fn extend_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>, values: &[T]) {
-        let mut ptr = self.reserve_vec(vec, values.len());
-        unsafe {
-            for value in values {
-                std::ptr::write(ptr, *value);
-                ptr = ptr.add(1);
-            }
-        }
+        let ptr = self.reserve_vec(vec, values.len());
+        unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), ptr, values.len()) };
     }
 
     #[inline]
     pub fn push_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>, value: T) {
-        if Self::SUPPORTS_LOCAL && vec.size < LOCAL_FITTING {
-            unsafe {
-                let ptr = vec.data.data.as_mut_ptr().add(vec.size);
-                std::ptr::write(ptr, value);
-            }
-        } else {
-            let npt = if !Self::SUPPORTS_LOCAL && vec.size == 0 {
-                0
-            } else {
-                vec.size.next_power_of_two()
-            };
-
-            if vec.size >= npt {
-                let mut old_data = vec.data.clone();
-
-                let new_size = if !Self::SUPPORTS_LOCAL && npt == 0 {
-                    1
-                } else {
-                    npt * 2
-                };
-
-                vec.data = self.alloc(new_size * 2);
-                unsafe {
-                    std::hint::assert_unchecked(npt >= LOCAL_FITTING);
-                    std::ptr::copy_nonoverlapping(
-                        self.get_mut_ptr(&mut old_data),
-                        self.get_mut_ptr(&mut vec.data),
-                        npt,
-                    );
-                }
-
-                self.free(old_data, npt);
-            }
-            unsafe {
-                std::ptr::write(self.get_mut(&mut vec.data, vec.size) as *mut _, value);
-            }
-        }
-        vec.size += 1;
+        let ptr = self.reserve_vec(vec, 1);
+        unsafe { std::ptr::write(ptr, value) };
     }
 
     pub fn free_vec(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>) {
-        if vec.size > 0 && (!Self::SUPPORTS_LOCAL || vec.size > LOCAL_FITTING) {
-            self.free(vec.data, vec.size.next_power_of_two());
+        if vec.is_heap() {
+            self.free_block(unsafe { vec.data.index }, vec.size_class());
         }
-        vec.data = AllocatedData::ZERO;
-        vec.size = 0;
+        *vec = InlineVec::new();
     }
 
     #[inline(always)]
-    pub fn slice_vec(&self, vec: &InlineVec<T, LOCAL_FITTING>) -> &[T] {
-        unsafe { from_raw_parts(self.get_ptr(&vec.data), vec.size) }
+    pub fn slice_vec<'a>(&'a self, vec: &'a InlineVec<T, LOCAL_FITTING>) -> &'a [T] {
+        unsafe { from_raw_parts(self.vec_ptr(vec), vec.len()) }
     }
 
+    /// # Safety
+    /// The returned slice is only valid while both the allocator and `vec` are
+    /// alive and neither is mutated.
     #[inline(always)]
     pub unsafe fn slice_vec_static(&self, vec: &InlineVec<T, LOCAL_FITTING>) -> &'static [T] {
-        unsafe { from_raw_parts(self.get_ptr(&vec.data), vec.size) }
+        unsafe { from_raw_parts(self.vec_ptr(vec), vec.len()) }
     }
 
     #[inline(always)]
-    pub fn slice_vec_mut(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>) -> &mut [T] {
-        unsafe { from_raw_parts_mut(self.get_mut_ptr(&mut vec.data), vec.size) }
+    pub fn slice_vec_mut<'a>(
+        &'a mut self,
+        vec: &'a mut InlineVec<T, LOCAL_FITTING>,
+    ) -> &'a mut [T] {
+        let len = vec.len();
+        unsafe { from_raw_parts_mut(self.vec_ptr_mut(vec), len) }
     }
 
     #[inline(always)]
-    pub fn iter_vec(&self, vec: &InlineVec<T, LOCAL_FITTING>) -> impl Iterator<Item = &T> {
+    pub fn iter_vec<'a>(&'a self, vec: &'a InlineVec<T, LOCAL_FITTING>) -> impl Iterator<Item = &'a T> {
         self.slice_vec(vec).iter()
     }
 
+    /// The elements of a vector, wherever they live. An inline vector's pointer
+    /// is into `vec` itself, which is why both borrows share a lifetime above.
     #[inline(always)]
-    fn get_ptr(&self, data: &AllocatedData<T, LOCAL_FITTING>) -> *const T {
-        if !Self::SUPPORTS_LOCAL || unsafe { data.index } & Self::PTR_FLAG != 0 {
-            self.get_ptr_heap(data)
+    fn vec_ptr(&self, vec: &InlineVec<T, LOCAL_FITTING>) -> *const T {
+        if Self::SUPPORTS_LOCAL && !vec.is_heap() {
+            unsafe { vec.data.data.as_ptr() }
         } else {
-            unsafe { data.data.as_ptr() }
+            self.heap_ptr(unsafe { vec.data.index })
         }
     }
 
     #[inline(always)]
-    fn get_mut_ptr(&mut self, data: &mut AllocatedData<T, LOCAL_FITTING>) -> *mut T {
-        if !Self::SUPPORTS_LOCAL || unsafe { data.index } & Self::PTR_FLAG != 0 {
-            self.get_mut_ptr_heap(data)
+    fn vec_ptr_mut(&mut self, vec: &mut InlineVec<T, LOCAL_FITTING>) -> *mut T {
+        if Self::SUPPORTS_LOCAL && !vec.is_heap() {
+            unsafe { vec.data.data.as_mut_ptr() }
         } else {
-            unsafe { data.data.as_mut_ptr() }
-        }
-    }
-
-    #[inline]
-    fn get_ptr_heap(&self, data: &AllocatedData<T, LOCAL_FITTING>) -> *const T {
-        unsafe {
-            self.data
-                .as_ptr()
-                .add(data.index & !Self::PTR_FLAG)
-                .cast::<T>()
-        }
-    }
-
-    #[inline]
-    fn get_mut_ptr_heap(&mut self, data: &mut AllocatedData<T, LOCAL_FITTING>) -> *mut T {
-        debug_assert!(unsafe { data.index & !Self::PTR_FLAG } <= self.data.len());
-        unsafe {
-            self.data
-                .as_mut_ptr()
-                .add(data.index & !Self::PTR_FLAG)
-                .cast::<T>()
+            let index = unsafe { vec.data.index };
+            self.heap_ptr_mut(index)
         }
     }
 
     #[inline(always)]
-    fn get_mut(&mut self, data: &mut AllocatedData<T, LOCAL_FITTING>, index: usize) -> &mut T {
-        let ptr = unsafe {
-            let ptr = self.get_mut_ptr(data);
-            ptr.offset(index as isize).cast::<T>()
+    fn heap_ptr(&self, index: usize) -> *const T {
+        debug_assert!(index <= self.data.len());
+        unsafe { self.data.as_ptr().add(index).cast::<T>() }
+    }
+
+    #[inline(always)]
+    fn heap_ptr_mut(&mut self, index: usize) -> *mut T {
+        debug_assert!(index <= self.data.len());
+        unsafe { self.data.as_mut_ptr().add(index).cast::<T>() }
+    }
+
+    /// Reserves a block of exactly `capacity` elements, returning its slab index
+    /// and the size class it must later be freed under.
+    #[inline]
+    fn alloc_block(&mut self, capacity: usize) -> (usize, usize) {
+        debug_assert!(capacity.is_power_of_two());
+        let logsize = capacity.trailing_zeros() as usize;
+
+        let index = match self.freelist[logsize].pop() {
+            Some(index) => index,
+            None => {
+                let index = self.data.len();
+                self.data.reserve(capacity);
+                unsafe {
+                    self.data.set_len(index + capacity);
+                }
+                index
+            }
         };
-        unsafe { &mut *ptr }
+        (index, logsize + 1)
     }
 
+    /// Returns a block to the list it was taken from. The class travels with the
+    /// vector rather than being recomputed from its length, so a block whose
+    /// vector was shrunk still lands in the right list instead of being filed
+    /// under a smaller one and leaking the difference.
     #[inline]
-    fn alloc(&mut self, size: usize) -> AllocatedData<T, LOCAL_FITTING> {
-        if size <= LOCAL_FITTING {
-            return AllocatedData::ZERO;
-        }
-
-        unsafe {
-            std::hint::assert_unchecked(size > 0);
-        }
-        let logsize = size.ilog2() as usize;
-
-        if let Some(index) = self
-            .freelist
-            .get_mut(logsize as usize)
-            .map(|f| f.pop())
-            .flatten()
-        {
-            AllocatedData {
-                index: index | Self::PTR_FLAG,
-            }
-        } else {
-            let index = self.data.len();
-            self.data.reserve(size);
-            unsafe {
-                self.data.set_len(index + size);
-            }
-            AllocatedData {
-                index: index | Self::PTR_FLAG,
-            }
-        }
-    }
-
-    fn free(&mut self, ptr: AllocatedData<T, LOCAL_FITTING>, size: usize) {
-        if size > LOCAL_FITTING {
-            unsafe {
-                std::hint::assert_unchecked(size > 0);
-            }
-            let logsize = size.ilog2() as usize;
-            self.freelist
-                .get_mut(logsize)
-                .map(|f| f.push(unsafe { ptr.index } & !Self::PTR_FLAG));
-        }
+    fn free_block(&mut self, index: usize, class: usize) {
+        debug_assert!(class > 0);
+        self.freelist[class - 1].push(index);
     }
 
     pub fn copy_from(&mut self, src: &Allocator<T, LOCAL_FITTING>) {
@@ -451,7 +445,9 @@ mod tests {
 
     fn exclusive() -> MutexGuard<'static, ()> {
         // A panicking case must not disable the others.
-        EXCLUSIVE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        EXCLUSIVE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Two inline slots, the width `AllocatorU32` uses.
@@ -498,6 +494,69 @@ mod tests {
             "Slab grew to {} for a vector of {} elements",
             allocator.used_capacity(),
             vec.len()
+        );
+    }
+
+    /// Every bit of an element is payload. The allocator used to keep its heap
+    /// marker in the top bit of the union, so a single inline value with its
+    /// high bit set was read back as a slab index.
+    #[test]
+    fn inline_values_may_use_every_bit() {
+        let mut allocator = Allocator::<u32, 1>::new(16);
+        for value in [u32::MAX, 1 << 31, (1 << 31) | 7] {
+            let mut vec = allocator.new_vec(0);
+            allocator.push_vec(&mut vec, value);
+            assert_eq!(allocator.slice_vec(&vec), &[value]);
+            allocator.free_vec(&mut vec);
+        }
+
+        let mut allocator = Allocator::<u64, 1>::new(16);
+        let mut vec = allocator.new_vec(0);
+        allocator.push_vec(&mut vec, u64::MAX);
+        assert_eq!(allocator.slice_vec(&vec), &[u64::MAX]);
+    }
+
+    /// A vector shrunk with `set_len` still owns the block it was grown to, so
+    /// freeing it has to return that block and not the smaller one its new
+    /// length suggests. Recycling the freed block is what proves it went back to
+    /// the right list.
+    #[test]
+    fn a_shrunk_vector_frees_the_block_it_owns() {
+        let mut allocator = Allocator::<u32, 1>::new(64);
+
+        let mut vec = allocator.new_vec(0);
+        allocator.extend_vec(&mut vec, &(0..64u32).collect::<Vec<_>>());
+        let after_growth = allocator.used_capacity();
+
+        unsafe { vec.set_len(1) };
+        allocator.free_vec(&mut vec);
+
+        // The 64-element block is back on its own list, so asking for another
+        // one of the same size must reuse it rather than extend the slab.
+        let mut reused = allocator.new_vec(64);
+        allocator.slice_vec_mut(&mut reused).fill(7);
+        assert_eq!(allocator.used_capacity(), after_growth);
+    }
+
+    /// Shrinking and regrowing repeatedly must not strand blocks either: every
+    /// cycle hands its block back under the class it was taken from.
+    #[test]
+    fn shrink_and_regrow_recycles_the_slab() {
+        let mut allocator = Allocator::<u64, 1>::new(64);
+
+        let mut vec = allocator.new_vec(0);
+        allocator.extend_vec(&mut vec, &(0..128u64).collect::<Vec<_>>());
+        let after_first_growth = allocator.used_capacity();
+
+        for _ in 0..1000 {
+            unsafe { vec.set_len(1) };
+            allocator.extend_vec(&mut vec, &(0..127u64).collect::<Vec<_>>());
+        }
+
+        assert_eq!(
+            allocator.used_capacity(),
+            after_first_growth,
+            "regrowing into the same size class must reuse the same block"
         );
     }
 }

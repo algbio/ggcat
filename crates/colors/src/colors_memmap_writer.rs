@@ -1,4 +1,5 @@
 // use crate::storage::roaring::ColorsStorage;
+use crate::bucket_colors::ColorRun;
 use crate::storage::ColorsSerializerTrait;
 use crate::storage::serializer::ColorsSerializer;
 use config::ColorIndexType;
@@ -40,14 +41,21 @@ impl<C: ColorsSerializerTrait> ColorsMemMapWriter<C> {
         })
     }
 
-    fn hash_colors(&self, colors: &[ColorIndexType]) -> u128 {
+    /// Hashes the canonical run list rather than the colors it stands for.
+    ///
+    /// The keys are drawn per process and never written anywhere, so what is fed
+    /// to the hash is free to change; what is not free to change is that one set
+    /// has exactly one spelling, or the same set would intern under two
+    /// identifiers. Coalescing in [`crate::bucket_colors::canonicalize`] is what
+    /// guarantees it, and every caller reaches the interner through it.
+    fn hash_colors(&self, colors: &[ColorRun]) -> u128 {
         let mut hasher = SipHasher13::new_with_keys(self.hash_keys.0, self.hash_keys.1);
         colors.hash(&mut hasher);
         hasher.finish128().as_u128()
     }
 
     #[inline(always)]
-    pub fn get_id(&self, colors: &[ColorIndexType]) -> ColorIndexType {
+    pub fn get_id(&self, colors: &[ColorRun]) -> ColorIndexType {
         let hash = self.hash_colors(colors);
 
         match self.colors.entry(hash) {
@@ -83,9 +91,9 @@ mod tests {
         let names: Vec<_> = (0..16).map(|i| format!("color_{i}")).collect();
         let writer =
             ColorsMemMapWriter::<DefaultColorsSerializer>::new(&path, &names, 1, false).unwrap();
-        let id = writer.get_id(&[0, 1, 2, 3, 4, 5, 6, 7]);
-        assert_eq!(writer.get_id(&[0, 1, 2, 3, 4, 5, 6, 7]), id);
-        let other = writer.get_id(&[9, 10, 11, 12]);
+        let id = writer.get_id(&[ColorRun::new(0, 8)]);
+        assert_eq!(writer.get_id(&[ColorRun::new(0, 8)]), id);
+        let other = writer.get_id(&[ColorRun::new(9, 4)]);
         assert_ne!(id, other);
         drop(writer);
 
