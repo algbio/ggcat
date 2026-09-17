@@ -1131,6 +1131,7 @@ dependencies = [
  "ggcat_hashes",
  "ggcat_io",
  "ggcat_kmers_transform",
+ "ggcat_minimizer_bucketing",
  "ggcat_sequence_output",
  "ggcat_structs",
  "ggcat_utils",

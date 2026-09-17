@@ -111,7 +111,12 @@ pub const PRIORITY_SCHEDULING_LOW: usize = 2;
 // Each chunk in a bucket must be between 256KB and 8MB
 pub const MIN_BUCKETS_CHUNK_SIZE: u64 = 1024 * 256;
 pub const DEFAULT_BUCKETS_CHUNK_SIZE: u64 = 1024 * 1024 * 2;
-pub const MAX_BUCKETS_CHUNK_SIZE: u64 = 1024 * 1024 * 16;
+/// Largest an uncompacted bucket chunk may grow before it is compacted.
+///
+/// Held down to 2 MiB so that compaction runs often and on little data at a
+/// time, which is what makes a light compaction -- one that never re-reads an
+/// already compacted chunk -- cheap enough to be the common case.
+pub const MAX_BUCKETS_CHUNK_SIZE: u64 = 1024 * 1024 * 2;
 
 // The soft limit to compaction iterations per bucket, sizes will be chosen to avoid exceeding this threshold
 pub const MAX_COMPACTION_ITERATIONS: u64 = 8;

@@ -26,6 +26,7 @@ use parallel_processor::{
     memory_fs::{MemoryFs, RemoveFileMode, file::internal::MemoryFileMode},
 };
 use parking_lot::Mutex;
+use std::path::PathBuf;
 
 #[test]
 fn repeated_compaction_keeps_canonical_union_and_multiplicity() {
@@ -95,8 +96,30 @@ fn repeated_compaction_keeps_canonical_union_and_multiplicity() {
         raw.lock().chunks.push(path);
         compactor.compact_buckets(&raw, &compacted, 0, &root);
         let paths = compacted.lock().chunks.clone();
+        // Which kind ran is readable from the names, and the rule makes the
+        // three rounds go light, extended, light: the first has nothing
+        // compacted to weigh against, the second finds a light chunk and no
+        // extended one so it promotes it, and the third is back to nothing
+        // light because the second consumed it.
+        let light = |p: &PathBuf| p.file_name().unwrap().to_str().unwrap().contains("light-");
+        match round {
+            0 => assert!(paths.iter().all(light), "{paths:?}"),
+            1 => assert!(!paths.iter().any(light), "{paths:?}"),
+            _ => {
+                assert!(paths.iter().any(light), "{paths:?}");
+                assert!(!paths.iter().all(light), "{paths:?}");
+            }
+        }
         let buckets = SplittedBucket::generate(paths.iter(), RemoveFileMode::Keep, 1);
+        // A light compaction leaves the earlier chunks alone, so the
+        // occurrences of one super-kmer may be spread over several records
+        // until an extended compaction folds them back together. What has to
+        // hold at every round is the union: every record is the same
+        // super-kmer, the multiplicities sum to everything written so far, and
+        // the colors together are exactly the colors fed in.
         let mut records = 0;
+        let mut seen_multiplicity = 0;
+        let mut seen_colors = std::collections::BTreeSet::new();
         for mut bucket in buckets.into_iter().flatten() {
             decode_sequences::<MinBkSingleColor, MinBkMultipleColors, typenum::U2, NoAlignment>(
                 None,
@@ -105,18 +128,17 @@ fn repeated_compaction_keeps_canonical_union_and_multiplicity() {
                 31,
                 |read, buffer| {
                     assert_eq!(read.read.to_string().as_bytes(), sequence);
-                    assert_eq!(read.multiplicity, total);
-                    let expected: Vec<_> = expected.iter().copied().collect();
+                    seen_multiplicity += read.multiplicity;
                     // The set is carried as runs now, so it is expanded here
                     // rather than in the pipeline.
-                    let decoded: Vec<_> =
-                        expand_runs(read.extra.get_unique_color(buffer)).collect();
-                    assert_eq!(decoded, expected);
+                    seen_colors.extend(expand_runs(read.extra.get_unique_color(buffer)));
                     records += 1;
                 },
             );
         }
-        assert_eq!(records, 1);
+        assert_eq!(seen_multiplicity, total);
+        assert_eq!(seen_colors, expected);
+        assert!(records >= 1);
     }
     MemoryFs::flush_to_disk(true);
     std::fs::remove_dir_all(root).unwrap();
