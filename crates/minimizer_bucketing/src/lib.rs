@@ -10,8 +10,8 @@ pub mod split_buckets;
 
 use crate::compactor::BucketsCompactor;
 use crate::deduplicator::{
-    BoundedDeduplicator, BucketOutput, BypassPolicy, DedupExtraData, DedupStats,
-    DeduplicatingDispatcher, LazyBucketOutput, LazyBuckets, deduplicator_memory,
+    BoundedDeduplicator, BucketOutput, BypassPolicy, DedupExtraData, DeduplicatingDispatcher,
+    LazyBucketOutput, LazyBuckets, deduplicator_memory,
 };
 use crate::lane_runs::SimdScratch;
 use crate::reader::MinimizerBucketingFilesReader;
@@ -550,9 +550,11 @@ impl<
                 // finalized.
                 // let mut stats = DedupStats::default();
                 if let Some(deduplicators) = deduplicators.lock().take() {
-                    // for deduplicator in deduplicators.iter() {
-                    //     stats.accumulate(&deduplicator.finish());
-                    // }
+                    for deduplicator in deduplicators.iter() {
+                        // stats.accumulate(
+                        deduplicator.finish();
+                        // );
+                    }
                     // ggcat_logging::info!("Super-kmer deduplication: {}", stats.report());
                     // Releases the last reference each one holds to the buckets.
                     drop(deduplicators);

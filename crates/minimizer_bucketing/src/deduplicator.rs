@@ -489,8 +489,8 @@ pub struct BoundedDeduplicator<
     MultipleData: DedupExtraData,
     FlagsCount: typenum::Unsigned,
     O: DedupOutput,
-    /// Where bypassed records go. It differs from `O` in the pipeline, where
-    /// the narrow buckets are built only once some bucket actually stands down.
+    // Where bypassed records go. It differs from `O` in the pipeline, where
+    // the narrow buckets are built only once some bucket actually stands down.
     Bypass: DedupOutput = O,
 > {
     slots: [Slot; 2],

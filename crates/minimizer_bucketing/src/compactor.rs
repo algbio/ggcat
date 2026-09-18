@@ -128,6 +128,13 @@ pub struct BucketsCompactor<
         >,
     >,
 
+    /// Holds what the narrow staging's extra data points at.
+    ///
+    /// An extra data entry is stored by value, and for the colour types it is a
+    /// range into a buffer rather than the colours themselves, so the bytes it
+    /// refers to have to be copied somewhere that outlives the decode.
+    uncompacted_narrow_extra_buffer: TempBuffer<SingleData>,
+
     // The uncompacted extra buffer
     uncompacted_super_kmers_extra_buffer: TempBuffer<MultipleData>,
 
@@ -153,6 +160,7 @@ impl<
             uncompacted_narrow_buffer: (0..second_buckets.total_buckets_count)
                 .map(|_| ReadMemStorage::new(ResizableVec::new()))
                 .collect(),
+            uncompacted_narrow_extra_buffer: SingleData::new_temp_buffer(),
             uncompacted_super_kmers_extra_buffer: MultipleData::new_temp_buffer(),
             k,
             target_chunk_size,
@@ -490,17 +498,24 @@ impl<
                 >(
                     chunks,
                     None,
-                    |read, _extra_buffer| {
-                        // Stored as it arrived. It is widened only if this
-                        // compaction actually folds, and not at all if it just
-                        // groups records into sub-buckets.
+                    |read, extra_buffer| {
+                        // Not widened: it is widened only if this compaction
+                        // actually folds, and not at all if it just groups
+                        // records into sub-buckets. What it points at still has
+                        // to cross into this compactor's own buffer, because
+                        // the decoder's is cleared after every record.
+                        let extra = SingleData::copy_extra_from(
+                            read.extra,
+                            extra_buffer,
+                            &mut self.uncompacted_narrow_extra_buffer,
+                        );
                         self.uncompacted_narrow_buffer[read.second_bucket as usize].encode_read(
                             &DeserializedRead {
                                 read: read.read,
                                 multiplicity: read.multiplicity,
                                 minimizer_pos: read.minimizer_pos,
                                 flags: read.flags,
-                                extra: read.extra,
+                                extra,
                                 second_bucket: 0,
                             },
                         );
@@ -713,7 +728,7 @@ impl<
                     let extra = MultipleData::from_single_entry(
                         &mut self.uncompacted_super_kmers_extra_buffer,
                         entry.extra,
-                        &SingleData::new_temp_buffer(),
+                        &self.uncompacted_narrow_extra_buffer,
                     )
                     .0;
                     Self::process_compactable_superkmer::<MultipleData>(
@@ -884,7 +899,7 @@ impl<
                         ),
                         &mut single_buffer,
                         &entry.extra,
-                        &SingleData::new_temp_buffer(),
+                        &self.uncompacted_narrow_extra_buffer,
                     );
 
                     if single_buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
@@ -911,6 +926,7 @@ impl<
         {
             MultipleData::clear_temp_buffer(&mut self.super_kmers_extra_buffer);
             MultipleData::clear_temp_buffer(&mut self.uncompacted_super_kmers_extra_buffer);
+            SingleData::clear_temp_buffer(&mut self.uncompacted_narrow_extra_buffer);
         }
 
         let new_path = new_bucket_multi.as_ref().map(|b| b.get_path());
