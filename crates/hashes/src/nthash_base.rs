@@ -46,7 +46,7 @@
 //     lookup
 // };
 
-const MULTIPLIER: u64 = 0x397f178c6ae330f9;
+pub(crate) const MULTIPLIER: u64 = 0x397f178c6ae330f9;
 
 #[inline(always)]
 pub fn h(c: u8, compressed: bool) -> u64 {

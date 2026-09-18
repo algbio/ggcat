@@ -1,4 +1,6 @@
+use crate::raw_reader::RawBytesReader;
 use crate::sequences_reader::DnaSequence;
+use crate::sequences_sink::SequencesSink;
 use crate::sequences_stream::fasta::FastaFileSequencesStream;
 use crate::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use std::sync::Arc;
@@ -43,6 +45,7 @@ impl GeneralSequenceBlockData {
 
 pub struct GeneralSequencesStream {
     fasta_file_reader: Option<FastaFileSequencesStream>,
+    raw_reader: Option<RawBytesReader>,
 }
 
 impl GenericSequencesStream for GeneralSequencesStream {
@@ -51,6 +54,7 @@ impl GenericSequencesStream for GeneralSequencesStream {
     fn new() -> Self {
         Self {
             fasta_file_reader: None,
+            raw_reader: None,
         }
     }
 
@@ -98,6 +102,41 @@ impl GenericSequencesStream for GeneralSequencesStream {
                     partial_read_copyback,
                     &mut callback,
                 );
+            }
+        }
+    }
+
+    fn read_block_into(
+        &mut self,
+        block: &Self::SequenceBlockData,
+        sink: &mut impl SequencesSink,
+    ) -> anyhow::Result<()> {
+        match block {
+            GeneralSequenceBlockData::FASTA(block) => self
+                .fasta_file_reader
+                .get_or_insert_with(FastaFileSequencesStream::new)
+                .read_block_into(block, sink),
+            GeneralSequenceBlockData::TAR(block) => {
+                let reader = self.raw_reader.get_or_insert_with(RawBytesReader::new);
+                if let Err(error) = block.read_into(reader, sink) {
+                    // Archive failures are collected and reported together,
+                    // exactly as the record-based reader does.
+                    block
+                        .registry
+                        .lock()
+                        .errors
+                        .push(format!("Archive {}: {error:#}", block.path.display()));
+                }
+                Ok(())
+            }
+            GeneralSequenceBlockData::GFA() => {
+                unimplemented!();
+            }
+            GeneralSequenceBlockData::Dynamic((reader, index)) => {
+                reader.read_block(*index, sink.wants_ident(), None, &mut |sequence, info| {
+                    sink.push_record(sequence, info)
+                });
+                Ok(())
             }
         }
     }

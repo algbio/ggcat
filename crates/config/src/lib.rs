@@ -5,7 +5,7 @@ use parallel_processor::buckets::writers::compressed_binary_writer::{
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeCheckpointSize;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 pub type BucketIndexType = u16;
@@ -22,8 +22,15 @@ pub const PACKETS_PRIORITY_FILES: usize = 1;
 
 // pub type DefaultColorsSerializer = RunLengthColorsSerializer;
 
-pub const READ_INTERMEDIATE_CHUNKS_SIZE: usize = 1024 * 512 * 1;
-pub static READ_INTERMEDIATE_QUEUE_MULTIPLIER: AtomicUsize = AtomicUsize::new(2);
+/// Bases held by each of the eight lanes of a parsed sequences batch.
+///
+/// A batch is therefore 512K bases, 128 KiB of packed words, which leaves room
+/// for the per-lane copies and window masks the bucketing threads build from it
+/// while trying to stay inside a core's private cache.
+pub const SIMD_LANE_BASES: usize = 64 * 1024;
+
+/// Largest identifier arena a single batch may accumulate before it is sent.
+pub const SIMD_BATCH_MAX_HEADER_BYTES: usize = 1024 * 256;
 
 pub const KMERS_TRANSFORM_READS_CHUNKS_SIZE: usize = 1024 * 24;
 
@@ -98,6 +105,32 @@ pub const COLORS_SINGLE_BATCH_SIZE: u64 = 20000;
 pub const QUERIES_COUNT_MIN_BATCH: u64 = 1000;
 pub const MAX_COLORMAP_WRITING_THREADS: usize = 24;
 pub const COLORS_BUFFER_DEFAULT_SIZE: usize = 1024 * 16;
+
+/// Total memory the per-bucket super-kmer deduplicators may hold between them.
+/// Split across the buckets, so the per-bucket window shrinks as the bucket
+/// count grows rather than the total growing with it.
+pub const MINIMIZER_DEDUPLICATION_MEMORY: usize = 2048 * 1024 * 1024;
+
+/// Collapse ratio, in percent of records removed over one drain window, below
+/// which a bucket's deduplicator is not paying for itself: it stops folding
+/// records and writes them straight out in the narrow form the bucketing
+/// threads already produced.
+pub const MINIMIZER_DEDUP_BYPASS_COLLAPSE_PERCENT: u64 = 10;
+
+/// Smallest window allowed to decide. A drain triggered after a handful of
+/// records says nothing about the input.
+pub const MINIMIZER_DEDUP_BYPASS_MIN_RECORDS: u64 = 4096;
+
+/// How many storage-fulls of input one bypass covers before the bucket is
+/// measured again.
+///
+/// A measured window folds a whole storage-full at several times the cost of
+/// forwarding it, so this is what bounds the price of staying adaptive: one
+/// window in sixty-four is under two percent. It is applied in full from the
+/// first bypass rather than ramped up to, because that decision already rests
+/// on a whole window's evidence and ramping would spend most of a run paying
+/// for the small budgets on the way.
+pub const MINIMIZER_DEDUP_BYPASS_SKIP_FACTOR: u32 = 64;
 
 pub const DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS: usize = 8192;
 pub const DEFAULT_COMPACTION_MAP_SUBBUCKET_VEC_ELEMENTS: usize = 8192;

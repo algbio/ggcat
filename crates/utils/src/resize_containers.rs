@@ -91,6 +91,12 @@ impl<C: ResizableContainer, const SIZE: usize> FixedSizeResizableContainer<C, SI
         Self(C::new_internal(SIZE))
     }
 
+    /// Starts below `SIZE`, for a caller holding to a memory budget. `clear`
+    /// only reinitialises above `SIZE`, so a smaller container stays smaller.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(C::new_internal(capacity))
+    }
+
     pub fn clear(&mut self) {
         self.0.clear_or_reinit(SIZE);
     }

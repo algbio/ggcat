@@ -25,6 +25,7 @@ io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
 structs = { package = "ggcat_structs", path = "../structs" }
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
+simd_accel = { package = "ggcat_simd_accel", path = "../simd-accel" }
 kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
 rayon = "1.10.0"
 byteorder = "1.5.0"

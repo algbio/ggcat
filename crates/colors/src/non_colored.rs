@@ -134,7 +134,7 @@ impl SequenceExtraDataCombiner for NonColoredManager {
     fn from_single_entry<'a>(
         out_buffer: &'a mut Self::TempBuffer,
         _color: Self::SingleDataType,
-        _in_buffer: &'a mut TempBuffer<Self::SingleDataType>,
+        _in_buffer: &'a TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer) {
         (Self, out_buffer)
     }

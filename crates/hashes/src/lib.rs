@@ -2,6 +2,7 @@ use bincode::{Decode, Encode};
 use dynamic_dispatch::dynamic_dispatch;
 
 pub mod cn_nthash;
+pub mod cn_nthash32;
 pub mod cn_seqhash;
 pub mod fw_seqhash;
 mod nthash_base;
@@ -21,6 +22,10 @@ pub mod default {
     pub type MNHFactory = super::cn_nthash::CanonicalNtHashIteratorFactory;
     pub type MNHExtendable = super::cn_nthash::ExtCanonicalNtHash;
     pub type MNHUnextendable = u64;
+
+    /// The minimizer hash of the bucketing phase: the scalar form of the
+    /// vectorized 32-bit canonical ntHash.
+    pub type MinimizerHashFactory = super::cn_nthash32::CanonicalNtHash32IteratorFactory;
 }
 
 pub trait UnextendableHashTraitType:

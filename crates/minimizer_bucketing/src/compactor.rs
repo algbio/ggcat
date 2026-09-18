@@ -88,7 +88,8 @@ fn is_light_chunk(path: &Path) -> bool {
 }
 
 pub struct BucketsCompactor<
-    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
+    // `Copy` because narrow records are staged by value, unwidened.
+    SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + Copy + 'static,
     MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + Copy + 'static,
     FlagsCount: typenum::Unsigned,
 > {
@@ -106,6 +107,22 @@ pub struct BucketsCompactor<
             ResizableVec<u8, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS>,
             MultipleData,
             WithMultiplicity,
+            AssemblerMinimizerPosition,
+            true,
+        >,
+    >,
+
+    /// Records that arrived narrow, staged narrow.
+    ///
+    /// A bypassed record is never folded with anything, so widening it on the
+    /// way in only to narrow it again on the way out is pure cost. Keeping it
+    /// as it arrived is what the compactor did before the deduplicator's wide
+    /// format was imposed on every record, folded or not.
+    uncompacted_narrow_buffer: Vec<
+        ReadMemStorage<
+            ResizableVec<u8, DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS>,
+            SingleData,
+            NoMultiplicity,
             AssemblerMinimizerPosition,
             true,
         >,
@@ -131,6 +148,9 @@ impl<
             super_kmers_hashmap: FuzzyHashmap::new(DEFAULT_COMPACTION_MAP_SUBBUCKET_ELEMENTS),
             super_kmers_extra_buffer: MultipleData::new_temp_buffer(),
             uncompacted_super_kmers_buffer: (0..second_buckets.total_buckets_count)
+                .map(|_| ReadMemStorage::new(ResizableVec::new()))
+                .collect(),
+            uncompacted_narrow_buffer: (0..second_buckets.total_buckets_count)
                 .map(|_| ReadMemStorage::new(ResizableVec::new()))
                 .collect(),
             uncompacted_super_kmers_extra_buffer: MultipleData::new_temp_buffer(),
@@ -212,9 +232,13 @@ impl<
     }
 
     #[inline(never)]
+    /// `narrow_bucket` holds the chunks a bypassing deduplicator wrote in the
+    /// bucketing threads' own format. They are compacted together with the wide
+    /// ones, as a single uncompacted blob.
     pub fn compact_buckets(
         &mut self,
         uncompacted_bucket: &Mutex<MultiChunkBucket>,
+        narrow_bucket: Option<&Mutex<MultiChunkBucket>>,
         compacted_bucket: &Mutex<MultiChunkBucket>,
         _bucket_index: usize,
         output_path: &Path,
@@ -229,6 +253,7 @@ impl<
         if TypeId::of::<SingleData>() == TypeId::of::<NonColoredManager>() {
             self.compact_buckets_with_writers::<LockFreeBinaryWriter, LockFreeBinaryWriter>(
                 uncompacted_bucket,
+                narrow_bucket,
                 compacted_bucket,
                 output_path,
                 _bucket_index,
@@ -239,6 +264,7 @@ impl<
             // Layer LZ4 over both colored outputs, including run-length encoded color sets.
             self.compact_buckets_with_writers::<CompressedBinaryWriter, CompressedBinaryWriter>(
                 uncompacted_bucket,
+                narrow_bucket,
                 compacted_bucket,
                 output_path,
                 _bucket_index,
@@ -251,6 +277,7 @@ impl<
     fn compact_buckets_with_writers<MultiWriter: LockFreeBucket, SingleWriter: LockFreeBucket>(
         &mut self,
         uncompacted_bucket: &Mutex<MultiChunkBucket>,
+        narrow_bucket: Option<&Mutex<MultiChunkBucket>>,
         compacted_bucket: &Mutex<MultiChunkBucket>,
         output_path: &Path,
         _bucket_index: usize,
@@ -321,19 +348,33 @@ impl<
         let mut taken_compacted_size = 0;
 
         struct ChosenChunk {
-            _compacted: bool,
+            /// Written by a bypassing deduplicator, so it holds the narrow
+            /// records rather than the wide ones.
+            narrow: bool,
             path: PathBuf,
         }
 
-        // Uncompacted
+        // Uncompacted, both flavours. They go into one list because they are one
+        // blob as far as compaction is concerned: only the decoder differs.
+        //
+        // A narrow chunk holds more records per byte than a wide one, so this
+        // size slightly under-counts the work it stands for. It only bounds how
+        // much already-compacted data may be read back alongside, so erring low
+        // is the safe direction.
+        for (bucket, narrow) in [
+            Some((uncompacted_bucket, false)),
+            narrow_bucket.map(|b| (b, true)),
+        ]
+        .into_iter()
+        .flatten()
         {
-            let mut bucket = uncompacted_bucket.lock();
+            let mut bucket = bucket.lock();
 
             while let Some(chunk) = bucket.chunks.pop() {
                 let chunk_size = MemoryFs::get_file_size(&chunk).unwrap();
                 taken_uncompacted_size += chunk_size;
                 uncompacted_chosen_chunks.push(ChosenChunk {
-                    _compacted: false,
+                    narrow,
                     path: chunk,
                 });
             }
@@ -395,7 +436,9 @@ impl<
 
                 taken_compacted_size += chunk_size;
                 compacted_chosen_chunks.push(ChosenChunk {
-                    _compacted: true,
+                    // Unread for compacted chunks: those are routed by the
+                    // format tag in their own header, not by this flag.
+                    narrow: false,
                     path: bucket.chunks.pop().unwrap(),
                 });
             }
@@ -418,35 +461,84 @@ impl<
             );
             input_files_size += bucket_file_index.get_file_size() as usize;
 
-            helper_read_bucket::<
-                SingleData,
-                WithSecondBucket,
-                NoMultiplicity,
-                AssemblerMinimizerPosition,
-                FlagsCount,
-                NoAlignment,
-            >(
-                bucket_file_index.into_chunks(),
-                None,
-                |read, extra_buffer| {
-                    self.uncompacted_super_kmers_buffer[read.second_bucket as usize].encode_read(
-                        &DeserializedRead {
-                            read: read.read,
-                            multiplicity: read.multiplicity,
-                            minimizer_pos: read.minimizer_pos,
-                            flags: read.flags,
-                            extra: MultipleData::from_single_entry(
-                                &mut self.uncompacted_super_kmers_extra_buffer,
-                                read.extra,
-                                extra_buffer,
-                            )
-                            .0,
-                            second_bucket: 0,
-                        },
-                    );
+            debug_assert_eq!(
+                bucket_file_index.get_data_format_info::<MinimizerBucketMode>(),
+                if bucket.narrow {
+                    MinimizerBucketMode::UncompactedNarrow
+                } else {
+                    MinimizerBucketMode::Single
                 },
-                self.k,
+                "an uncompacted chunk was taken from the wrong list"
             );
+
+            // Both flavours land in the same staging buffer, keyed by the
+            // in-band second bucket byte, so everything downstream of here sees
+            // one uncompacted blob.
+            let chunks = bucket_file_index.into_chunks();
+            if bucket.narrow {
+                // The bucketing threads' own format: one extra data entry and an
+                // implicit multiplicity of one. Widening has to happen inside
+                // the callback, because `helper_read_bucket` clears the
+                // decoder's buffer after every record.
+                helper_read_bucket::<
+                    SingleData,
+                    WithSecondBucket,
+                    NoMultiplicity,
+                    AssemblerMinimizerPosition,
+                    FlagsCount,
+                    NoAlignment,
+                >(
+                    chunks,
+                    None,
+                    |read, _extra_buffer| {
+                        // Stored as it arrived. It is widened only if this
+                        // compaction actually folds, and not at all if it just
+                        // groups records into sub-buckets.
+                        self.uncompacted_narrow_buffer[read.second_bucket as usize].encode_read(
+                            &DeserializedRead {
+                                read: read.read,
+                                multiplicity: read.multiplicity,
+                                minimizer_pos: read.minimizer_pos,
+                                flags: read.flags,
+                                extra: read.extra,
+                                second_bucket: 0,
+                            },
+                        );
+                    },
+                    self.k,
+                );
+            } else {
+                // Drained by a deduplicator, so the entries already carry the
+                // combinable extra data and a multiplicity and only have to
+                // cross into this compactor's arena.
+                helper_read_bucket::<
+                    MultipleData,
+                    WithSecondBucket,
+                    WithMultiplicity,
+                    AssemblerMinimizerPosition,
+                    FlagsCount,
+                    NoAlignment,
+                >(
+                    chunks,
+                    None,
+                    |read, extra_buffer| {
+                        self.uncompacted_super_kmers_buffer[read.second_bucket as usize]
+                            .encode_read(&DeserializedRead {
+                                read: read.read,
+                                multiplicity: read.multiplicity,
+                                minimizer_pos: read.minimizer_pos,
+                                flags: read.flags,
+                                extra: MultipleData::copy_extra_from(
+                                    read.extra,
+                                    extra_buffer,
+                                    &mut self.uncompacted_super_kmers_extra_buffer,
+                                ),
+                                second_bucket: 0,
+                            });
+                    },
+                    self.k,
+                );
+            }
         }
 
         // self.uncompacted_super_kmers_storage
@@ -523,10 +615,12 @@ impl<
         let mut multi_buffer = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
         let mut single_buffer = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
 
-        for (sub_bucket_index, (compacted_sub_bucket, uncompacted_buffer)) in sub_buckets
-            .into_iter()
-            .zip(&mut self.uncompacted_super_kmers_buffer)
-            .enumerate()
+        for (sub_bucket_index, ((compacted_sub_bucket, uncompacted_buffer), narrow_buffer)) in
+            sub_buckets
+                .into_iter()
+                .zip(&mut self.uncompacted_super_kmers_buffer)
+                .zip(&mut self.uncompacted_narrow_buffer)
+                .enumerate()
         {
             let mut total_sequences = 0;
 
@@ -534,12 +628,16 @@ impl<
             //     let pop_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
             // );
 
-            if uncompacted_buffer.sequences_count() == 0 && compacted_sub_bucket.is_none() {
+            if uncompacted_buffer.sequences_count() == 0
+                && narrow_buffer.sequences_count() == 0
+                && compacted_sub_bucket.is_none()
+            {
                 // Skip the sub-bucket if it has no data
                 continue;
             }
 
             let total_sequences_count = uncompacted_buffer.sequences_count()
+                + narrow_buffer.sequences_count()
                 + compacted_sub_bucket
                     .as_ref()
                     .map(|c| c.sequences_count)
@@ -607,6 +705,32 @@ impl<
                     );
                 });
                 uncompacted_buffer.clear();
+
+                // Records that arrived narrow are widened here rather than on
+                // the way into staging, so the cost falls only on a compaction
+                // that actually folds.
+                narrow_buffer.decode_reads(|entry| {
+                    let extra = MultipleData::from_single_entry(
+                        &mut self.uncompacted_super_kmers_extra_buffer,
+                        entry.extra,
+                        &SingleData::new_temp_buffer(),
+                    )
+                    .0;
+                    Self::process_compactable_superkmer::<MultipleData>(
+                        SuperKmerEntryRef {
+                            read: entry.read,
+                            multiplicity: entry.multiplicity,
+                            minimizer_pos: entry.minimizer_pos,
+                            flags: entry.flags,
+                            extra,
+                        },
+                        &mut self.super_kmers_hashmap,
+                        &mut total_sequences,
+                        &self.uncompacted_super_kmers_extra_buffer,
+                        &mut self.super_kmers_extra_buffer,
+                    );
+                });
+                narrow_buffer.clear();
 
                 // Split between single (multiplicity = 1) and multiple superkmers
                 self.super_kmers_hashmap.process_elements(
@@ -715,7 +839,6 @@ impl<
                 self.super_kmers_hashmap.reset_allocator();
             } else {
                 // Not compacting, just write the uncompacted buffer into the output bucket
-
                 new_bucket_single.set_checkpoint_data(
                     Some(&ReadsCheckpointData {
                         target_subbucket: sub_bucket_index as BucketIndexType,
@@ -749,6 +872,27 @@ impl<
                     }
                 });
                 uncompacted_buffer.clear();
+
+                // Already in the single form the output asks for.
+                narrow_buffer.decode_reads(|entry| {
+                    serializer_single.write_to(
+                        &CompressedReadsBucketData::new_packed(
+                            entry.read,
+                            entry.flags,
+                            0,
+                            entry.minimizer_pos,
+                        ),
+                        &mut single_buffer,
+                        &entry.extra,
+                        &SingleData::new_temp_buffer(),
+                    );
+
+                    if single_buffer.len() > DEFAULT_OUTPUT_BUFFER_SIZE {
+                        new_bucket_single.write_data(&single_buffer);
+                        single_buffer.clear();
+                    }
+                });
+                narrow_buffer.clear();
             }
 
             if multi_buffer.len() > 0 {

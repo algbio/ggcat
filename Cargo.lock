@@ -1186,6 +1186,7 @@ dependencies = [
  "ggcat_hashes",
  "ggcat_io",
  "ggcat_minimizer_bucketing",
+ "ggcat_simd_accel",
  "ggcat_structs",
  "parallel-processor",
  "streaming-libdeflate-rs",
@@ -1332,6 +1333,7 @@ dependencies = [
  "ggcat_io",
  "ggcat_kmers_transform",
  "ggcat_minimizer_bucketing",
+ "ggcat_simd_accel",
  "ggcat_structs",
  "ggcat_utils",
  "hashbrown 0.15.5",
@@ -1419,13 +1421,16 @@ dependencies = [
 name = "ggcat_minimizer_bucketing"
 version = "2.2.0"
 dependencies = [
+ "arc-swap",
  "bincode 2.0.1",
  "byteorder",
+ "flate2",
  "ggcat-logging",
  "ggcat_colors",
  "ggcat_config",
  "ggcat_hashes",
  "ggcat_io",
+ "ggcat_simd_accel",
  "ggcat_utils",
  "hashbrown 0.15.5",
  "nightly-quirks",
@@ -1434,6 +1439,7 @@ dependencies = [
  "replace_with",
  "rustc-hash",
  "streaming-libdeflate-rs",
+ "tar",
  "tokio",
  "typenum",
 ]
@@ -1455,6 +1461,7 @@ dependencies = [
  "ggcat_io",
  "ggcat_kmers_transform",
  "ggcat_minimizer_bucketing",
+ "ggcat_simd_accel",
  "ggcat_structs",
  "ggcat_utils",
  "hashbrown 0.15.5",
@@ -1493,6 +1500,20 @@ dependencies = [
  "streaming-libdeflate-rs",
  "typenum",
  "zstd",
+]
+
+[[package]]
+name = "ggcat_simd_accel"
+version = "2.2.0"
+dependencies = [
+ "criterion",
+ "ggcat_hashes",
+ "ggcat_io",
+ "ggcat_utils",
+ "pcg_rand",
+ "rand 0.8.5",
+ "rayon",
+ "wide",
 ]
 
 [[package]]

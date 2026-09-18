@@ -100,7 +100,9 @@ impl SplittedBucket {
 
             for (chunk, info) in chunks.into_iter().zip(info.iter()) {
                 match info.1 {
-                    MinimizerBucketMode::Single => unreachable!(),
+                    MinimizerBucketMode::Single | MinimizerBucketMode::UncompactedNarrow => {
+                        unreachable!("uncompacted chunks are consumed by the compactor")
+                    }
                     MinimizerBucketMode::SingleGrouped => single_chunks.push(chunk),
                     MinimizerBucketMode::Compacted => multi_chunks.push(chunk),
                 }

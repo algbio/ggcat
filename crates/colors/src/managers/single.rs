@@ -335,3 +335,6 @@ impl IdentSequenceWriter for UnitigColorDataSerializer {
         todo!()
     }
 }
+
+/// Holds no slab of its own, so the budget hooks are the defaults.
+impl io::concurrent::temp_reads::extra_data::BoundedTempBuffer for UnitigsSerializerTempBuffer {}

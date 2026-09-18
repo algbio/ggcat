@@ -874,3 +874,6 @@ mod tests {
         assert_eq!(run_remove(2..4, &[(1, 6)]), vec![(1, 4)]);
     }
 }
+
+/// Holds no slab of its own, so the budget hooks are the defaults.
+impl io::concurrent::temp_reads::extra_data::BoundedTempBuffer for UnitigsSerializerTempBuffer {}

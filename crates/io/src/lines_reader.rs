@@ -1,8 +1,6 @@
+use crate::raw_reader::{Codec, RawBytesReader, codec_of, open_input, wrap_decoder};
 use bstr::ByteSlice;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
-use parallel_processor::mt_debug_counters::counter::{AtomicCounter, AvgMode, SumMode};
-use parallel_processor::mt_debug_counters::{declare_avg_counter_i64, declare_counter_i64};
-use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use streaming_libdeflate_rs::decompress_file_buffered_callback;
@@ -13,58 +11,26 @@ pub(crate) enum LinesSource<'a> {
 }
 
 pub struct LinesReader {
-    buffer: Vec<u8>,
+    raw: RawBytesReader,
 }
-
-static COUNTER_THREADS_BUSY_READING: AtomicCounter<SumMode> =
-    declare_counter_i64!("line_reading_threads", SumMode, false);
-
-static COUNTER_THREADS_PROCESSING_READS: AtomicCounter<SumMode> =
-    declare_counter_i64!("line_processing_threads", SumMode, false);
-
-static COUNTER_THREADS_READ_BYTES: AtomicCounter<SumMode> =
-    declare_counter_i64!("line_read_bytes", SumMode, false);
-static COUNTER_THREADS_READ_BYTES_AVG: AtomicCounter<AvgMode> =
-    declare_avg_counter_i64!("line_read_bytes_avg", false);
 
 impl LinesReader {
     pub fn new() -> Self {
         Self {
-            buffer: vec![0; DEFAULT_OUTPUT_BUFFER_SIZE],
+            raw: RawBytesReader::new(),
         }
     }
 
     #[inline(always)]
     fn read_stream_buffered(
         &mut self,
-        mut stream: impl Read,
+        stream: &mut dyn Read,
         mut callback: impl FnMut(&[u8]),
     ) -> Result<(), ()> {
-        COUNTER_THREADS_BUSY_READING.inc();
-
-        loop {
-            let count = match stream.read(self.buffer.as_mut_slice()) {
-                Ok(count) => count,
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(_) => {
-                    COUNTER_THREADS_BUSY_READING.sub(1);
-                    return Err(());
-                }
-            };
-            COUNTER_THREADS_READ_BYTES.inc_by(count as i64);
-            COUNTER_THREADS_READ_BYTES_AVG.add_value(count as i64);
-            COUNTER_THREADS_BUSY_READING.sub(1);
-            if count == 0 {
-                COUNTER_THREADS_PROCESSING_READS.inc();
-                callback(&[]);
-                COUNTER_THREADS_PROCESSING_READS.sub(1);
-                return Ok(());
-            }
-            COUNTER_THREADS_PROCESSING_READS.inc();
-            callback(&self.buffer[0..count]);
-            COUNTER_THREADS_PROCESSING_READS.sub(1);
-            COUNTER_THREADS_BUSY_READING.inc();
-        }
+        let result = self.raw.read_stream(stream, &mut callback);
+        // The empty slice is how the line readers learn that the input ended.
+        callback(&[]);
+        result.map_err(|_| ())
     }
 
     fn read_binary_file(
@@ -73,82 +39,38 @@ impl LinesReader {
         mut callback: impl FnMut(&[u8]),
         remove: bool,
     ) {
-        if path.as_ref().extension().filter(|x| *x == "gz").is_some() {
-            if let Err(_err) = decompress_file_buffered_callback(
-                &path,
+        let source = path.as_ref();
+        let codec = codec_of(source);
+        if codec == Codec::Gzip {
+            if decompress_file_buffered_callback(
+                source,
                 |data| {
                     callback(data);
                     Ok(())
                 },
                 DEFAULT_OUTPUT_BUFFER_SIZE,
-            ) {
-                ggcat_logging::error!(
-                    "WARNING: Error while reading file {}",
-                    path.as_ref().display()
-                );
+            )
+            .is_err()
+            {
+                ggcat_logging::error!("WARNING: Error while reading file {}", source.display());
             }
             callback(&[]);
-        } else if path.as_ref().extension().filter(|x| *x == "lz4").is_some() {
-            let file = lz4::Decoder::new(
-                File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display())),
-            )
-            .unwrap();
-            self.read_stream_buffered(file, callback)
-                .unwrap_or_else(|_| {
-                    ggcat_logging::error!(
-                        "WARNING: Error while reading file {}",
-                        path.as_ref().display()
-                    );
-                });
-        } else if path.as_ref().extension().filter(|x| *x == "bz2").is_some() {
-            let file = bzip2::read::BzDecoder::new(
-                File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display())),
-            );
-            self.read_stream_buffered(file, callback)
-                .unwrap_or_else(|_| {
-                    ggcat_logging::error!(
-                        "WARNING: Error while reading file {}",
-                        path.as_ref().display()
-                    );
-                });
-        } else if path.as_ref().extension().filter(|x| *x == "xz").is_some() {
-            let file = liblzma::read::XzDecoder::new(
-                File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display())),
-            );
-            self.read_stream_buffered(file, callback)
-                .unwrap_or_else(|_| {
-                    ggcat_logging::error!(
-                        "WARNING: Error while reading file {}",
-                        path.as_ref().display()
-                    );
-                });
-        } else if path
-            .as_ref()
-            .extension()
-            .filter(|x| *x == "zst" || *x == "zstd")
-            .is_some()
-        {
-            let file = zstd::stream::read::Decoder::new(
-                File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display())),
-            )
-            .unwrap();
-            self.read_stream_buffered(file, callback)
-                .unwrap_or_else(|_| {
-                    ggcat_logging::error!(
-                        "WARNING: Error while reading file {}",
-                        path.as_ref().display()
-                    );
-                });
         } else {
-            let file =
-                File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display()));
-            self.read_stream_buffered(file, callback)
-                .unwrap_or_else(|_| {
-                    ggcat_logging::error!(
-                        "WARNING: Error while reading file {}",
-                        path.as_ref().display()
-                    );
-                });
+            match wrap_decoder(codec, open_input(source)) {
+                Ok(mut reader) => {
+                    self.read_stream_buffered(&mut reader, callback)
+                        .unwrap_or_else(|_| {
+                            ggcat_logging::error!(
+                                "WARNING: Error while reading file {}",
+                                source.display()
+                            );
+                        });
+                }
+                Err(_) => {
+                    ggcat_logging::error!("WARNING: Error while reading file {}", source.display());
+                    callback(&[]);
+                }
+            }
         }
 
         if remove {

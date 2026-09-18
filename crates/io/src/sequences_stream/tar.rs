@@ -1,7 +1,9 @@
 //! Sequential archive inputs. Discovery is deliberately confined to `read`.
 use super::SequenceInfo;
 use super::general::{DynamicSequencesStream, GeneralSequenceBlockData};
+use crate::raw_reader::RawBytesReader;
 use crate::sequences_reader::{DnaSequence, SequencesReader};
+use crate::sequences_sink::SequencesSink;
 use anyhow::{Context, Result, bail};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
@@ -163,6 +165,67 @@ impl TarSequenceBlock {
                 copyback,
                 copy_ident,
             );
+            if let Some(error) = checked.error {
+                bail!("Error reading {}: {}", name, error);
+            }
+        }
+        // Consume compression trailers too: tar iteration stops at its end marker.
+        std::io::copy(&mut archive.into_inner(), &mut std::io::sink())?;
+        for path in unmatched {
+            ggcat_logging::info!(
+                "Unmatched archive color mapping: {}:{}",
+                self.path.display(),
+                path.display()
+            );
+        }
+        Ok(())
+    }
+    /// Reads every supported member as raw bytes into `sink`.
+    pub fn read_into(
+        &self,
+        reader: &mut RawBytesReader,
+        sink: &mut impl SequencesSink,
+    ) -> Result<()> {
+        let file = std::fs::File::open(&self.path)
+            .with_context(|| format!("Cannot open archive {}", self.path.display()))?;
+        let mut archive = tar::Archive::new(decoded_reader(file, &self.path)?);
+        let mut unmatched: HashSet<_> = self.member_colors.keys().cloned().collect();
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let path = entry.path()?.into_owned();
+            let name = format!("{}:{}", self.path.display(), path.display());
+            let format = if !entry.header().entry_type().is_file() {
+                ggcat_logging::info!("Skipping {}: {}", name, "not a regular file");
+                continue;
+            } else {
+                match SequencesReader::archive_file_type(&path) {
+                    Some(format) => format,
+                    None => {
+                        ggcat_logging::info!(
+                            "Skipping {}: {}",
+                            name,
+                            "unsupported sequence format"
+                        );
+                        continue;
+                    }
+                }
+            };
+            unmatched.remove(&path);
+            let color = match self.member_colors.get(&path).copied().or(self.color) {
+                Some(id) => id,
+                None => self.registry.lock().member_color(name.clone())?,
+            };
+            let mut stream = decoded_reader(&mut entry, &path)
+                .with_context(|| format!("Cannot decompress {}", name))?;
+            // Keep parser errors in the normal Result path, including decoder failures.
+            let mut checked = CheckedReader {
+                inner: &mut stream,
+                error: None,
+            };
+            sink.begin_stream(format, SequenceInfo { color: Some(color) });
+            let result = reader.read_stream(&mut checked, |bytes| sink.push_bytes(bytes));
+            sink.end_stream();
+            result.with_context(|| format!("Error reading {}", name))?;
             if let Some(error) = checked.error {
                 bail!("Error reading {}: {}", name, error);
             }

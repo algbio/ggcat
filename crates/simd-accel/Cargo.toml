@@ -1,0 +1,24 @@
+[package]
+name = "ggcat_simd_accel"
+version = "2.2.0"
+edition = "2024"
+
+[lib]
+name = "ggcat_simd_accel"
+doctest = false
+
+[dependencies]
+wide = "0.7.33"
+
+[dev-dependencies]
+criterion = "0.5.1"
+hashes = { package = "ggcat_hashes", path = "../hashes" }
+io = { package = "ggcat_io", path = "../io" }
+pcg_rand = "0.13.0"
+rand = "0.8.5"
+rayon = "1.11.0"
+utils = { package = "ggcat_utils", path = "../utils" }
+
+[[bench]]
+name = "simd-accel-bench"
+harness = false

@@ -15,6 +15,7 @@ nightly-quirks = "0.1.4"
 # Pipeline libraries
 hashes = { package = "ggcat_hashes", path = "../hashes" }
 io = { package = "ggcat_io", path = "../io" }
+simd_accel = { package = "ggcat_simd_accel", path = "../simd-accel" }
 
 # Other libraries
 replace_with = "0.1.7"
@@ -30,3 +31,8 @@ rustc-hash = "2.1.0"
 hashbrown = "0.15.3"
 bincode = "2.0.1"
 typenum = "1.18.0"
+arc-swap = "1.7.1"
+
+[dev-dependencies]
+flate2 = "1.0.30"
+tar = "0.4"

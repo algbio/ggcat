@@ -9,13 +9,18 @@ use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::{BucketIndexType, ColorIndexType};
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::HashFunction;
-use hashes::default::MNHFactory;
+use hashes::default::{MNHFactory, MinimizerHashFactory};
 use hashes::rolling::batch_minqueue::BatchMinQueue;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
+use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::TempBuffer;
-use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
+use io::sequences_reader::DnaSequencesFileType;
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
+use minimizer_bucketing::lane_runs::{
+    LaneRunResolver, SimdScratch, build_valid_lanes, super_kmer_flags,
+};
+use minimizer_bucketing::simd_batch::{RecordInfo, SequencesLaneBatch};
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
@@ -23,6 +28,8 @@ use minimizer_bucketing::{
 use minimizer_bucketing::{MinimzerBucketingFilesReaderInputPacket, PushSequenceInfo};
 use parallel_processor::buckets::{BucketsCount, MultiChunkBucket};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
+use simd_accel::hashing::{SIMD_LANES, canonical_minimizer_items};
+use simd_accel::minimizer::SimdBatchMinQueue;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::Path;
@@ -36,6 +43,7 @@ struct MinimizerExtraData {
 
 pub struct AssemblerMinimizerBucketingExecutor<CD: MinimizerBucketingSeqColorData> {
     minimizer_queue: BatchMinQueue<MinimizerExtraData>,
+    simd_queue: SimdBatchMinQueue<u32>,
     global_data: Arc<MinimizerBucketingCommonData<()>>,
     pub duplicates_bucket: BucketIndexType,
     _phantom: PhantomData<CD>,
@@ -92,6 +100,7 @@ impl<CD: MinimizerBucketingSeqColorData> MinimizerBucketingExecutorFactory
     ) -> Self::ExecutorType {
         Self::ExecutorType {
             minimizer_queue: BatchMinQueue::new(global_data.k - global_data.m),
+            simd_queue: SimdBatchMinQueue::new(global_data.k - global_data.m),
             global_data: global_data.clone(),
             duplicates_bucket: global_data.buckets_count.normal_buckets_count as u16,
             canonical: global_data.canonical,
@@ -107,6 +116,7 @@ impl<CD: MinimizerBucketingSeqColorData> AssemblerMinimizerBucketingExecutorFact
     ) -> AssemblerMinimizerBucketingExecutor<CD> {
         AssemblerMinimizerBucketingExecutor {
             minimizer_queue: BatchMinQueue::new(global_data.k - global_data.m),
+            simd_queue: SimdBatchMinQueue::new(global_data.k - global_data.m),
             global_data: global_data.clone(),
             duplicates_bucket,
             canonical: global_data.canonical,
@@ -124,7 +134,7 @@ impl<CD: MinimizerBucketingSeqColorData>
         stream_info: &<AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::StreamInfo,
         sequence_info: SequenceInfo,
         _read_index: u64,
-        sequence: &DnaSequence<&[u8]>,
+        record: &RecordInfo<'_>,
         preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         CD::clear_temp_buffer(&mut preprocess_info.color_info_buffer);
@@ -132,12 +142,12 @@ impl<CD: MinimizerBucketingSeqColorData>
         preprocess_info.color_info = CD::create(
             SingleSequenceInfo {
                 static_color: sequence_info.color.unwrap_or(stream_info.file_color),
-                sequence_ident: match sequence.format {
+                sequence_ident: match record.format {
                     DnaSequencesFileType::FASTA | DnaSequencesFileType::FASTQ => {
-                        SequenceIdent::FASTA(sequence.ident_data)
+                        SequenceIdent::FASTA(record.ident_data)
                     }
                     DnaSequencesFileType::GFA => SequenceIdent::GFA {
-                        colors: sequence.ident_data,
+                        colors: record.ident_data,
                     },
                     DnaSequencesFileType::BINARY => {
                         todo!()
@@ -176,13 +186,123 @@ impl<CD: MinimizerBucketingSeqColorData>
         &mut self,
         preprocess_info: &<AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
         sequence: S,
+        range: Range<usize>,
+        used_bits: usize,
+        first_bits: usize,
+        second_bits: usize,
+        push_sequence: F,
+    ) {
+        self.process_sequence_with::<MNHFactory, S, F, SEPARATE_DUPLICATES>(
+            preprocess_info,
+            sequence,
+            range,
+            used_bits,
+            first_bits,
+            second_bits,
+            push_sequence,
+        )
+    }
+
+    fn process_simd_batch<F, const SEPARATE_DUPLICATES: bool>(
+        &mut self,
+        batch: &SequencesLaneBatch,
+        preprocess: &[AssemblerPreprocessInfo<CD>],
+        scratch: &mut SimdScratch,
+        used_bits: usize,
+        first_bits: usize,
+        second_bits: usize,
+        mut push_sequence: F,
+    ) where
+        F: for<'a, 'b> FnMut(
+            PushSequenceInfo<'a, CompressedRead<'b>, AssemblerMinimizerBucketingExecutorFactory<CD>>,
+        ),
+    {
+        let (k, m) = (self.global_data.k, self.global_data.m);
+        let duplicates_bucket = self.duplicates_bucket;
+        let canonical = self.canonical;
+
+        // A window spans the k-1 bases whose minimizer delimits a super-k-mer.
+        build_valid_lanes(&mut scratch.valid_lanes, batch, k - 1);
+        scratch.destride(batch);
+        let scratch = &*scratch;
+
+        let mut resolvers: [LaneRunResolver; SIMD_LANES] =
+            std::array::from_fn(|lane| LaneRunResolver::new(batch.fragments(lane)));
+
+        let hashes = canonical_minimizer_items::<SEPARATE_DUPLICATES>(batch.packed_sequence(), m)
+            .expect("the lanes are shorter than the minimizer");
+
+        self.simd_queue
+            .get_valid_minimizer_splits::<_, SEPARATE_DUPLICATES>(
+                hashes,
+                &scratch.valid_lanes,
+                #[inline(always)]
+                |run| {
+                    let resolved =
+                        resolvers[run.lane].resolve(run.start, run.end, run.finished, k, true);
+                    let preprocess_info = &preprocess[resolved.record_idx as usize];
+                    let hash = run.hash as u64;
+
+                    let (bucket, rc, minimizer_pos) = if SEPARATE_DUPLICATES && (hash & 1) == 0 {
+                        (duplicates_bucket, false, 0)
+                    } else {
+                        let position = (run.extra >> 1) as usize;
+                        let is_forward = run.extra & 1 == 1;
+                        let rc = canonical && SEPARATE_DUPLICATES && !is_forward;
+                        (
+                            MinimizerHashFactory::get_bucket(used_bits, first_bits, hash),
+                            rc,
+                            if rc {
+                                (resolved.end - position - m) as u16
+                            } else {
+                                (position - resolved.start) as u16
+                            },
+                        )
+                    };
+
+                    push_sequence(PushSequenceInfo {
+                        bucket,
+                        second_bucket: MinimizerHashFactory::get_bucket(
+                            used_bits + first_bits,
+                            second_bits,
+                            hash,
+                        ),
+                        sequence: scratch
+                            .lane_read(run.lane)
+                            .sub_slice((resolved.start..resolved.end).into()),
+                        extra_data: preprocess_info.color_info.get_subslice(
+                            (resolved.start - resolved.fragment_start)
+                                ..(run.end - resolved.fragment_start),
+                            rc,
+                        ),
+                        temp_buffer: &preprocess_info.color_info_buffer,
+                        minimizer_pos,
+                        flags: super_kmer_flags(resolved.include_first, resolved.include_last, rc),
+                        rc,
+                    });
+                },
+            );
+    }
+}
+
+impl<CD: MinimizerBucketingSeqColorData> AssemblerMinimizerBucketingExecutor<CD> {
+    /// The scalar super-k-mer splitting, over any minimizer hash.
+    pub fn process_sequence_with<
+        H: HashFunctionFactory<HashTypeUnextendable = u64>,
+        S: MinimizerInputSequence,
+        F: FnMut(PushSequenceInfo<S, AssemblerMinimizerBucketingExecutorFactory<CD>>),
+        const SEPARATE_DUPLICATES: bool,
+    >(
+        &mut self,
+        preprocess_info: &AssemblerPreprocessInfo<CD>,
+        sequence: S,
         _range: Range<usize>,
         used_bits: usize,
         first_bits: usize,
         second_bits: usize,
         mut push_sequence: F,
     ) {
-        let hashes = MNHFactory::new(sequence, self.global_data.m);
+        let hashes = H::new(sequence, self.global_data.m);
 
         let mut last_index = 1;
         let mut include_first = preprocess_info.include_first;
@@ -227,7 +347,7 @@ impl<CD: MinimizerBucketingSeqColorData>
                     } else {
                         let rc = self.canonical && SEPARATE_DUPLICATES && !min_hash.1.is_forward;
                         (
-                            MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
+                            H::get_bucket(used_bits, first_bits, min_hash.0),
                             rc,
                             if rc {
                                 (index + self.global_data.k - 1 - (min_hash.1.index as usize) - self.global_data.m) as u16
@@ -252,7 +372,7 @@ impl<CD: MinimizerBucketingSeqColorData>
                     push_sequence(
                         PushSequenceInfo {
                             bucket,
-                            second_bucket: MNHFactory::get_bucket(used_bits + first_bits, second_bits, min_hash.0),
+                            second_bucket: H::get_bucket(used_bits + first_bits, second_bits, min_hash.0),
                             sequence: sequence.get_subslice((last_index - 1)..(index + self.global_data.k - 1)),
                             extra_data: preprocess_info
                                 .color_info
@@ -336,7 +456,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         k,
         m,
         (),
-        Some(k - 1),
         false,
         k,
         chunking_size_threshold,

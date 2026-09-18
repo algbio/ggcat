@@ -6,15 +6,17 @@ use colors::colors_manager::{
 };
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
-use hashes::HashableSequence;
+use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement, TempBuffer,
 };
-use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
+use io::sequences_reader::DnaSequencesFileType;
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::fasta::FastaFileSequencesStream;
+use minimizer_bucketing::lane_runs::SimdScratch;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
+use minimizer_bucketing::simd_batch::{RecordInfo, SequencesLaneBatch};
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
@@ -119,11 +121,13 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Copy + FastS
     fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
 
     fn from_single_entry<'a>(
-        _out_buffer: &'a mut Self::TempBuffer,
+        out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
-        in_buffer: &'a mut TempBuffer<Self::SingleDataType>,
+        _in_buffer: &'a TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer) {
-        (single, in_buffer)
+        // Both buffers are `()` here, so handing back the destination is the
+        // same thing as handing back the source.
+        (single, out_buffer)
     }
 }
 
@@ -210,7 +214,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
         _stream_info: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
         sequence_info: SequenceInfo,
         _read_index: u64,
-        sequence: &DnaSequence<'_, &[u8]>,
+        record: &RecordInfo<'_>,
         preprocess_info: &mut <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
@@ -222,16 +226,13 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
                 let color = MinimizerBucketingSeqColorDataType::<CX>::create(
                     SingleSequenceInfo {
                         static_color: sequence_info.color.unwrap_or(0),
-                        sequence_ident: match sequence.format {
-                            DnaSequencesFileType::FASTA => {
-                                SequenceIdent::FASTA(sequence.ident_data)
+                        sequence_ident: match record.format {
+                            DnaSequencesFileType::FASTA | DnaSequencesFileType::FASTQ => {
+                                SequenceIdent::FASTA(record.ident_data)
                             }
                             DnaSequencesFileType::GFA => SequenceIdent::GFA {
-                                colors: sequence.ident_data,
+                                colors: record.ident_data,
                             },
-                            DnaSequencesFileType::FASTQ => {
-                                todo!()
-                            }
                             DnaSequencesFileType::BINARY => {
                                 todo!()
                             }
@@ -241,12 +242,11 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
                 );
 
                 if CX::COLORS_ENABLED
-                    && (color.debug_count() != sequence.seq.bases_count() - self.global_data.k + 1)
+                    && (color.debug_count() != record.bases_count - self.global_data.k + 1)
                 {
                     ggcat_logging::error!(
-                        "WARN: Sequence does not have enough colors, please check matching k size:\n{}\n{}",
-                        std::str::from_utf8(sequence.ident_data).unwrap(),
-                        sequence.seq.debug_to_string()
+                        "WARN: Sequence does not have enough colors, please check matching k size:\n{}",
+                        String::from_utf8_lossy(record.ident_data),
                     );
                 }
 
@@ -277,19 +277,72 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
         _used_bits: usize,
         _first_bits: usize,
         _second_bits: usize,
-        mut push_sequence: F,
+        push_sequence: F,
     ) {
-        let mut rolling_iter = preprocess_info
+        let colors = preprocess_info
             .read_data
             .as_ref()
             .unwrap()
             .colors
             .get_iterator(&preprocess_info.colors_buffer.0);
+        self.split_by_colors(sequence, colors, push_sequence);
+    }
 
+    fn process_simd_batch<F, const SEPARATE_DUPLICATES: bool>(
+        &mut self,
+        batch: &SequencesLaneBatch,
+        preprocess: &[ReadTypeBuffered<CX>],
+        scratch: &mut SimdScratch,
+        _used_bits: usize,
+        _first_bits: usize,
+        _second_bits: usize,
+        mut push_sequence: F,
+    ) where
+        F: for<'a, 'b> FnMut(
+            PushSequenceInfo<'a, CompressedRead<'b>, DumperMinimizerBucketingExecutorFactory<CX>>,
+        ),
+    {
+        let k = self.global_data.k;
+        scratch.destride(batch);
+        let scratch = &*scratch;
+        for lane in 0..simd_accel::hashing::SIMD_LANES {
+            let read = scratch.lane_read(lane);
+            for pair in batch.fragments(lane).windows(2) {
+                let (start, end) = (pair[0].lane_start as usize, pair[1].lane_start as usize);
+                let preprocess_info = &preprocess[pair[0].record_idx as usize];
+                let data = preprocess_info.read_data.as_ref().unwrap();
+                // A unitig longer than a lane is split, so its colours have to
+                // be taken from where the fragment starts inside the record.
+                let first = pair[0].source_start as usize;
+                let fragment_colors = data
+                    .colors
+                    .get_subslice(first..first + (end - start) - k + 1, false);
+                let colors = fragment_colors.get_iterator(&preprocess_info.colors_buffer.0);
+                self.split_by_colors(
+                    read.sub_slice((start..end).into()),
+                    colors,
+                    &mut push_sequence,
+                );
+            }
+        }
+    }
+}
+
+impl<CX: ColorsManager> DumperMinimizerBucketingExecutor<CX> {
+    /// Cuts a sequence wherever the colour of its k-mers changes.
+    fn split_by_colors<
+        S: MinimizerInputSequence,
+        F: FnMut(PushSequenceInfo<S, DumperMinimizerBucketingExecutorFactory<CX>>),
+    >(
+        &self,
+        sequence: S,
+        mut colors: impl Iterator<Item = SingleKmerColorDataType<CX>>,
+        mut push_sequence: F,
+    ) {
         let mut last_index = 0;
-        let mut last_color = rolling_iter.next().unwrap();
+        let mut last_color = colors.next().unwrap();
 
-        for (index, kmer_color) in rolling_iter.enumerate() {
+        for (index, kmer_color) in colors.enumerate() {
             if kmer_color != last_color {
                 push_sequence(PushSequenceInfo {
                     bucket: CX::get_bucket_from_color(
@@ -365,7 +418,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
             colors_count,
             buckets_count_log: buckets_count.normal_buckets_count_log,
         },
-        None,
         CX::COLORS_ENABLED,
         k,
         chunking_size_threshold,

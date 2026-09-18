@@ -20,6 +20,7 @@ io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
 structs = { package = "ggcat_structs", path = "../structs" }
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
+simd_accel = { package = "ggcat_simd_accel", path = "../simd-accel" }
 typenum = "1.18.0"
 
 # Other libraries
