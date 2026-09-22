@@ -19,3 +19,6 @@
 [submodule "libs-crates/parallel-processor-rs"]
 	path = libs-crates/parallel-processor-rs
 	url = ../../Guilucand/parallel-processor-rs.git
+[submodule "libs-crates/lz_copyback"]
+	path = libs-crates/lz_copyback
+	url = ../../Guilucand/lz-copyback.git
