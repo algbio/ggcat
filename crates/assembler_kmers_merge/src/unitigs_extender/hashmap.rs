@@ -390,10 +390,19 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                     MapEntry::new(CX::ColorsMergeManagerType::new_color_index())
                 });
 
-            entry.update_flags(
-                ((begin_ignored as u8) << ((!is_forward) as u8))
-                    | ((end_ignored as u8) << (is_forward as u8)),
-            );
+            let mut ignored_flags = ((begin_ignored as u8) << ((!is_forward) as u8))
+                | ((end_ignored as u8) << (is_forward as u8));
+
+            // An rc-symmetric (even k) kmer has its two (k-1)-mers equal up to rc, so they share
+            // the same minimizer and the kmer is never a boundary between different buckets.
+            // It is instead a split point inside this bucket, so it is added twice as an ignored kmer,
+            // but since is_forward() is meaningless for it, both occurrences would set the same flag,
+            // making it look like a link to another bucket. Mark it as seen on both sides instead.
+            if ignored_flags != 0 && hash.is_rc_symmetric() {
+                ignored_flags = READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END;
+            }
+
+            entry.update_flags(ignored_flags);
 
             let crossed_min_abundance =
                 entry.incr_by_and_check(sequence.multiplicity, self.params.min_multiplicity);
