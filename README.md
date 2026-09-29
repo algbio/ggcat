@@ -82,6 +82,9 @@ get their own archive-qualified colors.
 
 To build links between maximal unitigs in BCALM2 like format, use the `-e` flag
 
+To retain input contigs shorter than `k` in the output, add `--preserve-short-contigs`.
+These contigs have no k-mers, so they are emitted as separate sequences.
+
 #### Building minimum-plain text representations of kmer sets
 
 Unitigs are a plain-text representation of the set of kmers in the input reads / genomes, but not of minimum size. GGCAT integrates the [matchtigs & eulertigs](https://github.com/algbio/matchtigs) libraries. These libraries assume a set of maximal unitigs as input, and compute such minimum representations, allowing or forbidding repetitions of kmers, respectively. To build greedy matchtigs, use the `-g` flag; to build eulertigs, use the `--eulertigs` flag; to build a greedy version of eulertigs, use the `--pathtigs` flag.
@@ -106,6 +109,8 @@ Options:
           The lists of input files with colors in format <COLOR_NAME><TAB><FILE_PATH>
   -s, --min-multiplicity <MIN_MULTIPLICITY>
           Minimum multiplicity required to keep a kmer [default: 2]
+      --preserve-short-contigs
+          Preserve input contigs shorter than k in the output
   -k, --kmer-length <KMER_LENGTH>
           The k-mers length
   -t, --temp-dir <TEMP_DIR>

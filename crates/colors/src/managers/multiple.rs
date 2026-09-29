@@ -436,6 +436,24 @@ impl ColorsMergeManager for MultipleColorsManager {
         }
     }
 
+    fn short_contig_color(
+        table: &Self::GlobalColorsTableWriter,
+        color: ColorIndexType,
+        length: usize,
+        buffer: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
+    ) -> Self::PartialUnitigsColorStructure {
+        let subset = table.get_id(&[ColorRun::new(color, 1)]);
+        let start = buffer.colors.len();
+        buffer.colors.push(KmerSerializedColor {
+            color: subset,
+            counter: length as ColorCounterType,
+        });
+        UnitigColorData {
+            slice_start: start,
+            slice_end: buffer.colors.len(),
+        }
+    }
+
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]) {
         let sum: usize = str
             .colors

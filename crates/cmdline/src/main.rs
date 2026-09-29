@@ -171,6 +171,10 @@ struct AssemblerArgs {
     #[arg(short = 's', long = "min-multiplicity", default_value = "2")]
     pub min_multiplicity: usize,
 
+    /// Preserve input contigs shorter than k in the output
+    #[arg(long = "preserve-short-contigs")]
+    pub preserve_short_contigs: bool,
+
     /// Generate maximal unitigs connections references, in BCALM2 format L:<+/->:<other id>:<+/->
     #[arg(
         short = 'e',
@@ -479,7 +483,7 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
     *ggcat_api::debug::DEBUG_ASSEMBLER_LAST_STEP.lock() = convert_assembler_step(args.last_step);
 
     let output_file = instance
-        .build_graph(
+        .build_graph_with_short_contigs(
             inputs,
             args.output_file.clone(),
             Some(&color_names),
@@ -489,6 +493,7 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
             args.common_args.minimizer_length,
             args.colors,
             args.min_multiplicity,
+            args.preserve_short_contigs,
             if args.generate_maximal_unitigs_links {
                 ExtraElaboration::UnitigLinks
             } else if args.greedy_matchtigs {
@@ -513,7 +518,6 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
             },
         )
         .unwrap();
-
     ggcat_logging::stats::write_stats(&args.output_file.with_extension("elab.stats.json"));
 
     println!("Final output saved to: {}", output_file.display());

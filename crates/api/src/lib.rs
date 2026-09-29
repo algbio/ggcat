@@ -219,6 +219,37 @@ impl GGCATInstance {
     /// xz, zstd, or lz4.
     pub fn build_graph(
         &self,
+        input_streams: Vec<GeneralSequenceBlockData>,
+        output_file: PathBuf,
+        color_names: Option<&[String]>,
+        kmer_length: usize,
+        threads_count: usize,
+        forward_only: bool,
+        minimizer_length: Option<usize>,
+        colors: bool,
+        min_multiplicity: usize,
+        extra_elab: ExtraElaboration,
+        gfa_output_version: Option<GfaVersion>,
+    ) -> anyhow::Result<PathBuf> {
+        self.build_graph_with_short_contigs(
+            input_streams,
+            output_file,
+            color_names,
+            kmer_length,
+            threads_count,
+            forward_only,
+            minimizer_length,
+            colors,
+            min_multiplicity,
+            false,
+            extra_elab,
+            gfa_output_version,
+        )
+    }
+
+    /// Builds a graph and optionally preserves input contigs shorter than k.
+    pub fn build_graph_with_short_contigs(
+        &self,
         // The input streams
         input_streams: Vec<GeneralSequenceBlockData>,
 
@@ -242,6 +273,9 @@ impl GGCATInstance {
 
         // Minimum multiplicity required to keep a kmer
         min_multiplicity: usize,
+
+        // Preserve input contigs shorter than k in the output
+        preserve_short_contigs: bool,
 
         extra_elab: ExtraElaboration,
 
@@ -313,6 +347,7 @@ impl GGCATInstance {
             },
             debug::DEBUG_ONLY_BSTATS.load(Ordering::Relaxed),
             forward_only,
+            preserve_short_contigs,
         )?;
 
         if last_step == AssemblerPhase::FinalStep && !KEEP_FILES.load(Ordering::Relaxed) {

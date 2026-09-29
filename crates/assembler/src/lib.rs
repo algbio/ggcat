@@ -29,7 +29,9 @@ use io::debug_load_single_buckets;
 use io::debug_save_buckets;
 use io::debug_save_single_buckets;
 use io::ident_writer::IdentSequenceWriter;
+use io::sequences_stream::GenericSequencesStream;
 use io::sequences_stream::general::GeneralSequenceBlockData;
+use io::sequences_stream::general::GeneralSequencesStream;
 use io::{DUPLICATES_BUCKET_EXTRA, compute_stats_from_input_sizes};
 use parallel_processor::buckets::ExtraBucketData;
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
@@ -100,6 +102,7 @@ pub fn run_assembler<
     compute_tigs_mode: Option<MatchtigMode>,
     only_bstats: bool,
     forward_only: bool,
+    preserve_short_contigs: bool,
 ) -> anyhow::Result<PathBuf> {
     let temp_dir = temp_dir.unwrap_or(PathBuf::new());
 
@@ -109,6 +112,22 @@ pub fn run_assembler<
 
     let (input_blocks, input_colors) =
         io::sequences_stream::tar::prepare_inputs(input_blocks, color_names)?;
+    let mut short_contigs = Vec::new();
+    if preserve_short_contigs {
+        let mut reader = GeneralSequencesStream::new();
+        for (index, block) in input_blocks.iter().enumerate() {
+            reader.read_block(block, false, None, |sequence, info| {
+                if sequence.seq.len() < k {
+                    short_contigs.push(assembler_pipeline::ShortContig {
+                        bases: sequence.seq.to_vec(),
+                        color: info.color.unwrap_or(index as u32),
+                    });
+                }
+            });
+        }
+        let registry = input_colors.lock();
+        anyhow::ensure!(registry.errors.is_empty(), "{}", registry.errors.join("\n"));
+    }
     let checkpoint_path = temp_dir.join("minimizer-inputs.debug");
     let (file_stats, input_sizes) =
         if step > AssemblerPhase::MinimizerBucketing && checkpoint_path.exists() {
@@ -376,8 +395,6 @@ pub fn run_assembler<
 
     // write partial stats to allow early debug interruption
     ggcat_logging::stats::write_stats(&output_file.with_extension("elab.stats.json"));
-    drop(global_colors_table);
-
     build_final_unitigs::<MergingHash, AssemblerColorsManager, OutputMode>(
         k,
         sequences,
@@ -389,7 +406,10 @@ pub fn run_assembler<
         generate_maximal_unitigs_links,
         compute_tigs_mode,
         Box::new(output_file_mode),
+        &short_contigs,
+        &global_colors_table,
     );
+    drop(global_colors_table);
 
     let _ = std::fs::remove_dir(temp_dir.as_path());
 

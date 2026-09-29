@@ -88,6 +88,19 @@ pub trait StructuredSequenceBackend<CX: ColorsManager, LinksInfo: IdentSequenceW
         flush_callback: impl FnMut(&mut Self::SequenceTempBuffer),
     );
 
+    fn write_short_sequence(
+        _buffer: &mut Self::SequenceTempBuffer,
+        _k: usize,
+        _sequence_index: u64,
+        _bases: &[u8],
+        _colors: PartialUnitigsColorStructure<CX>,
+        _colors_buffer: &TempBuffer<PartialUnitigsColorStructure<CX>>,
+        _links: LinksInfo,
+        _links_buffer: &LinksInfo::TempBuffer,
+    ) {
+        unimplemented!("Raw short contigs are not supported by this output backend")
+    }
+
     fn get_path(&self) -> PathBuf;
 
     fn flush_temp_buffer(&mut self, buffer: &mut Self::SequenceTempBuffer);
@@ -203,6 +216,35 @@ impl<
 
     pub fn get_path(&self) -> PathBuf {
         self.backend.lock().get_path()
+    }
+
+    pub fn write_short_sequence(
+        &self,
+        buffer: &mut Backend::SequenceTempBuffer,
+        bases: &[u8],
+        colors: PartialUnitigsColorStructure<CX>,
+        colors_buffer: &TempBuffer<PartialUnitigsColorStructure<CX>>,
+        links: LinksInfo,
+        links_buffer: &LinksInfo::TempBuffer,
+    ) {
+        let mut index = self.current_index.lock();
+        let sequence_index = index.0;
+        assert_eq!(sequence_index, index.1);
+        index.0 += 1;
+        let mut backend = self.backend.lock();
+        Backend::write_short_sequence(
+            buffer,
+            self.k,
+            sequence_index,
+            bases,
+            colors,
+            colors_buffer,
+            links,
+            links_buffer,
+        );
+        backend.flush_temp_buffer(buffer);
+        index.1 += 1;
+        self.index_condvar.notify_all();
     }
 
     pub fn finalize(self) {

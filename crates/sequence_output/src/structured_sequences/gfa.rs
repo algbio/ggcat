@@ -164,6 +164,41 @@ impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
         Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes())
     }
 
+    fn write_short_sequence(
+        buffer: &mut Self::SequenceTempBuffer,
+        k: usize,
+        sequence_index: u64,
+        bases: &[u8],
+        _colors: PartialUnitigsColorStructure<CX>,
+        _colors_buffer: &TempBuffer<PartialUnitigsColorStructure<CX>>,
+        links: LinksInfo,
+        links_buffer: &LinksInfo::TempBuffer,
+    ) {
+        if VERSION == 1 {
+            write!(buffer, "S\t{}\t", sequence_index).unwrap();
+            buffer.extend_from_slice(bases);
+            write!(buffer, "\tLN:i:{}", bases.len()).unwrap();
+        } else {
+            write!(buffer, "S\t{}\t{}\t", sequence_index, bases.len()).unwrap();
+            buffer.extend_from_slice(bases);
+        }
+        #[cfg(feature = "support_kmer_counters")]
+        write!(buffer, "\tKC:i:0\tkm:f:0.0").unwrap();
+        buffer.push(b'\n');
+        let mut link_data = Default::default();
+        links.write_as_gfa::<VERSION>(
+            k as u64,
+            sequence_index,
+            bases.len() as u64,
+            &mut link_data,
+            (0, None),
+            false,
+            buffer,
+            links_buffer,
+        );
+        LinksInfo::flush_partial_as_ident(link_data, buffer);
+    }
+
     fn write_sequence(
         extract_workdata: &mut ReadExtractWorkData<CX>,
         k: usize,

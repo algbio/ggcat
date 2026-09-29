@@ -8,10 +8,15 @@ use std::{
 };
 
 use ::dynamic_dispatch::dynamic_dispatch;
-use colors::colors_manager::{ColorsManager, color_types::PartialUnitigsColorStructure};
+use colors::colors_manager::{
+    ColorsManager, ColorsMergeManager,
+    color_types::{ColorsMergeManagerType, GlobalColorsTableWriter, PartialUnitigsColorStructure},
+};
+use config::ColorIndexType;
 use config::{OUTPUT_COMPRESSION_LEVEL, SwapPriority, get_compression_level_info, get_memory_mode};
 use hashes::HashFunctionFactory;
 use io::{
+    concurrent::temp_reads::extra_data::SequenceExtraDataTempBufferManagement,
     concurrent::temp_reads::extra_data::{
         SequenceExtraData, SequenceExtraDataConsecutiveCompression,
     },
@@ -48,6 +53,46 @@ pub mod compute_matchtigs;
 pub mod eulertigs;
 pub mod extend_unitigs;
 pub mod maximal_unitig_links;
+
+pub struct ShortContig {
+    pub bases: Vec<u8>,
+    pub color: ColorIndexType,
+}
+
+fn write_short_contigs<CX, L, BK>(
+    writer: &StructuredSequenceWriter<CX, L, BK>,
+    short_contigs: &[ShortContig],
+    colors_table: &GlobalColorsTableWriter<CX>,
+    k: usize,
+    links: L,
+) where
+    CX: ColorsManager,
+    L: IdentSequenceWriter + SequenceExtraData + Clone,
+    BK: StructuredSequenceBackend<CX, L>,
+{
+    if short_contigs.is_empty() {
+        return;
+    }
+    let mut output_buffer = BK::alloc_temp_buffer(k);
+    let mut colors_buffer = PartialUnitigsColorStructure::<CX>::new_temp_buffer();
+    for contig in short_contigs {
+        PartialUnitigsColorStructure::<CX>::clear_temp_buffer(&mut colors_buffer);
+        let colors = ColorsMergeManagerType::<CX>::short_contig_color(
+            colors_table,
+            contig.color,
+            contig.bases.len(),
+            &mut colors_buffer,
+        );
+        writer.write_short_sequence(
+            &mut output_buffer,
+            &contig.bases,
+            colors,
+            &colors_buffer,
+            links.clone(),
+            &L::new_temp_buffer(),
+        );
+    }
+}
 
 pub enum OutputFileMode<
     OutputMode: StructuredSequenceBackendWrapper,
@@ -123,7 +168,12 @@ pub fn build_final_unitigs<
     generate_maximal_unitigs_links: bool,
     compute_tigs_mode: Option<MatchtigMode>,
     output_file_mode: Box<dyn Any>,
+    short_contigs: &[ShortContig],
+    colors_table: &dyn Any,
 ) {
+    let colors_table = colors_table
+        .downcast_ref::<Arc<GlobalColorsTableWriter<AssemblerColorsManager>>>()
+        .unwrap();
     let output_file_mode = *output_file_mode
         .downcast::<OutputFileMode<OutputMode, AssemblerColorsManager, ()>>()
         .unwrap();
@@ -164,6 +214,7 @@ pub fn build_final_unitigs<
 
         match output_file_mode {
             OutputFileMode::Final { output_file } => {
+                write_short_contigs(&output_file, short_contigs, colors_table.as_ref(), k, ());
                 Arc::try_unwrap(output_file)
                     .map_err(|_| ())
                     .unwrap()
@@ -179,6 +230,13 @@ pub fn build_final_unitigs<
                 );
 
                 if compute_tigs_mode == Some(MatchtigMode::FastEulerTigs) {
+                    write_short_contigs(
+                        &final_unitigs_file,
+                        short_contigs,
+                        colors_table.as_ref(),
+                        k,
+                        (),
+                    );
                     let circular_temp_unitigs_file = Arc::try_unwrap(circular_unitigs.unwrap())
                         .map_err(|_| ())
                         .unwrap();
@@ -207,6 +265,13 @@ pub fn build_final_unitigs<
                     compressed_temp_unitigs_file.finalize();
 
                     if let Some(compute_tigs_mode) = compute_tigs_mode.get_matchtigs_mode() {
+                        write_short_contigs(
+                            &final_unitigs_file,
+                            short_contigs,
+                            colors_table.as_ref(),
+                            k,
+                            (),
+                        );
                         let matchtigs_backend = MatchtigsStorageBackend::new();
 
                         let matchtigs_receiver = matchtigs_backend.get_receiver();
@@ -247,6 +312,13 @@ pub fn build_final_unitigs<
                                 &output_file,
                             ),
                             k,
+                        );
+                        write_short_contigs(
+                            &final_unitigs_file,
+                            short_contigs,
+                            colors_table.as_ref(),
+                            k,
+                            crate::maximal_unitig_links::maximal_unitig_index::DoubleMaximalUnitigLinks::EMPTY,
                         );
 
                         build_maximal_unitigs_links::<

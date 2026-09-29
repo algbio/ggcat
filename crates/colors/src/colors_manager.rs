@@ -253,6 +253,15 @@ pub trait ColorsMergeManager: Sized {
         colors_buffer: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
     ) -> Self::PartialUnitigsColorStructure;
 
+    fn short_contig_color(
+        _table: &Self::GlobalColorsTableWriter,
+        _color: ColorIndexType,
+        _length: usize,
+        _buffer: &mut TempBuffer<Self::PartialUnitigsColorStructure>,
+    ) -> Self::PartialUnitigsColorStructure {
+        Default::default()
+    }
+
     fn debug_tucs(str: &Self::TempUnitigColorStructure, seq: &[u8]);
     fn debug_colors<MH: HashFunctionFactory>(
         data: &Self::ColorsBufferTempStructure,

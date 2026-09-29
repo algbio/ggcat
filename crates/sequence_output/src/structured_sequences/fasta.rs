@@ -150,6 +150,30 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
         Vec::with_capacity(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes())
     }
 
+    fn write_short_sequence(
+        buffer: &mut Self::SequenceTempBuffer,
+        _k: usize,
+        sequence_index: u64,
+        bases: &[u8],
+        colors: PartialUnitigsColorStructure<CX>,
+        colors_buffer: &TempBuffer<PartialUnitigsColorStructure<CX>>,
+        links: LinksInfo,
+        links_buffer: &LinksInfo::TempBuffer,
+    ) {
+        write!(buffer, ">{} LN:i:{}", sequence_index, bases.len()).unwrap();
+        #[cfg(feature = "support_kmer_counters")]
+        write!(buffer, " KC:i:0 km:f:0.0").unwrap();
+        let mut color_data = Default::default();
+        colors.write_as_ident(&mut color_data, (0, None), false, buffer, colors_buffer);
+        PartialUnitigsColorStructure::<CX>::flush_partial_as_ident(color_data, buffer);
+        let mut link_data = Default::default();
+        links.write_as_ident(&mut link_data, (0, None), false, buffer, links_buffer);
+        LinksInfo::flush_partial_as_ident(link_data, buffer);
+        buffer.push(b'\n');
+        buffer.extend_from_slice(bases);
+        buffer.push(b'\n');
+    }
+
     fn write_sequence(
         extract_workdata: &mut ReadExtractWorkData<CX>,
         k: usize,
