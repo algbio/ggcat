@@ -870,11 +870,25 @@ pub fn extend_unitigs<
                             if info.is_circular {
                                 // Write a circular unitig
 
-                                let circular_unitigs_buffer = tmp_final_circular_unitigs_buffer
-                                    .as_mut()
-                                    .unwrap_or(&mut tmp_final_unitigs_buffer);
                                 let trim_color = read.bases_count() > k;
                                 let bases_count = (read.bases_count() - 1).max(k);
+
+                                // Both the extremities are the same canonical kmer, but it is a real cycle only if
+                                // the (k-1)-prefix is equal to the (k-1)-suffix with the same orientation.
+                                // Otherwise the ending is reverse complemented (for example a single rc-symmetric kmer with even k),
+                                // and it should be written as a linear unitig as rotating it does not make sense (still trimming the duplicated kmer)
+                                let is_real_cycle = {
+                                    let trimmed = read.sub_slice(0..bases_count);
+                                    trimmed
+                                        .sub_slice(0..(k - 1))
+                                        .as_bases_iter()
+                                        .eq(trimmed.sub_slice((bases_count - (k - 1))..bases_count).as_bases_iter())
+                                };
+
+                                let circular_unitigs_buffer = match tmp_final_circular_unitigs_buffer.as_mut() {
+                                    Some(circular_buffer) if is_real_cycle => circular_buffer,
+                                    _ => &mut tmp_final_unitigs_buffer,
+                                };
 
                                 if trim_color {
                                     CX::ColorsMergeManagerType::pop_base(&mut read_struct.extra.colors, &mut extra_buffer.0);
