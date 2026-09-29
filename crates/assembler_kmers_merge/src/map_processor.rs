@@ -2,7 +2,7 @@ use crate::unitigs_extender::hashmap::HashMapUnitigsExtender;
 use crate::unitigs_extender::{GlobalExtenderParams, UnitigsExtenderTrait};
 use crate::{GlobalMergeData, ParallelKmersMergeFactory};
 use colors::colors_manager::{ColorsManager, color_types};
-use config::{MAX_RESPLIT_SUBBUCKET_AVERAGE_MULTIPLIER, MAX_SUBBUCKET_AVERAGE_MULTIPLIER};
+use config::MAX_RESPLIT_SUBBUCKET_AVERAGE_MULTIPLIER;
 use ggcat_logging::stats;
 use ggcat_logging::stats::KmersMergeBucketReport;
 use hashes::HashFunctionFactory;
@@ -218,12 +218,12 @@ impl<
     ) {
         let map_packet = self.map_packet.as_mut().unwrap().deref_mut();
 
-        map_packet.is_outlier = if map_packet.is_resplitted {
-            sequences_count
-                > MAX_RESPLIT_SUBBUCKET_AVERAGE_MULTIPLIER * map_packet.average_sequences
-        } else {
-            sequences_count > MAX_SUBBUCKET_AVERAGE_MULTIPLIER * map_packet.average_sequences
-        };
+        // Sorting is faster than the hashmap unless the kmers are much fewer than the superkmers.
+        // This happens in the few large sub-buckets of a resplitted bucket collecting a highly repeated sequence,
+        // while non-resplitted buckets are always sorted (the large ones are resplitted instead).
+        map_packet.is_outlier = map_packet.is_resplitted
+            && sequences_count
+                > MAX_RESPLIT_SUBBUCKET_AVERAGE_MULTIPLIER * map_packet.average_sequences;
 
         if map_packet.is_duplicate || map_packet.is_outlier {
             process_reads_callback(

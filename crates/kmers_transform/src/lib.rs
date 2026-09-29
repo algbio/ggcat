@@ -1,7 +1,7 @@
 use crate::processor::{KmersProcessorInitData, KmersTransformProcessor, ResplitConfig};
 use config::{
     KEEP_FILES, MAX_RESPLIT_BUCKETS_COUNT, MAX_SUBBUCKET_AVERAGE_MULTIPLIER, MIN_AVERAGE_CAP,
-    MIN_RESPLIT_BUCKETS_COUNT, MINIMUM_LOG_DELTA_TIME,
+    MIN_RESPLIT_BUCKETS_COUNT, MIN_RESPLIT_SEQUENCES, MINIMUM_LOG_DELTA_TIME,
 };
 use ggcat_logging::{generate_stat_id, info};
 use io::DUPLICATES_BUCKET_EXTRA;
@@ -325,14 +325,16 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
                     continue;
                 };
 
-                let is_outlier = splitted_bucket.sequences_count
-                    > bucket_sequences_average * MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
+                let is_outlier = splitted_bucket.sequences_count > MIN_RESPLIT_SEQUENCES
+                    && splitted_bucket.sequences_count
+                        > bucket_sequences_average * MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
 
                 // Add the sub-bucket job
                 compute_thread_pool_handle.create_new_address_with_limit(
                     Arc::new(KmersProcessorInitData {
                         process_stat_id: generate_stat_id!(),
                         is_resplitted: false,
+                        resplit_part: None,
                         resplit_config: if is_outlier {
                             let subbuckets_count = (splitted_bucket.sequences_count
                                 / bucket_sequences_average)

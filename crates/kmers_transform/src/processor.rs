@@ -1,4 +1,4 @@
-use crate::resplitter::{KmersTransformResplitter, ResplitterInitData};
+use crate::resplitter::{KmersTransformResplitter, ResplitShared, ResplitterInitData};
 use crate::{
     GroupProcessStats, KmersTransformContext, KmersTransformExecutorFactory,
     KmersTransformFinalExecutor, KmersTransformMapProcessor,
@@ -21,6 +21,7 @@ use parallel_processor::mt_debug_counters::declare_counter_i64;
 use parking_lot::Mutex;
 use std::marker::PhantomData;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use utils::track;
 
@@ -37,6 +38,8 @@ pub struct KmersProcessorInitData<F: KmersTransformExecutorFactory> {
     pub process_stat_id: StatId,
     pub is_resplitted: bool,
     pub resplit_config: Option<ResplitConfig>,
+    /// A part of a bucket that is being resplitted in parallel
+    pub resplit_part: Option<Arc<ResplitShared<F>>>,
     pub splitted_bucket: Mutex<Option<SplittedBucket>>,
     pub debug_bucket_first_path: Option<PathBuf>,
     pub extra_bucket_data: Option<ExtraBucketData>,
@@ -77,10 +80,20 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
 
             let mut splitted_bucket = proc_info.splitted_bucket.lock().take().unwrap();
 
-            if let Some(resplit_config) = &proc_info.resplit_config {
-                let total_size = splitted_bucket.total_size;
+            let finish_resplit = |completed: Option<Arc<ResplitShared<F>>>| {
+                if let Some(shared) = completed {
+                    global_context
+                        .processed_subbuckets_count
+                        .fetch_add(1, Ordering::Relaxed);
 
-                KmersTransformResplitter::<F>::do_resplit(
+                    global_context
+                        .processed_buckets_size
+                        .fetch_add(shared.total_size as usize, Ordering::Relaxed);
+                }
+            };
+
+            if let Some(resplit_config) = &proc_info.resplit_config {
+                finish_resplit(KmersTransformResplitter::<F>::do_resplit(
                     global_context,
                     reader_thread.clone(),
                     ResplitterInitData {
@@ -89,16 +102,18 @@ impl<F: KmersTransformExecutorFactory> AsyncExecutor for KmersTransformProcessor
                         splitted_bucket,
                         process_handle: proc_info.processor_handle.clone(),
                     },
-                );
+                    global_context.total_threads_count,
+                ));
+                continue;
+            }
 
-                global_context
-                    .processed_subbuckets_count
-                    .fetch_add(1, Ordering::Relaxed);
-
-                global_context
-                    .processed_buckets_size
-                    .fetch_add(total_size as usize, Ordering::Relaxed);
-
+            if let Some(shared) = &proc_info.resplit_part {
+                finish_resplit(KmersTransformResplitter::<F>::process_part(
+                    global_context,
+                    reader_thread.clone(),
+                    shared.clone(),
+                    splitted_bucket,
+                ));
                 continue;
             }
 
