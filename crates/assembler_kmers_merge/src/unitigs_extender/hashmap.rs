@@ -10,7 +10,7 @@ use colors::colors_manager::{
 use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::{
     ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence,
-    extremal::{DelayedHashComputation, HashGenerator, PrecomputedHash},
+    extremal::PrecomputedHash,
 };
 use io::partial_unitigs_extra_data::SequenceAbundanceType;
 use io::{
@@ -380,10 +380,19 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                     MapEntry::new(CX::ColorsMergeManagerType::new_color_index())
                 });
 
-            entry.update_flags(
-                ((begin_ignored as u8) << ((!is_forward) as u8))
-                    | ((end_ignored as u8) << (is_forward as u8)),
-            );
+            let mut ignored_flags = ((begin_ignored as u8) << ((!is_forward) as u8))
+                | ((end_ignored as u8) << (is_forward as u8));
+
+            // An rc-symmetric (even k) kmer has its two (k-1)-mers equal up to rc, so they share
+            // the same minimizer and the kmer is never a boundary between different buckets.
+            // It is instead a split point inside this bucket, so it is added twice as an ignored kmer,
+            // but since is_forward() is meaningless for it, both occurrences would set the same flag,
+            // making it look like a link to another bucket. Mark it as seen on both sides instead.
+            if ignored_flags != 0 && hash.is_rc_symmetric() {
+                ignored_flags = READ_FLAG_INCL_BEGIN | READ_FLAG_INCL_END;
+            }
+
+            entry.update_flags(ignored_flags);
 
             let crossed_min_abundance =
                 entry.incr_by_and_check(sequence.multiplicity, self.params.min_multiplicity);
@@ -548,26 +557,14 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> UnitigsExtenderTrait<MH, CX>
                 &backward_seq[..]
             };
 
+            // The unitig is circular only if the (k-1)-prefix is equal to the (k-1)-suffix with the same orientation,
+            // comparing the canonical hashes here is wrong: it would also match unitigs ending with the reverse
+            // complement of their beginning, that cannot be really rotated (it will add fake kmers)
             let is_circular = compute_circular
-                && if fw_hash.is_none() && bw_hash.is_none() {
-                    let fw_hash = HashGenerator::<MH>::get_extremal_hash(
-                        &DelayedHashComputation,
-                        out_seq,
-                        self.params.k - 1,
-                        false,
-                    );
-
-                    let bw_hash = HashGenerator::<MH>::get_extremal_hash(
-                        &DelayedHashComputation,
-                        out_seq,
-                        self.params.k - 1,
-                        true,
-                    );
-
-                    fw_hash.to_unextendable() == bw_hash.to_unextendable()
-                } else {
-                    false
-                };
+                && fw_hash.is_none()
+                && bw_hash.is_none()
+                && out_seq[..(self.params.k - 1)]
+                    == out_seq[(out_seq.len() - (self.params.k - 1))..];
 
             compressed_seq_buffer.clear();
             CompressedRead::compress_from_plain(out_seq, |b| {
