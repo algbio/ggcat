@@ -17,7 +17,7 @@ use parallel_processor::buckets::{BucketsCount, ExtraBucketData, ExtraBuckets, M
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::execution_manager::scheduler::Scheduler;
-use parallel_processor::execution_manager::thread_pool::ExecThreadPool;
+use parallel_processor::execution_manager::thread_pool::{ExecThreadPool, ExecutorsHandle};
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parking_lot::Mutex;
@@ -288,92 +288,24 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
         let compute_thread_pool_handle =
             compute_thread_pool.start(scheduler.clone(), &self.global_context);
 
-        let mut total_subbuckets_sequences = 0;
-        let mut total_subbuckets_count = 0;
+        // Reading the buckets indexes to split them in sub-buckets is done by multiple threads,
+        // as a single thread cannot produce the sub-buckets as fast as they are processed
+        let dispatch_threads = (self.global_context.total_threads_count / 16).clamp(1, 16);
+        let next_bucket = AtomicUsize::new(0);
 
-        for bucket in self.normal_buckets_list.iter() {
-            let splitted_buckets = SplittedBucket::generate(
-                bucket.paths.iter(),
-                RemoveFileMode::Remove {
-                    remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
-                },
-                self.global_context.second_buckets_count.total_buckets_count,
-            );
-
-            for bucket in &splitted_buckets {
-                if let Some(bucket) = bucket {
-                    total_subbuckets_sequences += bucket.sequences_count;
-                    total_subbuckets_count += 1;
-                    self.global_context
-                        .total_subbucket_sequences
-                        .store(total_subbuckets_sequences, Ordering::Relaxed);
-                    self.global_context
-                        .total_subbucket_count
-                        .store(total_subbuckets_count, Ordering::Relaxed);
-                }
+        std::thread::scope(|scope| {
+            for _ in 0..dispatch_threads {
+                scope.spawn(|| {
+                    while let Some(bucket) = self
+                        .normal_buckets_list
+                        .get(next_bucket.fetch_add(1, Ordering::Relaxed))
+                    {
+                        self.dispatch_bucket(bucket, &compute_thread_pool_handle);
+                        self.maybe_log_completed_buckets(|| {}, &scheduler);
+                    }
+                });
             }
-
-            let bucket_sequences_average =
-                (total_subbuckets_sequences / total_subbuckets_count.max(1)).max(MIN_AVERAGE_CAP);
-
-            for splitted_bucket in splitted_buckets.into_iter() {
-                let Some(splitted_bucket) = splitted_bucket else {
-                    // Add the sub-bucket to the global counter
-                    self.global_context
-                        .processed_subbuckets_count
-                        .fetch_add(1, Ordering::Relaxed);
-                    continue;
-                };
-
-                let is_outlier = splitted_bucket.sequences_count > MIN_RESPLIT_SEQUENCES
-                    && splitted_bucket.sequences_count
-                        > bucket_sequences_average * MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
-
-                // Add the sub-bucket job
-                compute_thread_pool_handle.create_new_address_with_limit(
-                    Arc::new(KmersProcessorInitData {
-                        process_stat_id: generate_stat_id!(),
-                        is_resplitted: false,
-                        resplit_part: None,
-                        resplit_config: if is_outlier {
-                            let subbuckets_count = (splitted_bucket.sequences_count
-                                / bucket_sequences_average)
-                                .next_power_of_two()
-                                .max(MIN_RESPLIT_BUCKETS_COUNT)
-                                .min(MAX_RESPLIT_BUCKETS_COUNT);
-
-                            info!(
-                                "Resplitted bucket in {} sub-buckets (average sequences per bucket: {})!",
-                                subbuckets_count, bucket_sequences_average
-                            );
-                            self.global_context
-                                .extra_buckets_count
-                                .fetch_add(subbuckets_count as usize, Ordering::Relaxed);
-
-                            Some(ResplitConfig {
-                                subsplit_buckets_count: BucketsCount::new(
-                                    subbuckets_count.ilog2() as usize,
-                                    ExtraBuckets::Extra {
-                                        count: 1,
-                                        data: DUPLICATES_BUCKET_EXTRA,
-                                    },
-                                ),
-                            })
-                        } else {
-                            None
-                        },
-                        splitted_bucket: Mutex::new(Some(splitted_bucket)),
-                        debug_bucket_first_path: Some(bucket.paths[0].clone()),
-                        extra_bucket_data: bucket.extra_bucket_data,
-                        processor_handle: compute_thread_pool_handle.clone(),
-                    }),
-                    false,
-                    self.global_context.total_threads_count * 8,
-                );
-            }
-
-            self.maybe_log_completed_buckets(|| {}, &scheduler);
-        }
+        });
 
         // Log progress info while waiting for completion
         while compute_thread_pool_handle.get_pending_executors_count() > 0 {
@@ -385,6 +317,95 @@ impl<F: KmersTransformExecutorFactory> KmersTransform<F> {
 
         // Wait for the maps to be complete
         compute_thread_pool.join();
+    }
+
+    /// Splits a bucket in its sub-buckets and schedules them for processing
+    fn dispatch_bucket(
+        &self,
+        bucket: &InputBucketDesc,
+        compute_thread_pool_handle: &ExecutorsHandle<KmersTransformProcessor<F>>,
+    ) {
+        let splitted_buckets = SplittedBucket::generate(
+            bucket.paths.iter(),
+            RemoveFileMode::Remove {
+                remove_fs: !KEEP_FILES.load(Ordering::Relaxed),
+            },
+            self.global_context.second_buckets_count.total_buckets_count,
+        );
+
+        let (bucket_sequences, bucket_subbuckets) = splitted_buckets
+            .iter()
+            .flatten()
+            .fold((0, 0), |(s, c), b| (s + b.sequences_count, c + 1));
+        let total_subbuckets_sequences = self
+            .global_context
+            .total_subbucket_sequences
+            .fetch_add(bucket_sequences, Ordering::Relaxed)
+            + bucket_sequences;
+        let total_subbuckets_count = self
+            .global_context
+            .total_subbucket_count
+            .fetch_add(bucket_subbuckets, Ordering::Relaxed)
+            + bucket_subbuckets;
+
+        let bucket_sequences_average =
+            (total_subbuckets_sequences / total_subbuckets_count.max(1)).max(MIN_AVERAGE_CAP);
+
+        for splitted_bucket in splitted_buckets.into_iter() {
+            let Some(splitted_bucket) = splitted_bucket else {
+                // Add the sub-bucket to the global counter
+                self.global_context
+                    .processed_subbuckets_count
+                    .fetch_add(1, Ordering::Relaxed);
+                continue;
+            };
+
+            let is_outlier = splitted_bucket.sequences_count > MIN_RESPLIT_SEQUENCES
+                && splitted_bucket.sequences_count
+                    > bucket_sequences_average * MAX_SUBBUCKET_AVERAGE_MULTIPLIER;
+
+            // Add the sub-bucket job
+            compute_thread_pool_handle.create_new_address_with_limit(
+                Arc::new(KmersProcessorInitData {
+                    process_stat_id: generate_stat_id!(),
+                    is_resplitted: false,
+                    resplit_part: None,
+                    resplit_config: if is_outlier {
+                        let subbuckets_count = (splitted_bucket.sequences_count
+                            / bucket_sequences_average)
+                            .next_power_of_two()
+                            .max(MIN_RESPLIT_BUCKETS_COUNT)
+                            .min(MAX_RESPLIT_BUCKETS_COUNT);
+
+                        info!(
+                            "Resplitted bucket in {} sub-buckets (average sequences per bucket: {})!",
+                            subbuckets_count, bucket_sequences_average
+                        );
+                        self.global_context
+                            .extra_buckets_count
+                            .fetch_add(subbuckets_count as usize, Ordering::Relaxed);
+
+                        Some(ResplitConfig {
+                            subsplit_buckets_count: BucketsCount::new(
+                                subbuckets_count.ilog2() as usize,
+                                ExtraBuckets::Extra {
+                                    count: 1,
+                                    data: DUPLICATES_BUCKET_EXTRA,
+                                },
+                            ),
+                        })
+                    } else {
+                        None
+                    },
+                    splitted_bucket: Mutex::new(Some(splitted_bucket)),
+                    debug_bucket_first_path: Some(bucket.paths[0].clone()),
+                    extra_bucket_data: bucket.extra_bucket_data,
+                    processor_handle: compute_thread_pool_handle.clone(),
+                }),
+                false,
+                self.global_context.total_threads_count * 8,
+            );
+        }
     }
 
     fn maybe_log_completed_buckets(

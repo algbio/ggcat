@@ -7,7 +7,6 @@ use crate::{
     },
     varint::{VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, encode_varint, encode_varint_flags},
 };
-use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use typenum::U1;
 
 pub const INDIRECT_UNITIG_FLAG_MASK: u8 = 1;
@@ -146,10 +145,9 @@ impl<X: SequenceExtraDataConsecutiveCompression> SequenceExtraDataTempBufferMana
     type TempBuffer = (X::TempBuffer, Vec<IndirectReadInfo>);
 
     fn new_temp_buffer() -> Self::TempBuffer {
-        (
-            X::new_temp_buffer(),
-            Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE),
-        )
+        // Grows on demand: only indirect (oversize) sequences add entries here, and a large
+        // preallocation is mapped and unmapped each time a buffer is created, serializing the threads
+        (X::new_temp_buffer(), Vec::new())
     }
 
     fn clear_temp_buffer(buffer: &mut Self::TempBuffer) {

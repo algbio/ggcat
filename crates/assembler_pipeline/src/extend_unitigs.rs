@@ -38,7 +38,9 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
 use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::{BucketsCount, ExtraBuckets, MultiThreadBuckets, SingleBucket};
+use parallel_processor::buckets::{
+    BucketsCount, ExtraBuckets, LockFreeBucket, MultiThreadBuckets, SingleBucket,
+};
 use parallel_processor::memory_fs::{MemoryFs, RemoveFileMode};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
@@ -345,6 +347,36 @@ fn join_reads<'a, MH: HashFunctionFactory, CX: ColorsManager>(
     }
 }
 
+/// Same as [`MultiThreadBuckets::finalize_single`], but finalizes the buckets in parallel,
+/// as flushing (and compressing) the last data of each bucket is too slow to be done by a single thread
+fn finalize_single_parallel<B: LockFreeBucket + Send>(
+    buckets: Arc<MultiThreadBuckets<B>>,
+) -> Vec<SingleBucket> {
+    let buckets = Arc::try_unwrap(buckets)
+        .unwrap_or_else(|_| panic!("Cannot take full ownership of multi thread buckets!"));
+    let extra_data: Vec<_> = buckets
+        .get_stored_buckets()
+        .iter()
+        .map(|b| b.lock().extra_bucket_data.clone())
+        .collect();
+    let writers: Vec<B> = buckets.into_buckets().collect();
+    writers
+        .into_par_iter()
+        .zip(extra_data)
+        .enumerate()
+        .map(|(index, (writer, extra_bucket_data))| {
+            let path = writer.get_path();
+            writer.finalize();
+            SingleBucket {
+                index,
+                path,
+                extra_bucket_data,
+            }
+        })
+        .collect()
+}
+
+
 pub fn extend_unitigs<
     MH: HashFunctionFactory,
     CX: ColorsManager,
@@ -562,7 +594,7 @@ pub fn extend_unitigs<
 
                 subpartition_buffer.put_back(subpartition_buckets.finalize().0);
             });
-        let queued_buckets = Mutex::new(subpartitions.finalize_single());
+        let queued_buckets = Mutex::new(finalize_single_parallel(subpartitions));
 
         let mut subloop_index = 1;
         loop {
@@ -978,14 +1010,14 @@ pub fn extend_unitigs<
 
             if !has_joinable_unitigs.into_inner() {
                 // Remove the unuzed buckets (they are all empty)
-                subpartitions_next.finalize_single().iter().for_each(|s| {
+                finalize_single_parallel(subpartitions_next).iter().for_each(|s| {
                     MemoryFs::remove_file(&s.path, RemoveFileMode::Remove { remove_fs: true })
                         .unwrap()
                 });
                 break;
             }
 
-            let next_subpartitions = subpartitions_next.finalize_single();
+            let next_subpartitions = finalize_single_parallel(subpartitions_next);
 
             let next_subpartitions_size = next_subpartitions
                 .iter()
