@@ -1,5 +1,8 @@
 use crate::indirect_reads_extractor::{ReadExtractWorkData, indirect_read_extract_parts};
-use crate::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
+use crate::structured_sequences::{
+    DEFERRED_SEQUENCE_INDEX, IdentSequenceWriter, StructuredSequenceBackend,
+    write_with_deferred_indexes,
+};
 use bzip2::Compression as BzipCompression;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
@@ -214,15 +217,21 @@ impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
                 }
             };
 
-        // Sequence line
+        // Sequence line, with a deferred index the index is left out and inserted after the "S\t"
+        // when the buffer is flushed
+        buffer.extend_from_slice(b"S\t");
+        if sequence_index != DEFERRED_SEQUENCE_INDEX {
+            write!(buffer, "{}", sequence_index).unwrap();
+        }
+
         if VERSION == 1 {
             // S <index> <sequence> LN:i:<length> ...
-            write!(buffer, "S\t{}\t", sequence_index).unwrap();
+            buffer.push(b'\t');
             write_sequence_bases(buffer, &mut flush_callback);
             write!(buffer, "\tLN:i:{}", bases_count).unwrap();
         } else if VERSION == 2 {
             // S <index> <len> <sequence> ...
-            write!(buffer, "S\t{}\t{}\t", sequence_index, bases_count).unwrap();
+            write!(buffer, "\t{}\t", bases_count).unwrap();
             write_sequence_bases(buffer, &mut flush_callback);
         }
 
@@ -243,6 +252,7 @@ impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
         buffer.push(b'\n');
 
         let mut links_partial_data = Default::default();
+        let links_start = buffer.len();
 
         // color_info.write_as_ident(buffer, &extra_buffers.0);
         links_info.write_as_gfa::<VERSION>(
@@ -256,6 +266,13 @@ impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
             &extra_buffers.1,
         );
         LinksInfo::flush_partial_as_ident(links_partial_data, buffer);
+
+        // The link lines also contain the index, and reference the indexes of other sequences,
+        // so they can be written only with preassigned indexes
+        debug_assert!(
+            sequence_index != DEFERRED_SEQUENCE_INDEX || buffer.len() == links_start,
+            "GFA links cannot be written with a deferred sequence index"
+        );
     }
 
     fn get_path(&self) -> PathBuf {
@@ -264,6 +281,23 @@ impl<const VERSION: u32, CX: ColorsManager, LinksInfo: IdentSequenceWriter>
 
     fn flush_temp_buffer(&mut self, buffer: &mut Self::SequenceTempBuffer) {
         self.writer.write_all(buffer).unwrap();
+        buffer.clear();
+    }
+
+    const SUPPORTS_DEFERRED_INDEX: bool = true;
+
+    fn temp_buffer_size(buffer: &Self::SequenceTempBuffer) -> usize {
+        buffer.len()
+    }
+
+    fn flush_temp_buffer_with_indexes(
+        &mut self,
+        buffer: &mut Self::SequenceTempBuffer,
+        sequences_starts: &[usize],
+        first_index: u64,
+    ) {
+        // The index goes right after the "S\t" of the sequence line
+        write_with_deferred_indexes(&mut self.writer, buffer, sequences_starts, first_index, 2);
         buffer.clear();
     }
 

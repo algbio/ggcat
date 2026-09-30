@@ -66,12 +66,20 @@ pub const MEMORY_THRESHOLD_CLEAR_START_OFFSET: MemoryDataSize =
 
 pub const MINIMUM_LOG_DELTA_TIME: Duration = Duration::from_secs(10);
 
-// The maximum size multiplier of a subbucket when compared to the sizes averages
+// A resplitted sub-bucket larger than this multiplier of the sequences average is processed with the hashmap:
+// these are the few sub-buckets that collect a highly repeated sequence (ex. an adapter), where the kmers are
+// much less than the superkmers and the hashmap is faster than sorting
 pub const MAX_RESPLIT_SUBBUCKET_AVERAGE_MULTIPLIER: u64 = 2;
+// A sub-bucket is resplitted if it is larger than this multiplier of the sequences average...
 pub const MAX_SUBBUCKET_AVERAGE_MULTIPLIER: u64 = 8;
+// ...and it has more than this number of sequences. Below this size sorting the whole sub-bucket
+// costs less than resplitting it and sorting the new sub-buckets.
+pub const MIN_RESPLIT_SEQUENCES: u64 = 256 * 1024;
 pub const MIN_AVERAGE_CAP: u64 = 5000;
 pub const MIN_RESPLIT_BUCKETS_COUNT: u64 = 4;
 pub const MAX_RESPLIT_BUCKETS_COUNT: u64 = 1024;
+// A resplitted bucket is split in parts of at least this size, that are processed in parallel
+pub const MIN_RESPLIT_PART_SIZE: u64 = 32 * 1024 * 1024;
 
 // 1GB of reads max for each bucket
 pub const MIN_BUCKET_SIZE: u64 = 512 * 1024;

@@ -1,5 +1,8 @@
 use crate::indirect_reads_extractor::{ReadExtractWorkData, indirect_read_extract_parts};
-use crate::structured_sequences::{IdentSequenceWriter, StructuredSequenceBackend};
+use crate::structured_sequences::{
+    DEFERRED_SEQUENCE_INDEX, IdentSequenceWriter, StructuredSequenceBackend,
+    write_with_deferred_indexes,
+};
 use bzip2::Compression as BzipCompression;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
@@ -169,11 +172,17 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
         let bases_count =
             sequence.get_length() + extra_info.mode.get_total_length(&extra_buffers.0.1);
 
+        // With a deferred index the header is written without it, and the index is inserted after the '>'
+        // when the buffer is flushed
+        buffer.push(b'>');
+        if sequence_index != DEFERRED_SEQUENCE_INDEX {
+            write!(buffer, "{}", sequence_index).unwrap();
+        }
+
         #[cfg(feature = "support_kmer_counters")]
         write!(
             buffer,
-            ">{} LN:i:{} KC:i:{} km:f:{:.1}",
-            sequence_index,
+            " LN:i:{} KC:i:{} km:f:{:.1}",
             bases_count,
             extra_info.counters.sum,
             extra_info.counters.sum as f64 / (bases_count - k + 1) as f64
@@ -181,7 +190,7 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
         .unwrap();
 
         #[cfg(not(feature = "support_kmer_counters"))]
-        write!(buffer, ">{} LN:i:{}", sequence_index, bases_count,).unwrap();
+        write!(buffer, " LN:i:{}", bases_count,).unwrap();
 
         let mut links_partial_data = Default::default();
         let mut colors_partial_data = Default::default();
@@ -282,6 +291,23 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter> StructuredSequenceBacken
 
     fn flush_temp_buffer(&mut self, buffer: &mut Self::SequenceTempBuffer) {
         self.writer.write_all(buffer).unwrap();
+        buffer.clear();
+    }
+
+    const SUPPORTS_DEFERRED_INDEX: bool = true;
+
+    fn temp_buffer_size(buffer: &Self::SequenceTempBuffer) -> usize {
+        buffer.len()
+    }
+
+    fn flush_temp_buffer_with_indexes(
+        &mut self,
+        buffer: &mut Self::SequenceTempBuffer,
+        sequences_starts: &[usize],
+        first_index: u64,
+    ) {
+        // The index goes right after the '>' of the header
+        write_with_deferred_indexes(&mut self.writer, buffer, sequences_starts, first_index, 1);
         buffer.clear();
     }
 
