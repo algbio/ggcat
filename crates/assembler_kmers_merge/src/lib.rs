@@ -20,7 +20,9 @@ use kmers_transform::{
     KmersTransform, KmersTransformExecutorFactory, KmersTransformGlobalExtraData,
 };
 use minimizer_bucketing::{MinimizerBucketingCommonData, MinimizerBucketingExecutorFactory};
-use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::writers::compressed_binary_writer::{
+    CompressedBinaryWriter, EncoderMemoryUsage,
+};
 use parallel_processor::buckets::{
     BucketsCount, ExtraBuckets, MultiChunkBucket, MultiThreadBuckets,
 };
@@ -219,6 +221,7 @@ pub fn kmers_merge<
             get_memory_mode(SwapPriority::ResultBuckets),
             PARTIAL_UNITIGS_COMPACTED_CHECKPOINT_SIZE,
             get_compression_level_info(),
+            EncoderMemoryUsage::Normal,
         ),
         &(),
     );

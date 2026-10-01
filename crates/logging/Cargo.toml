@@ -11,3 +11,6 @@ serde_json = "1.0.137"
 
 [features]
 detailed-stats = []
+# Keep the counters of `Stat` and friends. Without it they are zero-sized, counting
+# compiles away and the reports that print them are skipped.
+stats = []

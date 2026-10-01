@@ -27,8 +27,10 @@
 //! SOFTWARE.
 
 pub mod batch;
+pub mod fasta_copyback;
 pub mod fasta_lexer;
 pub mod hashing;
 pub mod masks;
 pub mod minimizer;
 pub mod packer;
+pub mod stats;

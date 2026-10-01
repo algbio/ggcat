@@ -206,6 +206,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
             #[inline(always)]
             |index, min_hash, is_last| {
                 push_sequence(PushSequenceInfo {
+                    sequences_base_pos: minimizer_bucketing::NO_SEQUENCES_BASE_POS,
                     bucket: MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
                     second_bucket: MNHFactory::get_bucket(
                         used_bits + first_bits,
@@ -269,6 +270,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
                 let preprocess_info = &preprocess[resolved.record_idx as usize];
                 let hash = run.hash as u64;
                 push_sequence(PushSequenceInfo {
+                    sequences_base_pos: minimizer_bucketing::NO_SEQUENCES_BASE_POS,
                     bucket: MinimizerHashFactory::get_bucket(used_bits, first_bits, hash),
                     second_bucket: MinimizerHashFactory::get_bucket(
                         used_bits + first_bits,

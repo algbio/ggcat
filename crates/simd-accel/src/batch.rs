@@ -11,6 +11,10 @@ use crate::hashing::{PackedSimdSequence, SIMD_LANES};
 /// `record_idx` of the sentinel that terminates each lane's fragment list.
 pub const NO_RECORD: u32 = u32::MAX;
 
+/// `abs_start` of a fragment whose bases have no absolute base coordinate: the
+/// sentinel, and every fragment of a stream that is not LZ-tracked.
+pub const NO_ABS_BASE: u64 = u64::MAX;
+
 /// The record has more bases in the following batch.
 pub const RECORD_CONTINUES: u8 = 1 << 0;
 /// The record already had bases in a preceding batch.
@@ -30,6 +34,14 @@ pub struct LaneFragment {
     /// Offset of the first base inside the logical record, counting the
     /// non-DNA characters that were removed.
     pub source_start: u64,
+    /// Absolute base coordinate of the first base, or [`NO_ABS_BASE`].
+    ///
+    /// The absolute base coordinate of a base is its index in the concatenation of every
+    /// ACGT base of the LZ-tracked input it belongs to, in stream order: newlines,
+    /// headers, comments and non-ACGT characters hold none. A fragment is a run of
+    /// consecutive valid bases, so its base at lane position `p` sits at
+    /// `abs_start + (p - lane_start)`.
+    pub abs_start: u64,
 }
 
 impl LaneFragment {

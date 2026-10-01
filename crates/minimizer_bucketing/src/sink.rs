@@ -3,14 +3,16 @@
 use config::SIMD_BATCH_MAX_HEADER_BYTES;
 use ggcat_logging::stats;
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
-use io::sequences_sink::SequencesSink;
+use io::sequences_sink::{LzCopy, SequencesSink};
 use io::sequences_stream::SequenceInfo;
 use parallel_processor::execution_manager::executor::AddressProducer;
 use parallel_processor::execution_manager::packet::{Packet, PacketsPool};
 use parking_lot::RwLock;
 use simd_accel::batch::BatchSink;
+use simd_accel::fasta_copyback::{CopySpan, CopybackTracker, min_range_bases};
 use simd_accel::fasta_lexer::FastaSimdLexer;
 use simd_accel::packer::LanePacker;
+use simd_accel::stats::CopybackStats;
 
 use crate::simd_batch::{RecordExtra, SequencesLaneBatch, SimdSequencesBatch};
 
@@ -26,7 +28,8 @@ struct BatchPackets<'a, F: Clone + Sync + Send + Default + 'static> {
 impl<'a, F: Clone + Sync + Send + Default + 'static> BatchPackets<'a, F> {
     fn packet_mut(&mut self) -> &mut SimdSequencesBatch<F> {
         if self.packet.is_none() {
-            self.packet = Some(self.pool.alloc_packet());
+            let packet = self.pool.alloc_packet();
+            self.packet = Some(packet);
         }
         self.packet.as_mut().unwrap()
     }
@@ -106,11 +109,18 @@ pub struct BucketingSink<'a, F: Clone + Sync + Send + Default + 'static> {
     active: ActiveLexer,
     extra: RecordExtra,
     packets: BatchPackets<'a, F>,
+    /// The LZ copyback extension, present only when it is switched on.
+    copyback: Option<Box<CopybackTracker>>,
+    /// `Below this value a copy cannot yield a hole, so it is not worth reporting.
+    copyback_min_len: u64,
+    k: usize,
+    m: usize,
 }
 
 impl<'a, F: Clone + Sync + Send + Default + 'static> BucketingSink<'a, F> {
     pub fn new(
         k: usize,
+        m: usize,
         bases_per_lane: usize,
         ignored_length: usize,
         copy_ident: bool,
@@ -137,7 +147,20 @@ impl<'a, F: Clone + Sync + Send + Default + 'static> BucketingSink<'a, F> {
                 stream_info: F::default(),
                 stream_index: None,
             },
+            k,
+            m,
+            copyback_min_len: min_range_bases(k, m),
+            copyback: io::raw_reader::LZ_COPYBACK_ENABLED.then(|| {
+                Box::new(
+                    CopybackTracker::new(io::raw_reader::LZ_COPYBACK_SKIP, k, m)
+                )
+            }),
         }
+    }
+
+    /// What the extension saw, for the caller to aggregate across reader threads.
+    pub fn copyback_stats(&self) -> Option<CopybackStats> {
+        self.copyback.as_ref().map(|t| t.stats)
     }
 
     /// Starts one input block: its records are numbered from zero again.
@@ -160,6 +183,71 @@ impl<'a, F: Clone + Sync + Send + Default + 'static> BucketingSink<'a, F> {
 impl<F: Clone + Sync + Send + Default + 'static> SequencesSink for BucketingSink<'_, F> {
     fn wants_ident(&self) -> bool {
         self.packer.wants_ident()
+    }
+
+    fn wants_copies(&self) -> bool {
+        self.copyback.is_some()
+    }
+
+    fn copyback_min_len(&self) -> u64 {
+        self.copyback_min_len
+    }
+
+    fn begin_tracked_input(&mut self, path: &std::path::Path, retain: u64) {
+        let Some(tracker) = self.copyback.as_mut() else {
+            return;
+        };
+        tracker.begin_input(retain);
+    }
+
+    fn end_tracked_input(&mut self) {
+        // The reader lets go of its copy before the last packet leaves, so the manager
+        // is always finalized by a bucketing thread.
+        if self.packer.has_content() {
+            self.packer.finish(&mut self.packets);
+        } else {
+            let packet = self.packets.packet_mut();
+            self.packets.emit(true);
+        }
+    }
+
+    fn mark_opaque(&mut self, at: u64, len: u64) {
+        if let Some(tracker) = self.copyback.as_mut() {
+            tracker.mark_opaque(at, len);
+        }
+    }
+
+    fn push_bytes_tracked(
+        &mut self,
+        base: u64,
+        bytes: &[u8],
+        forward: &[LzCopy],
+        backward: &[LzCopy],
+    ) {
+        let Some(tracker) = self.copyback.as_mut() else {
+            self.lex_and_pack(bytes);
+            return;
+        };
+        // Only the FASTA lexer hands out absolute base coordinates; the bases of any
+        // other stream have none, and its bytes can be no copy's source.
+        if !matches!(self.active, ActiveLexer::Fasta) {
+            tracker.mark_opaque(base, bytes.len() as u64);
+            self.lex_and_pack(bytes);
+            return;
+        }
+        tracker.push_span(
+            &mut self.fasta,
+            &mut self.packer,
+            &mut self.packets,
+            base,
+            bytes,
+            forward.iter().map(|c| (c.src(), c.len())),
+            backward.iter().map(|c| CopySpan {
+                src: c.src(),
+                dst: c.dst(),
+                len: c.len(),
+            }),
+        );
     }
 
     fn begin_stream(&mut self, format: DnaSequencesFileType, info: SequenceInfo) {

@@ -8,9 +8,13 @@ name = "ggcat_simd_accel"
 doctest = false
 
 [dependencies]
+ggcat-logging = { version = "2.2.0", path = "../logging" }
+memchr = "2.7"
 wide = "0.7.33"
 
 [dev-dependencies]
+# The tests assert on the counters.
+ggcat-logging = { version = "2.2.0", path = "../logging", features = ["stats"] }
 criterion = "0.5.1"
 hashes = { package = "ggcat_hashes", path = "../hashes" }
 io = { package = "ggcat_io", path = "../io" }

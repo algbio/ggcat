@@ -118,7 +118,12 @@ impl GenericSequencesStream for GeneralSequencesStream {
                 .read_block_into(block, sink),
             GeneralSequenceBlockData::TAR(block) => {
                 let reader = self.raw_reader.get_or_insert_with(RawBytesReader::new);
-                if let Err(error) = block.read_into(reader, sink) {
+                let outcome = if crate::raw_reader::LZ_COPYBACK_ENABLED && sink.wants_copies() {
+                    block.read_into_tracked(reader, sink)
+                } else {
+                    block.read_into(reader, sink)
+                };
+                if let Err(error) = outcome {
                     // Archive failures are collected and reported together,
                     // exactly as the record-based reader does.
                     block

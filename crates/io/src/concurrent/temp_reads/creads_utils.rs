@@ -1,7 +1,6 @@
 use crate::compressed_read::{CompressedRead, CompressedReadIndipendent};
 use crate::varint::{
-    BufVarintSource, VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, VarintSource, encode_varint,
-    encode_varint_to_vec,
+    BufVarintSource, VARINT_FLAGS_MAX_SIZE, VARINT_MAX_SIZE, VarintSource, encode_varint_to_vec,
 };
 use bincode::{Decode, Encode};
 use byteorder::ReadBytesExt;

@@ -76,7 +76,11 @@ use parallel_processor::buckets::{ChunkingStatus, LockFreeBucket, MultiThreadBuc
 use parking_lot::{Mutex, RwLock};
 use std::cell::{RefCell, UnsafeCell};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+
+use ggcat_logging::AtomicStat;
+
+use crate::stats::DedupStats;
 
 /// How many times an append retries the buffers before processing itself
 /// inline. Bounds the starvation of a thread that keeps losing the seal race;
@@ -362,34 +366,6 @@ const EMPTY: Entry = Entry {
     offset: u32::MAX,
 };
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DedupStats {
-    /// Records handed to `add`.
-    pub records_in: u64,
-    /// Records written to the output bucket.
-    pub records_out: u64,
-    pub bytes_out: u64,
-    /// Drains, and which bound triggered each.
-    pub drains: u64,
-    pub drains_storage: u64,
-    pub drains_arena: u64,
-    pub drains_table: u64,
-    /// Buffers sealed, and slices that bypassed the buffers.
-    pub seals: u64,
-    pub inline_slices: u64,
-    /// Records too large to ever be stored, written straight out.
-    pub oversized_records: u64,
-    /// Bytes forwarded untouched while standing down, and how many windows
-    /// decided to stand down. Both zero on input the deduplicator is earning
-    /// its keep on, which is what makes a silent regression visible.
-    pub bypassed_bytes: u64,
-    pub bypass_windows: u64,
-    /// Peak live bytes of each bounded structure, for the budget assertions.
-    pub peak_storage: usize,
-    pub peak_arena: usize,
-    pub table_bytes: usize,
-}
-
 /// Everything a walk touches. Held behind one mutex, so processing is
 /// single-threaded however many threads are appending.
 struct DedupState<MultipleData: DedupExtraData, FlagsCount: typenum::Unsigned> {
@@ -427,6 +403,11 @@ struct DedupState<MultipleData: DedupExtraData, FlagsCount: typenum::Unsigned> {
     /// Raised when a write started a new chunk, so `add` can hand that back to
     /// the caller, which is what makes the compactor run.
     new_chunk: bool,
+    /// Records handed to `add` and records written, over the whole lifetime. Plain
+    /// counters rather than stats: the bypass decision reads them. Copied into
+    /// the stats at `finish`.
+    records_in: u64,
+    records_out: u64,
     /// Counters as of the last bypass decision, so a window can be measured
     /// against the cumulative ones without a second set of increments.
     window_records_in: u64,
@@ -513,7 +494,9 @@ pub struct BoundedDeduplicator<
     bypass_bytes_left: AtomicI64,
     /// Counted outside the state lock, because the bypass path deliberately
     /// never takes it. Folded into the stats at `finish`.
-    bypassed_bytes: AtomicU64,
+    bypassed_bytes: AtomicStat,
+    /// Bytes written through [`Self::write_direct`], likewise.
+    direct_bytes: AtomicStat,
     slot_capacity: usize,
 }
 
@@ -589,12 +572,11 @@ impl<
                 // Small and fixed: ggcat's DEFAULT_OUTPUT_BUFFER_SIZE is 4 MiB,
                 // larger than M itself for a 512 KiB budget.
                 staging_capacity: memory / 8,
-                stats: DedupStats {
-                    table_bytes: table_len * size_of::<Entry>(),
-                    ..DedupStats::default()
-                },
+                stats: DedupStats::new((table_len * size_of::<Entry>()) as u64),
                 torn: false,
                 new_chunk: false,
+                records_in: 0,
+                records_out: 0,
                 window_records_in: 0,
                 window_records_out: 0,
                 policy,
@@ -611,9 +593,20 @@ impl<
             } else {
                 0
             }),
-            bypassed_bytes: AtomicU64::new(0),
+            bypassed_bytes: AtomicStat::new(),
+            direct_bytes: AtomicStat::new(),
             slot_capacity,
         }
+    }
+
+    /// Writes a slice of whole records in the *wide* form straight to the output,
+    /// never deduplicated: for records that already carry their multiplicity.
+    pub fn write_direct(&self, slice: &[u8]) -> ChunkingStatus {
+        if slice.is_empty() {
+            return ChunkingStatus::SameChunk;
+        }
+        self.direct_bytes.add(slice.len() as u64);
+        self.output.write_records(slice)
     }
 
     /// Whether this bucket is currently standing its deduplicator down.
@@ -636,8 +629,7 @@ impl<
         if let Some(bypass) = &self.bypass_output {
             if self.force_bypass || self.bypass.load(Ordering::Relaxed) {
                 let status = bypass.write_records(slice);
-                self.bypassed_bytes
-                    .fetch_add(slice.len() as u64, Ordering::Relaxed);
+                self.bypassed_bytes.add(slice.len() as u64);
                 if !self.force_bypass
                     && self
                         .bypass_bytes_left
@@ -743,7 +735,11 @@ impl<
         self.seal_locked(&mut state, epoch + 1);
         self.seal_locked(&mut state, epoch);
         self.drain(&mut state);
-        state.stats.bypassed_bytes = self.bypassed_bytes.load(Ordering::Relaxed);
+        let (records_in, records_out) = (state.records_in, state.records_out);
+        state.stats.records_in.set(records_in);
+        state.stats.records_out.set(records_out);
+        state.stats.bypassed_bytes = self.bypassed_bytes.load();
+        state.stats.direct_bytes = self.direct_bytes.load();
         state.stats
     }
 
@@ -800,7 +796,7 @@ impl<
                 flags: narrow.flags,
                 second_bucket: narrow.second_bucket,
             };
-            state.stats.records_in += 1;
+            state.records_in += 1;
             self.insert(state, &mut in_arena, record);
         }
         debug_assert!(
@@ -935,8 +931,8 @@ impl<
                 offset: offset as u32,
             };
             state.occupied += 1;
-            state.stats.peak_storage = state.stats.peak_storage.max(state.storage.len());
-            state.stats.peak_arena = state.stats.peak_arena.max(state.out_arena.live_bytes());
+            state.stats.peak_storage.max_with(state.storage.len() as u64);
+            state.stats.peak_arena.max_with(state.out_arena.live_bytes() as u64);
             return;
         }
     }
@@ -1006,7 +1002,7 @@ impl<
             extra.combine_entries(&mut state.out_arena, record.extra, in_arena);
             std::ptr::write_unaligned(extra_ptr, extra);
         }
-        state.stats.peak_arena = state.stats.peak_arena.max(state.out_arena.live_bytes());
+        state.stats.peak_arena.max_with(state.out_arena.live_bytes() as u64);
     }
 
     /// Writes every stored record to the output bucket and empties the state.
@@ -1064,10 +1060,10 @@ impl<
             return;
         }
 
-        let window_in = state.stats.records_in - state.window_records_in;
-        let window_out = state.stats.records_out - state.window_records_out;
-        state.window_records_in = state.stats.records_in;
-        state.window_records_out = state.stats.records_out;
+        let window_in = state.records_in - state.window_records_in;
+        let window_out = state.records_out - state.window_records_out;
+        state.window_records_in = state.records_in;
+        state.window_records_out = state.records_out;
 
         if window_in < state.policy.min_records {
             // Too short a window to conclude anything from.
@@ -1170,59 +1166,7 @@ impl<
             staging.clear();
         }
         state.out_codec.write_to(&element, staging, &extra, arena);
-        state.stats.records_out += 1;
-    }
-}
-
-impl DedupStats {
-    /// Folds another bucket's figures in, for a summary over the whole array.
-    pub fn accumulate(&mut self, other: &Self) {
-        self.records_in += other.records_in;
-        self.records_out += other.records_out;
-        self.bytes_out += other.bytes_out;
-        self.drains += other.drains;
-        self.drains_storage += other.drains_storage;
-        self.drains_arena += other.drains_arena;
-        self.drains_table += other.drains_table;
-        self.seals += other.seals;
-        self.inline_slices += other.inline_slices;
-        self.oversized_records += other.oversized_records;
-        self.bypassed_bytes += other.bypassed_bytes;
-        self.bypass_windows += other.bypass_windows;
-        self.peak_storage = self.peak_storage.max(other.peak_storage);
-        self.peak_arena = self.peak_arena.max(other.peak_arena);
-        self.table_bytes = self.table_bytes.max(other.table_bytes);
-    }
-
-    /// One line per figure, for a test or a benchmark to print.
-    pub fn report(&self) -> String {
-        format!(
-            "records {} -> {} ({:.1}% collapsed), {} bytes out, {} drains \
-             (storage {}, arena {}, table {}), {} seals, {} inline slices, \
-             {} oversized, {} bytes bypassed over {} windows, \
-             peak storage {}, arena {}, table {}",
-            self.records_in,
-            self.records_out,
-            if self.records_in == 0 {
-                0.0
-            } else {
-                100.0 * self.records_in.saturating_sub(self.records_out) as f64
-                    / self.records_in as f64
-            },
-            self.bytes_out,
-            self.drains,
-            self.drains_storage,
-            self.drains_arena,
-            self.drains_table,
-            self.seals,
-            self.inline_slices,
-            self.oversized_records,
-            self.bypassed_bytes,
-            self.bypass_windows,
-            self.peak_storage,
-            self.peak_arena,
-            self.table_bytes,
-        )
+        state.records_out += 1;
     }
 }
 
@@ -1559,9 +1503,9 @@ mod tests {
             ),
         ] {
             let (wide, narrow, stats) = run_with_bypass(name, M, BypassPolicy::always(), &slices);
-            assert_eq!(stats.records_in, 0, "{name}: nothing should be decoded");
-            assert_eq!(stats.records_out, 0, "{name}");
-            assert!(stats.bypassed_bytes > 0, "{name}");
+            assert_eq!(stats.records_in.get(), 0, "{name}: nothing should be decoded");
+            assert_eq!(stats.records_out.get(), 0, "{name}");
+            assert!(stats.bypassed_bytes.get() > 0, "{name}");
             assert!(
                 decode(&wide).is_empty(),
                 "{name}: wide side should be empty"
@@ -1582,11 +1526,11 @@ mod tests {
         let (wide, narrow, stats) = run_with_bypass("bypass-unique", M, test_policy(), &slices);
 
         assert!(
-            stats.bypass_windows > 0,
+            stats.bypass_windows.get() > 0,
             "a bucket that collapses nothing should stand down: {}",
             stats.report()
         );
-        assert!(stats.bypassed_bytes > 0, "{}", stats.report());
+        assert!(stats.bypassed_bytes.get() > 0, "{}", stats.report());
         // Whatever the split, together they are the input.
         assert_eq!(
             union(decode(&wide), decode_narrow(&narrow)),
@@ -1606,12 +1550,12 @@ mod tests {
         let (wide, narrow, stats) = run_with_bypass("bypass-redundant", M, test_policy(), &slices);
 
         assert_eq!(
-            stats.bypass_windows,
+            stats.bypass_windows.get(),
             0,
             "a bucket collapsing 99% must keep folding: {}",
             stats.report()
         );
-        assert_eq!(stats.bypassed_bytes, 0, "{}", stats.report());
+        assert_eq!(stats.bypassed_bytes.get(), 0, "{}", stats.report());
         assert!(decode_narrow(&narrow).is_empty());
         assert_eq!(decode(&wide), expected(&records));
     }
@@ -1637,9 +1581,9 @@ mod tests {
 
         let (wide, narrow, stats) = run_with_bypass("bypass-flip", M, test_policy(), &slices);
 
-        assert!(stats.bypass_windows > 0, "{}", stats.report());
+        assert!(stats.bypass_windows.get() > 0, "{}", stats.report());
         assert!(
-            stats.records_in > 0,
+            stats.records_in.get() > 0,
             "the redundant prefix should have been folded"
         );
         assert_eq!(
@@ -1693,9 +1637,9 @@ mod tests {
             .collect();
 
         let (path, stats) = run("union", M, &[encode(&records)]);
-        assert_eq!(stats.records_in, 6);
-        assert_eq!(stats.records_out, 2);
-        assert_eq!(stats.drains, 1);
+        assert_eq!(stats.records_in.get(), 6);
+        assert_eq!(stats.records_out.get(), 2);
+        assert_eq!(stats.drains.get(), 1);
         assert_eq!(decode(&path), expected(&records));
     }
 
@@ -1717,7 +1661,7 @@ mod tests {
             records.push(record);
         }
         let (path, stats) = run("keys", M, &[encode(&records)]);
-        assert_eq!(stats.records_out, 3);
+        assert_eq!(stats.records_out.get(), 3);
         let decoded = decode(&path);
         assert_eq!(decoded, expected(&records));
         // The sub-bucket byte really is reproduced, not zeroed.
@@ -1745,7 +1689,7 @@ mod tests {
             })
             .collect();
         let (path, stats) = run("mult", M, &[encode(&records)]);
-        assert_eq!(stats.records_out, 1);
+        assert_eq!(stats.records_out.get(), 1);
         assert_eq!(decode(&path).values().next().unwrap().0, 10 + 11 + 12 + 13);
     }
 
@@ -1763,25 +1707,25 @@ mod tests {
         let (path, stats) = run("drain", M, &slices);
 
         assert!(
-            stats.drains > 1,
+            stats.drains.get() > 1,
             "expected several drains, got {}",
-            stats.drains
+            stats.drains.get()
         );
-        assert!(stats.records_out > 0);
+        assert!(stats.records_out.get() > 0);
         assert!(
-            stats.peak_storage <= M,
+            stats.peak_storage.get() <= M as u64,
             "storage peaked at {}",
-            stats.peak_storage
+            stats.peak_storage.get()
         );
         assert!(
-            stats.peak_arena <= M,
+            stats.peak_arena.get() <= M as u64,
             "arena peaked at {}",
-            stats.peak_arena
+            stats.peak_arena.get()
         );
         assert!(
-            stats.table_bytes <= M / 4,
+            stats.table_bytes.get() <= (M / 4) as u64,
             "table is {} bytes",
-            stats.table_bytes
+            stats.table_bytes.get()
         );
         assert_eq!(decode(&path), expected(&records));
     }
@@ -1798,14 +1742,14 @@ mod tests {
         let slices: Vec<_> = records.chunks(32).map(encode).collect();
         let (path, stats) = run("storage", M, &slices);
         assert!(
-            stats.drains_storage > 0,
+            stats.drains_storage.get() > 0,
             "expected the storage bound to bind: {}",
             stats.report()
         );
         assert!(
-            stats.peak_storage <= M,
+            stats.peak_storage.get() <= M as u64,
             "storage peaked at {}",
-            stats.peak_storage
+            stats.peak_storage.get()
         );
         assert_eq!(decode(&path), expected(&records));
     }
@@ -1820,7 +1764,7 @@ mod tests {
         let small = Record::new(&sequence(2, 40), 6);
         let records = vec![small.clone(), huge.clone(), small];
         let (path, stats) = run("huge", M, &[encode(&records)]);
-        assert_eq!(stats.oversized_records, 1, "{}", stats.report());
+        assert_eq!(stats.oversized_records.get(), 1, "{}", stats.report());
         assert_eq!(decode(&path), expected(&records));
     }
 
@@ -1834,8 +1778,8 @@ mod tests {
         let slice = encode(&records);
         assert!(slice.len() > M / 2, "fixture is not oversized");
         let (path, stats) = run("inline", M, &[slice]);
-        assert_eq!(stats.inline_slices, 1);
-        assert_eq!(stats.seals, 0);
+        assert_eq!(stats.inline_slices.get(), 1);
+        assert_eq!(stats.seals.get(), 0);
         assert_eq!(decode(&path), expected(&records));
     }
 
@@ -1849,11 +1793,11 @@ mod tests {
         let slices: Vec<_> = records.chunks(16).map(encode).collect();
         let (path, stats) = run("swap", M, &slices);
         assert!(
-            stats.seals > 2,
+            stats.seals.get() > 2,
             "expected several seals, got {}",
-            stats.seals
+            stats.seals.get()
         );
-        assert_eq!(stats.records_in, 6000);
+        assert_eq!(stats.records_in.get(), 6000);
         assert_eq!(decode(&path), expected(&records));
     }
 
@@ -1889,11 +1833,11 @@ mod tests {
         Arc::try_unwrap(bucket).ok().unwrap().finalize();
 
         assert!(
-            stats.seals > 2,
+            stats.seals.get() > 2,
             "expected several seals, got {}",
-            stats.seals
+            stats.seals.get()
         );
-        assert_eq!(stats.records_in, 8000);
+        assert_eq!(stats.records_in.get(), 8000);
         assert_eq!(decode(&file), expected(&records));
     }
 
@@ -1941,8 +1885,8 @@ mod tests {
         let file = bucket.get_path();
         Arc::try_unwrap(bucket).ok().unwrap().finalize();
 
-        assert_eq!(stats.oversized_records, 4, "{}", stats.report());
-        assert!(stats.drains > 1, "{}", stats.report());
+        assert_eq!(stats.oversized_records.get(), 4, "{}", stats.report());
+        assert!(stats.drains.get() > 1, "{}", stats.report());
         assert_eq!(decode(&file), expected(&records));
     }
 
@@ -1995,10 +1939,10 @@ mod tests {
         let dedup = BoundedDeduplicator::<NonColoredManager, Flags, _>::new(M, K, bucket);
         dedup.add(&bytes);
         let (bucket, stats) = dedup.finalize();
-        assert_eq!(stats.records_in, 10);
-        assert_eq!(stats.records_out, 1);
+        assert_eq!(stats.records_in.get(), 10);
+        assert_eq!(stats.records_out.get(), 1);
         assert_eq!(
-            stats.peak_arena, 0,
+            stats.peak_arena.get(), 0,
             "the plain path must not touch an arena"
         );
         let file = bucket.get_path();
@@ -2033,8 +1977,8 @@ mod tests {
     fn empty_input_writes_nothing() {
         let _guard = memory_fs();
         let (_, stats) = run("empty", M, &[Vec::new()]);
-        assert_eq!(stats.records_in, 0);
-        assert_eq!(stats.records_out, 0);
+        assert_eq!(stats.records_in.get(), 0);
+        assert_eq!(stats.records_out.get(), 0);
     }
 
     #[test]
@@ -2043,6 +1987,61 @@ mod tests {
         let _guard = memory_fs();
         let bucket = writer(&root("bad").join("out"));
         let _ = BoundedDeduplicator::<MinBkMultipleColors, Flags, _>::new(100_000, K, bucket);
+    }
+
+    /// Direct records share the per-bucket buffers with narrow ones, which are
+    /// tiny here so that they flush often: each kind goes where it belongs when the
+    /// buffer switches, the narrow ones through the deduplicator and the wide ones
+    /// straight out with their multiplicity, and none is lost or merged wrongly.
+    #[test]
+    fn direct_records_skip_the_deduplicator_through_the_same_buffers() {
+        let _guard = memory_fs();
+        let path = root("direct").join("out");
+        let dedup = [BoundedDeduplicator::<MinBkMultipleColors, Flags, _>::new(M, K, writer(&path))];
+        let (a, b) = (sequence(1, 40), sequence(2, 50));
+        let single = |color| {
+            MinBkSingleColor::create(
+                SingleSequenceInfo {
+                    static_color: color,
+                    sequence_ident: SequenceIdent::FASTA(b"fixture"),
+                },
+                &mut (),
+            )
+        };
+        let mut multiple_buffer = MinBkMultipleColors::new_temp_buffer();
+        let mut dispatcher = DeduplicatingDispatcher::new(&dedup, 64, K);
+        for round in 0..30u32 {
+            dispatcher.add_element_extended(
+                0,
+                &single(1),
+                &(),
+                &CompressedReadsBucketData::new(a.as_slice(), 1, 3, 0),
+            );
+            for (seq, color, multiplicity) in [(&a, 3, 5), (&b, 2, 7)] {
+                if round % 3 == 2 && color == 2 {
+                    continue;
+                }
+                let (extra, buffer) =
+                    MinBkMultipleColors::from_single_entry(&mut multiple_buffer, single(color), &());
+                dispatcher.add_element_direct(
+                    0,
+                    &extra,
+                    buffer,
+                    &CompressedReadsBucketData::new_with_multiplicity(seq, 1, 3, multiplicity, 0),
+                );
+            }
+        }
+        dispatcher.finalize();
+        let [dedup] = dedup;
+        let (bucket, stats) = dedup.finalize();
+        let file = bucket.get_path();
+        Arc::try_unwrap(bucket).ok().unwrap().finalize();
+        assert_eq!(stats.records_in.get(), 30, "only the narrow records are deduplicated");
+        assert!(stats.direct_bytes.get() > 0);
+        let got = decode(&file);
+        assert_eq!(got[&(a.clone(), 1, 3)], (30 + 30 * 5, vec![1, 3]));
+        assert_eq!(got[&(b.clone(), 1, 3)], (20 * 7, vec![2]));
+        assert_eq!(got.len(), 2);
     }
 
     // Silence the unused warnings for helpers only some instantiations use.
@@ -2068,6 +2067,12 @@ pub struct DeduplicatingDispatcher<
     buffers: Vec<Vec<u8>>,
     /// One codec per bucket, reset per record to match the decoder.
     codecs: Vec<InputCodec<MultipleData, FlagsCount>>,
+    /// Whether each buffer holds wide records for [`Self::add_element_direct`]
+    /// rather than narrow ones for the deduplicator; a buffer holds one kind at a
+    /// time and is flushed when it switches.
+    direct: Vec<bool>,
+    /// The wide codec, reset per record, so one serves every bucket.
+    out_codec: OutputCodec<MultipleData, FlagsCount>,
     finalized: bool,
 }
 
@@ -2091,9 +2096,57 @@ impl<
             codecs: (0..deduplicators.len())
                 .map(|_| InputCodec::<MultipleData, FlagsCount>::new(k))
                 .collect(),
+            direct: vec![false; deduplicators.len()],
+            out_codec: OutputCodec::<MultipleData, FlagsCount>::new(k),
             deduplicators,
             finalized: false,
         }
+    }
+
+    /// Hands bucket `index`'s buffer over to where its kind of records goes, and
+    /// empties it.
+    fn flush(&mut self, index: usize) -> ChunkingStatus {
+        let buffer = &mut self.buffers[index];
+        let status = if self.direct[index] {
+            self.deduplicators[index].write_direct(buffer)
+        } else {
+            self.deduplicators[index].add(buffer)
+        };
+        buffer.clear();
+        status
+    }
+
+    /// Adds a record in the wide form, with its multiplicity, that skips the
+    /// deduplicator: it goes through the same per-bucket buffer, whose narrow
+    /// records are handed to the deduplicator first, and then straight to the
+    /// bucket.
+    pub fn add_element_direct(
+        &mut self,
+        bucket: u16,
+        extra_data: &MultipleData,
+        extra_data_buffer: &TempBuffer<MultipleData>,
+        element: &CompressedReadsBucketData<'_>,
+    ) -> ChunkingStatus {
+        let index = bucket as usize;
+        let mut status = ChunkingStatus::SameChunk;
+        if !self.direct[index] {
+            if !self.buffers[index].is_empty() {
+                status = self.flush(index);
+            }
+            self.direct[index] = true;
+        }
+        self.out_codec.reset();
+        let buffer = &self.buffers[index];
+        if self.out_codec.get_size(element, extra_data) + buffer.len() > buffer.capacity()
+            && !buffer.is_empty()
+        {
+            if matches!(self.flush(index), ChunkingStatus::NewChunk) {
+                status = ChunkingStatus::NewChunk;
+            }
+        }
+        self.out_codec
+            .write_to(element, &mut self.buffers[index], extra_data, extra_data_buffer);
+        status
     }
 
     pub fn add_element_extended(
@@ -2104,9 +2157,13 @@ impl<
         element: &CompressedReadsBucketData<'_>,
     ) -> ChunkingStatus {
         let index = bucket as usize;
+        let mut status = ChunkingStatus::SameChunk;
+        if self.direct[index] {
+            status = self.flush(index);
+            self.direct[index] = false;
+        }
         let buffer = &mut self.buffers[index];
         let codec = &mut self.codecs[index];
-        let mut status = ChunkingStatus::SameChunk;
         // Every record stands on its own, so a sealed buffer can hold runs from
         // several threads back to back.
         codec.reset();
@@ -2114,7 +2171,9 @@ impl<
         if codec.get_size(element, extra_data) + buffer.len() > buffer.capacity()
             && !buffer.is_empty()
         {
-            status = self.deduplicators[index].add(buffer);
+            if matches!(self.deduplicators[index].add(buffer), ChunkingStatus::NewChunk) {
+                status = ChunkingStatus::NewChunk;
+            }
             buffer.clear();
         }
         codec.write_to(element, buffer, extra_data, extra_data_buffer);
@@ -2124,10 +2183,9 @@ impl<
     /// Hands every partial buffer over. The deduplicators themselves are
     /// finished separately, once every thread's dispatcher has been finalized.
     pub fn finalize(mut self) {
-        for (index, buffer) in self.buffers.iter_mut().enumerate() {
-            if !buffer.is_empty() {
-                self.deduplicators[index].add(buffer);
-                buffer.clear();
+        for index in 0..self.buffers.len() {
+            if !self.buffers[index].is_empty() {
+                self.flush(index);
             }
         }
         self.finalized = true;

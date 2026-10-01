@@ -345,6 +345,7 @@ impl<CX: ColorsManager> DumperMinimizerBucketingExecutor<CX> {
         for (index, kmer_color) in colors.enumerate() {
             if kmer_color != last_color {
                 push_sequence(PushSequenceInfo {
+                    sequences_base_pos: minimizer_bucketing::NO_SEQUENCES_BASE_POS,
                     bucket: CX::get_bucket_from_color(
                         &last_color,
                         self.global_data.global_data.colors_count,
@@ -364,6 +365,7 @@ impl<CX: ColorsManager> DumperMinimizerBucketingExecutor<CX> {
         }
 
         push_sequence(PushSequenceInfo {
+            sequences_base_pos: minimizer_bucketing::NO_SEQUENCES_BASE_POS,
             bucket: CX::get_bucket_from_color(
                 &last_color,
                 self.global_data.global_data.colors_count,

@@ -4,6 +4,7 @@
 //! 64-byte blocks, so they want the decompressed bytes as they come, without
 //! being cut into lines first.
 
+use crate::sequences_sink::SequencesSink;
 use anyhow::{Context, Result, anyhow};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use parallel_processor::mt_debug_counters::counter::{AtomicCounter, AvgMode, SumMode};
@@ -12,6 +13,22 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use streaming_libdeflate_rs::decompress_file_buffered_callback;
+
+/// Reads compressed inputs through the LZ-tracking decoder of `lz_copyback`, which hands
+/// the decompressed bytes out one window at a time together with the copies of that
+/// window, at both ends. The parser uses the forward ones to record what kind of data
+/// each repeated range holds, and the backward ones to skip the DNA it has already seen.
+///
+/// Off by default: the plain decoders are used and nothing changes.
+pub const LZ_COPYBACK_ENABLED: bool = true;
+
+/// Whether the parser actually drops the repeated bases. With this off and
+/// [`LZ_COPYBACK_ENABLED`] on, everything is tracked and reported but the output is
+/// unchanged, which is the configuration the equivalence tests use.
+///
+/// With it, the input given to the parser changes: a skipped stretch is deleted, so the
+/// bases around the hole fuse. Additional copyback range info are provided to correctly handle this.
+pub const LZ_COPYBACK_SKIP: bool = true;
 
 static COUNTER_THREADS_BUSY_READING: AtomicCounter<SumMode> =
     declare_counter_i64!("line_reading_threads", SumMode, false);
@@ -108,6 +125,55 @@ impl RawBytesReader {
             COUNTER_THREADS_PROCESSING_READS.sub(1);
             COUNTER_THREADS_BUSY_READING.inc();
         }
+    }
+
+    /// The tracker configuration the whole extension uses. `min_len` comes from the
+    /// sink, which is the only thing that knows `k` and `m`.
+    pub fn copyback_config(min_len: u64) -> lz_copyback::TrackerConfig {
+        lz_copyback::TrackerConfig {
+            direction: lz_copyback::Direction::Both,
+            min_len: min_len.max(1),
+            ..lz_copyback::TrackerConfig::default()
+        }
+    }
+
+    /// Reads a whole file through the tracking decoder into `sink`, window by window,
+    /// with the copies of each window at both ends.
+    ///
+    /// A loose file is one FASTA stream from end to end, so there is nothing opaque in
+    /// it and the windows cover it contiguously.
+    pub fn read_file_tracked_into(
+        &mut self,
+        path: &Path,
+        sink: &mut impl SequencesSink,
+    ) -> Result<()> {
+        let mut decoder = lz_copyback::open(path, Self::copyback_config(sink.copyback_min_len()))
+            .with_context(|| format!("Cannot open {}", path.display()))?;
+        // A copy reaches back by up to the stream's maximum distance, from anywhere in
+        // the window being emitted.
+        let retain = decoder
+            .max_distance()
+            .saturating_add(2 * decoder.window_size() as u64);
+        sink.begin_tracked_input(path, retain);
+        loop {
+            let Some(window) = decoder
+                .next_window()
+                .with_context(|| format!("Cannot decompress {}", path.display()))?
+            else {
+                break;
+            };
+            COUNTER_THREADS_READ_BYTES.inc_by(window.data.len() as i64);
+            sink.push_bytes_tracked(
+                window.start_abs,
+                window.data,
+                window.src_copies(),
+                window.dst_copies(),
+            );
+            if window.is_last {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// Reads and decompresses a whole file, by the codec its name implies.

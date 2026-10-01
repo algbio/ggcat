@@ -34,6 +34,7 @@ use io::{DUPLICATES_BUCKET_EXTRA, compute_stats_from_input_sizes};
 use parallel_processor::buckets::ExtraBucketData;
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
+use parallel_processor::buckets::writers::compressed_binary_writer::EncoderMemoryUsage;
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{BucketsCount, ExtraBuckets, MultiThreadBuckets};
 use parallel_processor::memory_data_size::MemoryDataSize;
@@ -275,6 +276,7 @@ pub fn run_assembler<
                         get_memory_mode(SwapPriority::FinalMaps as usize),
                         CompressedCheckpointSize::new_from_size(MemoryDataSize::from_mebioctets(4)),
                         get_compression_level_info(),
+                        EncoderMemoryUsage::Normal,
                     ),
                     &(),
                 ),
@@ -290,6 +292,7 @@ pub fn run_assembler<
                                 MemoryDataSize::from_mebioctets(1),
                             ),
                             get_compression_level_info(),
+                            EncoderMemoryUsage::Normal,
                         ),
                         &(),
                     ),

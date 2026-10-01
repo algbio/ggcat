@@ -55,6 +55,9 @@ pub struct ResolvedRun {
     pub fragment_end: usize,
     /// Offset of the fragment inside its record.
     pub source_start: u64,
+    /// Absolute base coordinate of the fragment's first base, or
+    /// [`simd_accel::batch::NO_ABS_BASE`].
+    pub abs_start: u64,
     /// First base of the super-k-mer inside the lane.
     pub start: usize,
     /// One past its last base.
@@ -71,6 +74,14 @@ impl ResolvedRun {
     #[inline(always)]
     pub fn source_index(&self, position: usize) -> usize {
         self.source_start as usize + (position - self.fragment_start)
+    }
+
+    /// Absolute base coordinate of the base at lane `position`, or `None` when the
+    /// fragment is not part of an LZ-tracked stream.
+    #[inline(always)]
+    pub fn abs_index(&self, position: usize) -> Option<u64> {
+        (self.abs_start != simd_accel::batch::NO_ABS_BASE)
+            .then(|| self.abs_start + (position - self.fragment_start) as u64)
     }
 }
 
@@ -117,6 +128,7 @@ impl<'a> LaneRunResolver<'a> {
             fragment_start: start,
             fragment_end: end,
             source_start: fragment.source_start,
+            abs_start: fragment.abs_start,
             start: if front_extra && run_start > start {
                 run_start - 1
             } else {
@@ -191,12 +203,14 @@ mod tests {
                 lane_start: start,
                 record_idx: 0,
                 source_start: start as u64,
+                abs_start: simd_accel::batch::NO_ABS_BASE,
             });
         }
         batch.lanes[0].push(LaneFragment {
             lane_start: fill,
             record_idx: NO_RECORD,
             source_start: 0,
+            abs_start: simd_accel::batch::NO_ABS_BASE,
         });
         batch.lane_fill[0] = fill;
         for lane in 1..SIMD_LANES {
@@ -204,6 +218,7 @@ mod tests {
                 lane_start: 0,
                 record_idx: NO_RECORD,
                 source_start: 0,
+                abs_start: simd_accel::batch::NO_ABS_BASE,
             });
         }
         batch.records.push(crate::simd_batch::RecordEntry {
@@ -278,16 +293,19 @@ mod tests {
                 lane_start: 0,
                 record_idx: 0,
                 source_start: 7,
+                abs_start: simd_accel::batch::NO_ABS_BASE,
             },
             LaneFragment {
                 lane_start: 20,
                 record_idx: 1,
                 source_start: 0,
+                abs_start: simd_accel::batch::NO_ABS_BASE,
             },
             LaneFragment {
                 lane_start: 32,
                 record_idx: NO_RECORD,
                 source_start: 0,
+                abs_start: simd_accel::batch::NO_ABS_BASE,
             },
         ];
         let mut resolver = LaneRunResolver::new(&fragments);

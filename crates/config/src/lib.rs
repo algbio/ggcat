@@ -81,12 +81,12 @@ pub const MAX_RESPLIT_BUCKETS_COUNT: u64 = 1024;
 // A resplitted bucket is split in parts of at least this size, that are processed in parallel
 pub const MIN_RESPLIT_PART_SIZE: u64 = 32 * 1024 * 1024;
 
-// 1GB of reads max for each bucket
+// 1GB of superkmers max for each bucket before doubling buckets count
 pub const MIN_BUCKET_SIZE: u64 = 512 * 1024;
 pub const MAX_BUCKET_SIZE: u64 = 1024 * 1024 * 1024;
 pub const MIN_BUCKETS_COUNT_LOG: usize = 2;
 pub const DEFAULT_BUCKETS_COUNT_LOG: usize = 10;
-pub const MAX_BUCKETS_COUNT_LOG: usize = 13;
+pub const MAX_BUCKETS_COUNT_LOG: usize = 11;
 
 pub const MIN_SECOND_BUCKET_SIZE: u64 = 2 * 1024;
 pub const MAX_SECOND_BUCKET_SIZE: u64 = 4 * 1024 * 1024;

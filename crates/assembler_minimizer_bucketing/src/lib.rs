@@ -25,7 +25,9 @@ use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
 };
-use minimizer_bucketing::{MinimzerBucketingFilesReaderInputPacket, PushSequenceInfo};
+use minimizer_bucketing::{
+    MinimzerBucketingFilesReaderInputPacket, NO_SEQUENCES_BASE_POS, PushSequenceInfo,
+};
 use parallel_processor::buckets::{BucketsCount, MultiChunkBucket};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use simd_accel::hashing::{SIMD_LANES, canonical_minimizer_items};
@@ -242,6 +244,10 @@ impl<CD: MinimizerBucketingSeqColorData>
                         resolvers[run.lane].resolve(run.start, run.end, run.finished, k, true);
                     let preprocess_info = &preprocess[resolved.record_idx as usize];
                     let hash = run.hash as u64;
+                    // The minimizer's first base, in absolute base coordinates.
+                    let sequences_base_pos = resolved
+                        .abs_index((run.extra >> 1) as usize)
+                        .unwrap_or(NO_SEQUENCES_BASE_POS);
 
                     let (bucket, rc, minimizer_pos) = if SEPARATE_DUPLICATES && (hash & 1) == 0 {
                         (duplicates_bucket, false, 0)
@@ -279,6 +285,7 @@ impl<CD: MinimizerBucketingSeqColorData>
                         minimizer_pos,
                         flags: super_kmer_flags(resolved.include_first, resolved.include_last, rc),
                         rc,
+                        sequences_base_pos,
                     });
                 },
             );
@@ -381,6 +388,7 @@ impl<CD: MinimizerBucketingSeqColorData> AssemblerMinimizerBucketingExecutor<CD>
                             minimizer_pos,
                             flags: ((include_first as u8) << (rc as u8)) | ((include_last as u8) << (!rc as u8)),
                             rc,
+                            sequences_base_pos: NO_SEQUENCES_BASE_POS,
                         },
                     );
                     last_index = index;

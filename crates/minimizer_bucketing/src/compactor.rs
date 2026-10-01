@@ -45,7 +45,7 @@ use parallel_processor::{
         BucketsCount, LockFreeBucket, MultiChunkBucket,
         readers::typed_binary_reader::AsyncReaderThread,
         writers::{
-            compressed_binary_writer::CompressedBinaryWriter,
+            compressed_binary_writer::{CompressedBinaryWriter, EncoderMemoryUsage},
             lock_free_binary_writer::LockFreeBinaryWriter,
         },
     },
@@ -257,6 +257,7 @@ impl<
             file_mode,
             MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
             get_compression_level_info(),
+            EncoderMemoryUsage::Normal,
         );
         if TypeId::of::<SingleData>() == TypeId::of::<NonColoredManager>() {
             self.compact_buckets_with_writers::<LockFreeBinaryWriter, LockFreeBinaryWriter>(

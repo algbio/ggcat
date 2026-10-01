@@ -23,7 +23,9 @@ use minimizer_bucketing::{
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 
 use parallel_processor::buckets::readers::typed_binary_reader::AsyncReaderThread;
-use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::writers::compressed_binary_writer::{
+    CompressedBinaryWriter, EncoderMemoryUsage,
+};
 use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
 use parallel_processor::buckets::{
     BucketsCount, LockFreeBucket, MultiChunkBucket, MultiThreadBuckets,
@@ -98,6 +100,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                     file_mode,
                     MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
                     get_compression_level_info(),
+                    EncoderMemoryUsage::Normal,
                 ),
                 &MinimizerBucketMode::Compacted,
             )))
@@ -330,6 +333,7 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
                             minimizer_pos,
                             flags,
                             rc,
+                            sequences_base_pos: _,
                         } = info;
 
                         sequences_count[bucket as usize] += 1;

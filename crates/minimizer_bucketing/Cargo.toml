@@ -8,7 +8,7 @@ edition = "2024"
 config = { package = "ggcat_config", path = "../config" }
 
 # Common libraries
-parallel-processor = "0.3.0"
+parallel-processor = "0.3.1"
 streaming-libdeflate-rs = "0.2.4"
 nightly-quirks = "0.1.4"
 
@@ -34,5 +34,10 @@ typenum = "1.18.0"
 arc-swap = "1.7.1"
 
 [dev-dependencies]
+# The tests assert on the counters.
+ggcat-logging = { version = "2.2.0", path = "../logging", features = ["stats"] }
+rand = "0.8.5"
+pcg_rand = "0.13.0"
 flate2 = "1.0.30"
+liblzma = "0.4.7"
 tar = "0.4"

@@ -73,16 +73,30 @@ impl GenericSequencesStream for FastaFileSequencesStream {
             if let (Some(member), Some(color)) = (member, block.1) {
                 archive.member_colors.insert(member, color);
             }
+            if crate::raw_reader::LZ_COPYBACK_ENABLED && sink.wants_copies() {
+                return archive.read_into_tracked(&mut self.raw_reader, sink);
+            }
             return archive.read_into(&mut self.raw_reader, sink);
         }
 
         let format = SequencesReader::file_type(&block.0)
             .with_context(|| format!("Cannot recognize file type of '{}'", block.0.display()))?;
         sink.begin_stream(format, SequenceInfo { color: block.1 });
-        let result = self
-            .raw_reader
-            .read_file(&block.0, |bytes| sink.push_bytes(bytes));
+        // Only FASTA is ever skipped, so any other format takes the plain decoder: the
+        // tracking one would record every LZ match only for the sink to drop them.
+        let tracked = crate::raw_reader::LZ_COPYBACK_ENABLED
+            && sink.wants_copies()
+            && matches!(format, crate::sequences_reader::DnaSequencesFileType::FASTA);
+        let result = if tracked {
+            self.raw_reader.read_file_tracked_into(&block.0, sink)
+        } else {
+            self.raw_reader
+                .read_file(&block.0, |bytes| sink.push_bytes(bytes))
+        };
         sink.end_stream();
+        if tracked {
+            sink.end_tracked_input();
+        }
         result
     }
 }

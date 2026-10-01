@@ -8,9 +8,14 @@
 //!   than `k` is removed again, so no fragment can be too short to hold a k-mer;
 //! * a record that does not fit in the rest of a lane continues in the next
 //!   lane after repeating its last `k - 1` bases, so no k-mer is lost.
+//!
+//! Bases of an LZ-tracked stream also carry an absolute base coordinate (see
+//! [`LaneFragment::abs_start`]), and the LZ copyback extension can drop some of them
+//! as a read break ([`LanePacker::push_hole`]).
 
 use crate::batch::{
-    BatchSink, LaneFragment, NO_RECORD, RECORD_CONTINUED, RECORD_CONTINUES, RecordEntry,
+    BatchSink, LaneFragment, NO_ABS_BASE, NO_RECORD, RECORD_CONTINUED, RECORD_CONTINUES,
+    RecordEntry,
 };
 use crate::hashing::SIMD_LANES;
 use crate::masks::{extract_fasta_masks, low_mask_u32, low_mask_u64};
@@ -52,6 +57,14 @@ struct OpenRecord<X> {
     continued: bool,
 }
 
+/// The fragment being filled.
+#[derive(Copy, Clone)]
+struct OpenFragment {
+    lane_start: u32,
+    source_start: u64,
+    abs_start: u64,
+}
+
 pub struct LanePacker<X: Clone> {
     k: usize,
     bases_per_lane: usize,
@@ -65,11 +78,15 @@ pub struct LanePacker<X: Clone> {
 
     next_read_index: u64,
 
+    /// Absolute base coordinate of the next valid base, or [`NO_ABS_BASE`] while the
+    /// bases pushed are not part of an LZ-tracked stream.
+    abs: u64,
+
     overlap_buf: Vec<u32>,
     header_buf: Vec<u8>,
 
     record: Option<OpenRecord<X>>,
-    fragment: Option<(u32, u64)>,
+    fragment: Option<OpenFragment>,
 }
 
 impl<X: Clone> LanePacker<X> {
@@ -101,6 +118,7 @@ impl<X: Clone> LanePacker<X> {
             pos: 0,
             batch_has_content: false,
             next_read_index: 0,
+            abs: NO_ABS_BASE,
             overlap_buf: Vec::with_capacity(k.div_ceil(16)),
             header_buf: Vec::new(),
             record: None,
@@ -128,6 +146,24 @@ impl<X: Clone> LanePacker<X> {
     pub fn has_open_record(&self) -> bool {
         self.record.is_some()
     }
+
+    /// Whether the batch being filled holds anything yet.
+    pub fn has_content(&self) -> bool {
+        self.batch_has_content
+    }
+
+    /// Sets the absolute base coordinate of the next valid base pushed, or
+    /// [`NO_ABS_BASE`] for bases that are not part of an LZ-tracked stream. Every valid
+    /// base pushed afterwards, packed or dropped in a hole, advances it by one.
+    pub fn set_abs(&mut self, abs: u64) {
+        self.abs = abs;
+    }
+
+    /// Absolute base coordinate of the next valid base, or [`NO_ABS_BASE`].
+    pub fn abs(&self) -> u64 {
+        self.abs
+    }
+
 
     pub fn begin_record(&mut self, extra: X) {
         debug_assert!(self.record.is_none(), "a record is already open");
@@ -193,6 +229,22 @@ impl<X: Clone> LanePacker<X> {
         }
     }
 
+    /// Advances the open record over `count` non-ACGT characters: the current fragment
+    /// is closed, so no k-mer spans them, and the record's length and source positions
+    /// still count them. They hold no absolute base coordinate.
+    ///
+    /// This is what [`Self::push_bases`] does for the characters of its `non_acgt` mask,
+    /// for a caller that has already separated them out (`crate::fasta_copyback`).
+    pub fn push_invalid(&mut self, sink: &mut impl BatchSink<X>, count: u64) {
+        if count == 0 {
+            return;
+        }
+        self.close_fragment(sink);
+        let record = self.record.as_mut().expect("bases outside of a record");
+        record.bases_total += count;
+        record.source_pos += count;
+    }
+
     /// Ends the open record. `allow_empty` keeps zero-length records, matching
     /// what the legacy FASTQ reader does and what the FASTA reader does not.
     pub fn end_record(&mut self, sink: &mut impl BatchSink<X>, allow_empty: bool) {
@@ -247,6 +299,21 @@ impl<X: Clone> LanePacker<X> {
         }
     }
 
+    /// Drops `count` valid bases of an LZ-tracked stream instead of packing them: a read
+    /// break, exactly as `count` ambiguity characters would be, except that the bases
+    /// keep their absolute coordinates. Used for the holes of `crate::fasta_copyback`.
+    pub fn push_hole(&mut self, sink: &mut impl BatchSink<X>, count: u64) {
+        debug_assert_ne!(self.abs, NO_ABS_BASE, "a hole outside of a tracked stream");
+        if count == 0 {
+            return;
+        }
+        self.close_fragment(sink);
+        let record = self.record.as_mut().expect("bases outside of a record");
+        record.bases_total += count;
+        record.source_pos += count;
+        self.abs += count;
+    }
+
     fn push_acgt_run(
         &mut self,
         sink: &mut impl BatchSink<X>,
@@ -270,6 +337,9 @@ impl<X: Clone> LanePacker<X> {
             copy_packed_bits(&mut sink.current().words, lane, pos, two_bits, source, take);
             self.pos += take;
             self.record.as_mut().unwrap().source_pos += take as u64;
+            if self.abs != NO_ABS_BASE {
+                self.abs += take as u64;
+            }
             source += take;
             len -= take;
         }
@@ -283,7 +353,11 @@ impl<X: Clone> LanePacker<X> {
             self.advance_lane(sink);
         }
         let source_start = self.record.as_ref().unwrap().source_pos;
-        self.fragment = Some((self.pos as u32, source_start));
+        self.fragment = Some(OpenFragment {
+            lane_start: self.pos as u32,
+            source_start,
+            abs_start: self.abs,
+        });
     }
 
     fn continue_in_next_lane(&mut self, sink: &mut impl BatchSink<X>) {
@@ -294,7 +368,16 @@ impl<X: Clone> LanePacker<X> {
         self.advance_lane(sink);
         let overlap = self.k - 1;
         let source_start = self.record.as_ref().unwrap().source_pos - overlap as u64;
-        self.fragment = Some((0, source_start));
+        let abs_start = if self.abs == NO_ABS_BASE {
+            NO_ABS_BASE
+        } else {
+            self.abs - overlap as u64
+        };
+        self.fragment = Some(OpenFragment {
+            lane_start: 0,
+            source_start,
+            abs_start,
+        });
         self.restore_overlap(sink);
     }
 
@@ -330,10 +413,10 @@ impl<X: Clone> LanePacker<X> {
     }
 
     fn close_fragment(&mut self, sink: &mut impl BatchSink<X>) {
-        let Some((lane_start, _)) = self.fragment else {
+        let Some(fragment) = self.fragment else {
             return;
         };
-        let start = lane_start as usize;
+        let start = fragment.lane_start as usize;
         if self.pos - start >= self.k {
             self.commit_fragment(sink);
             return;
@@ -355,13 +438,14 @@ impl<X: Clone> LanePacker<X> {
     }
 
     fn commit_fragment(&mut self, sink: &mut impl BatchSink<X>) {
-        let (lane_start, source_start) = self.fragment.take().unwrap();
+        let fragment = self.fragment.take().unwrap();
         let record_idx = self.materialize(sink);
         let lane = self.lane;
         sink.current().lanes[lane].push(LaneFragment {
-            lane_start,
+            lane_start: fragment.lane_start,
             record_idx,
-            source_start,
+            source_start: fragment.source_start,
+            abs_start: fragment.abs_start,
         });
         self.batch_has_content = true;
     }
@@ -433,6 +517,7 @@ impl<X: Clone> LanePacker<X> {
                     lane_start: batch.lane_fill[index],
                     record_idx: NO_RECORD,
                     source_start: 0,
+                    abs_start: NO_ABS_BASE,
                 });
             }
         }

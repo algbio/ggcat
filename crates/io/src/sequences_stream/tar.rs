@@ -2,9 +2,11 @@
 use super::SequenceInfo;
 use super::general::{DynamicSequencesStream, GeneralSequenceBlockData};
 use crate::raw_reader::RawBytesReader;
-use crate::sequences_reader::{DnaSequence, SequencesReader};
+use crate::sequences_reader::{DnaSequence, DnaSequencesFileType, SequencesReader};
 use crate::sequences_sink::SequencesSink;
 use anyhow::{Context, Result, bail};
+use lz_copyback::tar::{MemberCopy, MemberInfo, MemberSpan, TarConfig, TarTracker};
+use lz_copyback::{LzCopy, Window};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
@@ -180,6 +182,82 @@ impl TarSequenceBlock {
         }
         Ok(())
     }
+    /// Reads every supported member as raw bytes into `sink`, driving the archive
+    /// through the LZ-tracking decoder so that the parser sees the copies.
+    ///
+    /// The `tar` crate cannot be used here: it wants a `Read`, while the tracking
+    /// decoder hands out windows of the *whole* decompressed archive, and the copies
+    /// are in its coordinates. Member boundaries come from `lz_copyback::tar` instead,
+    /// which is also what attributes a copy to the members at its two ends.
+    ///
+    /// Everything the sink is told about must tile the archive: member content goes
+    /// through `push_bytes_tracked`, and headers, padding, and members that cannot be a
+    /// skip source through `mark_opaque`.
+    pub fn read_into_tracked(
+        &self,
+        reader: &mut RawBytesReader,
+        sink: &mut impl SequencesSink,
+    ) -> Result<()> {
+        let config = RawBytesReader::copyback_config(sink.copyback_min_len());
+        let mut decoder = lz_copyback::open(&self.path, config.clone())
+            .with_context(|| format!("Cannot open archive {}", self.path.display()))?;
+        // A backward copy reaches back by up to the stream's maximum distance plus the
+        // window still to be emitted, so its destination member must stay attributable
+        // that long.
+        let retain_back = decoder
+            .max_distance()
+            .saturating_add(2 * decoder.window_size() as u64);
+        let mut tracker = TarTracker::new(TarConfig {
+            min_len: config.min_len,
+            retain_back,
+            ..TarConfig::default()
+        });
+
+        sink.begin_tracked_input(&self.path, retain_back);
+        let mut state = TrackedArchive {
+            known: HashMap::new(),
+            open: None,
+            covered: 0,
+            unmatched: self.member_colors.keys().cloned().collect(),
+            forward: Vec::new(),
+            backward: Vec::new(),
+        };
+        loop {
+            let window = decoder
+                .next_window()
+                .with_context(|| format!("Cannot decompress {}", self.path.display()))?;
+            let Some(window) = window else { break };
+            let tw = tracker
+                .process(&window)
+                .with_context(|| format!("Cannot read archive {}", self.path.display()))?;
+            for member in tw.new_members {
+                state.known.insert(member.index, member.clone());
+            }
+            for span in tw.spans {
+                let at = window.start_abs + span.window_off as u64;
+                state.cover_gap(sink, at);
+                state.open_span(self, reader, sink, span)?;
+                state.push_span(sink, &window, tw.copies, tw.back_copies, span)?;
+                state.covered = at + span.len as u64;
+            }
+            state.cover_gap(sink, window.start_abs + window.data.len() as u64);
+            if window.is_last {
+                break;
+            }
+        }
+        state.close_member(reader, sink)?;
+        sink.end_tracked_input();
+        state.known.clear();
+        for path in state.unmatched {
+            ggcat_logging::info!(
+                "Unmatched archive color mapping: {}:{}",
+                self.path.display(),
+                path.display()
+            );
+        }
+        Ok(())
+    }
+
     /// Reads every supported member as raw bytes into `sink`.
     pub fn read_into(
         &self,
@@ -241,6 +319,203 @@ impl TarSequenceBlock {
         }
         Ok(())
     }
+}
+
+/// How a member's content is delivered.
+enum MemberKind {
+    /// A plain FASTA/FASTQ member: its bytes go to the sink with their copies.
+    Tracked,
+    /// A member that is itself compressed. The outer stream's copies address its
+    /// *compressed* bytes, which have nothing to do with the bases the lexer will see,
+    /// so it is collected and decompressed on its own and its range is opaque.
+    Buffered { data: Vec<u8>, name: String },
+    /// Not a regular file, or not a sequence format: its bytes are opaque.
+    Skipped,
+}
+
+/// The member currently being delivered.
+struct OpenMember {
+    index: u32,
+    kind: MemberKind,
+    /// Bytes of the member's content handed over so far, for an ordering check.
+    seen: u64,
+}
+
+/// Walks the spans of a tracked archive, opening and closing members.
+struct TrackedArchive {
+    known: HashMap<u32, MemberInfo>,
+    open: Option<OpenMember>,
+    /// Absolute offset up to which the sink has been told about every byte.
+    covered: u64,
+    unmatched: HashSet<PathBuf>,
+    forward: Vec<LzCopy>,
+    backward: Vec<LzCopy>,
+}
+
+impl TrackedArchive {
+    /// Everything between the last span and `at` is a header, padding, or the end
+    /// marker: not part of any FASTA stream.
+    fn cover_gap(&mut self, sink: &mut impl SequencesSink, at: u64) {
+        if at > self.covered {
+            sink.mark_opaque(self.covered, at - self.covered);
+            self.covered = at;
+        }
+    }
+
+    /// Makes `span`'s member the open one, closing the previous one first.
+    fn open_span(
+        &mut self,
+        block: &TarSequenceBlock,
+        reader: &mut RawBytesReader,
+        sink: &mut impl SequencesSink,
+        span: &MemberSpan,
+    ) -> Result<()> {
+        if self.open.as_ref().is_some_and(|m| m.index == span.member) {
+            return Ok(());
+        }
+        self.close_member(reader, sink)?;
+        let info = self
+            .known
+            .get(&span.member)
+            .with_context(|| format!("Unknown tar member {}", span.member))?;
+        let path = PathBuf::from(String::from_utf8_lossy(&info.name).into_owned());
+        let get_name = || format!("{}:{}", block.path.display(), path.display());
+        let kind = match classify_member(info, &path) {
+            None => {
+                let name = get_name();
+                ggcat_logging::info!("Skipping {}: {}", name, "unsupported member");
+                MemberKind::Skipped
+            }
+            Some(format) => {
+                self.unmatched.remove(&path);
+                let color = match block.member_colors.get(&path).copied().or(block.color) {
+                    Some(id) => id,
+                    None => {
+                        let name = get_name();
+                        block.registry.lock().member_color(name.clone())?
+                    }
+                };
+                sink.begin_stream(format, SequenceInfo { color: Some(color) });
+                if has_compression_suffix(&info.name) {
+                    let name = get_name();
+                    MemberKind::Buffered {
+                        data: Vec::new(),
+                        name,
+                    }
+                } else {
+                    MemberKind::Tracked
+                }
+            }
+        };
+        self.open = Some(OpenMember {
+            index: span.member,
+            kind,
+            seen: 0,
+        });
+        Ok(())
+    }
+
+    /// Hands one span's bytes over, with the copies that touch it.
+    fn push_span(
+        &mut self,
+        sink: &mut impl SequencesSink,
+        window: &Window<'_>,
+        copies: &[MemberCopy],
+        back_copies: &[LzCopy],
+        span: &MemberSpan,
+    ) -> Result<()> {
+        let member = self.open.as_mut().expect("a span always has a member");
+        if span.member_off != member.seen {
+            bail!(
+                "tar member {} span out of order: at {}, span starts at {}",
+                member.index,
+                member.seen,
+                span.member_off
+            );
+        }
+        member.seen += span.len as u64;
+        let at = window.start_abs + span.window_off as u64;
+        let bytes = &window.data[span.window_off..span.window_off + span.len];
+        match &mut member.kind {
+            MemberKind::Skipped => sink.mark_opaque(at, span.len as u64),
+            MemberKind::Buffered { data, .. } => {
+                sink.mark_opaque(at, span.len as u64);
+                data.extend_from_slice(bytes);
+            }
+            MemberKind::Tracked => {
+                let end = at + span.len as u64;
+                // A copy is delivered with the span its deciding end lies in: the
+                // source for the forward list, the destination for the backward one.
+                self.forward.clear();
+                for c in copies {
+                    if c.src_member != span.member
+                        || c.src_off() < span.member_off
+                        || c.src_off() + c.len() > span.member_off + span.len as u64
+                    {
+                        continue;
+                    }
+                    // The destination member's header has been parsed through the
+                    // lookahead, so it is known even though its bytes are still to come.
+                    let Some(destination) = self.known.get(&c.dst_member) else {
+                        continue;
+                    };
+                    // Only a copy whose distance or length overflows a `u32` is dropped,
+                    // which no LZ match can produce.
+                    self.forward.extend(LzCopy::try_new(
+                        at + (c.src_off() - span.member_off),
+                        destination.content_start + c.dst_off(),
+                        c.len(),
+                    ));
+                }
+                self.backward.clear();
+                self.backward.extend(
+                    back_copies
+                        .iter()
+                        .filter(|c| c.dst() >= at && c.dst_end() <= end)
+                        .copied(),
+                );
+                sink.push_bytes_tracked(at, bytes, &self.forward, &self.backward);
+            }
+        }
+        Ok(())
+    }
+
+    /// Ends the open member, decompressing it first when it was collected.
+    fn close_member(
+        &mut self,
+        reader: &mut RawBytesReader,
+        sink: &mut impl SequencesSink,
+    ) -> Result<()> {
+        let Some(member) = self.open.take() else {
+            return Ok(());
+        };
+        if let MemberKind::Buffered { data, name } = member.kind {
+            let mut stream = decoded_reader(std::io::Cursor::new(data), Path::new(&name))
+                .with_context(|| format!("Cannot decompress {}", name))?;
+            let result = reader.read_stream(&mut stream, |bytes| sink.push_bytes(bytes));
+            sink.end_stream();
+            return result.with_context(|| format!("Error reading {}", name));
+        }
+        if !matches!(member.kind, MemberKind::Skipped) {
+            sink.end_stream();
+        }
+        Ok(())
+    }
+}
+
+/// The format of a member the parser can read, if any.
+fn classify_member(info: &MemberInfo, path: &Path) -> Option<DnaSequencesFileType> {
+    if matches!(
+        info.opaque,
+        Some(lz_copyback::tar::OpaqueReason::NotRegularFile)
+    ) {
+        return None;
+    }
+    SequencesReader::archive_file_type(path)
+}
+
+fn has_compression_suffix(name: &[u8]) -> bool {
+    lz_copyback::tar::has_compression_suffix(name)
 }
 
 // The existing sequence callback API has no Result return. Remember read failures

@@ -36,6 +36,7 @@ impl<Factory: MinimizerBucketingExecutorFactory, SequencesStream: GenericSequenc
         let mut sequences_stream = SequencesStream::new();
         let mut sink = BucketingSink::new(
             context.common.k,
+            context.common.m,
             context.bases_per_lane,
             context.common.ignored_length,
             context.copy_ident,
@@ -56,6 +57,9 @@ impl<Factory: MinimizerBucketingExecutorFactory, SequencesStream: GenericSequenc
         }
 
         sink.finish();
+        if let Some(stats) = sink.copyback_stats() {
+            crate::stats::accumulate_copyback_stats(stats);
+        }
     }
 }
 

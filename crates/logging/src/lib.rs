@@ -1,3 +1,6 @@
+mod stat;
+pub use stat::{AtomicStat, Stat, StatDuration, StatTimer};
+
 #[cfg(feature = "detailed-stats")]
 pub mod stats;
 

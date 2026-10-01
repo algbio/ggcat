@@ -17,6 +17,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const K: usize = 11;
+/// `compute_best_m(11)`, spelled out because that is not a const fn.
+const M: usize = 7;
 const BASES: [u8; 4] = [b'A', b'C', b'T', b'G'];
 
 /// A record with the pieces of valid DNA it was reduced to.
@@ -344,6 +346,11 @@ fn check(block: GeneralSequenceBlockData, name: &str) {
             }
         }
     }
+}
+
+#[test]
+fn the_minimizer_length_matches_the_pipeline() {
+    assert_eq!(M, ::utils::compute_best_m(K), "M must be what the pipeline would pick");
 }
 
 #[test]

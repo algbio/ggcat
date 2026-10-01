@@ -1438,6 +1438,8 @@ dependencies = [
  "nightly-quirks",
  "parallel-processor",
  "parking_lot",
+ "pcg_rand",
+ "rand 0.8.5",
  "replace_with",
  "rustc-hash",
  "streaming-libdeflate-rs",
@@ -1509,6 +1511,7 @@ name = "ggcat_simd_accel"
 version = "2.2.0"
 dependencies = [
  "criterion",
+ "ggcat-logging",
  "ggcat_hashes",
  "ggcat_io",
  "ggcat_utils",
@@ -1852,6 +1855,8 @@ checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 [[package]]
 name = "lz-copyback"
 version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb431d349f3855af4bad5c4884e3811d0cd7124733e18b050b26b94f830693df"
 dependencies = [
  "bzip2 0.4.4",
  "crc32fast",
@@ -1885,6 +1890,8 @@ dependencies = [
 [[package]]
 name = "lzcb-lz4-flex"
 version = "0.1.0+lz4flex.0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99962965229087a5614175b58c0fbdb2fc37b20b90aa5aa91677145dbfb0772b"
 dependencies = [
  "twox-hash",
 ]
@@ -1892,6 +1899,8 @@ dependencies = [
 [[package]]
 name = "lzcb-lzma-sys"
 version = "0.1.0+xz.5.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "338ad3ecf55229a4814696b1a1555f7d105fc6e7e0bbec6d9b12d56f57a0fe01"
 dependencies = [
  "cc",
  "libc",
@@ -1900,6 +1909,8 @@ dependencies = [
 [[package]]
 name = "lzcb-zstd-sys"
 version = "0.1.0+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5646046700ce2df00c589da7462b15f78953659fe532989a5885a501af131362"
 dependencies = [
  "cc",
 ]
@@ -2165,9 +2176,9 @@ dependencies = [
 
 [[package]]
 name = "parallel-processor"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c5f1f7c175ca06588dfbea0c29f6ee5ae719c00c8382a982bf793c6f07fa225"
+checksum = "77282e6a48e8534c35a047af46fba2a92f0e4b04d2d2d33fa0bac1125e958c3e"
 dependencies = [
  "arc-swap",
  "backtrace",
@@ -2794,12 +2805,13 @@ dependencies = [
 [[package]]
 name = "streaming-libdeflate-rs"
 version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fafefbb1926ce3c6d9663d6d5222f9fb40955bac849320ec0f49ae5b68eb15e8"
 dependencies = [
  "crc32fast",
  "filebuffer",
  "maligned",
  "nightly-quirks",
- "rayon",
  "static_assertions",
  "structopt",
 ]
@@ -3111,21 +3123,6 @@ name = "unchecked-index"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eeba86d422ce181a719445e51872fa30f1f7413b62becb52e95ec91aa262d85c"
-
-[[package]]
-name = "uncompacted_bucket_dump"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ggcat_colors",
- "ggcat_config",
- "ggcat_hashes",
- "ggcat_io",
- "ggcat_minimizer_bucketing",
- "parallel-processor",
- "parking_lot",
- "typenum",
-]
 
 [[package]]
 name = "unicode-ident"

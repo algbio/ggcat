@@ -37,7 +37,9 @@ use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
 use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
-use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::writers::compressed_binary_writer::{
+    CompressedBinaryWriter, EncoderMemoryUsage,
+};
 use parallel_processor::buckets::{
     BucketsCount, ExtraBuckets, LockFreeBucket, MultiThreadBuckets, SingleBucket,
 };
@@ -376,7 +378,6 @@ fn finalize_single_parallel<B: LockFreeBucket + Send>(
         .collect()
 }
 
-
 pub fn extend_unitigs<
     MH: HashFunctionFactory,
     CX: ColorsManager,
@@ -427,6 +428,7 @@ pub fn extend_unitigs<
             get_memory_mode(SwapPriority::ResultBuckets),
             PARTIAL_UNITIGS_COMPACTED_CHECKPOINT_SIZE,
             get_compression_level_info(),
+            EncoderMemoryUsage::Normal,
         ),
         &(),
     ));
@@ -505,6 +507,7 @@ pub fn extend_unitigs<
                 get_memory_mode(SwapPriority::ResultBuckets),
                 CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
                 get_compression_level_info(),
+                EncoderMemoryUsage::Normal,
             ),
             &(),
         ));
@@ -610,6 +613,7 @@ pub fn extend_unitigs<
                     get_memory_mode(SwapPriority::ResultBuckets),
                     CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
                     get_compression_level_info(),
+                    EncoderMemoryUsage::Normal,
                 ),
                 &(),
             ));
@@ -1010,10 +1014,12 @@ pub fn extend_unitigs<
 
             if !has_joinable_unitigs.into_inner() {
                 // Remove the unuzed buckets (they are all empty)
-                finalize_single_parallel(subpartitions_next).iter().for_each(|s| {
-                    MemoryFs::remove_file(&s.path, RemoveFileMode::Remove { remove_fs: true })
-                        .unwrap()
-                });
+                finalize_single_parallel(subpartitions_next)
+                    .iter()
+                    .for_each(|s| {
+                        MemoryFs::remove_file(&s.path, RemoveFileMode::Remove { remove_fs: true })
+                            .unwrap()
+                    });
                 break;
             }
 

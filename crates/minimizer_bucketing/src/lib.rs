@@ -7,6 +7,7 @@ pub mod resplit_bucket;
 pub mod simd_batch;
 mod sink;
 pub mod split_buckets;
+pub mod stats;
 
 use crate::compactor::BucketsCompactor;
 use crate::deduplicator::{
@@ -23,7 +24,6 @@ use config::{
     BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
     MINIMIZER_DEDUPLICATION_MEMORY, SIMD_LANE_BASES, SwapPriority,
 };
-use ggcat_logging::stats;
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketData;
 use io::concurrent::temp_reads::extra_data::{
@@ -31,7 +31,7 @@ use io::concurrent::temp_reads::extra_data::{
 };
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use parallel_processor::buckets::writers::compressed_binary_writer::{
-    CompressedBinaryWriter, CompressionLevelInfo,
+    CompressedBinaryWriter, CompressionLevelInfo, EncoderMemoryUsage,
 };
 use parallel_processor::buckets::{
     BucketsCount, ChunkingStatus, LockFreeBucket, MultiChunkBucket, MultiThreadBuckets,
@@ -125,7 +125,14 @@ pub struct PushSequenceInfo<'a, S, F: MinimizerBucketingExecutorFactory> {
     pub minimizer_pos: u16,
     pub flags: u8,
     pub rc: bool,
+    /// Absolute base coordinate of the minimizer's first base inside its LZ-tracked
+    /// input (see `simd_accel::batch::LaneFragment::abs_start`), or
+    /// [`NO_SEQUENCES_BASE_POS`] when the sequence is not part of one.
+    pub sequences_base_pos: u64,
 }
+
+/// [`PushSequenceInfo::sequences_base_pos`] of a sequence outside any LZ-tracked input.
+pub const NO_SEQUENCES_BASE_POS: u64 = u64::MAX;
 
 pub trait MinimizerBucketingExecutorFactory: Sync + Send + Sized + 'static {
     type GlobalData: Sync + Send + 'static;
@@ -294,6 +301,7 @@ fn uncompacted_bucket_init() -> <UncompactedWriter as LockFreeBucket>::InitData 
             fast_disk: 0,
             slow_disk: 0,
         },
+        EncoderMemoryUsage::Low,
     )
 }
 
@@ -365,7 +373,7 @@ impl<
         //     DEFAULT_PER_CPU_BUFFER_SIZE.octets as usize * context.buckets.count()
         // ]);
 
-        stats!(
+        ggcat_logging::stats!(
             let thread_id = ggcat_logging::generate_stat_id!();
         );
 
@@ -381,7 +389,7 @@ impl<
             let batch = &input_packet.batch;
             let records_count = batch.records.len();
 
-            stats!(
+            ggcat_logging::stats!(
                 let stat_start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
             );
 
@@ -430,6 +438,7 @@ impl<
                         extra_data,
                         temp_buffer,
                         rc,
+                        sequences_base_pos,
                     } = info;
 
                     let chunking_status = tmp_reads_buffer.add_element_extended(
@@ -479,11 +488,11 @@ impl<
                 .fetch_add(total_bases, Ordering::Relaxed)
                 + total_bases;
 
-            stats!(
+            ggcat_logging::stats!(
                 let end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
             );
 
-            stats!(stats.assembler.input_process_stats.push(
+            ggcat_logging::stats!(stats.assembler.input_process_stats.push(
                 ggcat_logging::stats::InputChunkProcessStats {
                     id: input_packet.stats_block_id,
                     start_time: stat_start_time.into(),
@@ -848,6 +857,7 @@ impl GenericMinimizerBucketing {
 
             Option::take(&mut global_context.executor_group_address.write());
             compute_thread_pool.join();
+            crate::stats::log_copyback_stats();
         }
 
         let global_context = Arc::try_unwrap(global_context)
