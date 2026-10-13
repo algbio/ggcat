@@ -467,7 +467,7 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
 
     let inputs = inputs
         .into_iter()
-        .map(|x| GeneralSequenceBlockData::FASTA(x))
+        .map(|x| GeneralSequenceBlockData::FILE(x))
         .collect();
 
     *ggcat_api::debug::DEBUG_ASSEMBLER_FIRST_STEP.lock() = convert_assembler_step(args.step);

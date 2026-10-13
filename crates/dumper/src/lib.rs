@@ -52,7 +52,7 @@ pub fn dump_unitigs(
         )?;
 
     // TODO: Support GFA input
-    let file_stats = compute_stats_from_input_blocks(&[GeneralSequenceBlockData::FASTA((
+    let file_stats = compute_stats_from_input_blocks(&[GeneralSequenceBlockData::FILE((
         graph_input.as_ref().to_path_buf(),
         None,
     ))])?;

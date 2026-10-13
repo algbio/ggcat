@@ -10,7 +10,7 @@ use config::{KEEP_FILES, MEMORY_THRESHOLD_CLEAR_START_OFFSET, MINIMUM_GLOBAL_MEM
 pub use ggcat_logging::MessageLevel;
 use ggcat_logging::{UnrecoverableErrorLogging, info, warn};
 use io::sequences_stream::GenericSequencesStream;
-use io::sequences_stream::fasta::FastaFileSequencesStream;
+use io::sequences_stream::file::FileSequencesStream;
 use parallel_processor::enable_counters_logging;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::MemoryFs;
@@ -462,7 +462,7 @@ impl GGCATInstance {
                 output_function,
             )?;
         } else {
-            FastaFileSequencesStream::new().read_block(
+            FileSequencesStream::new().read_block(
                 &(graph_input.as_ref().to_path_buf(), None),
                 false,
                 Some(kmer_length - 1),

@@ -4,12 +4,12 @@ use crate::sequences_reader::{DnaSequence, SequencesReader};
 use crate::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use std::path::PathBuf;
 
-pub struct FastaFileSequencesStream {
+pub struct FileSequencesStream {
     sequences_reader: SequencesReader,
 }
 
-impl FastaFileSequencesStream {
-    pub fn get_estimated_bases_count(file: &PathBuf) -> anyhow::Result<u64> {
+impl FileSequencesStream {
+    pub fn estimated_bases_count(file: &PathBuf) -> anyhow::Result<u64> {
         // TODO: Improve this ratio estimation
         const COMPRESSED_READS_RATIO: f64 = 0.5;
 
@@ -32,7 +32,7 @@ impl FastaFileSequencesStream {
     }
 }
 
-impl GenericSequencesStream for FastaFileSequencesStream {
+impl GenericSequencesStream for FileSequencesStream {
     type SequenceBlockData = (PathBuf, Option<u32>);
 
     fn new() -> Self {

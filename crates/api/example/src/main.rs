@@ -39,15 +39,15 @@ fn main() {
     let graph_file = instance
         .build_graph(
             vec![
-                GeneralSequenceBlockData::FASTA((
+                GeneralSequenceBlockData::FILE((
                     PathBuf::from("../../../example-inputs/sal1.fa"),
                     None,
                 )),
-                GeneralSequenceBlockData::FASTA((
+                GeneralSequenceBlockData::FILE((
                     PathBuf::from("../../../example-inputs/sal2.fa"),
                     None,
                 )),
-                GeneralSequenceBlockData::FASTA((
+                GeneralSequenceBlockData::FILE((
                     PathBuf::from("../../../example-inputs/sal3.fa"),
                     None,
                 )),

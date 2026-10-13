@@ -1,4 +1,4 @@
-pub mod fasta;
+pub mod file;
 pub mod general;
 
 use crate::sequences_reader::DnaSequence;

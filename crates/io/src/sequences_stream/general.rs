@@ -1,5 +1,5 @@
 use crate::sequences_reader::DnaSequence;
-use crate::sequences_stream::fasta::FastaFileSequencesStream;
+use crate::sequences_stream::file::FileSequencesStream;
 use crate::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use std::sync::Arc;
 
@@ -16,19 +16,15 @@ pub trait DynamicSequencesStream: Sync + Send + 'static {
 }
 
 pub enum GeneralSequenceBlockData {
-    FASTA(<FastaFileSequencesStream as GenericSequencesStream>::SequenceBlockData),
-    GFA(),
+    FILE(<FileSequencesStream as GenericSequencesStream>::SequenceBlockData),
     Dynamic((Arc<dyn for<'a> DynamicSequencesStream>, usize)),
 }
 
 impl GeneralSequenceBlockData {
     pub fn estimated_bases_count(&self) -> anyhow::Result<u64> {
         match self {
-            GeneralSequenceBlockData::FASTA(block) => {
-                FastaFileSequencesStream::get_estimated_bases_count(&block.0)
-            }
-            GeneralSequenceBlockData::GFA() => {
-                todo!()
+            GeneralSequenceBlockData::FILE(block) => {
+                FileSequencesStream::estimated_bases_count(&block.0)
             }
             GeneralSequenceBlockData::Dynamic((reader, block)) => {
                 Ok(reader.estimated_base_count(*block))
@@ -38,16 +34,14 @@ impl GeneralSequenceBlockData {
 }
 
 pub struct GeneralSequencesStream {
-    fasta_file_reader: Option<FastaFileSequencesStream>,
+    file_reader: Option<FileSequencesStream>,
 }
 
 impl GenericSequencesStream for GeneralSequencesStream {
     type SequenceBlockData = GeneralSequenceBlockData;
 
     fn new() -> Self {
-        Self {
-            fasta_file_reader: None,
-        }
+        Self { file_reader: None }
     }
 
     fn read_block(
@@ -58,19 +52,16 @@ impl GenericSequencesStream for GeneralSequencesStream {
         mut callback: impl FnMut(DnaSequence<&[u8]>, SequenceInfo),
     ) {
         match block {
-            GeneralSequenceBlockData::FASTA(block) => {
-                if self.fasta_file_reader.is_none() {
-                    self.fasta_file_reader = Some(FastaFileSequencesStream::new());
+            GeneralSequenceBlockData::FILE(block) => {
+                if self.file_reader.is_none() {
+                    self.file_reader = Some(FileSequencesStream::new());
                 }
-                self.fasta_file_reader.as_mut().unwrap().read_block(
+                self.file_reader.as_mut().unwrap().read_block(
                     block,
                     copy_ident_data,
                     partial_read_copyback,
                     callback,
                 );
-            }
-            GeneralSequenceBlockData::GFA() => {
-                unimplemented!();
             }
             GeneralSequenceBlockData::Dynamic((reader, index)) => {
                 reader.read_block(

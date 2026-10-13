@@ -13,7 +13,7 @@ use io::concurrent::temp_reads::extra_data::{
 };
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
-use io::sequences_stream::fasta::FastaFileSequencesStream;
+use io::sequences_stream::file::FileSequencesStream;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
@@ -352,7 +352,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
         DumperKmersReferenceData<SingleKmerColorDataType<CX>>,
         DumperMinimizerBucketingExecutorFactory<CX>,
-        FastaFileSequencesStream,
+        FileSequencesStream,
     >(
         input_files.into_iter(),
         temp_dir,

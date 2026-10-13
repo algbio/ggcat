@@ -9,7 +9,7 @@ use hashes::{HashFunction, HashableSequence};
 use io::concurrent::temp_reads::extra_data::{SequenceExtraDataTempBufferManagement, TempBuffer};
 use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
-use io::sequences_stream::fasta::FastaFileSequencesStream;
+use io::sequences_stream::file::FileSequencesStream;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
@@ -264,7 +264,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
             QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>,
             QueryKmersReferenceData<MinimizerBucketingSeqColorDataType<CX>>,
             QuerierMinimizerBucketingExecutorFactory<CX>,
-            FastaFileSequencesStream,
+            FileSequencesStream,
         >(
             input_files.into_iter(),
             output_path,
