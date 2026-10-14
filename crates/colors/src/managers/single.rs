@@ -73,7 +73,7 @@ impl ColorsMergeManager for SingleColorManager {
 
     fn assign_color(
         _global_colors_table: &Self::GlobalColorsTableWriter,
-        _data: &mut [Self::SingleKmerColorDataType],
+        _data: &[ColorIndexType],
     ) -> Self::TableColorEntry {
         ()
     }

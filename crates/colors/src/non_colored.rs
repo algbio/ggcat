@@ -3,7 +3,7 @@ use crate::colors_manager::{
     MinimizerBucketingSeqColorDataIterable,
 };
 use crate::parsers::SingleSequenceInfo;
-use config::{BucketIndexType, ColorCounterType};
+use config::{BucketIndexType, ColorCounterType, ColorIndexType};
 use dynamic_dispatch::dynamic_dispatch;
 use hashbrown::HashMap;
 use hashes::HashFunctionFactory;
@@ -97,16 +97,12 @@ impl<'a> MinimizerBucketingSeqColorDataIterable<'a, NonColoredManager> for NonCo
     }
 }
 
-impl<'a, KmerColor> MinimizerBucketingSeqColorDataIterable<'a, &'a [KmerColor]>
-    for NonColoredManager
-{
-    type KmerColorIterator = std::iter::Repeat<&'a [KmerColor]>;
-
-    fn get_iterator(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator {
-        std::iter::repeat(&[])
+impl<'a> MinimizerBucketingSeqColorDataIterable<'a, &'a [ColorIndexType]> for NonColoredManager {
+    type KmerColorIterator = std::iter::Repeat<&'a [ColorIndexType]>;
+    fn get_iterator(&'a self, _: &'a ()) -> Self::KmerColorIterator {
+        std::iter::repeat(&[][..])
     }
-
-    fn get_unique_color(&'a self, _buffer: &'a Self::TempBuffer) -> &'a [KmerColor] {
+    fn get_unique_color(&'a self, _: &'a ()) -> &'a [ColorIndexType] {
         &[]
     }
 }
@@ -244,7 +240,7 @@ impl ColorsMergeManager for NonColoredManager {
     #[inline(always)]
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         _data: &mut Self::ColorsBufferTempStructure,
-        _kmer_colors: &[Self::SingleKmerColorDataType],
+        _kmer_colors: &[ColorIndexType],
         _color_entry: &mut Self::HashMapTempColorIndex,
         _same_color: bool,
         _reached_threshold: bool,
@@ -268,7 +264,7 @@ impl ColorsMergeManager for NonColoredManager {
 
     fn assign_color(
         _global_colors_table: &Self::GlobalColorsTableWriter,
-        _data: &mut [Self::SingleKmerColorDataType],
+        _data: &[ColorIndexType],
     ) -> Self::HashMapTempColorIndex {
         Self
     }

@@ -107,7 +107,7 @@ pub trait ColorsParser: Sized {
         + 'static;
     type MinimizerBucketingSeqColorDataType: for<'a> MinimizerBucketingSeqColorDataIterable<'a, Self::SingleKmerColorDataType>;
     type MinimizerBucketingMultipleSeqColorDataType: SequenceExtraDataCombiner<SingleDataType = Self::MinimizerBucketingSeqColorDataType>
-        + for<'a> MinimizerBucketingSeqColorDataIterable<'a, &'a [Self::SingleKmerColorDataType]>;
+        + for<'a> MinimizerBucketingSeqColorDataIterable<'a, &'a [ColorIndexType]>;
 }
 
 /// Helper trait to manage colors labeling on KmersMerge step
@@ -146,7 +146,7 @@ pub trait ColorsMergeManager: Sized {
     fn reinit_temp_buffer_structure(data: &mut Self::ColorsBufferTempStructure);
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         data: &mut Self::ColorsBufferTempStructure,
-        kmer_colors: &[Self::SingleKmerColorDataType],
+        kmer_colors: &[ColorIndexType],
         color_entry: &mut Self::HashMapTempColorIndex,
         same_color: bool,
         reached_threshold: bool,
@@ -163,9 +163,11 @@ pub trait ColorsMergeManager: Sized {
     );
 
     /// This step finds the color subset indexes for each map entry
+    /// `data` is the sorted, deduplicated color set of the unitig, as
+    /// completed by a [`crate::bucket_colors::ColorAccumulator`].
     fn assign_color(
         global_colors_table: &Self::GlobalColorsTableWriter,
-        data: &mut [Self::SingleKmerColorDataType],
+        data: &[ColorIndexType],
     ) -> Self::TableColorEntry;
 
     /// Struct used to hold color information about unitigs
