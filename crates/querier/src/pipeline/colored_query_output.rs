@@ -15,7 +15,9 @@ use parallel_processor::buckets::readers::binary_reader::{
 };
 use parallel_processor::buckets::readers::compressed_decoder::CompressedStreamDecoder;
 use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
-use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::writers::compressed_binary_writer::{
+    CompressedBinaryWriter, EncoderMemoryUsage,
+};
 use parallel_processor::buckets::{LockFreeBucket, SingleBucket};
 use parallel_processor::memory_fs::RemoveFileMode;
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
@@ -247,6 +249,7 @@ pub fn colored_query_output<MH: HashFunctionFactory, CX: ColorsManager>(
                         get_memory_mode(SwapPriority::ColoredQueryBuckets),
                         CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
                         get_compression_level_info(),
+                        EncoderMemoryUsage::Normal,
                     ),
                     bucket_index as usize,
                     &(),

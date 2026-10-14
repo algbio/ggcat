@@ -33,7 +33,9 @@ use nightly_quirks::slice_group_by::SliceGroupBy;
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
 use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
-use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
+use parallel_processor::buckets::writers::compressed_binary_writer::{
+    CompressedBinaryWriter, EncoderMemoryUsage,
+};
 use parallel_processor::buckets::{BucketsCount, ExtraBuckets, MultiThreadBuckets};
 use parallel_processor::fast_smart_bucket_sort::fast_smart_radix_sort;
 use parallel_processor::memory_fs::RemoveFileMode;
@@ -87,6 +89,7 @@ pub fn build_maximal_unitigs_links<
                     get_memory_mode(SwapPriority::HashBuckets),
                     CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
                     get_compression_level_info(),
+                    EncoderMemoryUsage::Normal,
                 ),
                 &(),
             ));
@@ -246,6 +249,7 @@ pub fn build_maximal_unitigs_links<
                 get_memory_mode(SwapPriority::LinksBuckets),
                 CompressedBinaryWriter::CHECKPOINT_SIZE_UNLIMITED,
                 get_compression_level_info(),
+                EncoderMemoryUsage::Normal,
             ),
             &(),
         ));

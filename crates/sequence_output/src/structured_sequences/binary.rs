@@ -25,7 +25,7 @@ use io::varint::{BufVarintSource, VARINT_MAX_SIZE, VarintSource, encode_varint};
 use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::writers::compressed_binary_writer::{
-    CompressedBinaryWriter, CompressedCheckpointSize, CompressionLevelInfo,
+    CompressedBinaryWriter, CompressedCheckpointSize, CompressionLevelInfo, EncoderMemoryUsage,
 };
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
 use std::io::{BufRead, Write};
@@ -67,6 +67,7 @@ impl<CX: ColorsManager, LinksInfo: IdentSequenceWriter + SequenceExtraData>
             MemoryFileMode,
             CompressedCheckpointSize,
             CompressionLevelInfo,
+            EncoderMemoryUsage,
         ),
         data_format: &T,
     ) -> Self {

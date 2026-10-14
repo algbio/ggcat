@@ -30,7 +30,7 @@ use io::sequences_reader::DnaSequence;
 use io::sequences_splitter::split_and_compress_sequences;
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use parallel_processor::buckets::writers::compressed_binary_writer::{
-    CompressedBinaryWriter, CompressionLevelInfo,
+    CompressedBinaryWriter, CompressionLevelInfo, EncoderMemoryUsage,
 };
 use parallel_processor::buckets::{
     BucketsCount, ChunkingStatus, LockFreeBucket, MultiChunkBucket, MultiThreadBuckets,
@@ -279,6 +279,8 @@ fn uncompacted_bucket_init() -> <UncompactedWriter as LockFreeBucket>::InitData 
             fast_disk: 0,
             slow_disk: 0,
         },
+        // Independent lz4 blocks, which need much less encoder memory per bucket
+        EncoderMemoryUsage::Low,
     )
 }
 
