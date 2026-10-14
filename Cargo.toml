@@ -44,6 +44,7 @@ members = [
     # Common pipeline crates
     "crates/logging",
     "crates/hashes",
+    "crates/simd-accel",
     "crates/io",
     "crates/minimizer_bucketing",
     "crates/kmers_transform",

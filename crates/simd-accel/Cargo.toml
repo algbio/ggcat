@@ -1,0 +1,10 @@
+[package]
+name = "ggcat_simd_accel"
+version = "2.2.0"
+edition = "2024"
+
+[lib]
+name = "ggcat_simd_accel"
+doctest = false
+
+[dependencies]
