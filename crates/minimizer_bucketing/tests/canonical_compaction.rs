@@ -13,9 +13,9 @@ use ggcat_minimizer_bucketing::{
 use io::concurrent::temp_reads::{
     creads_utils::{
         AssemblerMinimizerPosition, CompressedReadsBucketData, CompressedReadsBucketDataSerializer,
-        NoAlignment, NoMultiplicity, WithSecondBucket,
+        NoAlignment, WithMultiplicity, WithSecondBucket,
     },
-    extra_data::SequenceExtraDataTempBufferManagement,
+    extra_data::{SequenceExtraDataCombiner, SequenceExtraDataTempBufferManagement},
 };
 use parallel_processor::{
     buckets::{
@@ -64,28 +64,32 @@ fn repeated_compaction_keeps_canonical_union_and_multiplicity() {
             0,
             &MinimizerBucketMode::Single,
         );
+        // Raw buckets carry the combinable extra data and a multiplicity, the
+        // same shape the compacted ones do.
         let mut serializer = CompressedReadsBucketDataSerializer::<
-            MinBkSingleColor,
+            MinBkMultipleColors,
             WithSecondBucket,
-            NoMultiplicity,
+            WithMultiplicity,
             AssemblerMinimizerPosition,
             typenum::U2,
         >::new(31);
         let mut bytes = Vec::new();
+        let mut arena = MinBkMultipleColors::new_temp_buffer();
         // Enough raw bytes to select the earlier compacted chunk for merging.
         for color in colors.iter().copied().cycle().take(colors.len() * 100) {
-            let extra = MinBkSingleColor::create(
+            let single = MinBkSingleColor::create(
                 SingleSequenceInfo {
                     static_color: color,
                     sequence_ident: SequenceIdent::FASTA(b"fixture"),
                 },
                 &mut (),
             );
+            let (extra, arena) = MinBkMultipleColors::from_single_entry(&mut arena, single, &());
             serializer.write_to(
                 &CompressedReadsBucketData::new_plain_opt_rc(sequence, 3, 0, false, 0),
                 &mut bytes,
                 &extra,
-                &(),
+                arena,
             );
             total += 1;
         }
@@ -94,7 +98,7 @@ fn repeated_compaction_keeps_canonical_union_and_multiplicity() {
         let path = writer.get_path();
         writer.finalize();
         raw.lock().chunks.push(path);
-        compactor.compact_buckets(&raw, &compacted, 0, &root);
+        compactor.compact_buckets(&raw, None, &compacted, 0, &root);
         let paths = compacted.lock().chunks.clone();
         // Which kind ran is readable from the names, and the rule makes the
         // three rounds go light, extended, light: the first has nothing

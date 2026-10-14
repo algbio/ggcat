@@ -178,6 +178,11 @@ impl SequenceExtraDataTempBufferManagement for MinBkMultipleColors {
     fn new_temp_buffer() -> Self::TempBuffer {
         ColorArena::new(DEFAULT_PER_CPU_BUFFER_SIZE.as_bytes())
     }
+    /// A single-color set lives inline in its handle and never reaches the
+    /// slab, so a producer that only ever lifts singletons needs none of it.
+    fn new_passthrough_temp_buffer() -> Self::TempBuffer {
+        ColorArena::with_slab_capacity(0)
+    }
     fn clear_temp_buffer(buffer: &mut Self::TempBuffer) {
         buffer.reset();
     }
@@ -294,7 +299,7 @@ impl SequenceExtraDataCombiner for MinBkMultipleColors {
     fn from_single_entry<'a>(
         buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
-        _: &'a mut TempBuffer<Self::SingleDataType>,
+        _: &'a TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer) {
         (Self(buffer.singleton(single.0)), buffer)
     }

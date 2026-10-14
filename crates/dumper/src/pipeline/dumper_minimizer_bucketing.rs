@@ -119,11 +119,13 @@ impl<CX: SequenceExtraDataConsecutiveCompression<TempBuffer = ()> + Copy + FastS
     fn prepare_for_serialization(&mut self, _buffer: &mut Self::TempBuffer) {}
 
     fn from_single_entry<'a>(
-        _out_buffer: &'a mut Self::TempBuffer,
+        out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
-        in_buffer: &'a mut TempBuffer<Self::SingleDataType>,
+        _in_buffer: &'a TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer) {
-        (single, in_buffer)
+        // Both buffers are `()` here, so handing back the destination is the
+        // same thing as handing back the source.
+        (single, out_buffer)
     }
 }
 

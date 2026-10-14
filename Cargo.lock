@@ -1419,6 +1419,7 @@ dependencies = [
 name = "ggcat_minimizer_bucketing"
 version = "2.2.0"
 dependencies = [
+ "arc-swap",
  "bincode 2.0.1",
  "byteorder",
  "ggcat-logging",

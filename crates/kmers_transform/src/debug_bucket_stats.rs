@@ -3,7 +3,7 @@ use hashes::default::MNHFactory;
 use hashes::{ExtendableHashTraitType, HashFunction, HashFunctionFactory, HashableSequence};
 use io::concurrent::temp_reads::creads_utils::{
     AssemblerMinimizerPosition, CompressedReadsBucketDataSerializer, DeserializedRead,
-    NoMultiplicity, WithSecondBucket,
+    WithMultiplicity, WithSecondBucket,
 };
 use parallel_processor::buckets::readers::binary_reader::ChunkedBinaryReaderIndex;
 use parallel_processor::buckets::readers::typed_binary_reader::TypedStreamReader;
@@ -57,7 +57,7 @@ pub fn compute_stats_for_bucket<MH: HashFunctionFactory>(
         CompressedReadsBucketDataSerializer<
             (),
             WithSecondBucket,
-            NoMultiplicity,
+            WithMultiplicity,
             AssemblerMinimizerPosition,
             typenum::U2,
         >,

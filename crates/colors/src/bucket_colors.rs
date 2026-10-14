@@ -124,9 +124,7 @@ pub fn runs_from_colors(colors: &[ColorIndexType], out: &mut Vec<ColorRun>) {
         // tests, so the scan can run several colors ahead at once. The widening
         // is what keeps an unsorted list from wrapping the subtraction.
         let mut end = index + 1;
-        while end < colors.len()
-            && colors[end] as u64 == first as u64 + (end - index) as u64
-        {
+        while end < colors.len() && colors[end] as u64 == first as u64 + (end - index) as u64 {
             end += 1;
         }
         out.push(ColorRun::new(first, (end - index) as u64));
@@ -316,7 +314,10 @@ fn put_varint(sink: &mut impl ByteSink, value: u64) {
 /// without expanding them requires.
 fn encode_canonical(runs: &[ColorRun], sink: &mut impl ByteSink) {
     debug_assert!(!runs.is_empty());
-    debug_assert!(runs.windows(2).all(|pair| pair[0].end() < pair[1].start() as u64));
+    debug_assert!(
+        runs.windows(2)
+            .all(|pair| pair[0].end() < pair[1].start() as u64)
+    );
     put_varint(sink, (runs.len() - 1) as u64);
     let mut last = 0u64;
     for run in runs {
@@ -402,6 +403,17 @@ pub struct ColorArena {
     colors: ColorAllocator,
 }
 
+impl io::concurrent::temp_reads::extra_data::BoundedTempBuffer for ColorArena {
+    /// A set of one run lives inline in its handle, so a producer that only ever
+    /// builds singletons touches no slab at all and a budget of zero is right.
+    fn with_budget(bytes: usize) -> Self {
+        Self::with_slab_capacity(bytes / size_of::<ColorRun>())
+    }
+    fn live_bytes(&self) -> usize {
+        self.used_capacity() * size_of::<ColorRun>()
+    }
+}
+
 impl Default for ColorArena {
     fn default() -> Self {
         Self::new(0)
@@ -412,6 +424,16 @@ impl ColorArena {
     pub fn new(capacity: usize) -> Self {
         Self {
             colors: ColorAllocator::new(capacity),
+        }
+    }
+
+    /// An arena whose slab starts at `elements` runs rather than at the
+    /// allocator's default, for a caller working to a memory budget. See
+    /// [`Allocator::with_slab_capacity`]: [`Self::new`]'s argument sizes only
+    /// the freelists.
+    pub fn with_slab_capacity(elements: usize) -> Self {
+        Self {
+            colors: ColorAllocator::with_slab_capacity(elements),
         }
     }
 

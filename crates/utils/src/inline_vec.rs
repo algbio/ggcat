@@ -151,8 +151,28 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
     const SUPPORTS_LOCAL: bool = LOCAL_FITTING > 0;
 
     pub fn new(capacity: usize) -> Self {
+        Self::build(ResizableVec::new(), capacity)
+    }
+
+    /// Starts the slab at `elements` rather than at [`DEFAULT_ALLOCATOR_SIZE`],
+    /// for a caller that has a memory budget rather than a throughput target.
+    ///
+    /// [`Self::new`]'s argument only sizes the freelists -- the slab it makes is
+    /// always the default, which is 8Mi elements however small the argument. It
+    /// stays that way because its callers pass byte counts into what is an
+    /// element parameter, so honouring it there would shrink every arena in the
+    /// pipeline. This constructor is the opt-in.
+    ///
+    /// The slab still grows on demand; what this sets is where it starts, and
+    /// [`Self::reset`] keeps it there, since the reinit ceiling only applies
+    /// above the default size.
+    pub fn with_slab_capacity(elements: usize) -> Self {
+        Self::build(ResizableVec::with_capacity(elements), elements)
+    }
+
+    fn build(data: ResizableVec<MaybeUninit<T>, DEFAULT_ALLOCATOR_SIZE>, capacity: usize) -> Self {
         Allocator {
-            data: ResizableVec::new(),
+            data,
             freelist: (0..SIZE_CLASSES)
                 .map(|i| Vec::with_capacity(capacity / SIZE_CLASSES / (1 << i.min(31))))
                 .collect::<Vec<_>>()
@@ -281,7 +301,10 @@ impl<T: Copy, const LOCAL_FITTING: usize> Allocator<T, LOCAL_FITTING> {
     }
 
     #[inline(always)]
-    pub fn iter_vec<'a>(&'a self, vec: &'a InlineVec<T, LOCAL_FITTING>) -> impl Iterator<Item = &'a T> {
+    pub fn iter_vec<'a>(
+        &'a self,
+        vec: &'a InlineVec<T, LOCAL_FITTING>,
+    ) -> impl Iterator<Item = &'a T> {
         self.slice_vec(vec).iter()
     }
 

@@ -187,7 +187,7 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataCombiner for QueryKmer
     fn from_single_entry<'a>(
         out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
-        in_buffer: &'a mut TempBuffer<Self::SingleDataType>,
+        in_buffer: &'a TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer) {
         Self::copy_extra_from(single, in_buffer, out_buffer);
         (single, out_buffer)

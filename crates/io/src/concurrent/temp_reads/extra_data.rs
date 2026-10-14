@@ -42,10 +42,72 @@ impl BufRead for PointerDecoder {
     }
 }
 
+/// A temporary buffer that can be created against a memory budget and asked how
+/// much of it is live.
+///
+/// Every temporary buffer implements this so that a memory-bounded consumer --
+/// the super-kmer deduplicator is the one -- can hold to a budget without
+/// knowing which extra data type it is carrying. Both methods default to doing
+/// nothing, which is right for every buffer that holds no slab of its own, so
+/// an empty `impl` is the usual implementation.
+pub trait BoundedTempBuffer: Sync + Send + Default {
+    /// A buffer whose backing store starts sized for `bytes` rather than for
+    /// throughput. Defaults to [`Default`], which is what a buffer with no
+    /// backing store wants.
+    fn with_budget(bytes: usize) -> Self {
+        let _ = bytes;
+        Self::default()
+    }
+
+    /// Bytes handed out since the last reset, which a caller compares against
+    /// its budget. Monotone within a cycle.
+    fn live_bytes(&self) -> usize {
+        0
+    }
+}
+
+impl BoundedTempBuffer for () {}
+
+/// A plain vector holds no slab the deduplicator has to bound.
+impl<T: Sync + Send> BoundedTempBuffer for Vec<T> {}
+
+/// The shape the querier wraps its colour buffer in.
+impl<T: BoundedTempBuffer> BoundedTempBuffer for (T,) {
+    fn with_budget(bytes: usize) -> Self {
+        (T::with_budget(bytes),)
+    }
+    fn live_bytes(&self) -> usize {
+        self.0.live_bytes()
+    }
+}
+
+/// A colour buffer paired with something that carries no budget of its own.
+impl<T: BoundedTempBuffer, U: Sync + Send + Default> BoundedTempBuffer for (T, U) {
+    fn with_budget(bytes: usize) -> Self {
+        (T::with_budget(bytes), U::default())
+    }
+    fn live_bytes(&self) -> usize {
+        self.0.live_bytes()
+    }
+}
+
 pub trait SequenceExtraDataTempBufferManagement: Sized + Sync + Send + Debug + Clone {
-    type TempBuffer: Sync + Send + Default;
+    type TempBuffer: Sync + Send + Default + BoundedTempBuffer;
 
     fn new_temp_buffer() -> Self::TempBuffer;
+
+    /// A buffer for a producer that hands every entry straight on and never
+    /// accumulates into it, so it may start with no capacity at all.
+    ///
+    /// The bucketing writer is the case: it lifts one entry, serializes it and
+    /// forgets it. An implementation whose buffer reserves a large slab up front
+    /// -- `ColorArena` reserves 64 MiB regardless of its argument -- should
+    /// override this, or every producer thread pays for a slab it never touches.
+    #[inline(always)]
+    fn new_passthrough_temp_buffer() -> Self::TempBuffer {
+        Self::new_temp_buffer()
+    }
+
     fn clear_temp_buffer(buffer: &mut Self::TempBuffer);
     fn copy_temp_buffer(dest: &mut Self::TempBuffer, src: &Self::TempBuffer);
 
@@ -166,10 +228,16 @@ pub trait SequenceExtraDataCombiner: SequenceExtraDataConsecutiveCompression {
 
     fn prepare_for_serialization(&mut self, buffer: &mut Self::TempBuffer);
 
+    /// Lifts a single-entry extra into a combinable one, reading whatever the
+    /// single one's buffer holds and writing into `out_buffer`.
+    ///
+    /// `in_buffer` is shared rather than exclusive because no implementation
+    /// writes through it, and the bucketing writer only ever holds a shared
+    /// borrow of the executor's preprocess buffer.
     fn from_single_entry<'a>(
         out_buffer: &'a mut Self::TempBuffer,
         single: Self::SingleDataType,
-        in_buffer: &'a mut TempBuffer<Self::SingleDataType>,
+        in_buffer: &'a TempBuffer<Self::SingleDataType>,
     ) -> (Self, &'a mut Self::TempBuffer);
 }
 
