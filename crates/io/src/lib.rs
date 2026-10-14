@@ -61,6 +61,44 @@ pub fn debug_load_buckets(temp_dir: &Path, file: &str) -> anyhow::Result<Vec<Mul
     Ok(buckets)
 }
 
+/// Version of the inputs checkpoint, the first field of the file.
+const INPUTS_CHECKPOINT_VERSION: u32 = 1;
+
+/// Saves what the minimizer bucketing was planned with: the color names and the statistics
+/// that chose the buckets. A run resuming past it reads them back with
+/// [`debug_load_inputs`], so the buckets are read with the counts they were written with,
+/// without estimating the inputs again.
+pub fn debug_save_inputs(
+    temp_dir: &Path,
+    file: &str,
+    color_names: &[String],
+    stats: &FilesStatsInfo,
+) -> anyhow::Result<()> {
+    std::fs::write(
+        temp_dir.join(file),
+        bincode::encode_to_vec(
+            (INPUTS_CHECKPOINT_VERSION, color_names, stats),
+            DEFAULT_BINCODE_CONFIG,
+        )?,
+    )?;
+    Ok(())
+}
+
+pub fn debug_load_inputs(
+    temp_dir: &Path,
+    file: &str,
+) -> anyhow::Result<(Vec<String>, FilesStatsInfo)> {
+    let data = std::fs::read(temp_dir.join(file))?;
+    let ((version, color_names, stats), _): ((u32, Vec<String>, FilesStatsInfo), _) =
+        bincode::decode_from_slice(&data, DEFAULT_BINCODE_CONFIG)?;
+    anyhow::ensure!(
+        version == INPUTS_CHECKPOINT_VERSION,
+        "Unsupported input checkpoint version {version}"
+    );
+    Ok((color_names, stats))
+}
+
+#[derive(bincode::Encode, bincode::Decode)]
 pub struct FilesStatsInfo {
     pub best_buckets_count_log: usize,
     pub best_second_buckets_count_log: usize,
@@ -146,5 +184,45 @@ pub fn compute_stats_from_input_sizes(sizes: &[u64]) -> FilesStatsInfo {
         best_second_buckets_count_log: second_buckets_count.ilog2() as usize,
         bucket_size_compaction_threshold,
         target_chunk_size,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inputs_checkpoint_round_trips_and_checks_its_version() {
+        let directory =
+            std::env::temp_dir().join(format!("ggcat-inputs-checkpoint-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let names = vec!["a.fa".to_string(), "b.tar.xz".to_string()];
+        let stats = FilesStatsInfo {
+            best_buckets_count_log: 10,
+            best_second_buckets_count_log: 6,
+            bucket_size_compaction_threshold: 2 << 20,
+            target_chunk_size: 64 << 20,
+        };
+        debug_save_inputs(&directory, "inputs.debug", &names, &stats).unwrap();
+        let (loaded_names, loaded) = debug_load_inputs(&directory, "inputs.debug").unwrap();
+        assert_eq!(loaded_names, names);
+        assert_eq!(
+            (
+                loaded.best_buckets_count_log,
+                loaded.best_second_buckets_count_log,
+                loaded.bucket_size_compaction_threshold,
+                loaded.target_chunk_size
+            ),
+            (10, 6, 2 << 20, 64 << 20)
+        );
+
+        let other_version = bincode::encode_to_vec(
+            (INPUTS_CHECKPOINT_VERSION + 1, &names, &stats),
+            DEFAULT_BINCODE_CONFIG,
+        )
+        .unwrap();
+        std::fs::write(directory.join("inputs.debug"), other_version).unwrap();
+        assert!(debug_load_inputs(&directory, "inputs.debug").is_err());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

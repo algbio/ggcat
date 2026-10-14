@@ -225,15 +225,12 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
                     SingleSequenceInfo {
                         static_color: sequence_info.color.unwrap_or(0),
                         sequence_ident: match sequence.format {
-                            DnaSequencesFileType::FASTA => {
+                            DnaSequencesFileType::FASTA | DnaSequencesFileType::FASTQ => {
                                 SequenceIdent::FASTA(sequence.ident_data)
                             }
                             DnaSequencesFileType::GFA => SequenceIdent::GFA {
                                 colors: sequence.ident_data,
                             },
-                            DnaSequencesFileType::FASTQ => {
-                                todo!()
-                            }
                         },
                     },
                     &mut preprocess_info.colors_buffer.0,

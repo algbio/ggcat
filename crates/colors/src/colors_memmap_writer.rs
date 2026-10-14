@@ -108,4 +108,23 @@ mod tests {
         drop(reader);
         std::fs::remove_file(path).unwrap();
     }
+
+    /// A color map without a single set, as an input with no sequences leaves, can be opened,
+    /// and asking it for a set is a bounds error rather than a decode of whatever follows.
+    #[test]
+    fn a_color_map_without_sets_opens() {
+        let path =
+            std::env::temp_dir().join(format!("color-ids-empty-{}.colors.dat", std::process::id()));
+        let names: Vec<_> = (0..4).map(|i| format!("color_{i}")).collect();
+        drop(ColorsMemMapWriter::<DefaultColorsSerializer>::new(&path, &names, 1, false).unwrap());
+
+        let mut reader = ColorsDeserializer::<DefaultColorsSerializer>::new(&path, true).unwrap();
+        assert_eq!(reader.colors_subsets_count(), 0);
+        let out_of_bounds = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            reader.get_color_mappings(0, &mut Vec::new())
+        }));
+        assert!(out_of_bounds.is_err());
+        drop(reader);
+        std::fs::remove_file(path).unwrap();
+    }
 }

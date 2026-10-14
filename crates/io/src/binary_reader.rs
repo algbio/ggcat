@@ -65,16 +65,47 @@ pub(crate) fn is_archive(path: &Path) -> bool {
             .is_some_and(|extension| extension == "tar")
 }
 
-/// `source` decompressed by `codec`, as a reader.
+/// `source` decompressed by `codec`, as a reader. Every decoder but lz4's reads on past the end
+/// of a stream into the next one, as concatenated files and parallel compressors have them.
 fn decompressed<'a>(codec: Codec, source: impl Read + 'a) -> Result<Box<dyn Read + 'a>> {
     Ok(match codec {
         Codec::Gzip => Box::new(GzipDecoder::new(source)),
-        Codec::Lz4 => Box::new(lz4::Decoder::new(source)?),
-        Codec::Bzip2 => Box::new(bzip2::read::BzDecoder::new(source)),
-        Codec::Xz => Box::new(liblzma::read::XzDecoder::new(source)),
+        Codec::Lz4 => Box::new(Lz4Decoder::new(source)?),
+        Codec::Bzip2 => Box::new(bzip2::read::MultiBzDecoder::new(source)),
+        Codec::Xz => Box::new(liblzma::read::XzDecoder::new_multi_decoder(source)),
         Codec::Zstd => Box::new(zstd::stream::read::Decoder::new(source)?),
         Codec::Plain => Box::new(source),
     })
+}
+
+/// lz4's decoder, with an input that ends inside its frame made an error. The decoder itself
+/// just stops returning bytes then, and only tells it when finishing.
+pub struct Lz4Decoder<R: Read>(Option<lz4::Decoder<R>>);
+
+impl<R: Read> Lz4Decoder<R> {
+    pub fn new(source: R) -> std::io::Result<Self> {
+        Ok(Self(Some(lz4::Decoder::new(source)?)))
+    }
+}
+
+impl<R: Read> Read for Lz4Decoder<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let Some(decoder) = self.0.as_mut().filter(|_| !buffer.is_empty()) else {
+            return Ok(0);
+        };
+        let count = decoder.read(buffer)?;
+        if count == 0 {
+            // Not lz4's own error: it is `Interrupted`, which callers retry, and the retry
+            // would then find the decoder finished and report a clean end.
+            if self.0.take().unwrap().finish().1.is_err() {
+                return Err(std::io::Error::new(
+                    ErrorKind::UnexpectedEof,
+                    "lz4: the input ends inside a frame",
+                ));
+            }
+        }
+        Ok(count)
+    }
 }
 
 /// A decompressor, writing its output into a [`DecodedOutput`] one buffer at a time, with some
@@ -137,8 +168,8 @@ macro_rules! read_decoders {
 read_decoders! {
     impl[] for File;
     impl['r] for dyn Read + 'r;
-    impl[R: Read] for lz4::Decoder<R>;
-    impl[R: Read] for bzip2::read::BzDecoder<R>;
+    impl[R: Read] for Lz4Decoder<R>;
+    impl[R: Read] for bzip2::read::MultiBzDecoder<R>;
     impl[R: Read] for liblzma::read::XzDecoder<R>;
     impl[R: BufRead] for zstd::stream::read::Decoder<'_, R>;
 }
@@ -524,9 +555,12 @@ impl GenericBinaryReader {
         callback(BinaryEvent::FilePath(Some(name)));
         match codec {
             Codec::Gzip => self.decode(&mut GzipDecoder::new(source), callback),
-            Codec::Lz4 => self.decode(&mut lz4::Decoder::new(source)?, callback),
-            Codec::Bzip2 => self.decode(&mut bzip2::read::BzDecoder::new(source), callback),
-            Codec::Xz => self.decode(&mut liblzma::read::XzDecoder::new(source), callback),
+            Codec::Lz4 => self.decode(&mut Lz4Decoder::new(source)?, callback),
+            Codec::Bzip2 => self.decode(&mut bzip2::read::MultiBzDecoder::new(source), callback),
+            Codec::Xz => self.decode(
+                &mut liblzma::read::XzDecoder::new_multi_decoder(source),
+                callback,
+            ),
             Codec::Zstd => self.decode(&mut zstd::stream::read::Decoder::new(source)?, callback),
             Codec::Plain => self.decode(&mut source as &mut dyn Read, callback),
         }
@@ -543,18 +577,23 @@ impl GenericBinaryReader {
         let mut archive = tar::Archive::new(source);
         for entry in archive.entries()? {
             let mut entry = entry?;
+            let path = entry.path()?.into_owned();
+            let member = format!("{name}:{}", path.to_string_lossy());
             let is_file = matches!(
                 entry.header().entry_type(),
                 EntryType::Regular | EntryType::Continuous | EntryType::GNUSparse
             );
             if !is_file {
+                ggcat_logging::info!("Skipping {member}: not a regular file");
                 continue;
             }
-            let path = entry.path()?.into_owned();
-            let member = format!("{name}:{}", path.to_string_lossy());
             self.read_input(&member, &path, &mut entry, callback)
                 .with_context(|| format!("Cannot read archive member {member}"))?;
         }
+        // The tar end marker is not the end of the stream: reading on to it lets the
+        // decompressor check what follows, its checksums included.
+        std::io::copy(&mut archive.into_inner(), &mut std::io::sink())
+            .with_context(|| format!("Cannot read the end of archive {name}"))?;
         Ok(())
     }
 }
@@ -895,6 +934,95 @@ mod tests {
         .read_to_end(&mut decoded)
         .unwrap();
         assert!(decoded == expected);
+    }
+
+    /// `data` split in two and each half compressed on its own, back to back, as concatenating
+    /// two compressed files, or pbzip2, produces.
+    fn concatenated(data: &[u8], extension: &str) -> Vec<u8> {
+        let (first, second) = data.split_at(data.len() / 2);
+        [compress(first, extension), compress(second, extension)].concat()
+    }
+
+    #[test]
+    fn concatenated_streams_are_read_to_the_end() {
+        let directory = std::env::temp_dir().join(format!(
+            "ggcat-binary-reader-concatenated-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let data = sample(DEFAULT_OUTPUT_BUFFER_SIZE + 54321);
+        let member = sample(100_000);
+        for extension in ["gz", "bz2", "xz", "zst"] {
+            let path = directory.join(format!("input.fa.{extension}"));
+            std::fs::write(&path, concatenated(&data, extension)).unwrap();
+            let mut recorded = Recorded::default();
+            GenericBinaryReader::new(None)
+                .read_file(&path, recorder(&mut recorded))
+                .unwrap();
+            check(&recorded, &data, None, path.to_str());
+
+            // Both the archive and its member made of two streams.
+            let name = format!("a.fa.{extension}");
+            let tar = archive(&[(name.clone(), concatenated(&member, extension))]);
+            let path = directory.join(format!("input.tar.{extension}"));
+            std::fs::write(&path, concatenated(&tar, extension)).unwrap();
+            let mut files = Vec::new();
+            GenericBinaryReader::new(None)
+                .read_file(&path, file_recorder(&mut files))
+                .unwrap();
+            assert_eq!(files.len(), 1, "{extension}");
+            let name = format!("{}:{name}", path.display());
+            check(&files[0], &member, None, Some(&name));
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// What follows the tar end marker is read too, so a damaged end of the compressed stream
+    /// is found: here a wrong gzip checksum, and a broken xz stream footer.
+    #[test]
+    fn the_end_of_an_archive_is_checked() {
+        let directory = std::env::temp_dir().join(format!(
+            "ggcat-binary-reader-archive-end-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let tar = archive(&[("a.fa".into(), sample(100_000))]);
+        // How far from the end the damaged byte is: the first byte of gzip's CRC-32, the
+        // last of xz's footer magic.
+        for (extension, from_end) in [("gz", 8), ("xz", 1)] {
+            let mut compressed = compress(&tar, extension);
+            let at = compressed.len() - from_end;
+            compressed[at] ^= 0xff;
+            let path = directory.join(format!("input.tar.{extension}"));
+            std::fs::write(&path, compressed).unwrap();
+            let result = GenericBinaryReader::new(None).read_file(&path, |_| {});
+            assert!(result.is_err(), "{extension}: the damage went unnoticed");
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// An lz4 input that stops inside its frame is an error, for a file of its own and for an
+    /// archive member alike.
+    #[test]
+    fn truncated_lz4_is_an_error() {
+        let directory = std::env::temp_dir().join(format!(
+            "ggcat-binary-reader-truncated-lz4-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut truncated = compress(&sample(200_000), "lz4");
+        truncated.truncate(truncated.len() - 100);
+
+        let path = directory.join("input.fa.lz4");
+        std::fs::write(&path, &truncated).unwrap();
+        let result = GenericBinaryReader::new(None).read_file(&path, |_| {});
+        assert!(result.is_err(), "a truncated file went unnoticed");
+
+        let path = directory.join("input.tar");
+        std::fs::write(&path, archive(&[("a.fa.lz4".into(), truncated)])).unwrap();
+        let result = GenericBinaryReader::new(None).read_file(&path, |_| {});
+        assert!(result.is_err(), "a truncated member went unnoticed");
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     /// `data` compressed as the extension of `name` says.

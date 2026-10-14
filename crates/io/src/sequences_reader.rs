@@ -267,7 +267,7 @@ impl SequencesReader {
                     Some(DnaSequencesFileType::GFA) => todo!(),
                     // Archives can hold other files too, such as their documentation.
                     None if is_archive(source) => {
-                        ggcat_logging::warn!("Skipping '{name}': not a FASTA or FASTQ file");
+                        ggcat_logging::info!("Skipping {name}: unsupported sequence format");
                         SequencesParser::Skipped
                     }
                     None => panic!("Cannot recognize file type of '{}'", source.display()),

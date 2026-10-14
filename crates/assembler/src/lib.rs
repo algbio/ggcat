@@ -25,8 +25,10 @@ use hashes::HashFunctionFactory;
 use io::concurrent::temp_reads::extra_data::SequenceExtraData;
 use io::concurrent::temp_reads::extra_data::SequenceExtraDataConsecutiveCompression;
 use io::debug_load_buckets;
+use io::debug_load_inputs;
 use io::debug_load_single_buckets;
 use io::debug_save_buckets;
+use io::debug_save_inputs;
 use io::debug_save_single_buckets;
 use io::ident_writer::IdentSequenceWriter;
 use io::sequences_stream::general::GeneralSequenceBlockData;
@@ -109,9 +111,23 @@ pub fn run_assembler<
 
     stats!(let stats.start_time = Instant::now());
 
-    // Estimated once: the sizes pick the buckets and the order the inputs are read in.
-    let input_sizes = io::input_size::estimate_blocks(&input_blocks)?;
-    let file_stats = compute_stats_from_input_sizes(&input_sizes);
+    // Resuming past the bucketing reuses what it was planned with, when it was saved.
+    let resumed = if step > AssemblerPhase::MinimizerBucketing
+        && temp_dir.join("minimizer-inputs.debug").exists()
+    {
+        Some(debug_load_inputs(&temp_dir, "minimizer-inputs.debug")?)
+    } else {
+        None
+    };
+    let (color_names, file_stats, input_sizes) = match resumed {
+        Some((color_names, file_stats)) => (color_names, file_stats, Vec::new()),
+        None => {
+            // Estimated once: the sizes pick the buckets and the order the inputs are read in.
+            let input_sizes = io::input_size::estimate_blocks(&input_blocks)?;
+            let file_stats = compute_stats_from_input_sizes(&input_sizes);
+            (color_names.to_vec(), file_stats, input_sizes)
+        }
+    };
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
     let second_buckets_count_log = file_stats.best_second_buckets_count_log;
@@ -136,7 +152,7 @@ pub fn run_assembler<
     let global_colors_table = Arc::new(
         AssemblerColorsManager::ColorsMergeManagerType::create_colors_table(
             output_file.with_extension("colors.dat"),
-            color_names,
+            &color_names,
             colormap_threads_count,
             true,
         )?,
@@ -190,6 +206,12 @@ pub fn run_assembler<
 
     if KEEP_FILES.load(Ordering::Relaxed) || last_step < AssemblerPhase::FinalStep {
         debug_save_buckets(&temp_dir, "minimizer-bucketing.debug", &buckets);
+        debug_save_inputs(
+            &temp_dir,
+            "minimizer-inputs.debug",
+            &color_names,
+            &file_stats,
+        )?;
     }
 
     if last_step <= AssemblerPhase::MinimizerBucketing {
