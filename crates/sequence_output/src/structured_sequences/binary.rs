@@ -3,7 +3,6 @@ use crate::structured_sequences::{
     StructuredSequenceBackend, StructuredSequenceBackendInit, StructuredSequenceBackendWrapper,
 };
 use bincode::Encode;
-use byteorder::ReadBytesExt;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use config::DEFAULT_PER_CPU_BUFFER_SIZE;
@@ -22,14 +21,14 @@ use io::ident_writer::IdentSequenceWriter;
 use io::partial_unitigs_extra_data::{
     INDIRECT_UNITIG_FLAG_MASK, PartialUnitigExtraData, PartialUnitigMode,
 };
-use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
+use io::varint::{BufVarintSource, VARINT_MAX_SIZE, VarintSource, encode_varint};
 use parallel_processor::buckets::LockFreeBucket;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::buckets::writers::compressed_binary_writer::{
     CompressedBinaryWriter, CompressedCheckpointSize, CompressionLevelInfo,
 };
 use parallel_processor::memory_fs::file::internal::MemoryFileMode;
-use std::io::{Read, Write};
+use std::io::{BufRead, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
@@ -161,11 +160,11 @@ impl<CX: SequenceExtraDataConsecutiveCompression, LX: SequenceExtraData>
 
     fn decode_extended(
         buffer: &mut Self::TempBuffer,
-        reader: &mut impl Read,
+        reader: &mut impl BufRead,
         last_data: Self::LastData,
         read_flags: u8,
     ) -> Option<Self> {
-        let index = decode_varint(|| reader.read_u8().ok())?;
+        let index = BufVarintSource::new(reader).next_varint()?;
         Some(Self {
             index,
             extra_data: PartialUnitigExtraData::<CX>::decode_extended(

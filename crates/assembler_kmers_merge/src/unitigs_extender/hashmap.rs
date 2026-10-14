@@ -16,7 +16,7 @@ use io::partial_unitigs_extra_data::SequenceAbundanceType;
 use io::{
     compressed_read::CompressedRead,
     concurrent::temp_reads::{creads_utils::DeserializedRead, extra_data::TempBuffer},
-    varint::{decode_varint, encode_varint},
+    varint::{SliceVarintSource, VarintSource, encode_varint},
 };
 use kmers_transform::GroupProcessStats;
 use rustc_hash::{FxBuildHasher, FxHashMap};
@@ -90,25 +90,15 @@ impl<MH: HashFunctionFactory, CX: ColorsManager> HashMapUnitigsExtender<MH, CX> 
                 callback(hash, cread, rhentry);
             }
         } else {
-            let mut cursor = 0;
+            let mut source = SliceVarintSource::new(&self.encoded_saved_reads_indexes);
 
-            let mut last_saved_index = decode_varint(|| {
-                let value = self.encoded_saved_reads_indexes.get(cursor).copied();
-                cursor += 1;
-                value
-            })
-            .unwrap() as usize;
+            let mut last_saved_index = source.next_varint().unwrap() as usize;
             let mut is_last = false;
 
             while !is_last {
                 let read_start = last_saved_index as usize;
                 let read_end = last_saved_index
-                    + decode_varint(|| {
-                        let value = self.encoded_saved_reads_indexes.get(cursor).copied();
-                        cursor += 1;
-                        value
-                    })
-                    .unwrap_or_else(|| {
+                    + source.next_varint().unwrap_or_else(|| {
                         is_last = true;
                         (self.saved_reads.len() - last_saved_index) as u64
                     }) as usize;

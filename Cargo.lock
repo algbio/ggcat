@@ -2104,9 +2104,9 @@ dependencies = [
 
 [[package]]
 name = "parallel-processor"
-version = "0.2.7"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ac575cebc53e26ec5570922db6d061dc767e8bfbade165c948dd27268a0fb1d"
+checksum = "4c5f1f7c175ca06588dfbea0c29f6ee5ae719c00c8382a982bf793c6f07fa225"
 dependencies = [
  "arc-swap",
  "backtrace",

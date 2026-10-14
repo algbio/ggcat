@@ -4,7 +4,7 @@ use hashes::HashFunctionFactory;
 use parallel_processor::DEFAULT_BINCODE_CONFIG;
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use parallel_processor::fast_smart_bucket_sort::SortKey;
-use std::io::Read;
+use std::io::BufRead;
 use std::marker::PhantomData;
 use std::mem::size_of;
 
@@ -93,7 +93,7 @@ impl<H: Encode + Decode<()> + Copy> BucketItemSerializer for HashEntrySerializer
         bincode::encode_into_writer(element, VecWriterMut(bucket), DEFAULT_BINCODE_CONFIG).unwrap();
     }
 
-    fn read_from<'a, S: Read>(
+    fn read_from<'a, S: BufRead>(
         &mut self,
         mut stream: S,
         _read_buffer: &'a mut Self::ReadBuffer,

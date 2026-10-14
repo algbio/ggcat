@@ -1,12 +1,11 @@
 use crate::concurrent::temp_reads::creads_utils::{AlignModeOption, MinimizerModeOption};
-use crate::varint::{decode_varint_flags, encode_varint_flags};
-use byteorder::ReadBytesExt;
+use crate::varint::{BufVarintSource, VarintSource, encode_varint_flags};
 use core::fmt::{Debug, Formatter};
 use hashes::HashableSequence;
 use rustc_hash::FxBuildHasher;
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
-use std::io::Read;
+use std::io::BufRead;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -538,7 +537,7 @@ impl<'a> CompressedRead<'a> {
 
     #[inline(always)]
     pub fn read_from_stream<
-        S: Read,
+        S: BufRead,
         MinimizerMode: MinimizerModeOption,
         FlagsCount: typenum::Unsigned,
         AlignMode: AlignModeOption,
@@ -548,7 +547,8 @@ impl<'a> CompressedRead<'a> {
         min_size: usize,
         min_size_log: u8,
     ) -> Option<(Self, u16, u8)> {
-        let (encoded_size, flags) = decode_varint_flags::<_, FlagsCount>(|| stream.read_u8().ok())?;
+        let (encoded_size, flags) =
+            BufVarintSource::new(stream).next_varint_flags::<FlagsCount>()?;
 
         let (size, minimizer_pos, required_offset) = if MinimizerMode::ENABLED {
             let minimizer_pos = encoded_size & ((1 << min_size_log) - 1);

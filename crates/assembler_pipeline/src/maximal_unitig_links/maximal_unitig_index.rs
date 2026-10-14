@@ -3,12 +3,12 @@ use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraData, SequenceExtraDataTempBufferManagement,
 };
 use io::ident_writer::IdentSequenceWriter;
-use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
+use io::varint::{BufVarintSource, VARINT_MAX_SIZE, VarintSource, decode_varint, encode_varint};
 use parallel_processor::buckets::bucket_writer::BucketItemSerializer;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use utils::vec_slice::VecSlice;
 
 #[repr(transparent)]
@@ -63,9 +63,10 @@ impl PartialEq for MaximalUnitigIndex {
 
 impl HasEmptyExtraBuffer for MaximalUnitigIndex {}
 impl SequenceExtraData for MaximalUnitigIndex {
-    fn decode_extended(_: &mut (), reader: &mut impl Read) -> Option<Self> {
-        let index = decode_varint(|| reader.read_u8().ok())?;
-        let overlap_start = decode_varint(|| reader.read_u8().ok())?;
+    fn decode_extended(_: &mut (), reader: &mut impl BufRead) -> Option<Self> {
+        let mut source = BufVarintSource::new(reader);
+        let index = source.next_varint()?;
+        let overlap_start = source.next_varint()?;
         let flags = reader.read_u8().ok()?;
         Some(MaximalUnitigIndex::new(
             index,
@@ -178,20 +179,23 @@ impl BucketItemSerializer for MaximalUnitigLinkSerializer {
         }
     }
 
-    fn read_from<'a, S: Read>(
+    fn read_from<'a, S: BufRead>(
         &mut self,
         mut stream: S,
         read_buffer: &'a mut Self::ReadBuffer,
         _: &mut (),
     ) -> Option<Self::ReadType<'a>> {
-        let entry = decode_varint(|| stream.read_u8().ok())?;
-
-        let len = decode_varint(|| stream.read_u8().ok())? as usize;
+        let mut source = BufVarintSource::new(&mut stream);
+        let entry = source.next_varint()?;
+        let len = source.next_varint()? as usize;
 
         let start = read_buffer.len();
         for _i in 0..len {
-            let index = decode_varint(|| stream.read_u8().ok())?;
-            let overlap_start = decode_varint(|| stream.read_u8().ok())?;
+            // One source per entry: the flags byte below is read from the
+            // stream directly, which needs the borrow back.
+            let mut source = BufVarintSource::new(&mut stream);
+            let index = source.next_varint()?;
+            let overlap_start = source.next_varint()?;
             let flags = stream.read_u8().ok()?;
             read_buffer.push(MaximalUnitigIndex::new(
                 index,
@@ -275,7 +279,7 @@ impl SequenceExtraDataTempBufferManagement for DoubleMaximalUnitigLinks {
 }
 
 impl SequenceExtraData for DoubleMaximalUnitigLinks {
-    fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl Read) -> Option<Self> {
+    fn decode_extended(_buffer: &mut Self::TempBuffer, _reader: &mut impl BufRead) -> Option<Self> {
         unimplemented!()
     }
 

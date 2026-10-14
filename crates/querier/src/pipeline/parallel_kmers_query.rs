@@ -24,7 +24,7 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement, TempBuffer,
 };
-use io::varint::{decode_varint, encode_varint};
+use io::varint::{BufVarintSource, VarintSource, encode_varint};
 use kmers_transform::{
     GroupProcessStats, KmersTransform, KmersTransformExecutorFactory, KmersTransformFinalExecutor,
     KmersTransformGlobalExtraData, KmersTransformMapProcessor,
@@ -40,7 +40,7 @@ use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::{Packet, PacketTrait};
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use std::cmp::min;
-use std::io::{Read, Write};
+use std::io::{BufRead, Write};
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::num::NonZeroU64;
@@ -94,7 +94,7 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataConsecutiveCompression
     #[inline(always)]
     fn decode_extended(
         buffer: &mut Self::TempBuffer,
-        reader: &mut impl Read,
+        reader: &mut impl BufRead,
         last_data: Self::LastData,
         read_flags: u8,
     ) -> Option<Self> {
@@ -106,7 +106,7 @@ impl<CX: MinimizerBucketingSeqColorData> SequenceExtraDataConsecutiveCompression
                 read_flags,
             )?)),
             _ => Some(Self::Query(
-                NonZeroU64::new(decode_varint(|| reader.read_u8().ok())? + 1).unwrap(),
+                NonZeroU64::new(BufVarintSource::new(reader).next_varint()? + 1).unwrap(),
             )),
         }
     }

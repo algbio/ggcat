@@ -1,7 +1,7 @@
 use crate::storage::serializer::ColorsFlushProcessing;
 use config::ColorIndexType;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
-use std::io::Read;
+use std::io::BufRead;
 
 pub mod deserializer;
 pub mod roaring;
@@ -19,7 +19,9 @@ pub trait ColorsSerializerTrait: Sized + Sync + Send + 'static {
 
     type CheckpointWriter<'a>;
 
-    fn decode_color(reader: impl Read, out_vec: Option<&mut Vec<ColorIndexType>>);
+    /// A buffered reader, so the varint decoder can look a word ahead
+    /// without consuming what it has not used.
+    fn decode_color(reader: &mut impl BufRead, out_vec: Option<&mut Vec<ColorIndexType>>);
     // fn decode_colors(reader: impl Read) -> ;
 
     fn new(

@@ -3,14 +3,16 @@ use crate::colors_manager::{
     ColorsParser, MinimizerBucketingSeqColorData, MinimizerBucketingSeqColorDataIterable,
 };
 use crate::parsers::SingleSequenceInfo;
-use byteorder::ReadBytesExt;
 use config::{ColorIndexType, DEFAULT_PER_CPU_BUFFER_SIZE};
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement, TempBuffer,
 };
-use io::varint::{VARINT_MAX_SIZE, decode_varint, encode_varint};
-use std::io::{Read, Write};
+use io::varint::{
+    BufVarintSource, PointerVarintSource, SliceVarintSource, VARINT_MAX_SIZE, VarintSource,
+    encode_varint, encode_varint_to_vec,
+};
+use std::io::{BufRead, Write};
 use std::ops::Range;
 
 /*
@@ -44,10 +46,10 @@ impl Default for MinBkMultipleColors {
 
 #[inline(always)]
 fn decode_minbk_single_color(
-    get_byte_fn: impl FnMut() -> Option<u8>,
+    source: &mut impl VarintSource,
     last_data: MinBkSingleColor,
 ) -> Option<MinBkSingleColor> {
-    let color_value = decode_varint(get_byte_fn)? as ColorIndexType;
+    let color_value = source.next_varint()? as ColorIndexType;
 
     Some(if color_value == 0 {
         last_data
@@ -66,40 +68,25 @@ impl SequenceExtraDataConsecutiveCompression for MinBkSingleColor {
         last_data: Self::LastData,
         _read_flags: u8,
     ) -> Option<Self> {
-        let mut index = 0;
-        decode_minbk_single_color(
-            || {
-                let data = slice[index];
-                index += 1;
-                Some(data)
-            },
-            last_data,
-        )
+        decode_minbk_single_color(&mut SliceVarintSource::new(slice), last_data)
     }
 
     unsafe fn decode_from_pointer_extended(
         _: &mut (),
-        mut ptr: *const u8,
+        ptr: *const u8,
         last_data: Self::LastData,
         _read_flags: u8,
     ) -> Option<Self> {
-        decode_minbk_single_color(
-            || unsafe {
-                let data = *ptr;
-                ptr = ptr.add(1);
-                Some(data)
-            },
-            last_data,
-        )
+        decode_minbk_single_color(&mut unsafe { PointerVarintSource::new(ptr) }, last_data)
     }
 
     fn decode_extended(
         _: &mut (),
-        reader: &mut impl Read,
+        reader: &mut impl BufRead,
         last_data: Self::LastData,
         _read_flags: u8,
     ) -> Option<Self> {
-        decode_minbk_single_color(|| reader.read_u8().ok(), last_data)
+        decode_minbk_single_color(&mut BufVarintSource::new(reader), last_data)
     }
 
     fn encode_extended(
@@ -120,6 +107,28 @@ impl SequenceExtraDataConsecutiveCompression for MinBkSingleColor {
             },
         )
         .unwrap();
+    }
+
+    /// The bucketing phase writes one of these per superkmer, so it goes
+    /// straight into the bucket buffer rather than through `Write`.
+    #[inline(always)]
+    fn encode_to_vec_extended(
+        &self,
+        _: &(),
+        out: &mut Vec<u8>,
+        last_data: Self::LastData,
+        _sequence_length: usize,
+        _reverse_complement: bool,
+        _read_flags: u8,
+    ) {
+        encode_varint_to_vec(
+            out,
+            if last_data == *self {
+                0
+            } else {
+                self.0 as u64 + 1
+            },
+        );
     }
 
     #[inline(always)]
@@ -177,9 +186,31 @@ impl SequenceExtraDataTempBufferManagement for MinBkMultipleColors {
 
 impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
     type LastData = ();
+    /// Both overrides skip the `Read` indirection: the decoder can look a whole
+    /// word ahead when it owns the bytes, which it cannot do through a stream.
+    fn decode_from_slice_extended(
+        buffer: &mut Self::TempBuffer,
+        slice: &[u8],
+        _: (),
+        _: u8,
+    ) -> Option<Self> {
+        buffer
+            .decode_from_slice(slice)
+            .map(|(handle, _)| Self(handle))
+    }
+
+    unsafe fn decode_from_pointer_extended(
+        buffer: &mut Self::TempBuffer,
+        ptr: *const u8,
+        _: (),
+        _: u8,
+    ) -> Option<Self> {
+        unsafe { buffer.decode_from_pointer(ptr) }.map(Self)
+    }
+
     fn decode_extended(
         buffer: &mut Self::TempBuffer,
-        reader: &mut impl Read,
+        reader: &mut impl BufRead,
         _: (),
         _: u8,
     ) -> Option<Self> {
@@ -195,6 +226,17 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
         _: u8,
     ) {
         buffer.write_to(&self.0, writer);
+    }
+    fn encode_to_vec_extended(
+        &self,
+        buffer: &Self::TempBuffer,
+        out: &mut Vec<u8>,
+        _: (),
+        _: usize,
+        _: bool,
+        _: u8,
+    ) {
+        buffer.write_to_vec(&self.0, out);
     }
     fn obtain_last_data(&self, _: (), _: bool) {}
     fn max_size(&self) -> usize {
