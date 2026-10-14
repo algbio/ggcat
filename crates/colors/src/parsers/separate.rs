@@ -1,4 +1,4 @@
-use crate::bucket_colors::{ColorArena, ColorHandle};
+use crate::bucket_colors::{ColorArena, ColorHandle, ColorRun};
 use crate::colors_manager::{
     ColorsParser, MinimizerBucketingSeqColorData, MinimizerBucketingSeqColorDataIterable,
 };
@@ -22,13 +22,18 @@ use std::ops::Range;
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct MinBkSingleColor(ColorIndexType);
 
-/// Sorted, deduplicated colors serialized in temporary compactor buckets.
+/// A canonical color set serialized in temporary compactor buckets, held and
+/// written as maximal runs rather than as individual colors.
 ///
-/// Wire format: expanded length minus one, absolute first color, then positive
-/// deltas. A zero delta followed by N means append N + 3 consecutive colors
-/// after the previous color (a run of at least four including that color).
-/// The decoder accepts old delta-only sets too. Buckets containing ranges must
-/// be read with the updated codec; final graph/color-map formats are unaffected.
+/// Wire format: run count minus one, then one record per run. A record is the
+/// gap from the previous run's last color -- the first run's gap is its absolute
+/// first color -- shifted up one bit, the freed low bit saying whether a length
+/// varint follows, and that length biased by two. Framing each record on its own
+/// is what lets the decoder rebuild runs without expanding them; spending a bit
+/// rather than a whole varint is what keeps a one-color set at two bytes.
+/// Temporary buckets never outlive a process, so this format has no
+/// compatibility obligation; the graph annotations and the color-map
+/// second-order delta format are unchanged.
 #[derive(Copy, Clone, Debug)]
 pub struct MinBkMultipleColors(ColorHandle);
 
@@ -253,14 +258,15 @@ impl MinimizerBucketingSeqColorData for MinBkMultipleColors {
     }
 }
 
-/// Every k-mer of a superkmer shares the superkmer's colors.
-impl<'a> MinimizerBucketingSeqColorDataIterable<'a, &'a [ColorIndexType]> for MinBkMultipleColors {
-    type KmerColorIterator = std::iter::Repeat<&'a [ColorIndexType]>;
+/// Every k-mer of a superkmer shares the superkmer's colors, handed over as the
+/// runs the arena already holds: nothing on this path expands them.
+impl<'a> MinimizerBucketingSeqColorDataIterable<'a, &'a [ColorRun]> for MinBkMultipleColors {
+    type KmerColorIterator = std::iter::Repeat<&'a [ColorRun]>;
     fn get_iterator(&'a self, buffer: &'a ColorArena) -> Self::KmerColorIterator {
-        std::iter::repeat(buffer.colors(&self.0))
+        std::iter::repeat(buffer.runs(&self.0))
     }
-    fn get_unique_color(&'a self, buffer: &'a ColorArena) -> &'a [ColorIndexType] {
-        buffer.colors(&self.0)
+    fn get_unique_color(&'a self, buffer: &'a ColorArena) -> &'a [ColorRun] {
+        buffer.runs(&self.0)
     }
 }
 

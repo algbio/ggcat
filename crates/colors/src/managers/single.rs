@@ -1,4 +1,5 @@
 use crate::DefaultColorsSerializer;
+use crate::bucket_colors::ColorRun;
 use crate::colors_manager::ColorsMergeManager;
 use crate::storage::deserializer::ColorsDeserializer;
 use config::COLORS_BUFFER_DEFAULT_SIZE;
@@ -50,7 +51,7 @@ impl ColorsMergeManager for SingleColorManager {
 
     fn add_temp_buffer_structure_el<MH: HashFunctionFactory>(
         _data: &mut Self::ColorsBufferTempStructure,
-        _kmer_color: &[ColorIndexType],
+        _kmer_color: &[ColorRun],
         _color_entry: &mut Self::HashMapTempColorIndex,
         _same_color: bool,
         _reached_threshold: bool,
@@ -72,7 +73,7 @@ impl ColorsMergeManager for SingleColorManager {
 
     fn assign_color(
         _global_colors_table: &Self::GlobalColorsTableWriter,
-        _data: &[ColorIndexType],
+        _data: &[ColorRun],
     ) -> Self::TableColorEntry {
         ()
     }

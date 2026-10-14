@@ -1,3 +1,4 @@
+use colors::bucket_colors::{ColorRun, runs_from_colors};
 use colors::storage::run_length::ColorIndexSerializer;
 use config::ColorIndexType;
 use io::varint::{BufVarintSource, VARINT_MAX_SIZE, VarintSource, encode_varint};
@@ -33,7 +34,14 @@ pub struct QueryColoredCounters<'a> {
     pub colors: &'a [ColorIndexType],
 }
 
-pub struct QueryColoredCountersSerializer;
+/// The colors written here are the flattened endpoints of disjoint ranges, not
+/// individual colors, but they are still a strictly increasing sequence, which
+/// is all the subset encoder reads. Coalescing them into runs first is what lets
+/// that encoder keep its run-driven form while the bytes stay exactly what they
+/// were.
+pub struct QueryColoredCountersSerializer {
+    runs: Vec<ColorRun>,
+}
 
 impl BucketItemSerializer for QueryColoredCountersSerializer {
     type InputElementType<'a> = QueryColoredCounters<'a>;
@@ -48,7 +56,7 @@ impl BucketItemSerializer for QueryColoredCountersSerializer {
     fn clear_buffer(_buffer: &mut Self::ReadBuffer) {}
 
     fn new(_: ()) -> Self {
-        Self
+        Self { runs: Vec::new() }
     }
 
     fn reset(&mut self) {}
@@ -70,7 +78,8 @@ impl BucketItemSerializer for QueryColoredCountersSerializer {
         }
 
         assert_eq!(element.colors.len() % 2, 0);
-        ColorIndexSerializer::serialize_colors(bucket, &element.colors);
+        runs_from_colors(element.colors, &mut self.runs);
+        ColorIndexSerializer::serialize_colors(bucket, &self.runs);
     }
 
     fn read_from<'b, S: BufRead>(

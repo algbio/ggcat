@@ -366,7 +366,7 @@ impl<
                             colors_data.pending_color_set.clear();
                             colors_data
                                 .pending_color_set
-                                .append_colors(read.extra.get_unique_color(superkmers_extra_buffer));
+                                .append_runs(read.extra.get_unique_color(superkmers_extra_buffer));
                             let color = CX::ColorsMergeManagerType::assign_color(
                                 &colors_data.colors_global_table,
                                 colors_data.pending_color_set.finish(),

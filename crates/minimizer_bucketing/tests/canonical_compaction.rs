@@ -1,4 +1,5 @@
 use colors::{
+    bucket_colors::expand_runs,
     colors_manager::{MinimizerBucketingSeqColorData, MinimizerBucketingSeqColorDataIterable},
     parsers::{
         SequenceIdent, SingleSequenceInfo,
@@ -106,7 +107,11 @@ fn repeated_compaction_keeps_canonical_union_and_multiplicity() {
                     assert_eq!(read.read.to_string().as_bytes(), sequence);
                     assert_eq!(read.multiplicity, total);
                     let expected: Vec<_> = expected.iter().copied().collect();
-                    assert_eq!(read.extra.get_unique_color(buffer), expected);
+                    // The set is carried as runs now, so it is expanded here
+                    // rather than in the pipeline.
+                    let decoded: Vec<_> =
+                        expand_runs(read.extra.get_unique_color(buffer)).collect();
+                    assert_eq!(decoded, expected);
                     records += 1;
                 },
             );

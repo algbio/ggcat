@@ -1,3 +1,4 @@
+use crate::bucket_colors::ColorRun;
 use crate::colors_manager::{
     ColorsParser, MinimizerBucketingSeqColorData, MinimizerBucketingSeqColorDataIterable,
 };
@@ -250,20 +251,20 @@ impl SequenceExtraData for MinBkMultipleColors {
 
 pub struct MinBkMultipleColorsIterator<'a>(PhantomData<&'a ()>);
 impl<'a> Iterator for MinBkMultipleColorsIterator<'a> {
-    type Item = &'a [ColorIndexType];
+    type Item = &'a [ColorRun];
     fn next(&mut self) -> Option<Self::Item> {
         unimplemented!()
     }
 }
 
-impl<'a> MinimizerBucketingSeqColorDataIterable<'a, &'a [ColorIndexType]> for MinBkMultipleColors {
+impl<'a> MinimizerBucketingSeqColorDataIterable<'a, &'a [ColorRun]> for MinBkMultipleColors {
     type KmerColorIterator = MinBkMultipleColorsIterator<'a>;
 
     fn get_iterator(&'a self, _buffer: &'a Self::TempBuffer) -> Self::KmerColorIterator {
         unimplemented!()
     }
 
-    fn get_unique_color(&'a self, _buffer: &'a Self::TempBuffer) -> &'a [ColorIndexType] {
+    fn get_unique_color(&'a self, _buffer: &'a Self::TempBuffer) -> &'a [ColorRun] {
         unimplemented!()
     }
 }
