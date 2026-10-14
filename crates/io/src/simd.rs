@@ -4,24 +4,39 @@
 use crate::binary_reader::{BinaryEvent, GenericBinaryReader, is_archive};
 use crate::compressed_read::CompressedRead;
 use simd_accel::compressed_read::SimdCompressedRead;
+use simd_accel::masks::MaskKernel;
 use simd_accel::sequence_parser::{BLOCK_SIZE, SequenceParser};
 use std::path::Path;
 use utils::dna_sequence::{DnaSequence, DnaSequencesFileType};
 
+/// How much the parser gets at once: a whole number of its blocks, so that the kernel it runs
+/// costs a branch per chunk rather than per block.
+const CHUNK_SIZE: usize = 64 * 1024;
+const _: () = assert!(CHUNK_SIZE.is_multiple_of(BLOCK_SIZE));
+
 pub struct SimdSequencesReader {
-    /// Hands the input out in blocks of exactly [`BLOCK_SIZE`] bytes, as the parser takes it.
+    /// Hands the input out in chunks of exactly [`CHUNK_SIZE`] bytes, only the last one of each
+    /// file shorter.
     reader: GenericBinaryReader,
+    /// The kernel every file's parser runs, chosen once for this CPU.
+    kernel: MaskKernel,
 }
 
 impl SimdSequencesReader {
     pub fn new() -> Self {
         Self {
-            reader: GenericBinaryReader::new(Some(BLOCK_SIZE)),
+            reader: GenericBinaryReader::new(Some(CHUNK_SIZE)),
+            kernel: MaskKernel::detect(),
         }
     }
 
+    /// The kernel the parsers run.
+    pub fn kernel(&self) -> MaskKernel {
+        self.kernel
+    }
+
     /// As [`SequencesReader::process_file_extended`], with the bases packed: every file, or
-    /// every member of an archive, is fed to a parser of its own a block at a time.
+    /// every member of an archive, is fed to a parser of its own a chunk at a time.
     ///
     /// [`SequencesReader::process_file_extended`]: crate::sequences_reader::SequencesReader::process_file_extended
     pub fn process_file_extended<F: for<'a> FnMut(DnaSequence<'a, CompressedRead<'a>>)>(
@@ -35,6 +50,7 @@ impl SimdSequencesReader {
         // TODO: the parser takes no options yet.
         let _ = (line_split_copyback, copy_ident);
         let source = source.as_ref();
+        let kernel = self.kernel;
 
         let mut emit = |sequence: DnaSequence<'_, SimdCompressedRead<'_>>| {
             func(DnaSequence {
@@ -54,7 +70,7 @@ impl SimdSequencesReader {
                 }
                 let name = name.unwrap_or_default();
                 parser = match DnaSequencesFileType::from_name(name) {
-                    Some(DnaSequencesFileType::FASTA) => Some(SequenceParser::new()),
+                    Some(DnaSequencesFileType::FASTA) => Some(SequenceParser::with_kernel(kernel)),
                     Some(DnaSequencesFileType::FASTQ) => {
                         todo!("the SIMD parser reads FASTA only")
                     }

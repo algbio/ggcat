@@ -12,50 +12,128 @@ pub struct RawFastaMasks {
     pub mask_non_acgt: u64,
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-#[inline(always)]
-pub fn extract_fasta_masks(buf: &[u8; 64]) -> RawFastaMasks {
-    avx2::extract(buf)
+/// A kernel, as a type, so that code generic over it is compiled once per kernel and can
+/// inline it.
+pub trait Kernel {
+    /// The masks of `buf`.
+    ///
+    /// # Safety
+    ///
+    /// The CPU must have the kernel's features: see [`MaskKernel::is_supported`].
+    unsafe fn extract(buf: &[u8; 64]) -> RawFastaMasks;
 }
 
-#[cfg(all(
-    target_arch = "x86_64",
-    not(target_feature = "avx2"),
-    target_feature = "ssse3"
-))]
-#[inline(always)]
-pub fn extract_fasta_masks(buf: &[u8; 64]) -> RawFastaMasks {
-    ssse3::extract(buf)
+/// The AVX2 kernel: two 32-byte halves.
+#[cfg(target_arch = "x86_64")]
+pub struct Avx2;
+
+#[cfg(target_arch = "x86_64")]
+impl Kernel for Avx2 {
+    #[inline(always)]
+    unsafe fn extract(buf: &[u8; 64]) -> RawFastaMasks {
+        // SAFETY: the caller checked the CPU has AVX2.
+        unsafe { avx2::extract(buf) }
+    }
 }
 
-#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-#[inline(always)]
-pub fn extract_fasta_masks(buf: &[u8; 64]) -> RawFastaMasks {
-    neon::extract(buf)
+/// The SSSE3 kernel: four 16-byte quarters.
+#[cfg(target_arch = "x86_64")]
+pub struct Ssse3;
+
+#[cfg(target_arch = "x86_64")]
+impl Kernel for Ssse3 {
+    #[inline(always)]
+    unsafe fn extract(buf: &[u8; 64]) -> RawFastaMasks {
+        // SAFETY: the caller checked the CPU has SSSE3.
+        unsafe { ssse3::extract(buf) }
+    }
 }
 
-/// No vector byte shuffle on this target, so classify eight bytes at a time
-/// with ordinary 64-bit arithmetic. Slower, but it keeps the crate portable.
-#[cfg(not(any(
-    all(target_arch = "x86_64", target_feature = "avx2"),
-    all(
-        target_arch = "x86_64",
-        not(target_feature = "avx2"),
-        target_feature = "ssse3"
-    ),
-    all(target_arch = "aarch64", target_feature = "neon")
-)))]
-#[inline(always)]
-pub fn extract_fasta_masks(buf: &[u8; 64]) -> RawFastaMasks {
-    fallback::extract(buf)
+/// The NEON kernel.
+#[cfg(target_arch = "aarch64")]
+pub struct Neon;
+
+#[cfg(target_arch = "aarch64")]
+impl Kernel for Neon {
+    #[inline(always)]
+    unsafe fn extract(buf: &[u8; 64]) -> RawFastaMasks {
+        // SAFETY: the caller checked the CPU has NEON.
+        unsafe { neon::extract(buf) }
+    }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+/// The portable kernel, eight bytes at a time in ordinary 64-bit words: slower, but it runs
+/// anywhere.
+pub struct Portable;
+
+impl Kernel for Portable {
+    #[inline(always)]
+    unsafe fn extract(buf: &[u8; 64]) -> RawFastaMasks {
+        fallback::extract(buf)
+    }
+}
+
+/// Which kernel to run, chosen when the program runs rather than when it is compiled: every
+/// kernel of the target architecture is in the build, each compiled for its own features, so
+/// a build without `target-cpu=native` still gets the vector ones.
+///
+/// Choose once and keep it: [`Self::detect`] is cheap, but a loop over blocks should be
+/// compiled for one kernel, not branch on it for every block.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum MaskKernel {
+    #[cfg(target_arch = "x86_64")]
+    Avx2,
+    #[cfg(target_arch = "x86_64")]
+    Ssse3,
+    #[cfg(target_arch = "aarch64")]
+    Neon,
+    Portable,
+}
+
+impl MaskKernel {
+    /// Every kernel of this build, the fastest first.
+    pub fn all() -> Vec<Self> {
+        let mut kernels = Vec::new();
+        #[cfg(target_arch = "x86_64")]
+        kernels.extend([Self::Avx2, Self::Ssse3]);
+        #[cfg(target_arch = "aarch64")]
+        kernels.push(Self::Neon);
+        kernels.push(Self::Portable);
+        kernels
+    }
+
+    /// Whether this CPU can run the kernel. The checks are std's, which detects the features
+    /// once and caches them; a feature the build already enables answers at compile time.
+    pub fn is_supported(self) -> bool {
+        match self {
+            #[cfg(target_arch = "x86_64")]
+            Self::Avx2 => std::arch::is_x86_feature_detected!("avx2"),
+            #[cfg(target_arch = "x86_64")]
+            Self::Ssse3 => std::arch::is_x86_feature_detected!("ssse3"),
+            #[cfg(target_arch = "aarch64")]
+            Self::Neon => std::arch::is_aarch64_feature_detected!("neon"),
+            Self::Portable => true,
+        }
+    }
+
+    /// The fastest kernel this CPU can run.
+    pub fn detect() -> Self {
+        Self::all()
+            .into_iter()
+            .find(|kernel| kernel.is_supported())
+            .unwrap_or(Self::Portable)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
 mod avx2 {
-    use super::{RawFastaMasks, pack_two_bit_masks};
+    use super::{RawFastaMasks, opaque, pack_two_bit_masks};
     use core::arch::x86_64::*;
 
-    #[inline(always)]
+    // Not `inline(always)`, which `target_feature` forbids: a caller compiled for AVX2
+    // inlines it all the same, which is how the block loops are written.
+    #[target_feature(enable = "avx2")]
+    #[inline]
     pub fn extract(buf: &[u8; 64]) -> RawFastaMasks {
         unsafe {
             let ptr = buf.as_ptr().cast::<__m256i>();
@@ -89,7 +167,7 @@ mod avx2 {
                 line_feeds: byte_mask(first, second, b'\n'),
                 carriage_returns: byte_mask(first, second, b'\r'),
                 two_bits: pack_two_bit_masks(low, high),
-                mask_non_acgt: !actg,
+                mask_non_acgt: !opaque(actg),
             }
         }
     }
@@ -123,16 +201,13 @@ mod avx2 {
     }
 }
 
-#[cfg(all(
-    target_arch = "x86_64",
-    not(target_feature = "avx2"),
-    target_feature = "ssse3"
-))]
+#[cfg(target_arch = "x86_64")]
 mod ssse3 {
     use super::{RawFastaMasks, pack_two_bit_masks};
     use core::arch::x86_64::*;
 
-    #[inline(always)]
+    #[target_feature(enable = "ssse3")]
+    #[inline]
     pub fn extract(buf: &[u8; 64]) -> RawFastaMasks {
         unsafe {
             let ptr = buf.as_ptr().cast::<__m128i>();
@@ -190,13 +265,14 @@ mod ssse3 {
     }
 }
 
-#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+#[cfg(target_arch = "aarch64")]
 mod neon {
     use super::RawFastaMasks;
     use core::arch::aarch64::*;
     use core::mem::transmute;
 
-    #[inline(always)]
+    #[target_feature(enable = "neon")]
+    #[inline]
     pub fn extract(buf: &[u8; 64]) -> RawFastaMasks {
         unsafe {
             let values = vld4q_u8(buf.as_ptr());
@@ -349,6 +425,24 @@ pub mod fallback {
     }
 }
 
+/// `value` unchanged, but out of the optimizer's sight, so that it cannot fold a negation of a
+/// mask back into the byte comparisons that built it. Without AVX-512 it then treats the mask
+/// as 64 one-bit lanes and takes them apart a bit at a time: the AVX2 kernel ran at 2.4 GB/s
+/// instead of 15 on a build without it, whichever way the negation was written.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn opaque(mut value: u64) -> u64 {
+    // SAFETY: an empty template, which touches no memory, stack or flags.
+    unsafe {
+        core::arch::asm!(
+            "/* {0} */",
+            inout(reg) value,
+            options(pure, nomem, nostack, preserves_flags)
+        );
+    }
+    value
+}
+
 #[inline(always)]
 fn spread_32(mut value: u64) -> u64 {
     value &= 0xffff_ffff;
@@ -391,7 +485,7 @@ pub fn next_set_bit(mask: u64, start: usize) -> Option<usize> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Byte-at-a-time reference used both as the test oracle and as the
@@ -418,8 +512,36 @@ mod tests {
         result
     }
 
+    /// `kernel` on `block`, through its type, as the block loops call it.
+    pub(crate) fn extract_with(kernel: MaskKernel, block: &[u8; 64]) -> RawFastaMasks {
+        assert!(kernel.is_supported(), "{kernel:?} is not supported here");
+        // SAFETY: just checked.
+        unsafe {
+            match kernel {
+                #[cfg(target_arch = "x86_64")]
+                MaskKernel::Avx2 => Avx2::extract(block),
+                #[cfg(target_arch = "x86_64")]
+                MaskKernel::Ssse3 => Ssse3::extract(block),
+                #[cfg(target_arch = "aarch64")]
+                MaskKernel::Neon => Neon::extract(block),
+                MaskKernel::Portable => Portable::extract(block),
+            }
+        }
+    }
+
+    /// The kernels of this build that this CPU runs, which are the ones tested.
+    pub(crate) fn supported_kernels() -> Vec<MaskKernel> {
+        let kernels: Vec<_> = MaskKernel::all()
+            .into_iter()
+            .filter(|kernel| kernel.is_supported())
+            .collect();
+        eprintln!("kernels tested: {kernels:?}");
+        kernels
+    }
+
     #[test]
-    fn simd_extractor_matches_scalar_reference() {
+    fn every_supported_kernel_matches_scalar_reference() {
+        let kernels = supported_kernels();
         let mut state = 0x9e37_79b9u32;
         for round in 0..256 {
             let mut block = [0u8; 64];
@@ -439,7 +561,13 @@ mod tests {
                     _ => (state >> 24) as u8,
                 };
             }
-            assert_eq!(extract_fasta_masks(&block), scalar_masks(&block));
+            for &kernel in &kernels {
+                assert_eq!(
+                    extract_with(kernel, &block),
+                    scalar_masks(&block),
+                    "{kernel:?}"
+                );
+            }
         }
     }
 
@@ -465,8 +593,11 @@ mod tests {
                 };
             }
             assert_eq!(fallback::extract(&block), scalar_masks(&block));
-            // Whatever kernel this build selected has to agree with it too.
-            assert_eq!(fallback::extract(&block), extract_fasta_masks(&block));
+            // Whatever kernel the CPU gets has to agree with it too.
+            assert_eq!(
+                fallback::extract(&block),
+                extract_with(MaskKernel::detect(), &block)
+            );
         }
     }
 
@@ -492,9 +623,19 @@ mod tests {
     #[test]
     fn zero_bytes_are_not_acgt() {
         let block = [0u8; 64];
-        let masks = extract_fasta_masks(&block);
-        assert_eq!(masks.mask_non_acgt, u64::MAX);
-        assert_eq!(masks.open_brackets, 0);
-        assert_eq!(masks.line_feeds, 0);
+        for kernel in supported_kernels() {
+            let masks = extract_with(kernel, &block);
+            assert_eq!(masks.mask_non_acgt, u64::MAX, "{kernel:?}");
+            assert_eq!(masks.open_brackets, 0, "{kernel:?}");
+            assert_eq!(masks.line_feeds, 0, "{kernel:?}");
+        }
+    }
+
+    #[test]
+    fn detect_picks_the_fastest_supported_kernel() {
+        let detected = MaskKernel::detect();
+        assert!(detected.is_supported());
+        assert_eq!(Some(detected), supported_kernels().first().copied());
+        assert!(MaskKernel::Portable.is_supported());
     }
 }
