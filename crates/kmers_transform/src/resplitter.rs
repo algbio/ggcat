@@ -1,7 +1,7 @@
 use crate::processor::{KmersProcessorInitData, KmersTransformProcessor};
 use crate::{KmersTransformContext, KmersTransformExecutorFactory};
 use config::{
-    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, KEEP_FILES,
+    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, KEEP_FILES, MINIMIZER_BUCKETS_CHECKPOINT_SIZE,
     MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, SwapPriority, get_compression_level_info,
     get_memory_mode,
 };
@@ -24,10 +24,12 @@ use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThread
 
 use parallel_processor::buckets::readers::typed_binary_reader::AsyncReaderThread;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
-use parallel_processor::buckets::{BucketsCount, MultiThreadBuckets};
+use parallel_processor::buckets::writers::lock_free_binary_writer::LockFreeBinaryWriter;
+use parallel_processor::buckets::{BucketsCount, LockFreeBucket, MultiThreadBuckets};
 use parallel_processor::execution_manager::thread_pool::ExecutorsHandle;
 use parallel_processor::memory_fs::RemoveFileMode;
 use parking_lot::Mutex;
+use std::any::TypeId;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -47,7 +49,37 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
     pub fn do_resplit(
         global_context: &KmersTransformContext<F>,
         reader_thread: Arc<AsyncReaderThread>,
+        resplit_data: ResplitterInitData<F>,
+    ) {
+        let file_mode = get_memory_mode(SwapPriority::ResplitBuckets as usize);
+        if TypeId::of::<F::AssociatedExtraDataWithMultiplicity>()
+            == TypeId::of::<colors::parsers::separate::MinBkMultipleColors>()
+        {
+            Self::do_resplit_with_writer::<LockFreeBinaryWriter>(
+                global_context,
+                reader_thread,
+                resplit_data,
+                &(file_mode, MINIMIZER_BUCKETS_CHECKPOINT_SIZE),
+            );
+        } else {
+            Self::do_resplit_with_writer::<CompressedBinaryWriter>(
+                global_context,
+                reader_thread,
+                resplit_data,
+                &(
+                    file_mode,
+                    MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
+                    get_compression_level_info(),
+                ),
+            );
+        }
+    }
+
+    fn do_resplit_with_writer<Writer: LockFreeBucket>(
+        global_context: &KmersTransformContext<F>,
+        reader_thread: Arc<AsyncReaderThread>,
         mut resplit_data: ResplitterInitData<F>,
+        writer_init: &Writer::InitData,
     ) {
         let mut resplitter = F::new_resplitter(
             &global_context.global_extra_data,
@@ -56,18 +88,14 @@ impl<F: KmersTransformExecutorFactory> KmersTransformResplitter<F> {
 
         static RESPLIT_INDEX: AtomicUsize = AtomicUsize::new(0);
 
-        let buckets = Arc::new(MultiThreadBuckets::<CompressedBinaryWriter>::new(
+        let buckets = Arc::new(MultiThreadBuckets::<Writer>::new(
             resplit_data.subsplit_buckets_count,
             global_context.temp_dir.join(format!(
                 "resplit-{}",
                 RESPLIT_INDEX.fetch_add(1, Ordering::Relaxed)
             )),
             None,
-            &(
-                get_memory_mode(SwapPriority::ResplitBuckets as usize),
-                MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
-                get_compression_level_info(),
-            ),
+            writer_init,
             &MinimizerBucketMode::Compacted,
         ));
 

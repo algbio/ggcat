@@ -20,6 +20,13 @@ use utils::inline_vec::{AllocatorU32, InlineVec};
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct MinBkSingleColor(ColorIndexType);
 
+/// Sorted, deduplicated colors serialized in temporary compactor buckets.
+///
+/// Wire format: expanded length minus one, absolute first color, then positive
+/// deltas. A zero delta followed by N means append N + 3 consecutive colors
+/// after the previous color (a run of at least four including that color).
+/// The decoder accepts old delta-only sets too. Buckets containing ranges must
+/// be read with the updated codec; final graph/color-map formats are unaffected.
 #[derive(Copy, Clone, Debug)]
 pub struct MinBkMultipleColors(InlineVec<ColorIndexType, 2>);
 
@@ -185,14 +192,36 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
         _last_data: Self::LastData,
         _read_flags: u8,
     ) -> Option<Self> {
-        let len = decode_varint(|| reader.read_u8().ok())? as usize + 1;
+        let len = usize::try_from(decode_varint(|| reader.read_u8().ok())?)
+            .ok()?
+            .checked_add(1)?;
         let mut vec = buffer.new_vec(len);
         let slice = buffer.slice_vec_mut(&mut vec);
 
-        slice[0] = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
-        for i in 1..len {
-            let delta = decode_varint(|| reader.read_u8().ok())? as ColorIndexType;
-            slice[i] = slice[i - 1] + delta;
+        let mut last = ColorIndexType::try_from(decode_varint(|| reader.read_u8().ok())?).ok()?;
+        slice[0] = last;
+        let mut i = 1;
+        while i < len {
+            let delta = ColorIndexType::try_from(decode_varint(|| reader.read_u8().ok())?).ok()?;
+            if delta != 0 {
+                last = last.checked_add(delta)?;
+                slice[i] = last;
+                i += 1;
+            } else {
+                // Zero cannot be a delta in a deduplicated set. It introduces
+                // the remaining colors of a run whose first color was emitted.
+                let additional = decode_varint(|| reader.read_u8().ok())?.checked_add(3)?;
+                let additional = usize::try_from(additional).ok()?;
+                if additional > len - i {
+                    return None;
+                }
+                let first = last.checked_add(1)?;
+                last = last.checked_add(ColorIndexType::try_from(additional).ok()?)?;
+                for (offset, color) in slice[i..i + additional].iter_mut().enumerate() {
+                    *color = first + offset as ColorIndexType;
+                }
+                i += additional;
+            }
         }
 
         Some(Self(vec))
@@ -208,18 +237,31 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
         _read_flags: u8,
     ) {
         let slice = buffer.slice_vec(&self.0);
-        debug_assert!(slice.is_sorted());
+        debug_assert!(slice.windows(2).all(|pair| pair[0] < pair[1]));
         debug_assert_ne!(slice.len(), 0);
 
+        // Keep the expanded length and absolute first color. Subsequent positive
+        // varints are deltas; zero followed by (run length - 4) replaces three
+        // or more unit deltas. Short/sparse sets retain the old byte encoding.
         encode_varint(|b| writer.write_all(b), (slice.len() - 1) as u64).unwrap();
-        encode_varint(|b| writer.write_all(b), slice[0] as u64).unwrap();
-
-        let mut last = slice[0];
-
-        for i in 1..slice.len() {
-            let delta = slice[i] - last;
-            encode_varint(|b| writer.write_all(b), delta as u64).unwrap();
-            last = slice[i];
+        let mut last = 0;
+        let mut start = 0;
+        while start < slice.len() {
+            encode_varint(|b| writer.write_all(b), (slice[start] - last) as u64).unwrap();
+            let mut end = start + 1;
+            while end < slice.len() && slice[end] - slice[end - 1] == 1 {
+                end += 1;
+            }
+            let run_len = end - start;
+            if run_len >= 4 {
+                writer.write_all(&[0]).unwrap();
+                encode_varint(|b| writer.write_all(b), (run_len - 4) as u64).unwrap();
+            } else {
+                // At most two unit deltas, written together.
+                writer.write_all(&[1, 1][..run_len - 1]).unwrap();
+            }
+            last = slice[end - 1];
+            start = end;
         }
     }
 
@@ -232,7 +274,8 @@ impl SequenceExtraDataConsecutiveCompression for MinBkMultipleColors {
     }
 
     fn max_size(&self) -> usize {
-        self.0.len() * VARINT_MAX_SIZE
+        // Length prefix plus at most one varint per expanded color.
+        (self.0.len() + 1) * VARINT_MAX_SIZE
     }
 }
 
@@ -320,3 +363,6 @@ impl ColorsParser for SeparateColorsParser {
     type MinimizerBucketingSeqColorDataType = MinBkSingleColor;
     type MinimizerBucketingMultipleSeqColorDataType = MinBkMultipleColors;
 }
+
+#[cfg(test)]
+mod tests;
