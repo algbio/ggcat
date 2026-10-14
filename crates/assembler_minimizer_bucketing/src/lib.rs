@@ -13,7 +13,6 @@ use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use io::concurrent::temp_reads::extra_data::TempBuffer;
-use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
 use minimizer_bucketing::{
@@ -27,6 +26,7 @@ use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
+use utils::dna_sequence::{DnaSequence, DnaSequencesFileType};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct MinimizerExtraData {

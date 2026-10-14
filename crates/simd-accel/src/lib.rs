@@ -26,4 +26,6 @@
 //! OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 //! SOFTWARE.
 
+pub mod compressed_read;
 pub mod masks;
+pub mod sequence_parser;

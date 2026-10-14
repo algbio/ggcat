@@ -13,6 +13,7 @@ repository = "https://github.com/algbio/ggcat"
 # Config
 config = { package = "ggcat_config", path = "../config" }
 utils = { package = "ggcat_utils", path = "../utils" }
+simd_accel = { package = "ggcat_simd_accel", path = "../simd-accel" }
 
 
 # Common libraries

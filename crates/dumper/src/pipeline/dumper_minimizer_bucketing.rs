@@ -11,7 +11,6 @@ use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement, TempBuffer,
 };
-use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::file::FileSequencesStream;
 use minimizer_bucketing::resplit_bucket::RewriteBucketCompute;
@@ -28,6 +27,7 @@ use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use utils::dna_sequence::{DnaSequence, DnaSequencesFileType};
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct DumperKmersReferenceData<

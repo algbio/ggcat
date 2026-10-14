@@ -1,8 +1,8 @@
 pub mod file;
 pub mod general;
 
-use crate::sequences_reader::DnaSequence;
 use config::ColorIndexType;
+use utils::dna_sequence::DnaSequence;
 
 #[derive(Copy, Clone)]
 pub struct SequenceInfo {

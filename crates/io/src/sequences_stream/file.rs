@@ -1,8 +1,9 @@
 use ggcat_logging::UnrecoverableErrorLogging;
 
-use crate::sequences_reader::{DnaSequence, SequencesReader};
+use crate::sequences_reader::SequencesReader;
 use crate::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use std::path::PathBuf;
+use utils::dna_sequence::DnaSequence;
 
 pub struct FileSequencesStream {
     sequences_reader: SequencesReader,

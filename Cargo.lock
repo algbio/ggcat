@@ -1187,6 +1187,7 @@ dependencies = [
  "ggcat_io",
  "ggcat_minimizer_bucketing",
  "ggcat_structs",
+ "ggcat_utils",
  "parallel-processor",
  "streaming-libdeflate-rs",
  "typenum",
@@ -1376,6 +1377,7 @@ dependencies = [
  "ggcat-logging",
  "ggcat_config",
  "ggcat_hashes",
+ "ggcat_simd_accel",
  "ggcat_utils",
  "liblzma",
  "lz4",
@@ -1499,6 +1501,9 @@ dependencies = [
 [[package]]
 name = "ggcat_simd_accel"
 version = "2.2.0"
+dependencies = [
+ "ggcat_utils",
+]
 
 [[package]]
 name = "ggcat_structs"

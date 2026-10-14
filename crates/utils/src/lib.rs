@@ -1,6 +1,7 @@
 #[macro_use]
 pub mod debug_functions;
 pub mod assembler_phases;
+pub mod dna_sequence;
 pub mod fast_rand_bool;
 pub mod fuzzy_buckets;
 pub mod fuzzy_hashmap;

@@ -26,7 +26,6 @@ use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketData;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression, TempBuffer,
 };
-use io::sequences_reader::DnaSequence;
 use io::sequences_splitter::split_and_compress_sequences;
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use parallel_processor::buckets::writers::compressed_binary_writer::{
@@ -53,6 +52,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
+use utils::dna_sequence::DnaSequence;
 
 /// The record encoding of a temporary bucket chunk, stamped into every chunk
 /// file's header and read back to pick the decoder.

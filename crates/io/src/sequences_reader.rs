@@ -1,52 +1,14 @@
 use crate::binary_reader::is_archive;
 use crate::lines_reader::LinesReader;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
-use hashes::HashableSequence;
 use nightly_quirks::branch_pred::unlikely;
 use std::cmp::max;
 use std::path::Path;
+use utils::dna_sequence::{DnaSequence, DnaSequencesFileType};
 
 const IDENT_STATE: usize = 0;
 const SEQ_STATE: usize = 1;
 const QUAL_STATE: usize = 2;
-
-#[derive(Copy, Clone)]
-pub enum DnaSequencesFileType {
-    FASTA,
-    FASTQ,
-    GFA,
-}
-
-impl DnaSequencesFileType {
-    /// The format a file name implies, looking past compression extensions (`x.fq.gz`). A
-    /// member of an archive (`x.tar:dir/a.fa`) is recognized by its own name.
-    pub fn from_name(name: &str) -> Option<Self> {
-        const FASTQ_EXTS: &[&str] = &["fq", "fastq"];
-        const FASTA_EXTS: &[&str] = &["fa", "fasta", "fna", "ffn"];
-
-        let mut tmp = Path::new(name).file_name()?.to_str()?;
-        let mut path: &Path = tmp.as_ref();
-
-        while let Some(ext) = path.extension() {
-            if FASTQ_EXTS.contains(&ext.to_str().unwrap()) {
-                return Some(DnaSequencesFileType::FASTQ);
-            }
-            if FASTA_EXTS.contains(&ext.to_str().unwrap()) {
-                return Some(DnaSequencesFileType::FASTA);
-            }
-            tmp = &tmp[0..tmp.len() - ext.len() - 1];
-            path = tmp.as_ref()
-        }
-        None
-    }
-}
-
-#[derive(Copy, Clone)]
-pub struct DnaSequence<'a, S: HashableSequence + 'a> {
-    pub ident_data: &'a [u8],
-    pub seq: S,
-    pub format: DnaSequencesFileType,
-}
 
 const SEQ_LETTERS_MAPPING: [u8; 256] = {
     let mut lookup = [b'N'; 256];

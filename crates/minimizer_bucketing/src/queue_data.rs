@@ -1,9 +1,9 @@
 use ggcat_logging::stats::StatId;
-use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
 use parallel_processor::execution_manager::packet::PacketTrait;
 use std::mem::size_of;
+use utils::dna_sequence::{DnaSequence, DnaSequencesFileType};
 
 type SequencesType = (usize, usize, usize, DnaSequencesFileType, SequenceInfo);
 

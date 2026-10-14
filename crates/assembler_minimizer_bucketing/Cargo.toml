@@ -6,6 +6,7 @@ edition = "2024"
 
 # Config
 config = { package = "ggcat_config", path = "../config" }
+utils = { package = "ggcat_utils", path = "../utils" }
 
 # Common libraries
 parallel-processor = "0.3.1"

@@ -1,7 +1,7 @@
-use crate::sequences_reader::DnaSequence;
 use crate::sequences_stream::file::FileSequencesStream;
 use crate::sequences_stream::{GenericSequencesStream, SequenceInfo};
 use std::sync::Arc;
+use utils::dna_sequence::DnaSequence;
 
 pub trait DynamicSequencesStream: Sync + Send + 'static {
     fn read_block(

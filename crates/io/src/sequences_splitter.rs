@@ -2,7 +2,8 @@ use std::range::Range;
 
 use zstd::zstd_safe::WriteBuf;
 
-use crate::{compressed_read::CompressedRead, sequences_reader::DnaSequence};
+use crate::compressed_read::CompressedRead;
+use utils::dna_sequence::DnaSequence;
 
 pub fn split_and_compress_sequences(
     compress_temp_buffer: &mut Vec<u8>,

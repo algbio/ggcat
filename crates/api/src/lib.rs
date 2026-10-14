@@ -28,8 +28,8 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 pub use crate::utils::HashType;
+pub use ::utils::dna_sequence::{DnaSequence, DnaSequencesFileType};
 pub use config::ColorIndexType;
-pub use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 pub use io::sequences_stream::{
     SequenceInfo,
     general::{DynamicSequencesStream, GeneralSequenceBlockData},

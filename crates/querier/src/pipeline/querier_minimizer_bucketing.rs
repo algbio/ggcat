@@ -7,7 +7,6 @@ use hashes::rolling::batch_minqueue::BatchMinQueue;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use hashes::{HashFunction, HashableSequence};
 use io::concurrent::temp_reads::extra_data::{SequenceExtraDataTempBufferManagement, TempBuffer};
-use io::sequences_reader::{DnaSequence, DnaSequencesFileType};
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::file::FileSequencesStream;
 use minimizer_bucketing::{
@@ -23,6 +22,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use utils::dna_sequence::{DnaSequence, DnaSequencesFileType};
 
 use super::parallel_kmers_query::RewriteBucketComputeQuery;
 

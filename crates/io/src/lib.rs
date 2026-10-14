@@ -27,6 +27,7 @@ pub mod partial_unitigs_extra_data;
 pub mod sequences_reader;
 pub mod sequences_splitter;
 pub mod sequences_stream;
+pub mod simd;
 pub mod structs;
 pub mod varint;
 

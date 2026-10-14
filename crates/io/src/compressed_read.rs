@@ -3,6 +3,7 @@ use crate::varint::{BufVarintSource, VarintSource, encode_varint_flags};
 use core::fmt::{Debug, Formatter};
 use hashes::HashableSequence;
 use rustc_hash::FxBuildHasher;
+use simd_accel::compressed_read::SimdCompressedRead;
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::io::BufRead;
@@ -22,6 +23,19 @@ pub struct CompressedRead<'a> {
 
 unsafe impl<'a> Sync for CompressedRead<'a> {}
 unsafe impl<'a> Send for CompressedRead<'a> {}
+
+/// The SIMD parser's reads have the same layout, so taking one over is a copy of its fields.
+impl<'a> From<SimdCompressedRead<'a>> for CompressedRead<'a> {
+    #[inline(always)]
+    fn from(read: SimdCompressedRead<'a>) -> Self {
+        Self {
+            size: read.size,
+            start: read.start,
+            data: read.data,
+            _phantom: PhantomData,
+        }
+    }
+}
 
 impl<'a> Debug for CompressedRead<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
@@ -1321,5 +1335,16 @@ mod tests {
             NoAlignment,
         >(&mut tmp_buffer, &mut Cursor::new(&input), 27, 5);
         assert!(decompressed.is_some());
+    }
+
+    #[test]
+    fn simd_reads_convert_without_changing_their_bases() {
+        // T G C A G T A C, four per byte.
+        let data = [2 | 3 << 2 | 1 << 4, 3 | 2 << 2 | 1 << 6];
+        let simd = simd_accel::compressed_read::SimdCompressedRead::new(&data, 1, 6);
+        let read: CompressedRead = simd.into();
+        assert_eq!(read.to_string(), "GCAGTA");
+        assert_eq!(read.to_string(), format!("{simd:?}"));
+        assert_eq!((read.start, read.get_length()), (1, 6));
     }
 }

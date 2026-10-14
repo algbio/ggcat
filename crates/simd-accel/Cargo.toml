@@ -8,3 +8,4 @@ name = "ggcat_simd_accel"
 doctest = false
 
 [dependencies]
+utils = { package = "ggcat_utils", path = "../utils" }
