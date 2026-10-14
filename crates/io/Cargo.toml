@@ -17,7 +17,7 @@ utils = { package = "ggcat_utils", path = "../utils" }
 
 # Common libraries
 parallel-processor = "0.2.7"
-streaming-libdeflate-rs = "0.2.4"
+streaming-libdeflate-rs = "0.3.0"
 nightly-quirks = "0.1.4"
 
 # Pipeline libraries
@@ -40,6 +40,7 @@ bitbound = "0.1.0"
 serde = "1.0.228"
 deko = "0.6.0"
 liblzma = "0.4.7"
+tar = { version = "0.4.44", default-features = false }
 memchr = "2.8.2"
 maligned = "0.2.1"
 

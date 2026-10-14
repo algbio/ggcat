@@ -9,7 +9,7 @@ config = { package = "ggcat_config", path = "../config" }
 
 # Common libraries
 parallel-processor = "0.2.7"
-streaming-libdeflate-rs = "0.2.4"
+streaming-libdeflate-rs = "0.3.0"
 
 # Static dispatch
 dynamic-dispatch = "0.5.4"

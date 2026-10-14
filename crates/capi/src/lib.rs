@@ -266,7 +266,9 @@ fn ggcat_build_from_streams(
                             DnaSequencesFileTypeFFI::FASTA => DnaSequencesFileType::FASTA,
                             DnaSequencesFileTypeFFI::FASTQ => DnaSequencesFileType::FASTQ,
                             DnaSequencesFileTypeFFI::GFA => DnaSequencesFileType::GFA,
-                            DnaSequencesFileTypeFFI::BINARY => DnaSequencesFileType::BINARY,
+                            DnaSequencesFileTypeFFI::BINARY => {
+                                unimplemented!("binary sequences are not supported")
+                            }
                         },
                     },
                     SequenceInfo {

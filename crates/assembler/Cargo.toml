@@ -16,7 +16,7 @@ dynamic-dispatch = "0.5.4"
 
 # Common libraries
 parallel-processor = "0.2.7"
-streaming-libdeflate-rs = "0.2.4"
+streaming-libdeflate-rs = "0.3.0"
 nightly-quirks = "0.1.4"
 
 # Pipeline crates

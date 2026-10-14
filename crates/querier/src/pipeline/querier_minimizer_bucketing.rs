@@ -128,9 +128,6 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
                             DnaSequencesFileType::FASTQ => {
                                 todo!()
                             }
-                            DnaSequencesFileType::BINARY => {
-                                todo!()
-                            }
                         },
                     },
                     &mut preprocess_info.colors_buffer.0,

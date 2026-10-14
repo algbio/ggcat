@@ -57,6 +57,9 @@ impl<'a> Iterator for GzipDecompressorWrapper<'a> {
                     LibdeflateDecompressResult::MoreData => {
                         self.pos = 0;
                     }
+                    LibdeflateDecompressResult::NeedInput => {
+                        unreachable!("file decompressors never run out of input")
+                    }
                     LibdeflateDecompressResult::EndOfStream => {
                         self.is_finished = true;
                         return None;

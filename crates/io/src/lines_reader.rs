@@ -1,146 +1,47 @@
+use crate::binary_reader::{BinaryEvent, GenericBinaryReader};
 use bstr::ByteSlice;
-use config::DEFAULT_OUTPUT_BUFFER_SIZE;
-use parallel_processor::mt_debug_counters::counter::{AtomicCounter, AvgMode, SumMode};
-use parallel_processor::mt_debug_counters::{declare_avg_counter_i64, declare_counter_i64};
-use std::fs::File;
-use std::io::Read;
 use std::path::Path;
-use streaming_libdeflate_rs::decompress_file_buffered_callback;
 
 pub struct LinesReader {
-    buffer: Vec<u8>,
+    reader: GenericBinaryReader,
 }
 
-static COUNTER_THREADS_BUSY_READING: AtomicCounter<SumMode> =
-    declare_counter_i64!("line_reading_threads", SumMode, false);
+/// The lines of one chunk of a file, or the end of a file. Handing them over a chunk at a time
+/// lets the receiver pick what to do with them once, rather than once per line.
+pub struct ChunkLines<'a> {
+    chunk: &'a [u8],
+    end_of_file: bool,
+}
 
-static COUNTER_THREADS_PROCESSING_READS: AtomicCounter<SumMode> =
-    declare_counter_i64!("line_processing_threads", SumMode, false);
+impl<'a> ChunkLines<'a> {
+    /// Calls `callback` with each line, as `(line, partial, finished)`: `partial` when the line
+    /// continues in the next chunk, `finished` on the single empty line that ends a file.
+    #[inline(always)]
+    pub fn for_each(self, mut callback: impl FnMut(&'a [u8], bool, bool)) {
+        if self.end_of_file {
+            callback(&[], false, true);
+            return;
+        }
+        let mut buffer = self.chunk;
+        loop {
+            let (full, line) = LinesReader::split_line(&mut buffer);
 
-static COUNTER_THREADS_READ_BYTES: AtomicCounter<SumMode> =
-    declare_counter_i64!("line_read_bytes", SumMode, false);
-static COUNTER_THREADS_READ_BYTES_AVG: AtomicCounter<AvgMode> =
-    declare_avg_counter_i64!("line_read_bytes_avg", false);
+            if full {
+                callback(line, false, false);
+            } else {
+                if line.len() > 0 {
+                    callback(line, true, false);
+                }
+                break;
+            }
+        }
+    }
+}
 
 impl LinesReader {
     pub fn new() -> Self {
         Self {
-            buffer: vec![0; DEFAULT_OUTPUT_BUFFER_SIZE],
-        }
-    }
-
-    #[inline(always)]
-    fn read_stream_buffered(
-        &mut self,
-        mut stream: impl Read,
-        mut callback: impl FnMut(&[u8]),
-    ) -> Result<(), ()> {
-        COUNTER_THREADS_BUSY_READING.inc();
-
-        while let Ok(count) = stream.read(self.buffer.as_mut_slice()) {
-            COUNTER_THREADS_READ_BYTES.inc_by(count as i64);
-            COUNTER_THREADS_READ_BYTES_AVG.add_value(count as i64);
-            COUNTER_THREADS_BUSY_READING.sub(1);
-            if count == 0 {
-                COUNTER_THREADS_PROCESSING_READS.inc();
-                callback(&[]);
-                COUNTER_THREADS_PROCESSING_READS.sub(1);
-                return Ok(());
-            }
-            COUNTER_THREADS_PROCESSING_READS.inc();
-            callback(&self.buffer[0..count]);
-            COUNTER_THREADS_PROCESSING_READS.sub(1);
-            COUNTER_THREADS_BUSY_READING.inc();
-        }
-        Err(())
-    }
-
-    fn read_binary_file(
-        &mut self,
-        path: impl AsRef<Path>,
-        mut callback: impl FnMut(&[u8]),
-        remove: bool,
-    ) {
-        if path.as_ref().extension().filter(|x| *x == "gz").is_some() {
-            if let Err(_err) = decompress_file_buffered_callback(
-                &path,
-                |data| {
-                    callback(data);
-                    Ok(())
-                },
-                DEFAULT_OUTPUT_BUFFER_SIZE,
-            ) {
-                ggcat_logging::error!(
-                    "WARNING: Error while reading file {}",
-                    path.as_ref().display()
-                );
-            }
-            callback(&[]);
-        } else if path.as_ref().extension().filter(|x| *x == "lz4").is_some() {
-            let file = lz4::Decoder::new(
-                File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display())),
-            )
-            .unwrap();
-            self.read_stream_buffered(file, callback)
-                .unwrap_or_else(|_| {
-                    ggcat_logging::error!(
-                        "WARNING: Error while reading file {}",
-                        path.as_ref().display()
-                    );
-                });
-        } else if path.as_ref().extension().filter(|x| *x == "bz2").is_some() {
-            let file = bzip2::read::BzDecoder::new(
-                File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display())),
-            );
-            self.read_stream_buffered(file, callback)
-                .unwrap_or_else(|_| {
-                    ggcat_logging::error!(
-                        "WARNING: Error while reading file {}",
-                        path.as_ref().display()
-                    );
-                });
-        } else if path.as_ref().extension().filter(|x| *x == "xz").is_some() {
-            let file = liblzma::read::XzDecoder::new(
-                File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display())),
-            );
-            self.read_stream_buffered(file, callback)
-                .unwrap_or_else(|_| {
-                    ggcat_logging::error!(
-                        "WARNING: Error while reading file {}",
-                        path.as_ref().display()
-                    );
-                });
-        } else if path
-            .as_ref()
-            .extension()
-            .filter(|x| *x == "zst" || *x == "zstd")
-            .is_some()
-        {
-            let file = zstd::stream::read::Decoder::new(
-                File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display())),
-            )
-            .unwrap();
-            self.read_stream_buffered(file, callback)
-                .unwrap_or_else(|_| {
-                    ggcat_logging::error!(
-                        "WARNING: Error while reading file {}",
-                        path.as_ref().display()
-                    );
-                });
-        } else {
-            let file =
-                File::open(&path).expect(&format!("Cannot open file {}", path.as_ref().display()));
-            self.read_stream_buffered(file, callback)
-                .unwrap_or_else(|_| {
-                    ggcat_logging::error!(
-                        "WARNING: Error while reading file {}",
-                        path.as_ref().display()
-                    );
-                });
-        }
-
-        if remove {
-            std::fs::remove_file(path).unwrap();
+            reader: GenericBinaryReader::new(None),
         }
     }
 
@@ -173,48 +74,140 @@ impl LinesReader {
         }
     }
 
-    pub fn process_lines(
+    /// Whether `chunk` ends in the middle of a line.
+    fn ends_mid_line(chunk: &[u8]) -> bool {
+        let mut last = &chunk[chunk.rfind_byte(b'\n').map_or(0, |pos| pos + 1)..];
+        LinesReader::split_line(&mut last).1.len() > 0
+    }
+
+    /// Ends the file `name` with its finished line.
+    fn finish_file<T>(
+        lines: &mut impl FnMut(&mut T, ChunkLines<'_>),
+        state: &mut T,
+        name: &str,
+        line_pending: bool,
+    ) {
+        if line_pending {
+            ggcat_logging::error!("WARNING: No newline at ending of file '{}'", name);
+        }
+        lines(
+            state,
+            ChunkLines {
+                chunk: &[],
+                end_of_file: true,
+            },
+        );
+    }
+
+    /// Reads `file` a chunk of lines at a time. Every file in it (just `file`, or each member of
+    /// an archive) starts with a call to `new_file` with its name, whose result `lines` then
+    /// receives along with each chunk of lines of that file, ending with the finished line.
+    pub fn process_lines<T>(
         &mut self,
         file: impl AsRef<Path>,
-        mut callback: impl FnMut(
-            &[u8],
-            bool, /* partial (line continues on next call) */
-            bool, /* finished (last line) */
-        ),
+        mut new_file: impl FnMut(Option<&str>) -> T,
+        mut lines: impl FnMut(&mut T, ChunkLines<'_>),
         remove: bool,
     ) {
+        let file = file.as_ref();
+        let mut current: Option<T> = None;
+        let mut current_name = String::new();
         let mut line_pending = false;
 
-        self.read_binary_file(
-            file.as_ref(),
-            |mut buffer: &[u8]| {
-                // File finished
-                if buffer.len() == 0 {
-                    if line_pending {
-                        ggcat_logging::error!(
-                            "WARNING: No newline at ending of file '{}'",
-                            file.as_ref().display()
-                        );
-                    }
-                    callback(&[], false, true);
-                    return;
+        let result = self.reader.read_file(file, |event| match event {
+            BinaryEvent::FilePath(name) => {
+                // The previous file is finished before the next one starts.
+                if let Some(state) = &mut current {
+                    Self::finish_file(&mut lines, state, &current_name, line_pending);
                 }
+                current_name.clear();
+                current_name.push_str(name.unwrap_or_default());
+                line_pending = false;
+                current = Some(new_file(name));
+            }
+            BinaryEvent::Chunk(chunk) => {
+                let state = current.as_mut().expect("chunks come after their file path");
+                line_pending = Self::ends_mid_line(chunk);
+                lines(
+                    state,
+                    ChunkLines {
+                        chunk,
+                        end_of_file: false,
+                    },
+                );
+            }
+            BinaryEvent::Extra { .. } => {}
+        });
+        if let Err(error) = result {
+            ggcat_logging::error!(
+                "WARNING: Error while reading file {}: {error:#}",
+                file.display()
+            );
+        }
 
-                loop {
-                    let (full, line) = Self::split_line(&mut buffer);
+        if let Some(state) = &mut current {
+            Self::finish_file(&mut lines, state, &current_name, line_pending);
+        }
 
-                    if full {
-                        callback(line, false, false);
-                    } else {
-                        line_pending = line.len() > 0;
-                        if line_pending {
-                            callback(line, true, false);
-                        }
-                        break;
-                    }
-                }
+        if remove {
+            std::fs::remove_file(file).unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_file_is_finished_before_the_next_starts() {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (name, data) in [("a.txt", &b"one\ntwo"[..]), ("b.txt", b"three\r\n")] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            builder.append_data(&mut header, name, data).unwrap();
+        }
+        let directory =
+            std::env::temp_dir().join(format!("ggcat-lines-reader-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("input.tar");
+        std::fs::write(&path, builder.into_inner().unwrap()).unwrap();
+
+        let mut events = Vec::new();
+        let events_cell = std::cell::RefCell::new(&mut events);
+        LinesReader::new().process_lines(
+            &path,
+            |name| {
+                let name = name.unwrap().to_owned();
+                events_cell.borrow_mut().push(format!("new {name}"));
+                name
             },
-            remove,
+            |name, lines| {
+                lines.for_each(|line, partial, finished| {
+                    let line = String::from_utf8_lossy(line);
+                    events_cell
+                        .borrow_mut()
+                        .push(format!("{name}: {line:?} {partial} {finished}"));
+                })
+            },
+            false,
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+
+        let a = format!("{}:a.txt", path.display());
+        let b = format!("{}:b.txt", path.display());
+        assert_eq!(
+            events,
+            [
+                format!("new {a}"),
+                format!("{a}: \"one\" false false"),
+                format!("{a}: \"two\" true false"),
+                format!("{a}: \"\" false true"),
+                format!("new {b}"),
+                format!("{b}: \"three\" false false"),
+                format!("{b}: \"\" false true"),
+            ]
         );
     }
 }

@@ -1,3 +1,4 @@
+use crate::binary_reader::is_archive;
 use crate::lines_reader::LinesReader;
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use hashes::HashableSequence;
@@ -14,7 +15,30 @@ pub enum DnaSequencesFileType {
     FASTA,
     FASTQ,
     GFA,
-    BINARY,
+}
+
+impl DnaSequencesFileType {
+    /// The format a file name implies, looking past compression extensions (`x.fq.gz`). A
+    /// member of an archive (`x.tar:dir/a.fa`) is recognized by its own name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        const FASTQ_EXTS: &[&str] = &["fq", "fastq"];
+        const FASTA_EXTS: &[&str] = &["fa", "fasta", "fna", "ffn"];
+
+        let mut tmp = Path::new(name).file_name()?.to_str()?;
+        let mut path: &Path = tmp.as_ref();
+
+        while let Some(ext) = path.extension() {
+            if FASTQ_EXTS.contains(&ext.to_str().unwrap()) {
+                return Some(DnaSequencesFileType::FASTQ);
+            }
+            if FASTA_EXTS.contains(&ext.to_str().unwrap()) {
+                return Some(DnaSequencesFileType::FASTA);
+            }
+            tmp = &tmp[0..tmp.len() - ext.len() - 1];
+            path = tmp.as_ref()
+        }
+        None
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -37,6 +61,180 @@ const SEQ_LETTERS_MAPPING: [u8; 256] = {
     lookup
 };
 
+fn normalize_sequence(seq: &mut [u8]) {
+    for el in seq.iter_mut() {
+        *el = SEQ_LETTERS_MAPPING[*el as usize];
+    }
+}
+
+/// Parses a FASTA file, one line at a time.
+struct FastaParser {
+    intermediate: [Vec<u8>; 2],
+    on_comment: bool,
+    state: usize,
+    new_line: bool,
+    line_split_copyback: Option<usize>,
+    flush_size: usize,
+    copy_ident: bool,
+}
+
+impl FastaParser {
+    fn new(line_split_copyback: Option<usize>, copy_ident: bool) -> Self {
+        Self {
+            intermediate: [Vec::new(), Vec::new()],
+            on_comment: false,
+            state: SEQ_STATE,
+            new_line: true,
+            line_split_copyback,
+            flush_size: max(
+                DEFAULT_OUTPUT_BUFFER_SIZE,
+                line_split_copyback.unwrap_or(0) * 2,
+            ),
+            copy_ident,
+        }
+    }
+
+    #[inline(always)]
+    fn process_line(
+        &mut self,
+        line: &[u8],
+        partial: bool,
+        finished: bool,
+        func: &mut impl for<'a> FnMut(DnaSequence<'a, &'a [u8]>),
+    ) {
+        let intermediate = &mut self.intermediate;
+
+        if self.on_comment {
+            self.on_comment = !partial;
+        }
+        // If a new ident line is found (or it's the last line)
+        else if finished || (self.new_line && line.len() > 0 && line[0] == b'>') {
+            if intermediate[SEQ_STATE].len() > 0 {
+                normalize_sequence(&mut intermediate[SEQ_STATE]);
+                func(DnaSequence {
+                    ident_data: &intermediate[IDENT_STATE],
+                    seq: &intermediate[SEQ_STATE],
+                    format: DnaSequencesFileType::FASTA,
+                });
+            }
+
+            if self.copy_ident {
+                intermediate[IDENT_STATE].clear();
+                intermediate[IDENT_STATE].extend_from_slice(line);
+            }
+            intermediate[SEQ_STATE].clear();
+
+            self.state = if partial { IDENT_STATE } else { SEQ_STATE };
+        } else if self.new_line && line.len() > 0 && line[0] == b';' {
+            self.on_comment = true;
+        } else if self.state == IDENT_STATE {
+            if self.copy_ident {
+                intermediate[IDENT_STATE].extend_from_slice(line);
+            }
+
+            if !partial {
+                self.state = SEQ_STATE;
+            }
+        } else {
+            intermediate[SEQ_STATE].extend_from_slice(line);
+        }
+
+        if let Some(copyback) = self.line_split_copyback {
+            if intermediate[SEQ_STATE].len() >= self.flush_size {
+                normalize_sequence(&mut intermediate[SEQ_STATE]);
+                func(DnaSequence {
+                    ident_data: &intermediate[IDENT_STATE],
+                    seq: &intermediate[SEQ_STATE],
+                    format: DnaSequencesFileType::FASTQ,
+                });
+                let copy_start = intermediate[SEQ_STATE].len() - copyback;
+                intermediate[SEQ_STATE].copy_within(copy_start.., 0);
+                intermediate[SEQ_STATE].truncate(copyback);
+            }
+        }
+        self.new_line = !partial;
+    }
+}
+
+/// Parses a FASTQ file, one line at a time.
+struct FastqParser {
+    intermediate: [Vec<u8>; 3],
+    state: usize,
+    skipped_plus: bool,
+}
+
+impl FastqParser {
+    fn new() -> Self {
+        Self {
+            intermediate: [Vec::new(), Vec::new(), Vec::new()],
+            state: IDENT_STATE,
+            skipped_plus: false,
+        }
+    }
+
+    #[inline(always)]
+    fn process_line(
+        &mut self,
+        line: &[u8],
+        partial: bool,
+        finished: bool,
+        func: &mut impl for<'a> FnMut(DnaSequence<'a, &'a [u8]>),
+    ) {
+        let intermediate = &mut self.intermediate;
+
+        if unlikely(finished) {
+            if intermediate[SEQ_STATE].len() > 0 {
+                normalize_sequence(&mut intermediate[SEQ_STATE]);
+                func(DnaSequence {
+                    ident_data: &intermediate[IDENT_STATE],
+                    seq: &intermediate[SEQ_STATE],
+                    format: DnaSequencesFileType::FASTQ,
+                });
+            }
+
+            return;
+        }
+
+        if self.state == QUAL_STATE {
+            if !self.skipped_plus {
+                if !partial {
+                    self.skipped_plus = true;
+                }
+                return;
+            }
+
+            if !partial {
+                normalize_sequence(&mut intermediate[SEQ_STATE]);
+                func(DnaSequence {
+                    ident_data: &intermediate[IDENT_STATE],
+                    seq: &intermediate[SEQ_STATE],
+                    format: DnaSequencesFileType::FASTQ,
+                });
+
+                intermediate[IDENT_STATE].clear();
+                intermediate[SEQ_STATE].clear();
+                intermediate[QUAL_STATE].clear();
+
+                self.skipped_plus = false;
+            }
+        } else {
+            intermediate[self.state].extend_from_slice(line);
+        }
+
+        if !partial {
+            self.state = (self.state + 1) % 3;
+        }
+    }
+}
+
+/// The parser of the file being read, picked by its name.
+enum SequencesParser {
+    Fasta(FastaParser),
+    Fastq(FastqParser),
+    /// A file inside an archive that holds no sequences.
+    Skipped,
+}
+
 pub struct SequencesReader {
     lines_reader: LinesReader,
 }
@@ -48,196 +246,130 @@ impl SequencesReader {
         }
     }
 
-    fn normalize_sequence(seq: &mut [u8]) {
-        for el in seq.iter_mut() {
-            *el = SEQ_LETTERS_MAPPING[*el as usize];
-        }
-    }
-
     pub fn process_file_extended<F: for<'a> FnMut(DnaSequence<'a, &'a [u8]>)>(
         &mut self,
         source: impl AsRef<Path>,
-        func: F,
+        mut func: F,
         line_split_copyback: Option<usize>,
         copy_ident: bool,
         remove_file: bool,
     ) {
-        const FASTQ_EXTS: &[&str] = &["fq", "fastq"];
-        const FASTA_EXTS: &[&str] = &["fa", "fasta", "fna", "ffn"];
-
-        let mut file_type = None;
-        let mut tmp = source.as_ref().file_name().unwrap().to_str().unwrap();
-        let mut path: &Path = tmp.as_ref();
-
-        while let Some(ext) = path.extension() {
-            if FASTQ_EXTS.contains(&ext.to_str().unwrap()) {
-                file_type = Some(DnaSequencesFileType::FASTQ);
-                break;
-            }
-            if FASTA_EXTS.contains(&ext.to_str().unwrap()) {
-                file_type = Some(DnaSequencesFileType::FASTA);
-                break;
-            }
-            tmp = &tmp[0..tmp.len() - ext.len() - 1];
-            path = tmp.as_ref()
-        }
-
-        match file_type {
-            None => panic!(
-                "Cannot recognize file type of '{}'",
-                source.as_ref().display()
-            ),
-            Some(ftype) => match ftype {
-                DnaSequencesFileType::FASTA => {
-                    self.process_fasta(source, func, line_split_copyback, copy_ident, remove_file);
-                }
-                DnaSequencesFileType::FASTQ => {
-                    self.process_fastq(source, func, remove_file);
-                }
-                DnaSequencesFileType::GFA => {
-                    todo!()
-                }
-                DnaSequencesFileType::BINARY => {
-                    todo!()
-                }
-            },
-        }
-    }
-
-    fn process_fasta(
-        &mut self,
-        source: impl AsRef<Path>,
-        mut func: impl for<'a> FnMut(DnaSequence<'a, &'a [u8]>),
-        line_split_copyback: Option<usize>,
-        copy_ident: bool,
-        remove_file: bool,
-    ) {
-        let mut intermediate = [Vec::new(), Vec::new()];
-        let mut on_comment = false;
-        let mut state = SEQ_STATE;
-        let mut new_line = true;
-
-        let flush_size = max(
-            DEFAULT_OUTPUT_BUFFER_SIZE,
-            line_split_copyback.unwrap_or(0) * 2,
-        );
-
+        let source = source.as_ref();
         self.lines_reader.process_lines(
             source,
-            |line: &[u8], partial, finished| {
-                if on_comment {
-                    on_comment = !partial;
+            |name| {
+                let name = name.unwrap_or_default();
+                match DnaSequencesFileType::from_name(name) {
+                    Some(DnaSequencesFileType::FASTA) => {
+                        SequencesParser::Fasta(FastaParser::new(line_split_copyback, copy_ident))
+                    }
+                    Some(DnaSequencesFileType::FASTQ) => SequencesParser::Fastq(FastqParser::new()),
+                    Some(DnaSequencesFileType::GFA) => todo!(),
+                    // Archives can hold other files too, such as their documentation.
+                    None if is_archive(source) => {
+                        ggcat_logging::warn!("Skipping '{name}': not a FASTA or FASTQ file");
+                        SequencesParser::Skipped
+                    }
+                    None => panic!("Cannot recognize file type of '{}'", source.display()),
                 }
-                // If a new ident line is found (or it's the last line)
-                else if finished || (new_line && line.len() > 0 && line[0] == b'>') {
-                    if intermediate[SEQ_STATE].len() > 0 {
-                        Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
-                        func(DnaSequence {
-                            ident_data: &intermediate[IDENT_STATE],
-                            seq: &intermediate[SEQ_STATE],
-                            format: DnaSequencesFileType::FASTA,
-                        });
-                    }
-
-                    if copy_ident {
-                        intermediate[IDENT_STATE].clear();
-                        intermediate[IDENT_STATE].extend_from_slice(line);
-                    }
-                    intermediate[SEQ_STATE].clear();
-
-                    state = if partial { IDENT_STATE } else { SEQ_STATE };
-                } else if new_line && line.len() > 0 && line[0] == b';' {
-                    on_comment = true;
-                } else if state == IDENT_STATE {
-                    if copy_ident {
-                        intermediate[IDENT_STATE].extend_from_slice(line);
-                    }
-
-                    if !partial {
-                        state = SEQ_STATE;
-                    }
-                } else {
-                    intermediate[SEQ_STATE].extend_from_slice(line);
-                }
-
-                if let Some(copyback) = line_split_copyback {
-                    if intermediate[SEQ_STATE].len() >= flush_size {
-                        Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
-                        func(DnaSequence {
-                            ident_data: &intermediate[IDENT_STATE],
-                            seq: &intermediate[SEQ_STATE],
-                            format: DnaSequencesFileType::FASTQ,
-                        });
-                        let copy_start = intermediate[SEQ_STATE].len() - copyback;
-                        intermediate[SEQ_STATE].copy_within(copy_start.., 0);
-                        intermediate[SEQ_STATE].truncate(copyback);
-                    }
-                }
-                new_line = !partial;
+            },
+            // The parser is picked once per chunk, each running its own loop over the lines.
+            |parser, lines| match parser {
+                SequencesParser::Fasta(parser) => lines.for_each(|line, partial, finished| {
+                    parser.process_line(line, partial, finished, &mut func)
+                }),
+                SequencesParser::Fastq(parser) => lines.for_each(|line, partial, finished| {
+                    parser.process_line(line, partial, finished, &mut func)
+                }),
+                SequencesParser::Skipped => {}
             },
             remove_file,
         );
     }
+}
 
-    fn process_fastq(
-        &mut self,
-        source: impl AsRef<Path>,
-        mut func: impl for<'a> FnMut(DnaSequence<'a, &'a [u8]>),
-        // get_quality: bool,
-        remove_file: bool,
-    ) {
-        let mut state = IDENT_STATE;
-        let mut skipped_plus = false;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
 
-        let mut intermediate = [Vec::new(), Vec::new(), Vec::new()];
+    // No `;` comment line: the parser drops the complete lines that follow one.
+    const FASTA: &[u8] = b">r1 desc\r\nACGTacgt\r\nNNXY\r\n>r2\nGGGG\nCC";
+    const FASTQ: &[u8] = b"@q1\nACGTN\n+\nIIIII\n@q2 x\nacgt\n+q2 x\nIIII\n";
 
-        self.lines_reader.process_lines(
-            source,
-            |line: &[u8], partial, finished| {
-                if unlikely(finished) {
-                    if intermediate[SEQ_STATE].len() > 0 {
-                        Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
-                        func(DnaSequence {
-                            ident_data: &intermediate[IDENT_STATE],
-                            seq: &intermediate[SEQ_STATE],
-                            format: DnaSequencesFileType::FASTQ,
-                        });
-                    }
+    fn records(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(ident, seq)| (ident.to_string(), seq.to_string()))
+            .collect()
+    }
 
-                    return;
-                }
-
-                if state == QUAL_STATE {
-                    if !skipped_plus {
-                        if !partial {
-                            skipped_plus = true;
-                        }
-                        return;
-                    }
-
-                    if !partial {
-                        Self::normalize_sequence(&mut intermediate[SEQ_STATE]);
-                        func(DnaSequence {
-                            ident_data: &intermediate[IDENT_STATE],
-                            seq: &intermediate[SEQ_STATE],
-                            format: DnaSequencesFileType::FASTQ,
-                        });
-
-                        intermediate[IDENT_STATE].clear();
-                        intermediate[SEQ_STATE].clear();
-                        intermediate[QUAL_STATE].clear();
-
-                        skipped_plus = false;
-                    }
-                } else {
-                    intermediate[state].extend_from_slice(line);
-                }
-
-                if !partial {
-                    state = (state + 1) % 3;
-                }
+    /// The records parsed from `path`, as (ident, sequence).
+    fn parse(path: &Path) -> Vec<(String, String)> {
+        let mut parsed = Vec::new();
+        SequencesReader::new().process_file_extended(
+            path,
+            |sequence| {
+                parsed.push((
+                    String::from_utf8_lossy(sequence.ident_data).into_owned(),
+                    String::from_utf8_lossy(sequence.seq).into_owned(),
+                ))
             },
-            remove_file,
+            None,
+            true,
+            false,
         );
+        parsed
+    }
+
+    fn fasta_records() -> Vec<(String, String)> {
+        records(&[(">r1 desc", "ACGTACGTNNNN"), (">r2", "GGGGCC")])
+    }
+
+    fn fastq_records() -> Vec<(String, String)> {
+        records(&[("@q1", "ACGTN"), ("@q2 x", "ACGT")])
+    }
+
+    #[test]
+    fn files_and_archive_members_get_their_own_parser() {
+        let directory =
+            std::env::temp_dir().join(format!("ggcat-sequences-reader-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+
+        let fasta = directory.join("a.fa");
+        std::fs::write(&fasta, FASTA).unwrap();
+        assert_eq!(parse(&fasta), fasta_records());
+        let fastq = directory.join("b.fq");
+        std::fs::write(&fastq, FASTQ).unwrap();
+        assert_eq!(parse(&fastq), fastq_records());
+
+        // A line longer than a chunk, so it reaches the parser in parts.
+        let long = vec![b'A'; 5 << 20];
+        let long_fasta = [&b">long\n"[..], &long, b"\n"].concat();
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gzip.write_all(FASTQ).unwrap();
+        let mut builder = tar::Builder::new(Vec::new());
+        for (name, data) in [
+            ("a.fa", FASTA.to_vec()),
+            ("dir/b.fq.gz", gzip.finish().unwrap()),
+            ("readme.txt", b"not sequences\n".to_vec()),
+            ("long.fa", long_fasta),
+            ("c.fq", FASTQ.to_vec()),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            builder.append_data(&mut header, name, &data[..]).unwrap();
+        }
+        let archive = directory.join("input.tar");
+        std::fs::write(&archive, builder.into_inner().unwrap()).unwrap();
+
+        let mut expected = fasta_records();
+        expected.extend(fastq_records());
+        expected.push((">long".into(), String::from_utf8(long).unwrap()));
+        expected.extend(fastq_records());
+        assert!(parse(&archive) == expected);
+
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

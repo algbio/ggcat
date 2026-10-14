@@ -14,6 +14,7 @@ use parallel_processor::{
     buckets::{ExtraBucketData, MultiChunkBucket, SingleBucket},
 };
 
+pub mod binary_reader;
 pub mod compressed_read;
 pub mod concurrent;
 pub mod concurrent_filewriter;

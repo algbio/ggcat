@@ -963,6 +963,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1376,6 +1386,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "streaming-libdeflate-rs",
+ "tar",
  "typenum",
  "zstd",
 ]
@@ -2720,9 +2731,9 @@ dependencies = [
 
 [[package]]
 name = "streaming-libdeflate-rs"
-version = "0.2.4"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7796214c411beca5a7b980e968e43f1b087fb23c8624915b1b58d2b7a0b549e"
+checksum = "618cc29c4373285bdbe662cd5b60f891fe807f3797451c564b57e5e4294f3c57"
 dependencies = [
  "crc32fast",
  "filebuffer",
@@ -2825,6 +2836,16 @@ name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
+
+[[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+]
 
 [[package]]
 name = "termcolor"

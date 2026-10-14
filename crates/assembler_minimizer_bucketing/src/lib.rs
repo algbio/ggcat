@@ -139,9 +139,6 @@ impl<CD: MinimizerBucketingSeqColorData>
                     DnaSequencesFileType::GFA => SequenceIdent::GFA {
                         colors: sequence.ident_data,
                     },
-                    DnaSequencesFileType::BINARY => {
-                        todo!()
-                    }
                 },
             },
             &mut preprocess_info.color_info_buffer,
