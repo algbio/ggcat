@@ -76,6 +76,17 @@ struct SuperKmerEntryRef<'a, E> {
     flags: u8,
 }
 
+/// Whether a compacted chunk came out of a light compaction.
+///
+/// The kind lives in the file name rather than beside it, so a compaction that
+/// picks chunks up can tell what produced them without any state surviving in
+/// memory between calls.
+fn is_light_chunk(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.contains("light-"))
+}
+
 pub struct BucketsCompactor<
     SingleData: SequenceExtraDataConsecutiveCompression + Sync + Send + 'static,
     MultipleData: SequenceExtraDataCombiner<SingleDataType = SingleData> + Sync + Send + Copy + 'static,
@@ -248,12 +259,45 @@ impl<
     ) {
         static COMPACTED_INDEX: AtomicUsize = AtomicUsize::new(0);
 
+        /// How far the light chunks have to outweigh the smallest extended one
+        /// before an extended compaction folds them in.
+        const LIGHT_PROMOTION_RATIO: f64 = 2.0;
+
         const COMPACTED_VS_UNCOMPACTED_RATIO: f64 = 0.5;
         const COMPACTED_VS_UNCOMPACTED_RATIO_FORCED: f64 = 2.0;
 
         // Allow compaction only if the extra data can be combined
         // otherwise the compaction is needed only for splitting in sub-buckets
         let allow_compaction = MultipleData::ALLOW_COMBINE;
+
+        // There are two kinds of compaction. A *light* one folds this bucket's
+        // uncompacted chunks together and stops there. An *extended* one also
+        // re-reads chunks that were compacted before, which is what merges
+        // super-kmers across compactions -- and what costs a second pass over
+        // data that has already been read once.
+        //
+        // The extended kind runs only when the light chunks that have piled up
+        // since outweigh the smallest extended chunk, which is the point at
+        // which folding them in is worth a pass over it. Until the first
+        // extended chunk exists any light chunk is enough, so the first light
+        // output is promoted immediately. The uncompacted chunks are not part of
+        // this: they are processed either way, so they say nothing about which
+        // kind to run.
+        let extended_compaction = allow_compaction && {
+            let bucket = compacted_bucket.lock();
+            let mut light_total = 0u64;
+            let mut smallest_extended: Option<u64> = None;
+            for chunk in &bucket.chunks {
+                let size = MemoryFs::get_file_size(chunk).unwrap() as u64;
+                if is_light_chunk(chunk) {
+                    light_total += size;
+                } else {
+                    smallest_extended =
+                        Some(smallest_extended.map_or(size, |smallest| smallest.min(size)));
+                }
+            }
+            light_total as f64 > LIGHT_PROMOTION_RATIO * smallest_extended.unwrap_or(0) as f64
+        };
 
         // Outline of the compaction algorithm:
         // OBJECTIVE: Compact the new buckets avoiding too much overhead in compaction
@@ -302,8 +346,8 @@ impl<
 
         let force_advanced_compaction;
 
-        // Compacted
-        if allow_compaction {
+        // Compacted -- only an extended compaction reads these back.
+        if extended_compaction {
             let mut bucket = compacted_bucket.lock();
 
             let max_compacted =
@@ -410,12 +454,18 @@ impl<
 
         let compact_index = COMPACTED_INDEX.fetch_add(1, Ordering::Relaxed);
 
+        // The kind is carried in the name, which is where the next compaction
+        // reads it back from: nothing else has to remember what produced a
+        // chunk. `comp-mult-*` and `comp-single-*` still prefix both kinds, so
+        // everything that already keys off those names keeps working.
+        let kind = if extended_compaction { "" } else { "light-" };
         let new_path_multi = if allow_compaction {
-            Some(output_path.join(format!("comp-mult-{}.dat", compact_index)))
+            Some(output_path.join(format!("comp-mult-{}{}.dat", kind, compact_index)))
         } else {
             None
         };
-        let new_path_single = output_path.join(format!("comp-single-{}.dat", compact_index));
+        let new_path_single =
+            output_path.join(format!("comp-single-{}{}.dat", kind, compact_index));
 
         let new_bucket_multi = new_path_multi.as_ref().map(|new_path_multi| {
             MultiWriter::new(

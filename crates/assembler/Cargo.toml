@@ -21,6 +21,7 @@ nightly-quirks = "0.1.4"
 
 # Pipeline crates
 assembler_minimizer_bucketing = { package = "ggcat_assembler_minibuck", path = "../assembler_minimizer_bucketing" }
+minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
 assembler_kmers_merge = { package = "ggcat_assembler_kmerge", path = "../assembler_kmers_merge" }
 assembler_pipeline = { package = "ggcat_assembler_pipeline", path = "../assembler_pipeline" }
 kmers_transform = { package = "ggcat_kmers_transform", path = "../kmers_transform" }
