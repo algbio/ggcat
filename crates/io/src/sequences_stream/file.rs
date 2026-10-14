@@ -9,26 +9,10 @@ pub struct FileSequencesStream {
 }
 
 impl FileSequencesStream {
+    /// The decoded size of `file`, from its compression metadata (see [`crate::input_size`]).
     pub fn estimated_bases_count(file: &PathBuf) -> anyhow::Result<u64> {
-        // TODO: Improve this ratio estimation
-        const COMPRESSED_READS_RATIO: f64 = 0.5;
-
-        let length = std::fs::metadata(file)
-            .log_unrecoverable_error_with_data("Error while opening file", file.display())?
-            .len();
-
-        let file_bases_count = if file
-            .extension()
-            .map(|x| {
-                x == "gz" || x == "lz4" || x == "bz2" || x == "xz" || x == "zst" || x == "zstd"
-            })
-            .unwrap_or(false)
-        {
-            (length as f64 * COMPRESSED_READS_RATIO) as u64
-        } else {
-            length
-        };
-        Ok(file_bases_count)
+        crate::input_size::estimate(file)
+            .log_unrecoverable_error_with_data("Error while estimating input size", file.display())
     }
 }
 

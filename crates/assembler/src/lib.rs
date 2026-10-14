@@ -30,7 +30,7 @@ use io::debug_save_buckets;
 use io::debug_save_single_buckets;
 use io::ident_writer::IdentSequenceWriter;
 use io::sequences_stream::general::GeneralSequenceBlockData;
-use io::{DUPLICATES_BUCKET_EXTRA, compute_stats_from_input_blocks};
+use io::{DUPLICATES_BUCKET_EXTRA, compute_stats_from_input_sizes};
 use parallel_processor::buckets::ExtraBucketData;
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedCheckpointSize;
@@ -107,7 +107,9 @@ pub fn run_assembler<
 
     stats!(let stats.start_time = Instant::now());
 
-    let file_stats = compute_stats_from_input_blocks(&input_blocks)?;
+    // Estimated once: the sizes pick the buckets and the order the inputs are read in.
+    let input_sizes = io::input_size::estimate_blocks(&input_blocks)?;
+    let file_stats = compute_stats_from_input_sizes(&input_sizes);
 
     let buckets_count_log = buckets_count_log.unwrap_or_else(|| file_stats.best_buckets_count_log);
     let second_buckets_count_log = file_stats.best_second_buckets_count_log;
@@ -158,6 +160,7 @@ pub fn run_assembler<
         assembler_minimizer_bucketing::dynamic_dispatch::minimizer_bucketing(
             (AssemblerColorsManager::dynamic_dispatch_id(),),
             input_blocks,
+            input_sizes,
             temp_dir.as_path(),
             first_phase_buckets_count,
             second_buckets_count,

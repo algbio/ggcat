@@ -24,7 +24,7 @@ pub(crate) fn open_input(path: &Path) -> File {
 }
 
 /// The compression a file name implies.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) enum Codec {
     /// Read through a dedicated path-based decompressor, not as a stream.
     Gzip,

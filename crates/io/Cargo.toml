@@ -41,6 +41,7 @@ serde = "1.0.228"
 deko = "0.6.0"
 liblzma = "0.4.7"
 tar = { version = "0.4.44", default-features = false }
+crc32fast = "1.4"
 memchr = "2.8.2"
 maligned = "0.2.1"
 

@@ -1368,6 +1368,7 @@ dependencies = [
  "bstr",
  "byteorder",
  "bzip2 0.4.4",
+ "crc32fast",
  "deko",
  "dynamic-dispatch",
  "flate2",
