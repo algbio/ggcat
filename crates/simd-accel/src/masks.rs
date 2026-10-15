@@ -127,7 +127,7 @@ impl MaskKernel {
 
 #[cfg(target_arch = "x86_64")]
 mod avx2 {
-    use super::{RawFastaMasks, opaque, pack_two_bit_masks};
+    use super::{RawFastaMasks, opaque};
     use core::arch::x86_64::*;
 
     // Not `inline(always)`, which `target_feature` forbids: a caller compiled for AVX2
@@ -139,8 +139,6 @@ mod avx2 {
             let ptr = buf.as_ptr().cast::<__m256i>();
             let first = _mm256_loadu_si256(ptr);
             let second = _mm256_loadu_si256(ptr.add(1));
-            let high = movemask(first, second, 5);
-            let low = movemask(first, second, 6);
             let mask_upper = _mm256_set1_epi8(0b1101_1111u8 as i8);
             let mask_two_bits = _mm256_set1_epi8(0b110);
             let lut = _mm256_setr_epi8(
@@ -166,19 +164,33 @@ mod avx2 {
                 open_brackets: byte_mask(first, second, b'>'),
                 line_feeds: byte_mask(first, second, b'\n'),
                 carriage_returns: byte_mask(first, second, b'\r'),
-                two_bits: pack_two_bit_masks(low, high),
+                two_bits: u128::from(packed_codes(first))
+                    | (u128::from(packed_codes(second)) << 64),
                 mask_non_acgt: !opaque(actg),
             }
         }
     }
 
+    /// The codes of the 32 bytes of `bytes`, bits 1 and 2 of each, packed two bits per byte in
+    /// order. In vectors, as the scalar `pack_two_bit_masks` costs some 40 operations a block:
+    /// each code is `(byte >> 1) & 3`; a multiply-add joins neighbours into `c0 + 4 c1` per
+    /// 16-bit lane, another into `p0 + 16 p1` per 32-bit lane, whose low byte packs 4 bases; a
+    /// shuffle gathers those bytes.
     #[inline(always)]
-    unsafe fn movemask(first: __m256i, second: __m256i, shift: i32) -> u64 {
-        let a = unsafe { _mm256_movemask_epi8(_mm256_sll_epi16(first, _mm_cvtsi32_si128(shift))) }
-            as u32 as u64;
-        let b = unsafe { _mm256_movemask_epi8(_mm256_sll_epi16(second, _mm_cvtsi32_si128(shift))) }
-            as u32 as u64;
-        a | (b << 32)
+    unsafe fn packed_codes(bytes: __m256i) -> u64 {
+        unsafe {
+            let codes = _mm256_and_si256(_mm256_srli_epi16(bytes, 1), _mm256_set1_epi8(3));
+            let pairs = _mm256_maddubs_epi16(codes, _mm256_set1_epi16(0x0401));
+            let quads = _mm256_madd_epi16(pairs, _mm256_set1_epi32(0x0010_0001));
+            let gather = _mm256_setr_epi8(
+                0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, //
+                0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+            );
+            let packed = _mm256_shuffle_epi8(quads, gather);
+            let low = _mm256_extract_epi32::<0>(packed) as u32 as u64;
+            let high = _mm256_extract_epi32::<4>(packed) as u32 as u64;
+            low | (high << 32)
+        }
     }
 
     #[inline(always)]
@@ -203,7 +215,7 @@ mod avx2 {
 
 #[cfg(target_arch = "x86_64")]
 mod ssse3 {
-    use super::{RawFastaMasks, pack_two_bit_masks};
+    use super::RawFastaMasks;
     use core::arch::x86_64::*;
 
     #[target_feature(enable = "ssse3")]
@@ -217,8 +229,6 @@ mod ssse3 {
                 _mm_loadu_si128(ptr.add(2)),
                 _mm_loadu_si128(ptr.add(3)),
             ];
-            let high = movemask(values, 5);
-            let low = movemask(values, 6);
             let mask_upper = _mm_set1_epi8(0b1101_1111u8 as i8);
             let mask_two_bits = _mm_set1_epi8(0b110);
             let lut = _mm_setr_epi8(
@@ -236,16 +246,29 @@ mod ssse3 {
                 open_brackets: byte_mask(values, b'>'),
                 line_feeds: byte_mask(values, b'\n'),
                 carriage_returns: byte_mask(values, b'\r'),
-                two_bits: pack_two_bit_masks(low, high),
+                two_bits: packed_codes(values),
                 mask_non_acgt: !combine_masks(actg_values),
             }
         }
     }
 
+    /// The codes of the 64 bytes, packed two bits per byte in order, in vectors as in the AVX2
+    /// kernel: per 16 bytes, two multiply-adds pack 4 codes in the low byte of each 32-bit lane,
+    /// and a shuffle gathers those 4 bytes; the four parts are then joined in order.
     #[inline(always)]
-    unsafe fn movemask(values: [__m128i; 4], shift: i32) -> u64 {
-        let shift = unsafe { _mm_cvtsi32_si128(shift) };
-        unsafe { combine_masks(values.map(|value| _mm_sll_epi16(value, shift))) }
+    unsafe fn packed_codes(values: [__m128i; 4]) -> u128 {
+        unsafe {
+            let gather = _mm_setr_epi8(0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+            let packed = values.map(|value| {
+                let codes = _mm_and_si128(_mm_srli_epi16(value, 1), _mm_set1_epi8(3));
+                let pairs = _mm_maddubs_epi16(codes, _mm_set1_epi16(0x0401));
+                let quads = _mm_madd_epi16(pairs, _mm_set1_epi32(0x0010_0001));
+                _mm_shuffle_epi8(quads, gather)
+            });
+            let low = _mm_unpacklo_epi32(packed[0], packed[1]);
+            let high = _mm_unpacklo_epi32(packed[2], packed[3]);
+            core::mem::transmute::<__m128i, u128>(_mm_unpacklo_epi64(low, high))
+        }
     }
 
     #[inline(always)]

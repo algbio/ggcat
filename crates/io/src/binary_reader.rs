@@ -449,6 +449,11 @@ where
     }
 }
 
+/// How much a gzip file's decompressor decodes before handing it over: little enough to stay in
+/// the caches until it is read, with several readers at once. 4 MiB per reader overflowed the L3
+/// with 4 of them: `experiments-logs/2026-10-16_fastq-simd-scaling`.
+const GZIP_FILE_OUTPUT_BUFFER_SIZE: usize = 256 * 1024;
+
 pub struct GenericBinaryReader {
     buffer: AlignedBuffer,
     buffer_size: Option<usize>,
@@ -458,6 +463,10 @@ impl GenericBinaryReader {
     /// With `buffer_size`, which must be a power of two, every chunk handed out is exactly
     /// that many bytes and aligned to it, except the last one of each input, which can be
     /// shorter. Without it, chunks are the buffers the decoder produces.
+    ///
+    /// The chunks are filled in a ring of two of them, which stays in the caches: one of 4 MiB
+    /// made copying into it 4 times as costly with 4 readers at once,
+    /// `experiments-logs/2026-10-16_fastq-simd-scaling`.
     pub fn new(buffer_size: Option<usize>) -> Self {
         let (capacity, align) = match buffer_size {
             None => (DEFAULT_OUTPUT_BUFFER_SIZE, 1),
@@ -466,7 +475,7 @@ impl GenericBinaryReader {
                     size.is_power_of_two(),
                     "The buffer size must be a power of two, got {size}"
                 );
-                (DEFAULT_OUTPUT_BUFFER_SIZE.next_multiple_of(size), size)
+                (2 * size, size)
             }
         };
         Self {
@@ -529,7 +538,7 @@ impl GenericBinaryReader {
             // A gzip file keeps the decompressor that reads the file by itself.
             callback(BinaryEvent::FilePath(Some(&name)));
             let mut decoder =
-                LibdeflateGzipFileDecompressor::try_new(path, DEFAULT_OUTPUT_BUFFER_SIZE)
+                LibdeflateGzipFileDecompressor::try_new(path, GZIP_FILE_OUTPUT_BUFFER_SIZE)
                     .unwrap_or_else(|_| panic!("Cannot open file {}", path.display()));
             self.decode(&mut decoder, callback)
         } else {

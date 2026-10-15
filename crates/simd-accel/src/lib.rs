@@ -28,4 +28,5 @@
 
 pub mod compressed_read;
 pub mod masks;
+pub mod sequence_buffer;
 pub mod sequence_parser;
