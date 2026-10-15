@@ -63,6 +63,19 @@ impl BlockMasks {
     }
 }
 
+/// Where the bases of a line run to in a block, from `from`: its line feed, or the end of the
+/// block, less a `\r` before it. A `\r` is a line ending, never a base: one before the line feed,
+/// or one ending the block before a line feed in the next, is left out.
+#[inline(always)]
+fn bases_end(block: &[u8], from: usize, line_feed: Option<usize>) -> usize {
+    let end = line_feed.unwrap_or(block.len());
+    if end > from && block[end - 1] == b'\r' {
+        end - 1
+    } else {
+        end
+    }
+}
+
 /// Where the parser is in its input: one set of states for FASTA and one for FASTQ, as
 /// [`SequenceParser::reset`] picks the format.
 ///
@@ -70,11 +83,20 @@ impl BlockMasks {
 /// of its own line.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ParserState {
-    /// In a header line, from its `>` to its line feed. Then [`Self::FastaSequence`].
+    /// In a header line, from its `>` to its line feed. Then [`Self::FastaLineStart`].
     FastaHeader,
-    /// In the sequence lines of a record, up to the next line that starts with `>`, or the end
-    /// of the input. Then [`Self::FastaHeader`].
+    /// At the first byte of a line of a record, past its header, which it leaves to the next
+    /// state: a `>` ends the record, then [`Self::FastaHeader`]; anything else starts a line of
+    /// its sequence, [`Self::FastaSequence`] while the record has no bases yet, else
+    /// [`Self::FastaWrapped`]. `wrapped` once the record went over to that.
+    FastaLineStart { wrapped: bool },
+    /// In the first sequence line of a record, to its line feed: written a whole block at a time
+    /// with no shifting, as a FASTQ sequence is. A record on one line, as assemblies often are,
+    /// needs nothing else. Then [`Self::FastaLineStart`].
     FastaSequence,
+    /// In a later sequence line of a record, to its line feed: each piece of it between line
+    /// feeds appended shifted after the bases before. Then [`Self::FastaLineStart`].
+    FastaWrapped,
     /// In a header line, from its `@` to its line feed. Then [`Self::FastqSequence`].
     FastqHeader,
     /// In the sequence line of a record, to its line feed: one line, as the line reader also
@@ -113,7 +135,6 @@ pub const DEFAULT_IDENT_CAPACITY: usize = 256 << 10;
 /// `copyback_size`), or at the end of the input; then it is cleared and filled again.
 ///
 /// The format is chosen by [`Self::reset`], before each input: FASTA until the first one.
-/// For now FASTA sequences are a `todo!`.
 pub struct SequenceParser {
     /// Fixed for the parser's life, and supported by this CPU.
     kernel: MaskKernel,
@@ -138,9 +159,10 @@ pub struct SequenceParser {
     ///
     /// A FASTQ sequence, one contiguous line, goes in a whole block at a time, as the masks'
     /// `two_bits` hold them, from the end of the buffer: it starts as many bases into its first
-    /// block as the line does, so no bits are shifted. Lines that wrap are to go through
-    /// [`Self::push_bases`] instead, from a byte of their own: whole 64-bit words only, the
-    /// bases past them waiting in `sequence_word` until [`Self::flush_sequence`].
+    /// block as the line does, so no bits are shifted. So does a FASTA record's first line; its
+    /// later lines go through [`Self::push_bases`] instead, after [`Self::start_shifting`]:
+    /// whole 64-bit words only, the bases past them waiting in `sequence_word` until
+    /// [`Self::flush_sequence`].
     record_bases_start: usize,
     /// How many bases the current record has so far.
     record_bases: usize,
@@ -311,8 +333,29 @@ impl SequenceParser {
                             block,
                             &masks,
                             processed_index,
-                            ParserState::FastaSequence,
+                            ParserState::FastaLineStart { wrapped: false },
                         );
+                    }
+                    ParserState::FastaLineStart { wrapped } => {
+                        self.parse_fasta_line_start(block, processed_index, wrapped, &mut callback);
+                    }
+                    ParserState::FastaSequence => {
+                        processed_index = match self.copy_line_blocks(
+                            block,
+                            &masks,
+                            processed_index,
+                            &mut callback,
+                        ) {
+                            Some(line_feed) => {
+                                self.state = ParserState::FastaLineStart { wrapped: false };
+                                line_feed + 1
+                            }
+                            None => block.len(),
+                        };
+                    }
+                    ParserState::FastaWrapped => {
+                        processed_index =
+                            self.parse_fasta_wrapped(block, &masks, processed_index, &mut callback);
                     }
                     ParserState::FastqHeader => {
                         processed_index = self.parse_header(
@@ -322,14 +365,21 @@ impl SequenceParser {
                             ParserState::FastqSequence,
                         );
                     }
-                    ParserState::FastaSequence => todo!("FASTA sequence"),
                     ParserState::FastqSequence => {
-                        processed_index = self.parse_fastq_sequence(
+                        processed_index = match self.copy_line_blocks(
                             block,
                             &masks,
                             processed_index,
                             &mut callback,
-                        );
+                        ) {
+                            // The line feed ends what is kept of the record.
+                            Some(line_feed) => {
+                                self.end_record(&mut callback);
+                                self.state = ParserState::FastqPlus;
+                                line_feed + 1
+                            }
+                            None => block.len(),
+                        };
                     }
                     ParserState::FastqPlus => {
                         processed_index = match masks.line_feed_from(processed_index) {
@@ -385,34 +435,28 @@ impl SequenceParser {
         }
     }
 
-    /// Parses the FASTQ sequence line the parser is in, from `processed_index` to its line feed
-    /// or, if the block has none past it, to the end of the block: the block's `two_bits` go
-    /// into the buffer whole, with no shifting, as the line is contiguous and its blocks are
-    /// consecutive. Returns where it stopped. 20% faster than appending only the line's bases:
-    /// `experiments-logs/2026-10-15_fastq-simd-slowdown`.
+    /// Copies the sequence line the parser is in, from `processed_index` to its line feed or, if
+    /// the block has none past it, to the end of the block: the block's `two_bits` go into the
+    /// buffer whole, with no shifting, as the line is contiguous and its blocks are consecutive.
+    /// Returns the line feed, if the block has it. Copying whole blocks spares the shifts and
+    /// masks of appending only the line's bases, for a few unused bits before the record.
     ///
-    /// At the line feed the record ends, and the parser moves past it to the separator line.
-    /// Before it, a buffer full with a `copyback_size` splits the record.
-    ///
-    /// A `\r` is a line ending, never a base: one before the line feed, or one ending the block
-    /// before a line feed in the next, is left out.
+    /// With no line feed the line goes on in the next block: a buffer full then, with a
+    /// `copyback_size`, splits the record.
     // TODO: the bytes that are not ACGT, such as `N`, are kept as the two bits they happen to
     // have: the sequence is to be split at them (`masks.non_acgt`), as `SimdCompressedRead`
     // cannot hold them.
     #[inline(always)]
-    fn parse_fastq_sequence(
+    fn copy_line_blocks(
         &mut self,
         block: &[u8],
         masks: &BlockMasks,
         processed_index: usize,
         callback: &mut impl FnMut(&SequenceBuffer),
-    ) -> usize {
+    ) -> Option<usize> {
         debug_assert!(processed_index < block.len());
         let line_feed = masks.line_feed_from(processed_index);
-        let mut end = line_feed.unwrap_or(block.len());
-        if end > processed_index && block[end - 1] == b'\r' {
-            end -= 1;
-        }
+        let end = bases_end(block, processed_index, line_feed);
         if end > processed_index {
             let bases = &mut self.buffer.bases;
             if self.record_bases == 0 {
@@ -421,21 +465,86 @@ impl SequenceParser {
             bases.extend_from_slice(&masks.two_bits.to_le_bytes());
             self.record_bases += end - processed_index;
         }
+        if line_feed.is_none()
+            && let Some(copyback) = self.copyback_size
+            && self.buffer.bases.len() >= self.bases_capacity
+        {
+            self.split_record(copyback, false, callback);
+        }
+        line_feed
+    }
+
+    /// Picks the state of the FASTA line starting at `processed_index`, inside a record, from its
+    /// first byte, which it leaves to that state: see [`ParserState::FastaLineStart`].
+    #[inline(always)]
+    fn parse_fasta_line_start(
+        &mut self,
+        block: &[u8],
+        processed_index: usize,
+        wrapped: bool,
+        callback: &mut impl FnMut(&SequenceBuffer),
+    ) {
+        self.state = if block[processed_index] == b'>' {
+            self.end_record(callback);
+            ParserState::FastaHeader
+        } else if self.record_bases == 0 {
+            ParserState::FastaSequence
+        } else {
+            if !wrapped {
+                self.start_shifting();
+            }
+            ParserState::FastaWrapped
+        };
+    }
+
+    /// Appends the piece of the later FASTA sequence line the parser is in, from
+    /// `processed_index` to its line feed or, if the block has none past it, to the end of the
+    /// block, shifted after the bases before. Returns where it stopped; past the line feed, the
+    /// parser moves to the start of the next line. A buffer full, with a `copyback_size`,
+    /// splits the record.
+    #[inline(always)]
+    fn parse_fasta_wrapped(
+        &mut self,
+        block: &[u8],
+        masks: &BlockMasks,
+        processed_index: usize,
+        callback: &mut impl FnMut(&SequenceBuffer),
+    ) -> usize {
+        debug_assert!(processed_index < block.len());
+        let line_feed = masks.line_feed_from(processed_index);
+        self.push_bases(
+            masks.two_bits,
+            processed_index,
+            bases_end(block, processed_index, line_feed),
+        );
+        if let Some(copyback) = self.copyback_size
+            && self.buffer.bases.len() >= self.bases_capacity
+        {
+            self.split_record(copyback, true, callback);
+        }
         match line_feed {
             Some(line_feed) => {
-                self.end_record(callback);
-                self.state = ParserState::FastqPlus;
+                self.state = ParserState::FastaLineStart { wrapped: true };
                 line_feed + 1
             }
-            None => {
-                if let Some(copyback) = self.copyback_size
-                    && self.buffer.bases.len() >= self.bases_capacity
-                {
-                    self.split_record(copyback, callback);
-                }
-                block.len()
-            }
+            None => block.len(),
         }
+    }
+
+    /// Goes over from copying the record a block at a time to appending it shifted, at its
+    /// second line: the rest of the last block copied, past the record's end, is dropped, and
+    /// the bases of the record's last byte move into `sequence_word`, which the appends go on
+    /// from.
+    fn start_shifting(&mut self) {
+        let end = self.record_bases_start + self.record_bases;
+        let bases = &mut self.buffer.bases;
+        let partial = end % 4;
+        self.sequence_word = match partial {
+            0 => 0,
+            _ => u64::from(bases[end / 4]) & ((1 << (2 * partial)) - 1),
+        };
+        self.sequence_word_bits = 2 * partial;
+        bases.truncate(end / 4);
     }
 
     /// Ends the current record, all its bases in: adds it to the buffer, unless it has none,
@@ -476,21 +585,31 @@ impl SequenceParser {
         self.buffer.clear();
     }
 
-    /// Splits the current record, in the middle of its sequence line as the buffer is full:
-    /// the part so far is added and the buffer handed over; then the record goes on in the
-    /// cleared buffer from its header and its last `copyback` bases. A record of `copyback`
-    /// bases or fewer is only moved, unsplit.
+    /// Splits the current record, in the middle of its sequence as the buffer is full: the
+    /// part so far is added and the buffer handed over; then the record goes on in the cleared
+    /// buffer from its header and its last `copyback` bases. A record of `copyback` bases or
+    /// fewer is only moved, unsplit.
     ///
-    /// The record's bases run to the end of the buffer, as a FASTQ line written a block at a
-    /// time does between its blocks: so do the ones carried over, from the same place in their
-    /// byte, and the next block follows them with no shifting.
+    /// Copied a block at a time, the record's bases run to the end of the buffer between its
+    /// blocks: so do the ones carried over, from the same place in their byte, and the next
+    /// block follows them with no shifting. `shifted`, appended after [`Self::start_shifting`],
+    /// they are first moved out of `sequence_word`, and the carried ones' last byte back in.
     #[cold]
-    fn split_record(&mut self, copyback: usize, callback: &mut impl FnMut(&SequenceBuffer)) {
+    fn split_record(
+        &mut self,
+        copyback: usize,
+        shifted: bool,
+        callback: &mut impl FnMut(&SequenceBuffer),
+    ) {
+        if shifted {
+            self.flush_sequence();
+        }
         let end = self.record_bases_start + self.record_bases;
         debug_assert_eq!(end.div_ceil(4), self.buffer.bases.len());
-        let keep_from = match self.record_bases > copyback {
-            true => end - copyback,
-            false => self.record_bases_start,
+        let keep_from = if self.record_bases > copyback {
+            end - copyback
+        } else {
+            self.record_bases_start
         };
         if keep_from > self.record_bases_start {
             self.buffer.sequences.push(SequenceDescription {
@@ -510,18 +629,16 @@ impl SequenceParser {
         self.record_ident_start = 0;
         self.record_bases_start = keep_from % 4;
         self.record_bases = end - keep_from;
+        if shifted {
+            self.start_shifting();
+        }
     }
 
     /// Appends to the sequence the bases of bytes `from..to` of a block, from its masks'
     /// `two_bits`: in two halves of up to 32 bases, as one 64-bit word can take them, through
-    /// `sequence_word`, which only whole words leave. Nothing is read back from the buffer.
-    /// Faster than writing into it directly: `experiments-logs/2026-10-15_push-bases-variants`.
-    /// The record is to start at a byte of its own: `record_bases_start` four times the
-    /// buffer's length, before the first call.
-    #[expect(
-        dead_code,
-        reason = "for the FASTA sequence lines, which can wrap, still todo"
-    )]
+    /// `sequence_word`, which only whole words leave, so nothing is read back from the buffer.
+    /// The record's bases so far are to end at the end of the buffer and `sequence_word`, as
+    /// [`Self::start_shifting`] leaves them.
     #[inline(always)]
     fn push_bases(&mut self, two_bits: u128, from: usize, to: usize) {
         let count = to - from;
@@ -597,9 +714,10 @@ impl SequenceParser {
     /// already or has no bases yet, and only its header is dropped.
     pub fn finish(&mut self, mut callback: impl FnMut(&SequenceBuffer)) {
         match self.state {
-            ParserState::FastaSequence | ParserState::FastqSequence => {
-                self.end_record(&mut callback)
-            }
+            ParserState::FastaLineStart { .. }
+            | ParserState::FastaSequence
+            | ParserState::FastaWrapped
+            | ParserState::FastqSequence => self.end_record(&mut callback),
             ParserState::FastaHeader
             | ParserState::FastqHeader
             | ParserState::FastqPlus
@@ -683,7 +801,6 @@ mod tests {
 
     impl Record {
         fn of(sequence: DnaSequence<'_, SimdCompressedRead<'_>>) -> Self {
-            assert!(matches!(sequence.format, DnaSequencesFileType::FASTQ));
             let read = sequence.seq;
             let start = read.start as usize;
             assert!(start < 4, "start {start} is not within the first byte");
@@ -1019,6 +1136,161 @@ mod tests {
         input
     }
 
+    /// `reads` as FASTA, the sequence of read `i` in lines of `width(i)` bases (all on one line
+    /// for `None`), each line ended by `ending`.
+    fn fasta_of(
+        reads: &[(Vec<u8>, Vec<u8>)],
+        width: impl Fn(usize) -> Option<usize>,
+        ending: &[u8],
+    ) -> Vec<u8> {
+        let mut input = Vec::new();
+        for (index, (header, bases)) in reads.iter().enumerate() {
+            input.push(b'>');
+            input.extend_from_slice(&header[1..]);
+            input.extend_from_slice(ending);
+            let width = width(index).unwrap_or(bases.len().max(1));
+            for line in bases.chunks(width) {
+                input.extend_from_slice(line);
+                input.extend_from_slice(ending);
+            }
+        }
+        input
+    }
+
+    /// `reads` as their records: the FASTA headers start with `>`.
+    fn fasta_records(reads: &[(Vec<u8>, Vec<u8>)]) -> Vec<Record> {
+        reads
+            .iter()
+            .map(|(header, bases)| {
+                let mut ident = b">".to_vec();
+                ident.extend_from_slice(&header[1..]);
+                Record::expected(&ident, bases)
+            })
+            .collect()
+    }
+
+    /// All of `input` through a FASTA parser on `kernel`, in calls of `slice` bytes, a whole
+    /// number of blocks; the records handed over.
+    fn parse_fasta(kernel: MaskKernel, input: &[u8], slice: usize) -> Vec<Record> {
+        let mut parser = fastq_parser(kernel, true);
+        parser.reset(DnaSequencesFileType::FASTA);
+        let mut records = Vec::new();
+        for chunk in input.chunks(slice) {
+            parser.parse_data(chunk, collect(&mut records));
+        }
+        parser.finish(collect(&mut records));
+        records
+    }
+
+    #[test]
+    fn fasta_lines_of_any_width_and_ending_are_joined() {
+        let reads = reads(30, 300);
+        let widths: Vec<Option<usize>> = (1..=80).map(Some).chain([None]).collect();
+        for kernel in supported_kernels() {
+            for &width in &widths {
+                for ending in [&b"\n"[..], b"\r\n"] {
+                    let input = fasta_of(&reads, |_| width, ending);
+                    assert_eq!(
+                        parse_fasta(kernel, &input, 16 * BLOCK_SIZE),
+                        fasta_records(&reads),
+                        "{kernel:?}, width {width:?}, ending {ending:?}"
+                    );
+                }
+            }
+            // Wrapped and unwrapped records mixed.
+            let input = fasta_of(
+                &reads,
+                |index| (index % 3 > 0).then_some(7 * index + 1),
+                b"\n",
+            );
+            assert_eq!(
+                parse_fasta(kernel, &input, BLOCK_SIZE),
+                fasta_records(&reads),
+                "{kernel:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_fasta_record_on_one_line_keeps_its_place_in_its_first_block() {
+        for kernel in supported_kernels() {
+            let mut parser = fastq_parser(kernel, true);
+            parser.reset(DnaSequencesFileType::FASTA);
+            let mut starts = Vec::new();
+            parser.parse_data(b">r1 x\nACGTACGT\n>r2\nGG\nCC\n", |_| panic!("not full"));
+            parser.finish(|buffer| {
+                starts.extend(
+                    buffer
+                        .descriptions()
+                        .iter()
+                        .map(|description| description.bases_start),
+                )
+            });
+            // r1 starts at byte 6 of the block, copied whole from the start of the buffer, so at
+            // base 6; r2, wrapped, is copied likewise from the byte after r1's last.
+            assert_eq!(starts, [6, 4 * 4 + 19], "{kernel:?}");
+        }
+    }
+
+    #[test]
+    fn fasta_records_without_bases_are_dropped_and_empty_lines_add_nothing() {
+        let input = b">empty\n>also empty\n\n\r\n>r\n\nAC\n\r\nGT\n\n>last empty";
+        for kernel in supported_kernels() {
+            assert_eq!(
+                parse_fasta(kernel, input, BLOCK_SIZE),
+                [Record::expected(b">r", b"ACGT")],
+                "{kernel:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_fasta_input_can_end_without_a_line_feed() {
+        for (input, bases) in [
+            (&b">r\nACGT"[..], &b"ACGT"[..]),
+            (b">r\nACGT\r", b"ACGT"),
+            (b">r\nAC\nGT", b"ACGT"),
+            (b">r\nAC\r\nGT\r", b"ACGT"),
+            (b">r\nACGT\n", b"ACGT"),
+        ] {
+            for kernel in supported_kernels() {
+                assert_eq!(
+                    parse_fasta(kernel, input, BLOCK_SIZE),
+                    [Record::expected(b">r", bases)],
+                    "{kernel:?}, {}",
+                    String::from_utf8_lossy(input)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fasta_parsing_does_not_depend_on_where_the_input_is_cut() {
+        // The first header longer by 0 to 63 bytes, so that every line ending lands at every
+        // place in a block; the input cut into two calls at every block boundary.
+        let reads = reads(6, 200);
+        for shift in 0..BLOCK_SIZE {
+            let mut reads = reads.clone();
+            reads[0].0.extend(std::iter::repeat_n(b'x', shift));
+            let input = fasta_of(&reads, |index| (index % 2 == 0).then_some(61), b"\r\n");
+            for kernel in supported_kernels() {
+                for cut in (0..=input.len()).step_by(BLOCK_SIZE) {
+                    let mut parser = fastq_parser(kernel, true);
+                    parser.reset(DnaSequencesFileType::FASTA);
+                    let mut records = Vec::new();
+                    parser.parse_data(&input[..cut], |_| panic!("not full"));
+                    parser.parse_data(&input[cut..], |_| panic!("not full"));
+                    parser.finish(collect(&mut records));
+                    assert_eq!(
+                        records,
+                        fasta_records(&reads),
+                        "{kernel:?}, shift {shift}, cut {cut}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_buffer_is_handed_over_when_nearly_full_of_bases_at_the_end_of_a_sequence() {
         let reads = reads(100, 60);
@@ -1086,14 +1358,36 @@ mod tests {
 
     #[test]
     fn long_sequences_are_split_with_their_last_bases_repeated_and_short_ones_moved() {
-        // Reads up to 600 bases in buffers of 256 bytes, 1024 bases, with a copyback of 100.
-        let copyback = 100;
+        // Reads up to 600 bases in buffers of 256 bytes, 1024 bases, with a copyback of 100: as
+        // FASTQ, and as FASTA with every third record on one line and the others wrapped.
         let reads = reads(200, 600);
-        let input = fastq_of(&reads);
+        long_sequences_are_split(&reads, DnaSequencesFileType::FASTQ, &fastq_of(&reads));
+        let fasta = fasta_of(
+            &reads,
+            |index| (index % 3 > 0).then_some(13 * index % 97 + 1),
+            b"\r\n",
+        );
+        let reads: Vec<_> = reads
+            .iter()
+            .map(|(header, bases)| {
+                let mut ident = b">".to_vec();
+                ident.extend_from_slice(&header[1..]);
+                (ident, bases.clone())
+            })
+            .collect();
+        long_sequences_are_split(&reads, DnaSequencesFileType::FASTA, &fasta);
+    }
+
+    fn long_sequences_are_split(
+        reads: &[(Vec<u8>, Vec<u8>)],
+        format: DnaSequencesFileType,
+        input: &[u8],
+    ) {
+        let copyback = 100;
         for kernel in supported_kernels() {
             let mut parser =
                 SequenceParser::with_kernel(kernel, true, Some(copyback), 256, 1 << 20);
-            parser.reset(DnaSequencesFileType::FASTQ);
+            parser.reset(format);
             let mut records = Vec::new();
             let mut callback = |buffer: &SequenceBuffer| {
                 // No sequence starts a whole block of bases past where the one before ended.
@@ -1111,7 +1405,7 @@ mod tests {
 
             let mut parts = records.iter().peekable();
             let mut splits = 0;
-            for (header, bases) in &reads {
+            for (header, bases) in reads {
                 let expected = Record::expected(header, bases).codes;
                 let first = parts.next().unwrap();
                 assert_eq!(first.ident, *header, "{kernel:?}");

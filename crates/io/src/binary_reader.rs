@@ -449,9 +449,8 @@ where
     }
 }
 
-/// How much a gzip file's decompressor decodes before handing it over: little enough to stay in
-/// the caches until it is read, with several readers at once. 4 MiB per reader overflowed the L3
-/// with 4 of them: `experiments-logs/2026-10-16_fastq-simd-scaling`.
+/// How much a gzip file's decompressor decodes before handing it over: little enough to still be
+/// in the caches when it is read, even with a reader on every core sharing the last level.
 const GZIP_FILE_OUTPUT_BUFFER_SIZE: usize = 256 * 1024;
 
 pub struct GenericBinaryReader {
@@ -464,9 +463,8 @@ impl GenericBinaryReader {
     /// that many bytes and aligned to it, except the last one of each input, which can be
     /// shorter. Without it, chunks are the buffers the decoder produces.
     ///
-    /// The chunks are filled in a ring of two of them, which stays in the caches: one of 4 MiB
-    /// made copying into it 4 times as costly with 4 readers at once,
-    /// `experiments-logs/2026-10-16_fastq-simd-scaling`.
+    /// The chunks are filled in a ring of only two of them, so that it stays in the caches:
+    /// each byte is written there and read back right after, by every reader at once.
     pub fn new(buffer_size: Option<usize>) -> Self {
         let (capacity, align) = match buffer_size {
             None => (DEFAULT_OUTPUT_BUFFER_SIZE, 1),
