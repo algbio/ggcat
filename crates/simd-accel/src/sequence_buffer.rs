@@ -25,6 +25,10 @@ pub struct SequenceDescription {
 /// it, may be unused, which is what keeps writing FASTQ sequences free of shifts. A sequence too
 /// long for the buffer is handed over in parts, each starting with the last bases of the one
 /// before (the parser's `copyback_size`), all with the same header.
+///
+/// Sequences hold only ACGT bases: a record is split at its other bytes, such as `N`, into
+/// several sequences with its header, those shorter than the parser's `min_seqlen` left out. The
+/// bytes split at stay in [`Self::bases`], between the sequences, as the bases their bits make.
 pub struct SequenceBuffer {
     pub(crate) ident: Vec<u8>,
     pub(crate) bases: Vec<u8>,

@@ -44,7 +44,8 @@ impl SimdSequencesReader {
     /// `func` a [`SequenceBuffer`] at a time: the source gets a parser, which every file, or
     /// every member of an archive, is fed to a chunk at a time, after a reset to its format.
     /// Each file's last buffer is handed over at its end; `line_split_copyback` splits the
-    /// sequences too long for a buffer, as the line reader's does.
+    /// sequences too long for a buffer, as the line reader's does. The sequences hold only ACGT
+    /// bases, split at the other bytes, and those shorter than `min_seqlen` are left out.
     ///
     /// [`SequencesReader::process_file_extended`]: crate::sequences_reader::SequencesReader::process_file_extended
     pub fn process_file_extended<F: FnMut(&SequenceBuffer)>(
@@ -53,6 +54,7 @@ impl SimdSequencesReader {
         mut func: F,
         line_split_copyback: Option<usize>,
         copy_ident: bool,
+        min_seqlen: usize,
         remove_file: bool,
     ) {
         let source = source.as_ref();
@@ -60,6 +62,7 @@ impl SimdSequencesReader {
             self.kernel,
             copy_ident,
             line_split_copyback,
+            min_seqlen,
             DEFAULT_BASES_CAPACITY,
             DEFAULT_IDENT_CAPACITY,
         );

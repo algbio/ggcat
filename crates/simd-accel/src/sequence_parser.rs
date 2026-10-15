@@ -150,6 +150,9 @@ pub struct SequenceParser {
     /// start of its next part: as `line_split_copyback` of the line reader. `None` splits none,
     /// growing the buffer past its capacity for a sequence that needs it.
     copyback_size: Option<usize>,
+    /// The shortest sequence handed over, at least 1: shorter pieces of a record, between its
+    /// bytes that are not ACGT, are left out.
+    min_length: usize,
     /// When the buffer counts as full: bytes of packed bases, bytes of headers.
     bases_capacity: usize,
     ident_capacity: usize,
@@ -169,8 +172,18 @@ pub struct SequenceParser {
     /// whole 64-bit words only, the bases past them waiting in `sequence_word` until
     /// [`Self::flush_sequence`].
     record_bases_start: usize,
-    /// How many bases the current record has so far.
+    /// How many bases the current record has so far, its bytes that are not ACGT included: they
+    /// are written as the bases their two bits make, and only the sequences skip them.
     record_bases: usize,
+    /// Where the current record's open run of ACGT bases starts in the buffer's `bases`, in
+    /// bases: each byte that is not ACGT ends one, which becomes a sequence if it is long enough.
+    run_start: usize,
+    /// How many sequences the buffer held when the current record started: if it holds no more
+    /// at its end, the record kept none, and its header goes.
+    record_sequences: usize,
+    /// How many bytes of the buffer's `bases` to keep at the end of the current record: up to its
+    /// last sequence kept, or none of it.
+    kept_end: usize,
     /// The unfinished last word of the sequence: its low `sequence_word_bits` bits, the rest
     /// zero.
     sequence_word: u64,
@@ -184,13 +197,15 @@ pub struct SequenceParser {
 
 impl SequenceParser {
     /// A parser on the fastest kernel this CPU runs, keeping the headers or not, splitting the
-    /// sequences too long for its buffer with `copyback_size` bases repeated, or not at all; its
-    /// buffer is [`DEFAULT_BASES_CAPACITY`] and [`DEFAULT_IDENT_CAPACITY`] bytes.
-    pub fn new(keep_ident: bool, copyback_size: Option<usize>) -> Self {
+    /// sequences too long for its buffer with `copyback_size` bases repeated, or not at all, and
+    /// dropping those shorter than `min_seqlen`; its buffer is [`DEFAULT_BASES_CAPACITY`] and
+    /// [`DEFAULT_IDENT_CAPACITY`] bytes.
+    pub fn new(keep_ident: bool, copyback_size: Option<usize>, min_seqlen: usize) -> Self {
         Self::with_kernel(
             MaskKernel::detect(),
             keep_ident,
             copyback_size,
+            min_seqlen,
             DEFAULT_BASES_CAPACITY,
             DEFAULT_IDENT_CAPACITY,
         )
@@ -201,19 +216,21 @@ impl SequenceParser {
     ///
     /// # Panics
     ///
-    /// If the bases carried over at a split, and two blocks, would take more than half the
-    /// buffer: it could then never empty.
+    /// If the bases carried over at a split (the copyback, or a sequence too short to be split),
+    /// and two blocks, would take more than half the buffer: it could then never empty.
     pub fn with_kernel(
         kernel: MaskKernel,
         keep_ident: bool,
         copyback_size: Option<usize>,
+        min_seqlen: usize,
         bases_capacity: usize,
         ident_capacity: usize,
     ) -> Self {
         assert!(kernel.is_supported(), "{kernel:?} is not supported here");
         if let Some(copyback) = copyback_size {
+            let carried = copyback.max(min_seqlen);
             assert!(
-                copyback.div_ceil(4) + 2 * BLOCK_SIZE / 4 <= bases_capacity / 2,
+                carried.div_ceil(4) + 2 * BLOCK_SIZE / 4 <= bases_capacity / 2,
                 "a copyback of {copyback} bases does not fit twice in {bases_capacity} bytes"
             );
         }
@@ -222,12 +239,16 @@ impl SequenceParser {
             kernel,
             keep_ident,
             copyback_size,
+            min_length: min_seqlen.max(1),
             bases_capacity,
             ident_capacity,
             buffer: SequenceBuffer::new(format),
             record_ident_start: 0,
             record_bases_start: 0,
             record_bases: 0,
+            run_start: 0,
+            record_sequences: 0,
+            kept_end: 0,
             sequence_word: 0,
             sequence_word_bits: 0,
             state: ParserState::start(format),
@@ -254,6 +275,9 @@ impl SequenceParser {
         self.record_ident_start = self.buffer.ident.len();
         self.record_bases_start = 0;
         self.record_bases = 0;
+        self.run_start = 0;
+        self.record_sequences = self.buffer.sequences.len();
+        self.kept_end = self.buffer.bases.len();
         self.sequence_word = 0;
         self.sequence_word_bits = 0;
     }
@@ -457,9 +481,6 @@ impl SequenceParser {
     ///
     /// With no line feed the line goes on in the next block: a buffer full then, with a
     /// `copyback_size`, splits the record.
-    // TODO: the bytes that are not ACGT, such as `N`, are kept as the two bits they happen to
-    // have: the sequence is to be split at them (`masks.non_acgt`), as `SimdCompressedRead`
-    // cannot hold them.
     #[inline(always)]
     fn copy_line_blocks(
         &mut self,
@@ -472,12 +493,16 @@ impl SequenceParser {
         let line_feed = masks.line_feed_from(processed_index);
         let end = bases_end(block, processed_index, line_feed);
         if end > processed_index {
-            let bases = &mut self.buffer.bases;
+            let first_base = 4 * self.buffer.bases.len() + processed_index;
             if self.record_bases == 0 {
-                self.record_bases_start = 4 * bases.len() + processed_index;
+                self.record_bases_start = first_base;
+                self.run_start = first_base;
             }
-            bases.extend_from_slice(&masks.two_bits.to_le_bytes());
+            self.buffer
+                .bases
+                .extend_from_slice(&masks.two_bits.to_le_bytes());
             self.record_bases += end - processed_index;
+            self.split_at_non_acgt(masks.non_acgt, processed_index, end, first_base);
         }
         if line_feed.is_none()
             && let Some(copyback) = self.copyback_size
@@ -529,11 +554,12 @@ impl SequenceParser {
     ) -> usize {
         debug_assert!(processed_index < block.len());
         let line_feed = masks.line_feed_from(processed_index);
-        self.push_bases(
-            masks.two_bits,
-            processed_index,
-            bases_end(block, processed_index, line_feed),
-        );
+        let end = bases_end(block, processed_index, line_feed);
+        let first_base = self.record_bases_start + self.record_bases;
+        if end > processed_index {
+            self.push_bases(masks.two_bits, processed_index, end);
+            self.split_at_non_acgt(masks.non_acgt, processed_index, end, first_base);
+        }
         if let Some(copyback) = self.copyback_size
             && self.buffer.bases.len() >= self.bases_capacity
         {
@@ -564,24 +590,51 @@ impl SequenceParser {
         bases.truncate(end / 4);
     }
 
-    /// Ends the current record, all its bases in: adds it to the buffer, unless it has none,
-    /// and then its header goes too; trims the buffer's bases to the byte of its last one; hands
-    /// the buffer over if less than 1/16 of either capacity is left. Then starts the next
-    /// record.
+    /// Ends the open run of ACGT bases at the byte that is not ACGT, or the record's end, at base
+    /// `end` of the buffer: adds it as a sequence, with the record's header, if it is long
+    /// enough.
+    #[inline(always)]
+    fn close_run(&mut self, end: usize) {
+        let length = end - self.run_start;
+        if length >= self.min_length {
+            let buffer = &mut self.buffer;
+            buffer.sequences.push(SequenceDescription {
+                ident_start: self.record_ident_start,
+                ident_len: buffer.ident.len() - self.record_ident_start,
+                bases_start: self.run_start,
+                bases_len: length,
+            });
+            self.kept_end = end.div_ceil(4);
+        }
+    }
+
+    /// Splits the record's sequence at the bytes `from..to` of a block that are not ACGT, now
+    /// bases of the buffer from `first_base` on: each ends the open run and starts the next past
+    /// it. One test when there are none, as in nearly every block.
+    #[inline(always)]
+    fn split_at_non_acgt(&mut self, non_acgt: u64, from: usize, to: usize, first_base: usize) {
+        debug_assert!(from < to && to <= BLOCK_SIZE);
+        let mut bytes = non_acgt & (u64::MAX << from) & (u64::MAX >> (BLOCK_SIZE - to));
+        while bytes != 0 {
+            let base = first_base + bytes.trailing_zeros() as usize - from;
+            self.close_run(base);
+            self.run_start = base + 1;
+            bytes &= bytes - 1;
+        }
+    }
+
+    /// Ends the current record, all its bases in: its last run of ACGT bases becomes a sequence
+    /// if it is long enough; the buffer's bases are trimmed to the byte of its last sequence
+    /// kept, or to before the record if it kept none, and then its header goes too; the buffer
+    /// is handed over if less than 1/16 of either capacity is left. Then starts the next record.
     #[inline(always)]
     fn end_record(&mut self, callback: &mut impl FnMut(&SequenceBuffer)) {
         if self.record_bases > 0 {
             self.flush_sequence();
-            let buffer = &mut self.buffer;
-            let end = self.record_bases_start + self.record_bases;
-            buffer.sequences.push(SequenceDescription {
-                ident_start: self.record_ident_start,
-                ident_len: buffer.ident.len() - self.record_ident_start,
-                bases_start: self.record_bases_start,
-                bases_len: self.record_bases,
-            });
-            buffer.bases.truncate(end.div_ceil(4));
-        } else {
+            self.close_run(self.record_bases_start + self.record_bases);
+        }
+        self.buffer.bases.truncate(self.kept_end);
+        if self.buffer.sequences.len() == self.record_sequences {
             self.buffer.ident.truncate(self.record_ident_start);
         }
         let (bases, ident) = (self.buffer.bases.len(), self.buffer.ident.len());
@@ -602,10 +655,10 @@ impl SequenceParser {
         self.buffer.clear();
     }
 
-    /// Splits the current record, in the middle of its sequence as the buffer is full: the
-    /// part so far is added and the buffer handed over; then the record goes on in the cleared
-    /// buffer from its header and its last `copyback` bases. A record of `copyback` bases or
-    /// fewer is only moved, unsplit.
+    /// Splits the current record, in the middle of its sequence as the buffer is full: its open
+    /// run of ACGT bases so far is added and the buffer handed over; then the record goes on in
+    /// the cleared buffer from its header and that run's last `copyback` bases. A run of
+    /// `copyback` bases or fewer, or too short to be kept, is only moved, unsplit.
     ///
     /// Copied a block at a time, the record's bases run to the end of the buffer between its
     /// blocks: so do the ones carried over, from the same place in their byte, and the next
@@ -623,18 +676,14 @@ impl SequenceParser {
         }
         let end = self.record_bases_start + self.record_bases;
         debug_assert_eq!(end.div_ceil(4), self.buffer.bases.len());
-        let keep_from = if self.record_bases > copyback {
+        let open = end - self.run_start;
+        let keep_from = if open > copyback && open >= self.min_length {
             end - copyback
         } else {
-            self.record_bases_start
+            self.run_start
         };
-        if keep_from > self.record_bases_start {
-            self.buffer.sequences.push(SequenceDescription {
-                ident_start: self.record_ident_start,
-                ident_len: self.buffer.ident.len() - self.record_ident_start,
-                bases_start: self.record_bases_start,
-                bases_len: self.record_bases,
-            });
+        if keep_from > self.run_start {
+            self.close_run(end);
         }
         if !self.buffer.is_empty() {
             callback(&self.buffer);
@@ -646,6 +695,9 @@ impl SequenceParser {
         self.record_ident_start = 0;
         self.record_bases_start = keep_from % 4;
         self.record_bases = end - keep_from;
+        self.run_start = keep_from % 4;
+        self.record_sequences = 0;
+        self.kept_end = 0;
         if shifted {
             self.start_shifting();
         }
@@ -798,6 +850,7 @@ mod tests {
             kernel,
             keep_ident,
             None,
+            0,
             DEFAULT_BASES_CAPACITY,
             DEFAULT_IDENT_CAPACITY,
         );
@@ -834,6 +887,16 @@ mod tests {
             }
         }
 
+        /// The sequences of a record of header `ident` and bytes `bases`: its runs of ACGT bases,
+        /// split at every other byte, those shorter than `min_length` left out.
+        fn runs(ident: &[u8], bases: &[u8], min_length: usize) -> Vec<Self> {
+            bases
+                .split(|byte| !matches!(byte & 0b1101_1111, b'A' | b'C' | b'G' | b'T'))
+                .filter(|run| run.len() >= min_length.max(1))
+                .map(|run| Self::expected(ident, run))
+                .collect()
+        }
+
         /// The record of header `ident` and bases `bases`, as letters.
         fn expected(ident: &[u8], bases: &[u8]) -> Self {
             Self {
@@ -865,14 +928,14 @@ mod tests {
 
     #[test]
     fn a_new_parser_takes_the_detected_kernel_and_reads_fasta() {
-        let parser = SequenceParser::new(false, None);
+        let parser = SequenceParser::new(false, None, 0);
         assert_eq!(parser.kernel(), MaskKernel::detect());
         assert_eq!(parser.state, ParserState::FastaLineStart { wrapped: false });
     }
 
     #[test]
     fn reset_starts_each_format_at_its_first_line() {
-        let mut parser = SequenceParser::new(false, None);
+        let mut parser = SequenceParser::new(false, None, 0);
         parser.reset(DnaSequencesFileType::FASTQ);
         assert_eq!(parser.state, ParserState::FastqHeader);
         assert!(matches!(
@@ -886,12 +949,12 @@ mod tests {
     #[test]
     #[should_panic(expected = "FASTA and FASTQ only")]
     fn reset_rejects_gfa() {
-        SequenceParser::new(false, None).reset(DnaSequencesFileType::GFA);
+        SequenceParser::new(false, None, 0).reset(DnaSequencesFileType::GFA);
     }
 
     #[test]
     fn reset_forgets_the_buffer_and_the_record() {
-        let mut parser = SequenceParser::new(true, None);
+        let mut parser = SequenceParser::new(true, None, 0);
         parser.reset(DnaSequencesFileType::FASTQ);
         // A whole record, then one cut inside its sequence line: nothing handed over yet.
         parser.parse_data(b"@read1\nACGT\n+\nIIII\n@read2\nACGT", |_| {
@@ -990,7 +1053,8 @@ mod tests {
                 input.extend_from_slice(b"\r\n");
                 let (first, rest) = input.split_at(BLOCK_SIZE);
                 parser.parse_data(first, |_| panic!("not full"));
-                assert_eq!(parser.buffer.len(), 1, "{kernel:?}");
+                // Split at its `N`.
+                assert_eq!(parser.buffer.len(), 2, "{kernel:?}");
                 assert_eq!(parser.state, ParserState::FastqQuality, "{kernel:?}");
                 assert_eq!(parser.record_bases, 0, "{kernel:?}");
                 // Trimmed to the byte of its last base: 9 bases from base 10 of the block.
@@ -1000,8 +1064,8 @@ mod tests {
                 parser.parse_data(rest, |_| panic!("not full"));
                 parser.finish(collect(&mut records));
                 let ident: &[u8] = if keep_ident { b"@read1 x" } else { b"" };
-                let expected = Record::expected(ident, b"ACGTNacgt");
-                assert_eq!(records, [expected], "{kernel:?}, keep_ident {keep_ident}");
+                let expected = Record::runs(ident, b"ACGTNacgt", 0);
+                assert_eq!(records, expected, "{kernel:?}, keep_ident {keep_ident}");
                 assert!(parser.buffer.is_empty(), "{kernel:?}");
             }
         }
@@ -1048,10 +1112,8 @@ mod tests {
         input.extend_from_slice(b"\r\n");
         input.extend(std::iter::repeat_n(b'I', bases.len()));
         input.extend_from_slice(b"\r\n");
-        let expected = [
-            Record::expected(first_header, b"ACGT"),
-            Record::expected(header, bases),
-        ];
+        let mut expected = vec![Record::expected(first_header, b"ACGT")];
+        expected.extend(Record::runs(header, bases, 0));
         let shift = first_header.len() - 6;
         for kernel in supported_kernels() {
             for cut in (0..=input.len()).step_by(BLOCK_SIZE) {
@@ -1073,7 +1135,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "only the last slice of an input")]
     fn only_the_last_slice_of_an_input_can_end_a_block_short() {
-        let mut parser = SequenceParser::new(false, None);
+        let mut parser = SequenceParser::new(false, None, 0);
         parser.reset(DnaSequencesFileType::FASTQ);
         parser.parse_data(b"@read1\nAC", |_| {});
         parser.parse_data(b"GT\n", |_| {});
@@ -1101,7 +1163,7 @@ mod tests {
 
     #[test]
     fn finish_hands_over_nothing_but_whole_records() {
-        let mut parser = SequenceParser::new(true, None);
+        let mut parser = SequenceParser::new(true, None, 0);
         parser.reset(DnaSequencesFileType::FASTQ);
         let mut buffers = 0;
         parser.parse_data(b"@r\nACGT\n+\nIIII", |_| buffers += 1);
@@ -1123,6 +1185,11 @@ mod tests {
 
     /// `count` FASTQ reads, of 1 to `max` bases, from a fixed seed: their headers and bases.
     fn reads(count: usize, max: usize) -> Vec<(Vec<u8>, Vec<u8>)> {
+        reads_with_n(count, max, 0)
+    }
+
+    /// As [`reads`], with each byte an `N` or `n` with a probability of `n_per_mille` / 1000.
+    fn reads_with_n(count: usize, max: usize, n_per_mille: u64) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut state = 0x9e37_79b9_7f4a_7c15u64;
         let mut next = move || {
             state ^= state << 13;
@@ -1134,7 +1201,13 @@ mod tests {
             .map(|index| {
                 let length = 1 + (next() as usize) % max;
                 let bases = (0..length)
-                    .map(|_| b"ACGTacgt"[(next() % 8) as usize])
+                    .map(|_| {
+                        if next() % 1000 < n_per_mille {
+                            b"Nn"[(next() % 2) as usize]
+                        } else {
+                            b"ACGTacgt"[(next() % 8) as usize]
+                        }
+                    })
                     .collect();
                 (format!("@read{index}").into_bytes(), bases)
             })
@@ -1350,12 +1423,65 @@ mod tests {
     }
 
     #[test]
+    fn sequences_are_split_at_every_byte_that_is_not_acgt() {
+        // At the start and the end, in a row, lowercase and IUPAC codes.
+        let bases = b"NACGTNNacgtRYnACGTACGTKMn".repeat(5);
+        let reads = vec![
+            (b"@r1".to_vec(), bases.clone()),
+            (b"@r2".to_vec(), b"NNNN".to_vec()),
+        ];
+        let expected = Record::runs(b"@r1", &bases, 0);
+        for kernel in supported_kernels() {
+            let mut parser = fastq_parser(kernel, true);
+            let mut records = Vec::new();
+            parser.parse_data(&fastq_of(&reads), collect(&mut records));
+            parser.finish(collect(&mut records));
+            assert_eq!(records, expected, "{kernel:?}, FASTQ");
+            // FASTA on one line, then wrapped, across the switch to shifted appends.
+            let expected: Vec<_> = Record::runs(b">r1", &bases, 0);
+            for width in [None, Some(1), Some(7), Some(60)] {
+                let input = fasta_of(&reads, |_| width, b"\r\n");
+                assert_eq!(
+                    parse_fasta(kernel, &input, BLOCK_SIZE),
+                    expected,
+                    "{kernel:?}, FASTA, width {width:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sequences_shorter_than_min_seqlen_are_left_out() {
+        // Runs of 1 to 6 bases between N; then a record with none of 4 or more.
+        let input = b">r1\nANACNACGNACGTNACGTANACGTAC\n>r2\nACGNACNA\n>r3\nGGGG\n";
+        for kernel in supported_kernels() {
+            let mut parser = SequenceParser::with_kernel(kernel, true, None, 4, 1 << 20, 1 << 20);
+            parser.reset(DnaSequencesFileType::FASTA);
+            let mut records = Vec::new();
+            parser.parse_data(input, |_| panic!("not full"));
+            parser.finish(|buffer: &SequenceBuffer| {
+                // r2 kept nothing: neither its header nor its bases are left.
+                assert_eq!(buffer.ident(), b">r1>r3", "{kernel:?}");
+                let last = buffer.descriptions().last().unwrap();
+                assert_eq!(
+                    buffer.bases().len(),
+                    (last.bases_start + last.bases_len).div_ceil(4)
+                );
+                records.extend(buffer.sequences().map(Record::of));
+            });
+            let mut expected = Record::runs(b">r1", b"ANACNACGNACGTNACGTANACGTAC", 4);
+            expected.push(Record::expected(b">r3", b"GGGG"));
+            assert_eq!(records, expected, "{kernel:?}");
+        }
+    }
+
+    #[test]
     fn a_buffer_is_handed_over_when_nearly_full_of_bases_at_the_end_of_a_sequence() {
         let reads = reads(100, 60);
         let input = fastq_of(&reads);
         let capacity = 128;
         for kernel in supported_kernels() {
-            let mut parser = SequenceParser::with_kernel(kernel, true, None, capacity, 1 << 20);
+            let mut parser = SequenceParser::with_kernel(kernel, true, None, 0, capacity, 1 << 20);
             parser.reset(DnaSequencesFileType::FASTQ);
             let mut records = Vec::new();
             let mut sizes = Vec::new();
@@ -1383,7 +1509,7 @@ mod tests {
         let reads = reads(20, 10);
         let input = fastq_of(&reads);
         for kernel in supported_kernels() {
-            let mut parser = SequenceParser::with_kernel(kernel, true, None, 1 << 20, 32);
+            let mut parser = SequenceParser::with_kernel(kernel, true, None, 0, 1 << 20, 32);
             parser.reset(DnaSequencesFileType::FASTQ);
             let mut lengths = Vec::new();
             parser.parse_data(&input, |buffer| lengths.push(buffer.len()));
@@ -1405,7 +1531,7 @@ mod tests {
         let reads: Vec<_> = reads.collect();
         let input = fastq_of(&reads);
         for kernel in supported_kernels() {
-            let mut parser = SequenceParser::with_kernel(kernel, false, None, 128, 1 << 20);
+            let mut parser = SequenceParser::with_kernel(kernel, false, None, 0, 128, 1 << 20);
             parser.reset(DnaSequencesFileType::FASTQ);
             let mut records = Vec::new();
             parser.parse_data(&input, collect(&mut records));
@@ -1416,43 +1542,63 @@ mod tests {
 
     #[test]
     fn long_sequences_are_split_with_their_last_bases_repeated_and_short_ones_moved() {
-        // Reads up to 600 bases in buffers of 256 bytes, 1024 bases, with a copyback of 100: as
-        // FASTQ, and as FASTA with every third record on one line and the others wrapped.
-        let reads = reads(200, 600);
-        long_sequences_are_split(&reads, DnaSequencesFileType::FASTQ, &fastq_of(&reads));
-        let fasta = fasta_of(
-            &reads,
-            |index| (index % 3 > 0).then_some(13 * index % 97 + 1),
-            b"\r\n",
-        );
-        let reads: Vec<_> = reads
-            .iter()
-            .map(|(header, bases)| {
-                let mut ident = b">".to_vec();
-                ident.extend_from_slice(&header[1..]);
-                (ident, bases.clone())
-            })
-            .collect();
-        long_sequences_are_split(&reads, DnaSequencesFileType::FASTA, &fasta);
+        // Reads up to 600 bases in buffers of 256 bytes, 1024 bases: as FASTQ, and as FASTA with
+        // every third record on one line and the others wrapped. Without N and every sequence
+        // kept, with a copyback of 100; then with N, as is, and dropping those under 31 with the
+        // copyback of 30 that k = 31 asks for.
+        for (n_per_mille, copyback, min_seqlen) in [(0, 100, 0), (3, 100, 0), (3, 30, 31)] {
+            let reads = reads_with_n(200, 600, n_per_mille);
+            let fastq = fastq_of(&reads);
+            let split = |reads: &[(Vec<u8>, Vec<u8>)], format, input: &[u8]| {
+                long_sequences_are_split(
+                    reads,
+                    format,
+                    input,
+                    copyback,
+                    min_seqlen,
+                    n_per_mille == 0,
+                )
+            };
+            split(&reads, DnaSequencesFileType::FASTQ, &fastq);
+            let fasta = fasta_of(
+                &reads,
+                |index| (index % 3 > 0).then_some(13 * index % 97 + 1),
+                b"\r\n",
+            );
+            let reads: Vec<_> = reads
+                .iter()
+                .map(|(header, bases)| {
+                    let mut ident = b">".to_vec();
+                    ident.extend_from_slice(&header[1..]);
+                    (ident, bases.clone())
+                })
+                .collect();
+            split(&reads, DnaSequencesFileType::FASTA, &fasta);
+        }
     }
 
     fn long_sequences_are_split(
         reads: &[(Vec<u8>, Vec<u8>)],
         format: DnaSequencesFileType,
         input: &[u8],
+        copyback: usize,
+        min_seqlen: usize,
+        one_sequence_per_record: bool,
     ) {
-        let copyback = 100;
         for kernel in supported_kernels() {
             let mut parser =
-                SequenceParser::with_kernel(kernel, true, Some(copyback), 256, 1 << 20);
+                SequenceParser::with_kernel(kernel, true, Some(copyback), min_seqlen, 256, 1 << 20);
             parser.reset(format);
             let mut records = Vec::new();
             let mut callback = |buffer: &SequenceBuffer| {
-                // No sequence starts a whole block of bases past where the one before ended.
+                // No record starts a whole block of bases past where the one before ended. The
+                // runs of one record are apart by the bytes split at, which stay in the buffer.
                 for pair in buffer.descriptions().windows(2) {
                     let end = (pair[0].bases_start + pair[0].bases_len).div_ceil(4) * 4;
-                    let gap = pair[1].bases_start - end;
-                    assert!(gap < BLOCK_SIZE, "{kernel:?}: {gap} bases unused");
+                    if one_sequence_per_record {
+                        let gap = pair[1].bases_start - end;
+                        assert!(gap < BLOCK_SIZE, "{kernel:?}: {gap} bases unused");
+                    }
                 }
                 records.extend(buffer.sequences().map(Record::of));
             };
@@ -1461,32 +1607,44 @@ mod tests {
             }
             parser.finish(&mut callback);
 
+            // Each run of each read, rebuilt from its parts.
             let mut parts = records.iter().peekable();
             let mut splits = 0;
             for (header, bases) in reads {
-                let expected = Record::expected(header, bases).codes;
-                let first = parts.next().unwrap();
-                assert_eq!(first.ident, *header, "{kernel:?}");
-                let mut joined = first.codes.clone();
-                while let Some(part) = parts.next_if(|part| part.ident == *header) {
-                    splits += 1;
+                for run in Record::runs(header, bases, min_seqlen) {
+                    let first = parts.next().unwrap();
+                    assert_eq!(first.ident, *header, "{kernel:?}");
                     assert!(
-                        joined.len() > copyback,
-                        "{kernel:?}: a short part was split"
+                        run.codes.starts_with(&first.codes),
+                        "{kernel:?}: not the run"
                     );
+                    let mut joined = first.codes.clone();
+                    while joined.len() < run.codes.len() {
+                        let part = parts.next().unwrap();
+                        splits += 1;
+                        assert_eq!(part.ident, *header, "{kernel:?}");
+                        assert!(
+                            joined.len() > copyback,
+                            "{kernel:?}: a short part was split"
+                        );
+                        assert_eq!(
+                            part.codes[..copyback],
+                            joined[joined.len() - copyback..],
+                            "{kernel:?}: the part does not start with the last bases"
+                        );
+                        joined.extend_from_slice(&part.codes[copyback..]);
+                    }
                     assert_eq!(
-                        part.codes[..copyback],
-                        joined[joined.len() - copyback..],
-                        "{kernel:?}: the part does not start with the last bases"
+                        joined,
+                        run.codes,
+                        "{kernel:?}, {}",
+                        String::from_utf8_lossy(header)
                     );
-                    joined.extend_from_slice(&part.codes[copyback..]);
+                    // A split just before the run's end leaves a last part of its copyback
+                    // only, kept if it is long enough, as the line reader keeps it.
+                    let tail = &joined[joined.len().saturating_sub(copyback)..];
+                    parts.next_if(|part| part.ident == *header && part.codes == tail);
                 }
-                assert_eq!(
-                    joined,
-                    expected,
-                    "{kernel:?}, {}",
-                    String::from_utf8_lossy(header)
-                );
             }
             assert!(parts.next().is_none(), "{kernel:?}");
             assert!(splits > 10, "{kernel:?}: only {splits} splits");
@@ -1496,6 +1654,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "does not fit twice")]
     fn a_copyback_has_to_fit_twice_in_the_buffer() {
-        SequenceParser::with_kernel(MaskKernel::Portable, false, Some(200), 64, 64);
+        SequenceParser::with_kernel(MaskKernel::Portable, false, Some(200), 0, 64, 64);
     }
 }
