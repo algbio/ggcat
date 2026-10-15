@@ -85,11 +85,16 @@ fn bases_end(block: &[u8], from: usize, line_feed: Option<usize>) -> usize {
 enum ParserState {
     /// In a header line, from its `>` to its line feed. Then [`Self::FastaLineStart`].
     FastaHeader,
-    /// At the first byte of a line of a record, past its header, which it leaves to the next
-    /// state: a `>` ends the record, then [`Self::FastaHeader`]; anything else starts a line of
-    /// its sequence, [`Self::FastaSequence`] while the record has no bases yet, else
-    /// [`Self::FastaWrapped`]. `wrapped` once the record went over to that.
+    /// At the first byte of a line, which it leaves to the next state: a `>` ends the record,
+    /// then [`Self::FastaHeader`]; a `;` starts a comment, [`Self::FastaComment`]; anything else
+    /// starts a line of the record's sequence, [`Self::FastaSequence`] while the record has no
+    /// bases yet, else [`Self::FastaWrapped`]. `wrapped` once the record went over to that. An
+    /// input starts here too: sequence lines before any header make a record with no header,
+    /// as the line reader also reads them.
     FastaLineStart { wrapped: bool },
+    /// In a comment line, from its `;` to its line feed: skipped whole, wherever a line can
+    /// start. Then [`Self::FastaLineStart`], with the same `wrapped`.
+    FastaComment { wrapped: bool },
     /// In the first sequence line of a record, to its line feed: written a whole block at a time
     /// with no shifting, as a FASTQ sequence is. A record on one line, as assemblies often are,
     /// needs nothing else. Then [`Self::FastaLineStart`].
@@ -115,7 +120,7 @@ impl ParserState {
     /// The state an input of `format` starts in.
     fn start(format: DnaSequencesFileType) -> Self {
         match format {
-            DnaSequencesFileType::FASTA => Self::FastaHeader,
+            DnaSequencesFileType::FASTA => Self::FastaLineStart { wrapped: false },
             DnaSequencesFileType::FASTQ => Self::FastqHeader,
             DnaSequencesFileType::GFA => panic!("the SIMD parser reads FASTA and FASTQ only"),
         }
@@ -339,6 +344,15 @@ impl SequenceParser {
                     ParserState::FastaLineStart { wrapped } => {
                         self.parse_fasta_line_start(block, processed_index, wrapped, &mut callback);
                     }
+                    ParserState::FastaComment { wrapped } => {
+                        processed_index = match masks.line_feed_from(processed_index) {
+                            Some(line_feed) => {
+                                self.state = ParserState::FastaLineStart { wrapped };
+                                line_feed + 1
+                            }
+                            None => block.len(),
+                        };
+                    }
                     ParserState::FastaSequence => {
                         processed_index = match self.copy_line_blocks(
                             block,
@@ -484,9 +498,12 @@ impl SequenceParser {
         wrapped: bool,
         callback: &mut impl FnMut(&SequenceBuffer),
     ) {
-        self.state = if block[processed_index] == b'>' {
+        let first = block[processed_index];
+        self.state = if first == b'>' {
             self.end_record(callback);
             ParserState::FastaHeader
+        } else if first == b';' {
+            ParserState::FastaComment { wrapped }
         } else if self.record_bases == 0 {
             ParserState::FastaSequence
         } else {
@@ -715,6 +732,7 @@ impl SequenceParser {
     pub fn finish(&mut self, mut callback: impl FnMut(&SequenceBuffer)) {
         match self.state {
             ParserState::FastaLineStart { .. }
+            | ParserState::FastaComment { .. }
             | ParserState::FastaSequence
             | ParserState::FastaWrapped
             | ParserState::FastqSequence => self.end_record(&mut callback),
@@ -849,11 +867,11 @@ mod tests {
     fn a_new_parser_takes_the_detected_kernel_and_reads_fasta() {
         let parser = SequenceParser::new(false, None);
         assert_eq!(parser.kernel(), MaskKernel::detect());
-        assert_eq!(parser.state, ParserState::FastaHeader);
+        assert_eq!(parser.state, ParserState::FastaLineStart { wrapped: false });
     }
 
     #[test]
-    fn reset_starts_each_format_at_its_header() {
+    fn reset_starts_each_format_at_its_first_line() {
         let mut parser = SequenceParser::new(false, None);
         parser.reset(DnaSequencesFileType::FASTQ);
         assert_eq!(parser.state, ParserState::FastqHeader);
@@ -862,7 +880,7 @@ mod tests {
             DnaSequencesFileType::FASTQ
         ));
         parser.reset(DnaSequencesFileType::FASTA);
-        assert_eq!(parser.state, ParserState::FastaHeader);
+        assert_eq!(parser.state, ParserState::FastaLineStart { wrapped: false });
     }
 
     #[test]
@@ -1261,6 +1279,46 @@ mod tests {
                     String::from_utf8_lossy(input)
                 );
             }
+        }
+    }
+
+    #[test]
+    fn fasta_comment_lines_are_skipped_wherever_a_line_starts() {
+        // Before the first header, after a header, between the lines of a record copied a block
+        // at a time and of one already shifted, between records, at the end without a line
+        // feed; one longer than a block; with Windows line endings in the second input.
+        let long = format!(";{}", "x".repeat(2 * BLOCK_SIZE));
+        let input = format!(
+            ";first\n>r1 a\n;after the header\nACGT\n;inside\nGGCC\n;again\nTT\n{long}\n\
+             >r2\nAAAA\n;between records\n>r3\nCC\n;last"
+        );
+        let expected = [
+            Record::expected(b">r1 a", b"ACGTGGCCTT"),
+            Record::expected(b">r2", b"AAAA"),
+            Record::expected(b">r3", b"CC"),
+        ];
+        for kernel in supported_kernels() {
+            for input in [input.clone(), input.replace('\n', "\r\n")] {
+                assert_eq!(
+                    parse_fasta(kernel, input.as_bytes(), BLOCK_SIZE),
+                    expected,
+                    "{kernel:?}, {input:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fasta_lines_before_any_header_make_a_record_without_one() {
+        for kernel in supported_kernels() {
+            assert_eq!(
+                parse_fasta(kernel, b"ACGT\nGG\n>r\nTT\n", BLOCK_SIZE),
+                [
+                    Record::expected(b"", b"ACGTGG"),
+                    Record::expected(b">r", b"TT")
+                ],
+                "{kernel:?}"
+            );
         }
     }
 

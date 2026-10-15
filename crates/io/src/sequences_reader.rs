@@ -66,8 +66,10 @@ impl FastaParser {
     ) {
         let intermediate = &mut self.intermediate;
 
-        if self.on_comment {
-            self.on_comment = !partial;
+        // A comment line goes on for as long as its parts are partial; the end of the input ends
+        // it too.
+        if self.on_comment && !finished {
+            self.on_comment = partial;
         }
         // If a new ident line is found (or it's the last line)
         else if finished || (self.new_line && line.len() > 0 && line[0] == b'>') {
@@ -88,7 +90,8 @@ impl FastaParser {
 
             self.state = if partial { IDENT_STATE } else { SEQ_STATE };
         } else if self.new_line && line.len() > 0 && line[0] == b';' {
-            self.on_comment = true;
+            // A comment line, skipped, also in the parts that follow if it does not end here.
+            self.on_comment = partial;
         } else if self.state == IDENT_STATE {
             if self.copy_ident {
                 intermediate[IDENT_STATE].extend_from_slice(line);
@@ -255,7 +258,6 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    // No `;` comment line: the parser drops the complete lines that follow one.
     const FASTA: &[u8] = b">r1 desc\r\nACGTacgt\r\nNNXY\r\n>r2\nGGGG\nCC";
     const FASTQ: &[u8] = b"@q1\nACGTN\n+\nIIIII\n@q2 x\nacgt\n+q2 x\nIIII\n";
 
@@ -331,6 +333,38 @@ mod tests {
         expected.push((">long".into(), String::from_utf8(long).unwrap()));
         expected.extend(fastq_records());
         assert!(parse(&archive) == expected);
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn fasta_comment_lines_are_skipped_wherever_a_line_starts() {
+        let directory = std::env::temp_dir().join(format!(
+            "ggcat-sequences-reader-comments-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+
+        // Before the first header, after a header, between sequence lines, between records, and
+        // at the end without a line feed.
+        let fasta = directory.join("comments.fa");
+        std::fs::write(
+            &fasta,
+            b";first\n>r1 a\n;after the header\nACGT\n;inside\nGGCC\n>r2\nAAAA\n;between\n>r3\nCC\n;last",
+        )
+        .unwrap();
+        let expected = records(&[(">r1 a", "ACGTGGCC"), (">r2", "AAAA"), (">r3", "CC")]);
+        assert_eq!(parse(&fasta), expected);
+
+        // A comment longer than a chunk, so it reaches the parser in parts.
+        let comment = [&b";"[..], &vec![b'x'; 5 << 20]].concat();
+        let long = directory.join("long.fa");
+        std::fs::write(
+            &long,
+            [&b">r1\nACGT\n"[..], &comment, b"\nGG\n>r2\nTT\n"].concat(),
+        )
+        .unwrap();
+        assert_eq!(parse(&long), records(&[(">r1", "ACGTGG"), (">r2", "TT")]));
 
         std::fs::remove_dir_all(directory).unwrap();
     }
