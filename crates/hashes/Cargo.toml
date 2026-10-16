@@ -22,9 +22,14 @@ bincode = "2.0.1"
 name = "hashes-bench"
 harness = false
 
+[[bench]]
+name = "simd-nthash-bench"
+harness = false
+
 [dev-dependencies]
 pcg_rand = "0.13.0"
 rand = "0.8.5"
 utils = { package = "ggcat_utils", path = "../utils" }
 io = { package = "ggcat_io", path = "../io" }
 criterion = "0.5.1"
+rayon = "1.11.0"

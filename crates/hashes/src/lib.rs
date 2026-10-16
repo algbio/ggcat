@@ -11,6 +11,7 @@ pub mod dummy_hasher;
 pub mod extremal;
 pub mod fw_rkhash;
 pub mod rolling;
+pub mod simd;
 
 use std::fmt::{Debug, Display};
 use std::hash::{BuildHasher, Hash};

@@ -1358,6 +1358,7 @@ dependencies = [
  "ggcat_utils",
  "pcg_rand",
  "rand 0.8.5",
+ "rayon",
 ]
 
 [[package]]
