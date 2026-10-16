@@ -9,8 +9,7 @@ use colors::{
 use config::{KEEP_FILES, MEMORY_THRESHOLD_CLEAR_START_OFFSET, MINIMUM_GLOBAL_MEMORY};
 pub use ggcat_logging::MessageLevel;
 use ggcat_logging::{UnrecoverableErrorLogging, info, warn};
-use io::sequences_stream::GenericSequencesStream;
-use io::sequences_stream::file::FileSequencesStream;
+use io::sequences_reader::SequencesReader;
 use parallel_processor::enable_counters_logging;
 use parallel_processor::memory_data_size::MemoryDataSize;
 use parallel_processor::memory_fs::MemoryFs;
@@ -462,13 +461,13 @@ impl GGCATInstance {
                 output_function,
             )?;
         } else {
-            FileSequencesStream::new().read_block(
-                &(graph_input.as_ref().to_path_buf(), None),
-                false,
+            // Each record's header as it is in the file, which the line reader keeps.
+            SequencesReader::new().process_file_extended(
+                graph_input.as_ref(),
+                |seq| output_function(seq.ident_data, &[], false),
                 Some(kmer_length - 1),
-                |seq, __info| {
-                    output_function(seq.ident_data, &[], false);
-                },
+                false,
+                false,
             );
         }
 

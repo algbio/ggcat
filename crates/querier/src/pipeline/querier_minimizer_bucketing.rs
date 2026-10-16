@@ -6,6 +6,7 @@ use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use hashes::{HashFunction, HashableSequence};
+use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{SequenceExtraDataTempBufferManagement, TempBuffer};
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::file::FileSequencesStream;
@@ -87,6 +88,9 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
 
     type ExecutorType = QuerierMinimizerBucketingExecutor<CX>;
 
+    // A query is numbered by its record in the query file, however many sequences it gives.
+    const RECORD_INDICES: bool = true;
+
     fn new(
         global_data: &Arc<MinimizerBucketingCommonData<Self::GlobalData>>,
     ) -> Self::ExecutorType {
@@ -94,6 +98,15 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
             minimizer_queue: BatchMinQueue::new(global_data.k - global_data.m + 1),
             global_data: global_data.clone(),
             _phantom: PhantomData,
+        }
+    }
+
+    fn input_records(global_data: &Self::GlobalData, stream_info: &Self::StreamInfo, records: u64) {
+        // Every query, those that give no sequence included, as the counts are kept by index.
+        if let FileType::Query = stream_info {
+            global_data
+                .queries_count
+                .store(records as usize, Ordering::Relaxed);
         }
     }
 }
@@ -106,7 +119,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
         stream_info: &<QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
         sequence_info: SequenceInfo,
         read_index: u64,
-        sequence: &DnaSequence<'_, &[u8]>,
+        sequence: &DnaSequence<'_, CompressedRead<'_>>,
         preprocess_info: &mut <QuerierMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
@@ -142,13 +155,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
 
                 ReadType::Graph { color }
             }
-            FileType::Query => {
-                self.global_data
-                    .global_data
-                    .queries_count
-                    .fetch_add(1, Ordering::Relaxed);
-                ReadType::Query(NonZeroU64::new(read_index + 1).unwrap())
-            }
+            FileType::Query => ReadType::Query(NonZeroU64::new(read_index + 1).unwrap()),
         }
     }
 
@@ -272,7 +279,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
             },
             None,
             CX::COLORS_ENABLED,
-            0,
             chunking_size_threshold,
             target_chunk_size,
             false,

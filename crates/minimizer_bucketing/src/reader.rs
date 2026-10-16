@@ -3,12 +3,10 @@ use crate::queue_data::MinimizerBucketingQueueData;
 use crate::{MinimizerBucketingExecutionContext, MinimizerBucketingExecutorFactory};
 use ggcat_logging::stats;
 use io::sequences_stream::GenericSequencesStream;
-use nightly_quirks::branch_pred::unlikely;
 use parallel_processor::execution_manager::executor::{
     AsyncExecutor, ExecutorAddressOperations, ExecutorReceiver,
 };
 use parallel_processor::execution_manager::objects_pool::PoolObjectTrait;
-use replace_with::replace_with_or_abort;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::sync::atomic::Ordering;
@@ -41,125 +39,78 @@ impl<Factory: MinimizerBucketingExecutorFactory, SequencesStream: GenericSequenc
 
         let mut sequences_stream = SequencesStream::new();
 
-        while let Some(mut input_packet) = ops.receive_packet() {
-            let mut data_packet = packets_pool.alloc_packet();
+        while let Some(input_packet) = ops.receive_packet() {
             let stream_info = input_packet.stream_info.clone();
-
-            let data = data_packet.deref_mut();
-            data.stream_info = stream_info.clone();
-            data.start_read_index = 0;
-
-            let mut read_index = 0;
 
             context.current_file.fetch_add(1, Ordering::Relaxed);
 
             stats!(
                 let mut stat_start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+                let mut last_stats_id = None;
             );
 
-            sequences_stream.read_block(
-                &mut input_packet.sequences,
-                context.copy_ident,
-                context.partial_read_copyback,
-                |x, seq_info| {
-                    let mut data = data_packet.deref_mut();
+            let records = sequences_stream.read_block(
+                &input_packet.sequences,
+                &context.parser_settings,
+                |buffer, sequence_info| {
+                    let mut packet = packets_pool.alloc_packet();
+                    let data = packet.deref_mut();
+                    // The parser goes on in the buffer the packet held, emptied by its reset.
+                    let empty = std::mem::replace(&mut data.buffer, buffer);
+                    data.sequence_info = sequence_info;
+                    data.stream_info = stream_info.clone();
 
-                    if x.seq.len() < context.common.ignored_length {
-                        return;
-                    }
+                    stats!(
+                        let stat_end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
+                        let chunk_index = { let counter = &mut ggcat_logging::get_stat!(stats.input_counter); *counter += 1; *counter };
+                        let stat_seq_count = data.buffer.len();
+                        let stat_seq_size = data.get_total_size();
+                        let stats_id = ggcat_logging::generate_stat_id!();
+                        data.stats_block_id = stats_id;
+                        last_stats_id = Some(stats_id);
+                    );
 
-                    if unlikely(!data.push_sequences(x, seq_info)) {
-                        assert!(
-                            data.start_read_index as usize + data.sequences.len()
-                                <= read_index as usize
-                        );
+                    context
+                        .executor_group_address
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .send_packet(packet);
 
-                        replace_with_or_abort(&mut data_packet, |packet| {
-                            stats!(
-                                let stat_end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
-                                let chunk_index = { let counter = &mut ggcat_logging::get_stat!(stats.input_counter); *counter += 1; *counter };
-                                let stat_seq_count = packet.sequences.len();
-                                let stat_seq_size = packet.get_total_size();
-                                let stats_id = ggcat_logging::generate_stat_id!();
-                                let mut packet = packet;
-                                packet.stats_block_id = stats_id;
-                            );
-
-                            context.executor_group_address
-                                .read()
-                                .as_ref()
-                                .unwrap()
-                                .send_packet(packet);
-
-                            let new_packet = packets_pool.alloc_packet();
-
-                            stats!(let finished_send_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed(););
-                            stats!(
-                                stats.assembler.input_chunks.push(ggcat_logging::stats::InputChunkStats {
-                                    id: stats_id,
-                                    index: chunk_index,
-                                    sequences_count: stat_seq_count,
-                                    sequences_size: stat_seq_size,
-                                    start_time: stat_start_time.into(),
-                                    end_time: stat_end_time.into(),
-                                    finished_send_time: finished_send_time.into(),
-                                    is_last: false,
-                                });
-                            );
-                            stats!(stat_start_time = finished_send_time);
-
-                            new_packet
+                    stats!(let finished_send_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed(););
+                    stats!(
+                        stats.assembler.input_chunks.push(ggcat_logging::stats::InputChunkStats {
+                            id: stats_id,
+                            index: chunk_index,
+                            sequences_count: stat_seq_count,
+                            sequences_size: stat_seq_size,
+                            start_time: stat_start_time.into(),
+                            end_time: stat_end_time.into(),
+                            finished_send_time: finished_send_time.into(),
+                            is_last: false,
                         });
+                    );
+                    stats!(stat_start_time = finished_send_time);
 
-                        // mem_tracker.update_memory_usage(&[max_len]);
-
-                        data = data_packet.deref_mut();
-                        data.stream_info = stream_info.clone();
-                        data.start_read_index = read_index;
-
-                        if !data.push_sequences(x, seq_info) {
-                            panic!("BUG: Out of memory!");
-                        }
-                    }
-                    read_index += 1;
+                    empty
                 },
             );
 
-            if data_packet.sequences.len() > 0 {
-                stats!(
-                    let stat_end_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
-                    let chunk_index = { let counter = &mut ggcat_logging::get_stat!(stats.input_counter); *counter += 1; *counter };
-                    let stat_seq_count = data_packet.sequences.len();
-                    let stat_seq_size = data_packet.get_total_size();
-                    let stats_id = ggcat_logging::generate_stat_id!();
-                    data_packet.stats_block_id = stats_id;
-                );
+            // Which packet was the input's last is only known once it is read.
+            stats!(if let Some(id) = last_stats_id {
+                let mut stats = ggcat_logging::stats::STATS.lock();
+                if let Some(chunk) = stats
+                    .assembler
+                    .input_chunks
+                    .iter_mut()
+                    .rev()
+                    .find(|chunk| chunk.id == id)
+                {
+                    chunk.is_last = true;
+                }
+            });
 
-                context
-                    .executor_group_address
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .send_packet(data_packet);
-
-                stats!(
-                    let finished_send_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
-                );
-
-                stats!(
-                    stats.assembler.input_chunks.push(ggcat_logging::stats::InputChunkStats {
-                        id: stats_id,
-                        index: chunk_index,
-                        sequences_count: stat_seq_count,
-                        sequences_size: stat_seq_size,
-                        start_time: stat_start_time.into(),
-                        end_time: stat_end_time.into(),
-                        finished_send_time: finished_send_time.into(),
-                        is_last: true,
-                    });
-                );
-            }
-
+            Factory::input_records(&context.common.global_data, &stream_info, records);
             context.processed_files.fetch_add(1, Ordering::Relaxed);
         }
     }

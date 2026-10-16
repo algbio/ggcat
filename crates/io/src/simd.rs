@@ -3,15 +3,17 @@
 
 use crate::binary_reader::{BinaryEvent, GenericBinaryReader, is_archive};
 use simd_accel::masks::MaskKernel;
-use simd_accel::sequence_parser::{
-    BLOCK_SIZE, DEFAULT_BASES_CAPACITY, DEFAULT_IDENT_CAPACITY, SequenceParser,
-};
+use simd_accel::sequence_parser::BLOCK_SIZE;
 use std::path::Path;
 use utils::dna_sequence::DnaSequencesFileType;
 
 /// What the reader hands out, from `simd-accel`: its sequences turn into io's `CompressedRead`
 /// with `.into()`.
 pub use simd_accel::sequence_buffer::{SequenceBuffer, SequenceDescription};
+/// How each source's parser is set up; also the parser's own defaults.
+pub use simd_accel::sequence_parser::{
+    DEFAULT_BASES_CAPACITY, DEFAULT_IDENT_CAPACITY, ParserSettings, SequenceParser,
+};
 
 /// How much the parser gets at once: a whole number of its blocks, as it requires of every
 /// slice but an input's last, and many of them, so that the kernel it runs costs a branch per
@@ -42,32 +44,25 @@ impl SimdSequencesReader {
 
     /// As [`SequencesReader::process_file_extended`], with the bases packed and handed to
     /// `func` a [`SequenceBuffer`] at a time, by value: `func` gives back a buffer for the
-    /// parser to fill later, a new one or one it is done with. The source gets a parser, which
-    /// every file, or every member of an archive, is fed to a chunk at a time, after a reset to
-    /// its format.
-    /// Each file's last buffer is handed over at its end; `line_split_copyback` splits the
-    /// sequences too long for a buffer, as the line reader's does. The sequences hold only ACGT
-    /// bases, split at the other bytes, and those shorter than `min_seqlen` are left out.
+    /// parser to fill later, a new one or one it is done with. The source gets a parser of
+    /// `settings`, which every file, or every member of an archive, is fed to a chunk at a time,
+    /// after a reset to its format. Each file's last buffer is handed over at its end; a
+    /// copyback splits the sequences too long for a buffer, as the line reader's does. The
+    /// sequences hold only ACGT bases, split at the other bytes, and those shorter than
+    /// `min_seqlen` are left out. Returns how many records the source held, as
+    /// [`SequenceParser::records`] counts them: the record indices, if asked for, go on across
+    /// the members of an archive.
     ///
     /// [`SequencesReader::process_file_extended`]: crate::sequences_reader::SequencesReader::process_file_extended
     pub fn process_file_extended<F: FnMut(SequenceBuffer) -> SequenceBuffer>(
         &mut self,
         source: impl AsRef<Path>,
+        settings: &ParserSettings,
         mut func: F,
-        line_split_copyback: Option<usize>,
-        copy_ident: bool,
-        min_seqlen: usize,
         remove_file: bool,
-    ) {
+    ) -> u64 {
         let source = source.as_ref();
-        let mut parser = SequenceParser::with_kernel(
-            self.kernel,
-            copy_ident,
-            line_split_copyback,
-            min_seqlen,
-            DEFAULT_BASES_CAPACITY,
-            DEFAULT_IDENT_CAPACITY,
-        );
+        let mut parser = settings.parser(self.kernel);
         // Whether the file being read is a sequence file the parser reads, not one skipped.
         let mut parsing = false;
 
@@ -112,5 +107,6 @@ impl SimdSequencesReader {
         if remove_file {
             std::fs::remove_file(source).unwrap();
         }
+        parser.records()
     }
 }

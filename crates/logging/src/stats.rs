@@ -12,7 +12,7 @@ use std::{
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StatId(u64);
 
 #[derive(Clone, Copy, Default)]

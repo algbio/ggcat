@@ -244,7 +244,6 @@ pub fn kmers_merge<
                 min(m, 2)
             }, // m
             buckets_count,
-            k,
             BucketsCount::ONE,
             (),
             MH::CANONICAL,

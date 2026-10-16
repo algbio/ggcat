@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum DnaSequencesFileType {
     FASTA,
     FASTQ,

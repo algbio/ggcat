@@ -1,12 +1,11 @@
 use ggcat_logging::UnrecoverableErrorLogging;
 
-use crate::sequences_reader::SequencesReader;
 use crate::sequences_stream::{GenericSequencesStream, SequenceInfo};
+use crate::simd::{ParserSettings, SequenceBuffer, SimdSequencesReader};
 use std::path::PathBuf;
-use utils::dna_sequence::DnaSequence;
 
 pub struct FileSequencesStream {
-    sequences_reader: SequencesReader,
+    sequences_reader: SimdSequencesReader,
 }
 
 impl FileSequencesStream {
@@ -22,23 +21,22 @@ impl GenericSequencesStream for FileSequencesStream {
 
     fn new() -> Self {
         Self {
-            sequences_reader: SequencesReader::new(),
+            sequences_reader: SimdSequencesReader::new(),
         }
     }
 
     fn read_block(
         &mut self,
         block: &Self::SequenceBlockData,
-        copy_ident_data: bool,
-        partial_read_copyback: Option<usize>,
-        mut callback: impl FnMut(DnaSequence<&[u8]>, SequenceInfo),
-    ) {
+        settings: &ParserSettings,
+        mut callback: impl FnMut(SequenceBuffer, SequenceInfo) -> SequenceBuffer,
+    ) -> u64 {
+        let info = SequenceInfo { color: block.1 };
         self.sequences_reader.process_file_extended(
             &block.0,
-            |x| callback(x, SequenceInfo { color: block.1 }),
-            partial_read_copyback,
-            copy_ident_data,
+            settings,
+            |buffer| callback(buffer, info),
             false,
-        );
+        )
     }
 }

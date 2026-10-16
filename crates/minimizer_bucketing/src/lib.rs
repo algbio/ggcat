@@ -15,9 +15,8 @@ use crate::queue_data::MinimizerBucketingQueueData;
 use crate::reader::MinimizerBucketingFilesReader;
 use bincode::{Decode, Encode};
 use config::{
-    BucketIndexType, DEFAULT_OUTPUT_BUFFER_SIZE, DEFAULT_PER_CPU_BUFFER_SIZE,
-    MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE, MINIMIZER_DEDUPLICATION_MEMORY,
-    READ_INTERMEDIATE_CHUNKS_SIZE, SwapPriority,
+    BucketIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, MINIMIZER_BUCKETS_COMPACTED_CHECKPOINT_SIZE,
+    MINIMIZER_DEDUPLICATION_MEMORY, READ_INTERMEDIATE_CHUNKS_SIZE, SwapPriority,
 };
 use ggcat_logging::stats;
 use hashes::HashableSequence;
@@ -26,8 +25,8 @@ use io::concurrent::temp_reads::creads_utils::CompressedReadsBucketData;
 use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression, TempBuffer,
 };
-use io::sequences_splitter::split_and_compress_sequences;
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
+use io::simd::{DEFAULT_IDENT_CAPACITY, ParserSettings};
 use parallel_processor::buckets::writers::compressed_binary_writer::{
     CompressedBinaryWriter, CompressionLevelInfo, EncoderMemoryUsage,
 };
@@ -138,8 +137,23 @@ pub trait MinimizerBucketingExecutorFactory: Sync + Send + Sized + 'static {
 
     type ExecutorType: MinimizerBucketingExecutor<Self>;
 
+    /// Whether each sequence goes to `preprocess_dna_sequence` with the index of its record in
+    /// its input, all the pieces of one record sharing it; otherwise with 0. Costs a `u64` for
+    /// each sequence read.
+    const RECORD_INDICES: bool = false;
+
     fn new(global_data: &Arc<MinimizerBucketingCommonData<Self::GlobalData>>)
     -> Self::ExecutorType;
+
+    /// Called by a reader once it has read an input of `stream_info`: `records` is how many
+    /// records it held, numbered as the record indices are, those that gave no sequence
+    /// included.
+    fn input_records(
+        _global_data: &Self::GlobalData,
+        _stream_info: &Self::StreamInfo,
+        _records: u64,
+    ) {
+    }
 }
 
 pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>:
@@ -150,7 +164,7 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
         stream_info: &Factory::StreamInfo,
         sequence_info: SequenceInfo,
         read_index: u64,
-        sequence: &DnaSequence<'_, &[u8]>,
+        sequence: &DnaSequence<'_, CompressedRead<'_>>,
         preprocess_info: &mut Factory::PreprocessInfo,
     );
 
@@ -181,7 +195,6 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
 pub struct MinimizerBucketingCommonData<GlobalData> {
     pub k: usize,
     pub m: usize,
-    pub ignored_length: usize,
     pub canonical: bool,
     pub buckets_count: BucketsCount,
     pub second_buckets_count: BucketsCount,
@@ -194,7 +207,6 @@ impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
         k: usize,
         m: usize,
         buckets_count: BucketsCount,
-        ignored_length: usize,
         second_buckets_count: BucketsCount,
         global_data: GlobalData,
         canonical: bool,
@@ -202,7 +214,6 @@ impl<GlobalData> MinimizerBucketingCommonData<GlobalData> {
         Self {
             k,
             m,
-            ignored_length,
             buckets_count,
             second_buckets_count,
             compaction_offsets: (0..buckets_count.total_buckets_count)
@@ -245,8 +256,8 @@ pub struct MinimizerBucketingExecutionContext<
 
     pub packets_pool: PacketsPool<MinimizerBucketingQueueData<E::StreamInfo>>,
 
-    pub partial_read_copyback: Option<usize>,
-    pub copy_ident: bool,
+    /// How the readers parse their inputs into the packets' buffers.
+    pub parser_settings: ParserSettings,
 
     pub forward_only: bool,
 }
@@ -356,8 +367,6 @@ impl<
             let thread_id = ggcat_logging::generate_stat_id!();
         );
 
-        let mut compress_buffer = Vec::with_capacity(DEFAULT_OUTPUT_BUFFER_SIZE);
-
         while let Some(input_packet) = ops.receive_packet() {
             let mut total_bases = 0;
             let mut buckets_processor = Executor::new(&context.common);
@@ -371,81 +380,81 @@ impl<
                 let stat_start_time = ggcat_logging::get_stat_opt!(stats.start_time).elapsed();
             );
 
-            for (index, (x, seq_info)) in input_packet.iter_sequences().enumerate() {
-                total_bases += x.seq.len() as u64;
+            // Already split at the bytes that are not ACGT, those shorter than k left out.
+            let buffer = &input_packet.buffer;
+            let record_indices = buffer.record_indices();
+            for (index, sequence) in buffer.sequences().enumerate() {
+                let sequence = DnaSequence {
+                    ident_data: sequence.ident_data,
+                    seq: CompressedRead::from(sequence.seq),
+                    format: sequence.format,
+                };
+                let bases = sequence.seq.bases_count();
+                total_bases += bases as u64;
                 buckets_processor.preprocess_dna_sequence(
                     &input_packet.stream_info,
-                    seq_info,
-                    input_packet.start_read_index + index as u64,
-                    &x,
+                    input_packet.sequence_info,
+                    record_indices.get(index).copied().unwrap_or(0),
+                    &sequence,
                     &mut preprocess_info,
                 );
 
-                split_and_compress_sequences(
-                    &mut compress_buffer,
-                    context.common.k,
-                    &x,
-                    &mut |sequence: CompressedRead, range: std::range::Range<usize>| {
-                        buckets_processor.process_sequence::<_, _, true>(
-                            &preprocess_info,
+                buckets_processor.process_sequence::<_, _, true>(
+                    &preprocess_info,
+                    sequence.seq,
+                    0..bases,
+                    0,
+                    context.common.buckets_count.normal_buckets_count_log,
+                    context.common.second_buckets_count.normal_buckets_count_log,
+                    |info| {
+                        let PushSequenceInfo {
+                            bucket,
+                            second_bucket,
                             sequence,
-                            range.into(),
-                            0,
-                            context.common.buckets_count.normal_buckets_count_log,
-                            context.common.second_buckets_count.normal_buckets_count_log,
-                            |info| {
-                                let PushSequenceInfo {
-                                    bucket,
-                                    second_bucket,
-                                    sequence,
-                                    minimizer_pos,
-                                    flags,
-                                    extra_data,
-                                    temp_buffer,
-                                    rc,
-                                } = info;
+                            minimizer_pos,
+                            flags,
+                            extra_data,
+                            temp_buffer,
+                            rc,
+                        } = info;
 
-                                let chunking_status = tmp_reads_buffer.add_element_extended(
-                                    bucket,
-                                    &extra_data,
-                                    temp_buffer,
-                                    &CompressedReadsBucketData::new_packed_opt_rc(
-                                        sequence,
-                                        flags,
-                                        second_bucket as u8,
-                                        rc,
-                                        minimizer_pos,
-                                    ),
-                                );
-
-                                // A new chunk was produced, compact it
-                                if let ChunkingStatus::NewChunk = chunking_status {
-                                    if compactor.is_none() {
-                                        *compactor = Some(BucketsCompactor::new(
-                                            context.common.k,
-                                            &context.common.second_buckets_count,
-                                            context.target_chunk_size,
-                                        ));
-                                    }
-                                    let compactor =
-                                        unsafe { compactor.as_mut().unwrap_unchecked() };
-
-                                    // Only some of the buckets may have stood down, and the
-                                    // set does not exist at all until one does.
-                                    let narrow = context.narrow_buckets.peek();
-                                    compactor.compact_buckets(
-                                        &uncompacted_buckets.get_stored_buckets()[bucket as usize],
-                                        narrow
-                                            .as_ref()
-                                            .map(|n| &n.get_stored_buckets()[bucket as usize]),
-                                        &context.compacted_buckets.as_ref().unwrap()
-                                            [bucket as usize],
-                                        bucket as usize,
-                                        &context.output_path,
-                                    );
-                                }
-                            },
+                        let chunking_status = tmp_reads_buffer.add_element_extended(
+                            bucket,
+                            &extra_data,
+                            temp_buffer,
+                            &CompressedReadsBucketData::new_packed_opt_rc(
+                                sequence,
+                                flags,
+                                second_bucket as u8,
+                                rc,
+                                minimizer_pos,
+                            ),
                         );
+
+                        // A new chunk was produced, compact it
+                        if let ChunkingStatus::NewChunk = chunking_status {
+                            if compactor.is_none() {
+                                *compactor = Some(BucketsCompactor::new(
+                                    context.common.k,
+                                    &context.common.second_buckets_count,
+                                    context.target_chunk_size,
+                                ));
+                            }
+                            let compactor = unsafe { compactor.as_mut().unwrap_unchecked() };
+
+                            // Only some of the buckets may have stood down, and the
+                            // set does not exist at all until one does.
+                            let narrow = context.narrow_buckets.peek();
+                            compactor.compact_buckets(
+                                &uncompacted_buckets.get_stored_buckets()[bucket as usize],
+                                narrow
+                                    .as_ref()
+                                    .map(|n| &n.get_stored_buckets()[bucket as usize]),
+                                &context.compacted_buckets.as_ref().unwrap()[bucket as usize],
+                                bucket as usize,
+                                &context.output_path,
+                            );
+                        }
                     },
                 );
 
@@ -682,7 +691,6 @@ impl GenericMinimizerBucketing {
         global_data: Executor::GlobalData,
         partial_read_copyback: Option<usize>,
         copy_ident: bool,
-        ignored_length: usize,
         chunking_size_threshold: Option<u64>,
         target_chunk_size: u64,
         forward_only: bool,
@@ -768,7 +776,6 @@ impl GenericMinimizerBucketing {
                 k,
                 m,
                 buckets_count,
-                ignored_length,
                 second_buckets_count,
                 global_data,
                 !forward_only,
@@ -782,13 +789,17 @@ impl GenericMinimizerBucketing {
 
             target_chunk_size,
 
-            packets_pool: PacketsPool::new(
-                compute_threads_count * 4,
-                READ_INTERMEDIATE_CHUNKS_SIZE,
-            ),
-            partial_read_copyback,
+            packets_pool: PacketsPool::new(compute_threads_count * 4, ()),
+            // A packet takes as many bases as it took bytes when sequences went there as text.
+            parser_settings: ParserSettings {
+                keep_ident: copy_ident,
+                copyback_size: partial_read_copyback,
+                min_seqlen: k,
+                record_indices: Executor::RECORD_INDICES,
+                bases_capacity: READ_INTERMEDIATE_CHUNKS_SIZE / 4,
+                ident_capacity: DEFAULT_IDENT_CAPACITY,
+            },
             read_threads_count,
-            copy_ident,
             forward_only,
         });
 

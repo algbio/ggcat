@@ -1,7 +1,9 @@
 use crate::sequences_stream::file::FileSequencesStream;
 use crate::sequences_stream::{GenericSequencesStream, SequenceInfo};
+use crate::simd::{ParserSettings, SequenceBuffer};
+use simd_accel::masks::MaskKernel;
 use std::sync::Arc;
-use utils::dna_sequence::DnaSequence;
+use utils::dna_sequence::{DnaSequence, DnaSequencesFileType};
 
 pub trait DynamicSequencesStream: Sync + Send + 'static {
     fn read_block(
@@ -35,41 +37,58 @@ impl GeneralSequenceBlockData {
 
 pub struct GeneralSequencesStream {
     file_reader: Option<FileSequencesStream>,
+    /// The kernel the parsers of dynamic streams run, chosen once for this CPU.
+    kernel: MaskKernel,
 }
 
 impl GenericSequencesStream for GeneralSequencesStream {
     type SequenceBlockData = GeneralSequenceBlockData;
 
     fn new() -> Self {
-        Self { file_reader: None }
+        Self {
+            file_reader: None,
+            kernel: MaskKernel::detect(),
+        }
     }
 
     fn read_block(
         &mut self,
         block: &Self::SequenceBlockData,
-        copy_ident_data: bool,
-        partial_read_copyback: Option<usize>,
-        mut callback: impl FnMut(DnaSequence<&[u8]>, SequenceInfo),
-    ) {
+        settings: &ParserSettings,
+        mut callback: impl FnMut(SequenceBuffer, SequenceInfo) -> SequenceBuffer,
+    ) -> u64 {
         match block {
-            GeneralSequenceBlockData::FILE(block) => {
-                if self.file_reader.is_none() {
-                    self.file_reader = Some(FileSequencesStream::new());
-                }
-                self.file_reader.as_mut().unwrap().read_block(
-                    block,
-                    copy_ident_data,
-                    partial_read_copyback,
-                    callback,
-                );
-            }
+            GeneralSequenceBlockData::FILE(block) => self
+                .file_reader
+                .get_or_insert_with(FileSequencesStream::new)
+                .read_block(block, settings, callback),
             GeneralSequenceBlockData::Dynamic((reader, index)) => {
+                // The stream hands over a record at a time, each with its own format and
+                // information, and a buffer holds sequences of only one of each: a record that
+                // changes either hands the buffer over first.
+                let mut parser = settings.parser(self.kernel);
+                let mut current: Option<(DnaSequencesFileType, SequenceInfo)> = None;
                 reader.read_block(
                     *index,
-                    copy_ident_data,
-                    partial_read_copyback,
-                    &mut callback,
+                    settings.keep_ident,
+                    settings.copyback_size,
+                    &mut |sequence, info| {
+                        if current != Some((sequence.format, info)) {
+                            if let Some((_, current_info)) = current {
+                                parser.finish(|buffer| callback(buffer, current_info));
+                            }
+                            parser.reset_for_records(sequence.format);
+                            current = Some((sequence.format, info));
+                        }
+                        parser.push_record(sequence.ident_data, sequence.seq, |buffer| {
+                            callback(buffer, info)
+                        });
+                    },
                 );
+                if let Some((_, info)) = current {
+                    parser.finish(|buffer| callback(buffer, info));
+                }
+                parser.records()
             }
         }
     }

@@ -59,11 +59,13 @@ fn ident_of(parser: &SequenceParser) -> &[u8] {
     &parser.buffer.ident[parser.record_ident_start..]
 }
 
-/// A sequence as a buffer hands it over: its header, and its bases' codes, one per base.
+/// A sequence as a buffer hands it over: its header, its bases' codes, one per base, and its
+/// record's index, if the parser gives them.
 #[derive(Debug, PartialEq)]
 struct Record {
     ident: Vec<u8>,
     codes: Vec<u8>,
+    record: Option<u64>,
 }
 
 impl Record {
@@ -80,7 +82,20 @@ impl Record {
         Self {
             ident: sequence.ident_data.to_vec(),
             codes,
+            record: None,
         }
+    }
+
+    /// The sequences of `buffer`, with their records' indices if it has them.
+    fn all_of(buffer: &SequenceBuffer) -> impl Iterator<Item = Self> + '_ {
+        let indices = buffer.record_indices();
+        buffer
+            .sequences()
+            .enumerate()
+            .map(|(index, sequence)| Self {
+                record: indices.get(index).copied(),
+                ..Self::of(sequence)
+            })
     }
 
     /// The sequences of a record of header `ident` and bytes `bases`: its runs of ACGT bases,
@@ -98,6 +113,7 @@ impl Record {
         Self {
             ident: ident.to_vec(),
             codes: bases.iter().map(|base| (base >> 1) & 3).collect(),
+            record: None,
         }
     }
 }
@@ -105,7 +121,7 @@ impl Record {
 /// A callback adding the sequences of every buffer it gets to `records`, then giving it back.
 fn collect(records: &mut Vec<Record>) -> impl FnMut(SequenceBuffer) -> SequenceBuffer + '_ {
     |buffer| {
-        records.extend(buffer.sequences().map(Record::of));
+        records.extend(Record::all_of(&buffer));
         buffer
     }
 }
@@ -942,7 +958,7 @@ fn a_carriage_return_ending_a_block_ends_a_line_only_before_a_line_feed() {
             (b"\r\nGGTT\n+\nII\n", 1),
         ] {
             let input = [&start[..], end].concat();
-            let expected = reference_sequences(&input, format, true, 0);
+            let (expected, _) = reference_sequences(&input, format, true, 0, None);
             assert_eq!(
                 expected.len(),
                 runs,
@@ -969,7 +985,7 @@ fn a_buffer_full_in_the_last_block_of_the_input_is_split_there() {
     // bytes, the least a copyback of 3 takes, is full only once the short last block is in.
     let mut input = b"@r\n".to_vec();
     input.extend(b"ACGT".iter().cycle().take(4 * BLOCK_SIZE + 10 - 3));
-    let expected = reference_sequences(&input, DnaSequencesFileType::FASTQ, true, 0);
+    let (expected, _) = reference_sequences(&input, DnaSequencesFileType::FASTQ, true, 0, None);
     for kernel in supported_kernels() {
         let mut parser = SequenceParser::with_kernel(kernel, true, Some(3), 0, 66, 1 << 20);
         parser.reset(DnaSequencesFileType::FASTQ);
@@ -978,6 +994,107 @@ fn a_buffer_full_in_the_last_block_of_the_input_is_split_there() {
         parser.finish(collect(&mut parts));
         assert_eq!(parts.len(), 2, "{kernel:?}: split once");
         assert_eq!(rebuild(&expected, &parts, 3), Ok(()), "{kernel:?}");
+    }
+}
+
+#[test]
+fn every_sequence_has_its_records_index_and_every_record_counts() {
+    // Lines before the first header; a record split at an N; one with no bases; one with no run
+    // long enough; a header cut by the end of the input, which does not count.
+    let fasta = b"ACGT\n>r1\nACNGT\n>r2\n>r3\nNNN\n>r4\nGG\nCC\n>cut";
+    // A sequence split at an N; an empty sequence; a record cut in its header.
+    let fastq = b"@q0\nACNGT\n+\nIIIII\n@q1\n\n+\n\n@q2\nAC\n+\nII\n@cut";
+    let run = |ident: &[u8], bases: &[u8], record| Record {
+        record: Some(record),
+        ..Record::expected(ident, bases)
+    };
+    for kernel in supported_kernels() {
+        for (format, input, expected, records) in [
+            (
+                DnaSequencesFileType::FASTA,
+                &fasta[..],
+                vec![
+                    run(b"", b"ACGT", 0),
+                    run(b">r1", b"AC", 1),
+                    run(b">r1", b"GT", 1),
+                    run(b">r4", b"GGCC", 4),
+                ],
+                5,
+            ),
+            (
+                DnaSequencesFileType::FASTQ,
+                fastq,
+                vec![
+                    run(b"@q0", b"AC", 0),
+                    run(b"@q0", b"GT", 0),
+                    run(b"@q2", b"AC", 2),
+                ],
+                3,
+            ),
+        ] {
+            let mut parser = SequenceParser::with_kernel(kernel, true, None, 2, 1 << 20, 1 << 20)
+                .with_record_indices();
+            parser.reset(format);
+            let mut found = Vec::new();
+            parser.parse_data(input, collect(&mut found));
+            parser.finish(collect(&mut found));
+            assert_eq!(found, expected, "{kernel:?}");
+            assert_eq!(parser.records(), records, "{kernel:?}");
+            // An archive's next file goes on from there.
+            parser.reset(format);
+            parser.parse_data(input, collect(&mut found));
+            parser.finish(collect(&mut found));
+            assert_eq!(parser.records(), 2 * records, "{kernel:?}");
+        }
+    }
+}
+
+#[test]
+fn a_record_pushed_whole_is_read_as_a_fasta_record_on_one_line() {
+    // Records with N, empty, under min_seqlen, and longer than a buffer of 128 bytes.
+    let reads: Vec<_> = reads_with_n(60, 1500, 5)
+        .into_iter()
+        .map(|(header, bases)| ([&b">"[..], &header[1..]].concat(), bases))
+        .collect();
+    let mut fasta = Vec::new();
+    for (header, bases) in &reads {
+        fasta.extend_from_slice(header);
+        fasta.push(b'\n');
+        fasta.extend_from_slice(bases);
+        fasta.push(b'\n');
+    }
+    let (expected, records) =
+        reference_sequences(&fasta, DnaSequencesFileType::FASTA, true, 31, Some(0));
+    assert_eq!(records, reads.len() as u64);
+    for kernel in supported_kernels() {
+        // Without a copyback the same sequences as the file's; with one, split where the buffer
+        // fills, which a record in a file, starting inside a block, does elsewhere.
+        for copyback in [None, Some(30)] {
+            let parser = || {
+                let mut parser =
+                    SequenceParser::with_kernel(kernel, true, copyback, 31, 128, 1 << 20)
+                        .with_record_indices();
+                parser.reset(DnaSequencesFileType::FASTA);
+                parser
+            };
+            let (mut parsed, mut pushed) = (Vec::new(), Vec::new());
+            let mut from_file = parser();
+            from_file.parse_data(&fasta, collect(&mut parsed));
+            from_file.finish(collect(&mut parsed));
+            let mut from_memory = parser();
+            for (header, bases) in &reads {
+                from_memory.push_record(header, bases, collect(&mut pushed));
+            }
+            from_memory.finish(collect(&mut pushed));
+            assert_eq!(from_memory.records(), records, "{kernel:?}, {copyback:?}");
+            match copyback {
+                None => assert_eq!(pushed, parsed, "{kernel:?}"),
+                Some(copyback) => {
+                    assert!(pushed.len() > expected.len(), "{kernel:?}: none split");
+                    assert_eq!(rebuild(&expected, &pushed, copyback), Ok(()), "{kernel:?}");
+                }
+            }
+        }
     }
 }
 
@@ -1213,19 +1330,27 @@ fn fuzzed_fastq(random: &mut Random) -> Vec<u8> {
 /// FASTA record, a `;` line is skipped, any other adds its bytes to the record, lines before
 /// any header making one without; a FASTQ record is four lines, its second the sequence, and
 /// one cut before that has none. Each record is split at the bytes that are not ACGT.
+///
+/// Also how many records there are, as [`SequenceParser::records`] counts them: those whose
+/// header line ends with a line feed, and the lines before any FASTA header if they have bytes.
+/// With `first_record`, the sequences have the indices of their records, counted from it.
 fn reference_sequences(
     input: &[u8],
     format: DnaSequencesFileType,
     keep_ident: bool,
     min_length: usize,
-) -> Vec<Record> {
-    let mut lines: Vec<&[u8]> = input
-        .split(|&byte| byte == b'\n')
-        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
-        .collect();
-    // What follows the last line feed, if anything.
-    if lines.last().is_some_and(|line| line.is_empty()) {
-        lines.pop();
+    first_record: Option<u64>,
+) -> (Vec<Record>, u64) {
+    // Each line, and whether a line feed ends it.
+    let mut lines: Vec<(&[u8], bool)> = Vec::new();
+    let mut rest = input;
+    while !rest.is_empty() {
+        let (line, ended) = match rest.iter().position(|&byte| byte == b'\n') {
+            Some(end) => (&rest[..end], true),
+            None => (rest, false),
+        };
+        rest = &rest[(line.len() + ended as usize)..];
+        lines.push((line.strip_suffix(b"\r").unwrap_or(line), ended));
     }
     let ident = |line: &[u8]| {
         if keep_ident {
@@ -1234,35 +1359,50 @@ fn reference_sequences(
             Vec::new()
         }
     };
-    let mut records: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    // Each record's header and bases, and whether it counts.
+    let mut records: Vec<(Vec<u8>, Vec<u8>, bool)> = Vec::new();
     match format {
         DnaSequencesFileType::FASTA => {
-            records.push((Vec::new(), Vec::new()));
-            for line in lines {
+            records.push((Vec::new(), Vec::new(), false));
+            for (line, ended) in lines {
                 match line.first() {
-                    Some(b'>') => records.push((ident(line), Vec::new())),
+                    Some(b'>') => records.push((ident(line), Vec::new(), ended)),
                     Some(b';') => {}
                     _ => records.last_mut().unwrap().1.extend_from_slice(line),
                 }
             }
+            records[0].2 = !records[0].1.is_empty();
         }
         DnaSequencesFileType::FASTQ => {
-            for record in lines.chunks(4).filter(|record| record.len() >= 2) {
-                records.push((ident(record[0]), record[1].to_vec()));
+            for record in lines.chunks(4) {
+                let bases = record.get(1).map_or(&[][..], |line| line.0);
+                records.push((ident(record[0].0), bases.to_vec(), record[0].1));
             }
         }
         DnaSequencesFileType::GFA => unreachable!(),
     }
-    records
-        .iter()
-        .flat_map(|(ident, bases)| Record::runs(ident, bases, min_length))
-        .collect()
+    let mut sequences = Vec::new();
+    let mut counted = 0;
+    for (ident, bases, counts) in &records {
+        let index = first_record.map(|first| first + counted);
+        counted += *counts as u64;
+        sequences.extend(
+            Record::runs(ident, bases, min_length)
+                .into_iter()
+                .map(|run| Record {
+                    record: index,
+                    ..run
+                }),
+        );
+    }
+    (sequences, counted)
 }
 
 /// A parser's settings in the fuzz test.
 #[derive(Clone, Copy, Debug)]
 struct Config {
     keep_ident: bool,
+    record_indices: bool,
     copyback: Option<usize>,
     min_seqlen: usize,
     bases_capacity: usize,
@@ -1293,6 +1433,7 @@ impl Config {
         };
         Self {
             keep_ident: random.chance(700),
+            record_indices: random.chance(500),
             copyback,
             min_seqlen,
             bases_capacity,
@@ -1325,6 +1466,18 @@ fn check_buffer(
                 buffer.ident().len()
             ));
         }
+    }
+    let indices = if config.record_indices {
+        buffer.len()
+    } else {
+        0
+    };
+    if buffer.record_indices().len() != indices {
+        return Some(format!(
+            "{} record indices for {} sequences",
+            buffer.record_indices().len(),
+            buffer.len()
+        ));
     }
     let last = buffer.descriptions().last().unwrap();
     if buffer.bases().len() != (last.bases_start + last.bases_len).div_ceil(4)
@@ -1374,7 +1527,7 @@ fn parse_in_slices(
     let mut callback = |buffer: SequenceBuffer| {
         problems.extend(check_buffer(&buffer, format, config));
         let first = records.len();
-        records.extend(buffer.sequences().map(Record::of));
+        records.extend(Record::all_of(&buffer));
         match give_back {
             0 => buffer,
             1 => {
@@ -1405,7 +1558,7 @@ fn parse_in_slices(
     }
     parser.finish(&mut callback);
     for (buffer, first) in &kept {
-        let again: Vec<Record> = buffer.sequences().map(Record::of).collect();
+        let again: Vec<Record> = Record::all_of(buffer).collect();
         if records.get(*first..*first + again.len()) != Some(&again[..]) {
             problems.push("a buffer kept by the callback changed after it was handed over".into());
         }
@@ -1423,7 +1576,11 @@ fn describe(record: Option<&Record>) -> String {
                 .iter()
                 .map(|&code| b"ACTG"[code as usize] as char)
                 .collect();
-            format!("{} {letters}", record.ident.escape_ascii())
+            format!(
+                "{} {letters} {:?}",
+                record.ident.escape_ascii(),
+                record.record
+            )
         }
     }
 }
@@ -1433,7 +1590,10 @@ fn describe(record: Option<&Record>) -> String {
 /// longer.
 fn rebuild_run(run: &Record, parts: &[Record], copyback: usize) -> Option<usize> {
     let first = parts.first()?;
-    if first.ident != run.ident || !run.codes.starts_with(&first.codes) {
+    if first.ident != run.ident
+        || first.record != run.record
+        || !run.codes.starts_with(&first.codes)
+    {
         return None;
     }
     let (mut length, mut used) = (first.codes.len(), 1);
@@ -1445,6 +1605,7 @@ fn rebuild_run(run: &Record, parts: &[Record], copyback: usize) -> Option<usize>
         }
         let from = length - copyback;
         if part.ident != run.ident
+            || part.record != run.record
             || part.codes.len() <= copyback
             || run.codes.get(from..from + part.codes.len()) != Some(&part.codes[..])
         {
@@ -1470,9 +1631,9 @@ fn rebuild(runs: &[Record], parts: &[Record], copyback: usize) -> Result<(), usi
             next.insert(end);
             let tail = &run.codes[run.codes.len().saturating_sub(copyback)..];
             if run.codes.len() > copyback
-                && parts
-                    .get(end)
-                    .is_some_and(|part| part.ident == run.ident && part.codes == tail)
+                && parts.get(end).is_some_and(|part| {
+                    part.ident == run.ident && part.record == run.record && part.codes == tail
+                })
             {
                 next.insert(end + 1);
             }
@@ -1501,14 +1662,15 @@ fn check_input(
     seed: u64,
 ) -> Result<(), String> {
     let mut random = Random::new(seed);
-    let mut parser = SequenceParser::with_kernel(
-        kernel,
-        config.keep_ident,
-        config.copyback,
-        config.min_seqlen,
-        config.bases_capacity,
-        config.ident_capacity,
-    );
+    let mut parser = ParserSettings {
+        keep_ident: config.keep_ident,
+        copyback_size: config.copyback,
+        min_seqlen: config.min_seqlen,
+        record_indices: config.record_indices,
+        bases_capacity: config.bases_capacity,
+        ident_capacity: config.ident_capacity,
+    }
+    .parser(kernel);
     if random.chance(250) {
         parser.reset(match format {
             DnaSequencesFileType::FASTA => DnaSequencesFileType::FASTQ,
@@ -1517,11 +1679,25 @@ fn check_input(
         let blocks = random.below(input.len() / BLOCK_SIZE + 1);
         parser.parse_data(&input[..blocks * BLOCK_SIZE], |buffer| buffer);
     }
+    // The records go on being counted across a reset.
+    let first_record = parser.records();
     let (found, problems) = parse_in_slices(&mut parser, config, format, input, &mut random);
     if let Some(problem) = problems.first() {
         return Err(problem.clone());
     }
-    let expected = reference_sequences(input, format, config.keep_ident, config.min_seqlen);
+    let (expected, records) = reference_sequences(
+        input,
+        format,
+        config.keep_ident,
+        config.min_seqlen,
+        config.record_indices.then_some(first_record),
+    );
+    if parser.records() != first_record + records {
+        return Err(format!(
+            "{} records counted, {records} expected",
+            parser.records() - first_record
+        ));
+    }
     let first_difference = match config.copyback {
         None => (0..expected.len().max(found.len()))
             .find(|&index| expected.get(index) != found.get(index)),

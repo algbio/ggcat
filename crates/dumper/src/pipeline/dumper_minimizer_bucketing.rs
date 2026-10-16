@@ -7,6 +7,7 @@ use colors::colors_manager::{
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use config::BucketIndexType;
 use hashes::HashableSequence;
+use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{
     HasEmptyExtraBuffer, SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression,
     SequenceExtraDataTempBufferManagement, TempBuffer,
@@ -212,7 +213,7 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<DumperMinimizerBucketingExecu
         _stream_info: &<DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::StreamInfo,
         sequence_info: SequenceInfo,
         _read_index: u64,
-        sequence: &DnaSequence<'_, &[u8]>,
+        sequence: &DnaSequence<'_, CompressedRead<'_>>,
         preprocess_info: &mut <DumperMinimizerBucketingExecutorFactory<CX> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         MinimizerBucketingSeqColorDataType::<CX>::clear_temp_buffer(
@@ -363,7 +364,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         },
         None,
         CX::COLORS_ENABLED,
-        k,
         chunking_size_threshold,
         target_chunk_size,
         false,

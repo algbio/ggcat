@@ -192,6 +192,46 @@ pub struct SequenceParser {
     /// Whether the last slice [`Self::parse_data`] took was not a whole number of blocks: it
     /// must have been the input's last, as the block-wise copy of FASTQ sequences relies on.
     ended_short: bool,
+    /// Whether each sequence handed over comes with the index of its record, in the buffer's
+    /// `record_indices`: see [`Self::with_record_indices`].
+    record_indices: bool,
+    /// The records counted since the parser was made, across inputs: the current record, once
+    /// counted, is the last of them. See [`Self::records`].
+    records: u64,
+    /// `records` at the last [`Self::reset`]: while it has not grown, the current input has not
+    /// counted a record yet.
+    input_records: u64,
+}
+
+/// How to set up a [`SequenceParser`], for code that makes one for each input: the arguments of
+/// [`SequenceParser::with_kernel`], and whether to call [`SequenceParser::with_record_indices`].
+#[derive(Copy, Clone, Debug)]
+pub struct ParserSettings {
+    pub keep_ident: bool,
+    pub copyback_size: Option<usize>,
+    pub min_seqlen: usize,
+    pub record_indices: bool,
+    pub bases_capacity: usize,
+    pub ident_capacity: usize,
+}
+
+impl ParserSettings {
+    /// A parser of these settings on `kernel`, which this CPU has to support.
+    pub fn parser(&self, kernel: MaskKernel) -> SequenceParser {
+        let parser = SequenceParser::with_kernel(
+            kernel,
+            self.keep_ident,
+            self.copyback_size,
+            self.min_seqlen,
+            self.bases_capacity,
+            self.ident_capacity,
+        );
+        if self.record_indices {
+            parser.with_record_indices()
+        } else {
+            parser
+        }
+    }
 }
 
 impl SequenceParser {
@@ -254,9 +294,29 @@ impl SequenceParser {
             state: ParserState::start(format),
             after_carriage_return: ParserState::start(format),
             ended_short: false,
+            record_indices: false,
+            records: 0,
+            input_records: 0,
         };
         parser.reset(format);
         parser
+    }
+
+    /// The parser, with the index of its record for each sequence it hands over: in the
+    /// buffer's `record_indices`, which stays empty otherwise. A record's index is its place
+    /// among those [`Self::records`] counts; all the sequences of one record share it, and a
+    /// record that kept none leaves its index unused.
+    pub fn with_record_indices(mut self) -> Self {
+        self.record_indices = true;
+        self
+    }
+
+    /// How many records the parser has read since it was made, across [`Self::reset`], so that
+    /// the files of an archive are counted as one input: every record whose header line ended,
+    /// those with no sequence kept included, and in FASTA the lines before the first header,
+    /// if they have sequence bytes. A header cut by the end of its input does not count.
+    pub fn records(&self) -> u64 {
+        self.records
     }
 
     pub fn kernel(&self) -> MaskKernel {
@@ -266,13 +326,25 @@ impl SequenceParser {
     /// Forgets the input parsed so far, what the buffer holds included, to start a new one of
     /// `format`, FASTA or FASTQ.
     pub fn reset(&mut self, format: DnaSequencesFileType) {
+        self.restart(format, ParserState::start(format));
+    }
+
+    /// As [`Self::reset`], for an input of records that all come whole through
+    /// [`Self::push_record`]: of any format, GFA included, as `format` only marks the buffers.
+    pub fn reset_for_records(&mut self, format: DnaSequencesFileType) {
+        self.restart(format, ParserState::FastaLineStart { wrapped: false });
+    }
+
+    /// Empties the buffers, for an input of `format`, and starts it in `state`.
+    fn restart(&mut self, format: DnaSequencesFileType, state: ParserState) {
         let (bases, ident) = self.buffer_room();
         for buffer in [&mut self.buffer, &mut self.next_buffer] {
             buffer.prepare(format, bases, ident);
         }
         self.start_record();
-        self.state = ParserState::start(format);
+        self.state = state;
         self.ended_short = false;
+        self.input_records = self.records;
     }
 
     /// The room a buffer needs for all the parser fills it with, so that it does not grow: bytes
@@ -510,6 +582,7 @@ impl SequenceParser {
         }
         match line_feed {
             Some(line_feed) => {
+                self.records += 1;
                 self.state = sequence;
                 line_feed + 1
             }
@@ -541,6 +614,10 @@ impl SequenceParser {
             if self.record_bases == 0 {
                 self.record_bases_start = first_base;
                 self.run_start = first_base;
+                // FASTA lines before any header, a record of their own.
+                if self.records == self.input_records {
+                    self.records += 1;
+                }
             }
             self.buffer
                 .bases
@@ -640,10 +717,13 @@ impl SequenceParser {
     /// Adds the `\r` that ended the previous block, left out by [`Self::bases_end`], back to the
     /// record, the line having gone on past it: a byte that is not ACGT like any other, it ends
     /// the open run. Before the record's first base it would split nothing off, so it is not
-    /// added then.
+    /// added then; it still makes FASTA lines before any header a record.
     #[cold]
     fn add_carriage_return(&mut self) {
         if self.record_bases == 0 {
+            if self.records == self.input_records {
+                self.records += 1;
+            }
             return;
         }
         let base = self.record_bases_start + self.record_bases;
@@ -688,6 +768,9 @@ impl SequenceParser {
                 bases_start: self.run_start,
                 bases_len: length,
             });
+            if self.record_indices {
+                buffer.record_indices.push(self.records - 1);
+            }
             self.kept_end = end.div_ceil(4);
         }
     }
@@ -883,6 +966,29 @@ impl SequenceParser {
             }
             None => block.len(),
         }
+    }
+
+    /// Adds a record held in memory, of header `ident` and bases `bases`, which holds no line
+    /// feed: as a FASTA record on one line, split at its bytes that are not ACGT and handed over
+    /// as [`Self::parse_data`] does, into a buffer of the format of the last
+    /// [`Self::reset_for_records`] or [`Self::reset`].
+    /// For inputs that come a sequence at a time rather than as a file; not to be mixed with
+    /// [`Self::parse_data`] before [`Self::finish`].
+    pub fn push_record(
+        &mut self,
+        ident: &[u8],
+        bases: &[u8],
+        mut callback: impl FnMut(SequenceBuffer) -> SequenceBuffer,
+    ) {
+        if self.keep_ident {
+            self.buffer.ident.extend_from_slice(ident);
+        }
+        self.records += 1;
+        self.state = ParserState::FastaSequence;
+        self.parse_data(bases, &mut callback);
+        self.end_record(&mut callback);
+        self.state = ParserState::FastaLineStart { wrapped: false };
+        self.ended_short = false;
     }
 
     /// Ends the input: ends the record still open, if any, and hands the buffer over to

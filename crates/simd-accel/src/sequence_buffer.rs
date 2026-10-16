@@ -38,6 +38,8 @@ pub struct SequenceBuffer {
     pub(crate) ident: Vec<u8>,
     pub(crate) bases: Vec<u8>,
     pub(crate) sequences: Vec<SequenceDescription>,
+    /// The index of each sequence's record, from a parser `with_record_indices`; else empty.
+    pub(crate) record_indices: Vec<u64>,
     pub(crate) format: DnaSequencesFileType,
 }
 
@@ -49,6 +51,7 @@ impl SequenceBuffer {
             ident: Vec::new(),
             bases: Vec::new(),
             sequences: Vec::new(),
+            record_indices: Vec::new(),
             format: DnaSequencesFileType::FASTA,
         }
     }
@@ -82,6 +85,12 @@ impl SequenceBuffer {
         &self.bases
     }
 
+    /// The index of each sequence's record, in the order of [`Self::descriptions`], from a parser
+    /// made `with_record_indices`; empty from any other.
+    pub fn record_indices(&self) -> &[u64] {
+        &self.record_indices
+    }
+
     /// The sequence `description` describes, which has to be one of this buffer's.
     pub fn sequence(
         &self,
@@ -107,10 +116,12 @@ impl SequenceBuffer {
             .map(|description| self.sequence(description))
     }
 
-    pub(crate) fn clear(&mut self) {
+    /// Empties it, keeping its memory.
+    pub fn clear(&mut self) {
         self.ident.clear();
         self.bases.clear();
         self.sequences.clear();
+        self.record_indices.clear();
     }
 
     /// Empties it for an input of `format`, with room for `bases` bytes of bases and `ident` of

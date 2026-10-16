@@ -12,6 +12,7 @@ use hashes::HashFunction;
 use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
+use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::TempBuffer;
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
@@ -124,7 +125,7 @@ impl<CD: MinimizerBucketingSeqColorData>
         stream_info: &<AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::StreamInfo,
         sequence_info: SequenceInfo,
         _read_index: u64,
-        sequence: &DnaSequence<&[u8]>,
+        sequence: &DnaSequence<CompressedRead>,
         preprocess_info: &mut <AssemblerMinimizerBucketingExecutorFactory<CD> as MinimizerBucketingExecutorFactory>::PreprocessInfo,
     ) {
         CD::clear_temp_buffer(&mut preprocess_info.color_info_buffer);
@@ -329,7 +330,6 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         (),
         Some(k - 1),
         false,
-        k,
         chunking_size_threshold,
         target_chunk_size,
         forward_only,
