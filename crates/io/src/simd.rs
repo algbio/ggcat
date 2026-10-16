@@ -41,14 +41,16 @@ impl SimdSequencesReader {
     }
 
     /// As [`SequencesReader::process_file_extended`], with the bases packed and handed to
-    /// `func` a [`SequenceBuffer`] at a time: the source gets a parser, which every file, or
-    /// every member of an archive, is fed to a chunk at a time, after a reset to its format.
+    /// `func` a [`SequenceBuffer`] at a time, by value: `func` gives back a buffer for the
+    /// parser to fill later, a new one or one it is done with. The source gets a parser, which
+    /// every file, or every member of an archive, is fed to a chunk at a time, after a reset to
+    /// its format.
     /// Each file's last buffer is handed over at its end; `line_split_copyback` splits the
     /// sequences too long for a buffer, as the line reader's does. The sequences hold only ACGT
     /// bases, split at the other bytes, and those shorter than `min_seqlen` are left out.
     ///
     /// [`SequencesReader::process_file_extended`]: crate::sequences_reader::SequencesReader::process_file_extended
-    pub fn process_file_extended<F: FnMut(&SequenceBuffer)>(
+    pub fn process_file_extended<F: FnMut(SequenceBuffer) -> SequenceBuffer>(
         &mut self,
         source: impl AsRef<Path>,
         mut func: F,

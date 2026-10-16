@@ -29,6 +29,11 @@ pub struct SequenceDescription {
 /// Sequences hold only ACGT bases: a record is split at its other bytes, such as `N`, into
 /// several sequences with its header, those shorter than the parser's `min_seqlen` left out. The
 /// bytes split at stay in [`Self::bases`], between the sequences, as the bases their bits make.
+///
+/// The parser hands each buffer to its callback by value, to keep or send away, and goes on in
+/// another one, which the callback gives back: a new one from [`Self::new`], which holds no
+/// memory, or one it is done with. The parser clears it and makes the room it needs in it. A
+/// buffer handed over ends at its last sequence, its bases and its headers alike.
 pub struct SequenceBuffer {
     pub(crate) ident: Vec<u8>,
     pub(crate) bases: Vec<u8>,
@@ -37,12 +42,14 @@ pub struct SequenceBuffer {
 }
 
 impl SequenceBuffer {
-    pub(crate) fn new(format: DnaSequencesFileType) -> Self {
+    /// An empty buffer holding no memory, for a callback to give the parser: the parser makes
+    /// the room it needs in it, and sets its format.
+    pub fn new() -> Self {
         Self {
             ident: Vec::new(),
             bases: Vec::new(),
             sequences: Vec::new(),
-            format,
+            format: DnaSequencesFileType::FASTA,
         }
     }
 
@@ -104,5 +111,20 @@ impl SequenceBuffer {
         self.ident.clear();
         self.bases.clear();
         self.sequences.clear();
+    }
+
+    /// Empties it for an input of `format`, with room for `bases` bytes of bases and `ident` of
+    /// headers: exactly that much if it has less, nothing allocated if it has as much already.
+    pub(crate) fn prepare(&mut self, format: DnaSequencesFileType, bases: usize, ident: usize) {
+        self.clear();
+        self.format = format;
+        self.bases.reserve_exact(bases);
+        self.ident.reserve_exact(ident);
+    }
+}
+
+impl Default for SequenceBuffer {
+    fn default() -> Self {
+        Self::new()
     }
 }

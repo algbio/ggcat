@@ -102,9 +102,12 @@ impl Record {
     }
 }
 
-/// A callback adding the sequences of every buffer it gets to `records`.
-fn collect(records: &mut Vec<Record>) -> impl FnMut(&SequenceBuffer) + '_ {
-    |buffer| records.extend(buffer.sequences().map(Record::of))
+/// A callback adding the sequences of every buffer it gets to `records`, then giving it back.
+fn collect(records: &mut Vec<Record>) -> impl FnMut(SequenceBuffer) -> SequenceBuffer + '_ {
+    |buffer| {
+        records.extend(buffer.sequences().map(Record::of));
+        buffer
+    }
 }
 
 #[test]
@@ -333,8 +336,8 @@ fn fastq_parsing_does_not_depend_on_the_cut(first_header: &[u8], header: &[u8], 
 fn only_the_last_slice_of_an_input_can_end_a_block_short() {
     let mut parser = SequenceParser::new(false, None, 0);
     parser.reset(DnaSequencesFileType::FASTQ);
-    parser.parse_data(b"@read1\nAC", |_| {});
-    parser.parse_data(b"GT\n", |_| {});
+    parser.parse_data(b"@read1\nAC", |buffer| buffer);
+    parser.parse_data(b"GT\n", |buffer| buffer);
 }
 
 #[test]
@@ -362,19 +365,32 @@ fn finish_hands_over_nothing_but_whole_records() {
     let mut parser = SequenceParser::new(true, None, 0);
     parser.reset(DnaSequencesFileType::FASTQ);
     let mut buffers = 0;
-    parser.parse_data(b"@r\nACGT\n+\nIIII", |_| buffers += 1);
+    parser.parse_data(b"@r\nACGT\n+\nIIII", |buffer| {
+        buffers += 1;
+        buffer
+    });
     parser.finish(|buffer| {
         assert_eq!(buffer.len(), 1);
         assert_eq!(buffer.ident(), b"@r");
         buffers += 1;
+        buffer
     });
     assert_eq!(buffers, 1);
     // A header with no sequence is only forgotten; an empty input hands nothing over.
     parser.reset(DnaSequencesFileType::FASTQ);
-    parser.parse_data(b"@cut", |_| buffers += 1);
-    parser.finish(|_| buffers += 1);
+    parser.parse_data(b"@cut", |buffer| {
+        buffers += 1;
+        buffer
+    });
+    parser.finish(|buffer| {
+        buffers += 1;
+        buffer
+    });
     parser.reset(DnaSequencesFileType::FASTQ);
-    parser.finish(|_| buffers += 1);
+    parser.finish(|buffer| {
+        buffers += 1;
+        buffer
+    });
     assert_eq!(buffers, 1);
     assert!(parser.buffer.ident().is_empty());
 }
@@ -511,7 +527,8 @@ fn a_fasta_record_on_one_line_keeps_its_place_in_its_first_block() {
                     .descriptions()
                     .iter()
                     .map(|description| description.bases_start),
-            )
+            );
+            buffer
         });
         // r1 starts at byte 6 of the block, copied whole from the start of the buffer, so at
         // base 6; r2, wrapped, is copied likewise from the byte after r1's last.
@@ -655,7 +672,7 @@ fn sequences_shorter_than_min_seqlen_are_left_out() {
         parser.reset(DnaSequencesFileType::FASTA);
         let mut records = Vec::new();
         parser.parse_data(input, |_| panic!("not full"));
-        parser.finish(|buffer: &SequenceBuffer| {
+        parser.finish(|buffer| {
             // r2 kept nothing: neither its header nor its bases are left.
             assert_eq!(buffer.ident(), b">r1>r3", "{kernel:?}");
             let last = buffer.descriptions().last().unwrap();
@@ -664,6 +681,7 @@ fn sequences_shorter_than_min_seqlen_are_left_out() {
                 (last.bases_start + last.bases_len).div_ceil(4)
             );
             records.extend(buffer.sequences().map(Record::of));
+            buffer
         });
         let mut expected = Record::runs(b">r1", b"ANACNACGNACGTNACGTANACGTAC", 4);
         expected.push(Record::expected(b">r3", b"GGGG"));
@@ -681,9 +699,10 @@ fn a_buffer_is_handed_over_when_nearly_full_of_bases_at_the_end_of_a_sequence() 
         parser.reset(DnaSequencesFileType::FASTQ);
         let mut records = Vec::new();
         let mut sizes = Vec::new();
-        let mut callback = |buffer: &SequenceBuffer| {
+        let mut callback = |buffer: SequenceBuffer| {
             sizes.push(buffer.bases().len());
             records.extend(buffer.sequences().map(Record::of));
+            buffer
         };
         parser.parse_data(&input, &mut callback);
         parser.finish(&mut callback);
@@ -708,14 +727,58 @@ fn a_buffer_is_handed_over_when_nearly_full_of_headers() {
         let mut parser = SequenceParser::with_kernel(kernel, true, None, 0, 1 << 20, 32);
         parser.reset(DnaSequencesFileType::FASTQ);
         let mut lengths = Vec::new();
-        parser.parse_data(&input, |buffer| lengths.push(buffer.len()));
-        parser.finish(|buffer| lengths.push(buffer.len()));
+        let mut count = |buffer: SequenceBuffer| {
+            lengths.push(buffer.len());
+            buffer
+        };
+        parser.parse_data(&input, &mut count);
+        parser.finish(&mut count);
         // "@readN" headers of 6 or 7 bytes: 30 bytes of them fill 32 nearly.
         assert_eq!(lengths.iter().sum::<usize>(), 20, "{kernel:?}");
         assert!(
             lengths.iter().all(|&length| length <= 5),
             "{kernel:?}: {lengths:?}"
         );
+    }
+}
+
+#[test]
+fn the_callback_owns_each_buffer_and_any_it_gives_back_is_cleared() {
+    let reads = reads(100, 60);
+    let input = fastq_of(&reads);
+    let expected: Vec<Record> = reads
+        .iter()
+        .map(|(header, bases)| Record::expected(header, bases))
+        .collect();
+    for kernel in supported_kernels() {
+        // Buffers of 128 bytes of bases, several for these reads: each kept, a new one given
+        // back.
+        let mut parser = SequenceParser::with_kernel(kernel, true, None, 0, 128, 1 << 20);
+        parser.reset(DnaSequencesFileType::FASTQ);
+        let mut kept = Vec::new();
+        let mut keep = |buffer: SequenceBuffer| {
+            kept.push(buffer);
+            SequenceBuffer::new()
+        };
+        parser.parse_data(&input, &mut keep);
+        parser.finish(&mut keep);
+        assert!(kept.len() > 5, "{kernel:?}: {} buffers", kept.len());
+        let records: Vec<Record> = kept
+            .iter()
+            .flat_map(|buffer| buffer.sequences().map(Record::of))
+            .collect();
+        assert_eq!(records, expected, "{kernel:?}");
+
+        // Again, given back those full buffers, one each time.
+        parser.reset(DnaSequencesFileType::FASTQ);
+        let (mut full, mut records) = (kept.into_iter(), Vec::new());
+        let mut refill = |buffer: SequenceBuffer| {
+            records.extend(buffer.sequences().map(Record::of));
+            full.next().unwrap_or_default()
+        };
+        parser.parse_data(&input, &mut refill);
+        parser.finish(&mut refill);
+        assert_eq!(records, expected, "{kernel:?}");
     }
 }
 
@@ -779,7 +842,7 @@ fn long_sequences_are_split(
             SequenceParser::with_kernel(kernel, true, Some(copyback), min_seqlen, 256, 1 << 20);
         parser.reset(format);
         let mut records = Vec::new();
-        let mut callback = |buffer: &SequenceBuffer| {
+        let mut callback = |buffer: SequenceBuffer| {
             // No record starts a whole block of bases past where the one before ended. The
             // runs of one record are apart by the bytes split at, which stay in the buffer.
             for pair in buffer.descriptions().windows(2) {
@@ -790,6 +853,7 @@ fn long_sequences_are_split(
                 }
             }
             records.extend(buffer.sequences().map(Record::of));
+            buffer
         };
         for chunk in input.chunks(16 * BLOCK_SIZE) {
             parser.parse_data(chunk, &mut callback);
@@ -1238,9 +1302,16 @@ impl Config {
 }
 
 /// What is wrong with `buffer` as a parser of `config` hands it over, if anything.
-fn check_buffer(buffer: &SequenceBuffer, config: &Config) -> Option<String> {
+fn check_buffer(
+    buffer: &SequenceBuffer,
+    format: DnaSequencesFileType,
+    config: &Config,
+) -> Option<String> {
     if buffer.is_empty() {
         return Some("an empty buffer was handed over".into());
+    }
+    if std::mem::discriminant(&buffer.format()) != std::mem::discriminant(&format) {
+        return Some("a buffer of the wrong format was handed over".into());
     }
     for description in buffer.descriptions() {
         if description.bases_len < config.min_seqlen.max(1)
@@ -1255,19 +1326,39 @@ fn check_buffer(buffer: &SequenceBuffer, config: &Config) -> Option<String> {
             ));
         }
     }
-    // Split when full in the middle of a sequence, at the end of a block or a line.
-    if config.copyback.is_some() && buffer.bases().len() > config.bases_capacity + BLOCK_SIZE / 2 {
+    let last = buffer.descriptions().last().unwrap();
+    if buffer.bases().len() != (last.bases_start + last.bases_len).div_ceil(4)
+        || buffer.ident().len() != last.ident_start + last.ident_len
+    {
         return Some(format!(
-            "{} bytes of bases handed over, over a capacity of {}",
+            "a buffer of {} bytes of bases and {} of headers, past its last sequence {last:?}",
             buffer.bases().len(),
-            config.bases_capacity
+            buffer.ident().len()
+        ));
+    }
+    // Every buffer, given back or new, gets the room the parser makes in it: split when full in
+    // the middle of a sequence, it never needs more for its bases, and with no headers kept it
+    // needs none for them.
+    let room = config.bases_capacity + 2 * (BLOCK_SIZE / 4);
+    if (config.copyback.is_some() && buffer.bases.capacity() != room)
+        || (!config.keep_ident && buffer.ident.capacity() != 0)
+    {
+        return Some(format!(
+            "a buffer of {} bytes of bases, room for {} of a room of {room}, and room for {} \
+             bytes of headers",
+            buffer.bases().len(),
+            buffer.bases.capacity(),
+            buffer.ident.capacity()
         ));
     }
     None
 }
 
 /// The sequences of `input` from `parser` of `config`, reset to `format` and fed slices of
-/// whole blocks of any number, none too; the problems of the buffers handed over.
+/// whole blocks of any number, none too; the problems of the buffers handed over. The callback
+/// gives back, as `random` picks for the whole input, the buffer it got; a new one, keeping
+/// each it gets; or the one it got two hand-overs before, not cleared. A buffer kept has to
+/// hold at the end what it held when handed over.
 fn parse_in_slices(
     parser: &mut SequenceParser,
     config: &Config,
@@ -1277,9 +1368,28 @@ fn parse_in_slices(
 ) -> (Vec<Record>, Vec<String>) {
     parser.reset(format);
     let (mut records, mut problems) = (Vec::new(), Vec::new());
-    let mut callback = |buffer: &SequenceBuffer| {
-        problems.extend(check_buffer(buffer, config));
+    // The buffers kept, with where their sequences start in `records`.
+    let mut kept: Vec<(SequenceBuffer, usize)> = Vec::new();
+    let give_back = random.below(3);
+    let mut callback = |buffer: SequenceBuffer| {
+        problems.extend(check_buffer(&buffer, format, config));
+        let first = records.len();
         records.extend(buffer.sequences().map(Record::of));
+        match give_back {
+            0 => buffer,
+            1 => {
+                kept.push((buffer, first));
+                SequenceBuffer::new()
+            }
+            _ => {
+                kept.push((buffer, first));
+                if kept.len() > 2 {
+                    kept.remove(0).0
+                } else {
+                    SequenceBuffer::new()
+                }
+            }
+        }
     };
     let mut rest = input;
     while !rest.is_empty() {
@@ -1294,6 +1404,12 @@ fn parse_in_slices(
         rest = next;
     }
     parser.finish(&mut callback);
+    for (buffer, first) in &kept {
+        let again: Vec<Record> = buffer.sequences().map(Record::of).collect();
+        if records.get(*first..*first + again.len()) != Some(&again[..]) {
+            problems.push("a buffer kept by the callback changed after it was handed over".into());
+        }
+    }
     (records, problems)
 }
 
@@ -1399,7 +1515,7 @@ fn check_input(
             _ => DnaSequencesFileType::FASTA,
         });
         let blocks = random.below(input.len() / BLOCK_SIZE + 1);
-        parser.parse_data(&input[..blocks * BLOCK_SIZE], |_| {});
+        parser.parse_data(&input[..blocks * BLOCK_SIZE], |buffer| buffer);
     }
     let (found, problems) = parse_in_slices(&mut parser, config, format, input, &mut random);
     if let Some(problem) = problems.first() {

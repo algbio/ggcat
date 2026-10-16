@@ -127,9 +127,10 @@ pub const DEFAULT_IDENT_CAPACITY: usize = 256 << 10;
 /// Parses FASTA or FASTQ input into sequences, a block of [`BLOCK_SIZE`] bytes at a time, and
 /// hands them over a [`SequenceBuffer`] at a time.
 ///
-/// The buffer is handed to the callback when it is nearly full at the end of a sequence (less
-/// than 1/16 of either capacity left), when it is full in the middle of one (with a
-/// `copyback_size`), or at the end of the input; then it is cleared and filled again.
+/// The buffer goes to the callback, by value, when it is nearly full at the end of a sequence
+/// (less than 1/16 of either capacity left), when it is full in the middle of one (with a
+/// `copyback_size`), or at the end of the input. The parser goes on in its next buffer, and
+/// keeps the one the callback gives back to go on in at the hand-over after.
 ///
 /// The format is chosen by [`Self::reset`], before each input: FASTA until the first one.
 pub struct SequenceParser {
@@ -151,6 +152,10 @@ pub struct SequenceParser {
     /// The sequences parsed and not handed over yet, the current record's header and bases
     /// included.
     buffer: SequenceBuffer,
+    /// The buffer the next hand-over goes on in, empty: a split copies the record's header and
+    /// the bases it carries over there before handing `buffer` over. Then the buffer the
+    /// callback gives back waits here.
+    next_buffer: SequenceBuffer,
     /// Where the current record's header starts in the buffer's `ident`: it is written there
     /// as it is parsed.
     record_ident_start: usize,
@@ -229,14 +234,15 @@ impl SequenceParser {
             );
         }
         let format = DnaSequencesFileType::FASTA;
-        Self {
+        let mut parser = Self {
             kernel,
             keep_ident,
             copyback_size,
             min_length: min_seqlen.max(1),
             bases_capacity,
             ident_capacity,
-            buffer: SequenceBuffer::new(format),
+            buffer: SequenceBuffer::new(),
+            next_buffer: SequenceBuffer::new(),
             record_ident_start: 0,
             record_bases_start: 0,
             record_bases: 0,
@@ -248,7 +254,9 @@ impl SequenceParser {
             state: ParserState::start(format),
             after_carriage_return: ParserState::start(format),
             ended_short: false,
-        }
+        };
+        parser.reset(format);
+        parser
     }
 
     pub fn kernel(&self) -> MaskKernel {
@@ -258,11 +266,29 @@ impl SequenceParser {
     /// Forgets the input parsed so far, what the buffer holds included, to start a new one of
     /// `format`, FASTA or FASTQ.
     pub fn reset(&mut self, format: DnaSequencesFileType) {
-        self.buffer.clear();
-        self.buffer.format = format;
+        let (bases, ident) = self.buffer_room();
+        for buffer in [&mut self.buffer, &mut self.next_buffer] {
+            buffer.prepare(format, bases, ident);
+        }
         self.start_record();
         self.state = ParserState::start(format);
         self.ended_short = false;
+    }
+
+    /// The room a buffer needs for all the parser fills it with, so that it does not grow: bytes
+    /// of bases and of headers. A buffer full in the middle of a sequence goes past
+    /// `bases_capacity` by the bases of two blocks at most before it is handed over: a FASTA line
+    /// ending a block is copied with no test of the capacity, and the next line's block follows
+    /// it before one. Headers only if kept. Only a sequence too long for a buffer, with no
+    /// copyback to split it, a header past `ident_capacity`, and the list of sequences, whose
+    /// length depends on theirs, still grow it.
+    fn buffer_room(&self) -> (usize, usize) {
+        let ident = if self.keep_ident {
+            self.ident_capacity
+        } else {
+            0
+        };
+        (self.bases_capacity + 2 * (BLOCK_SIZE / 4), ident)
     }
 
     /// Starts a record at the end of the buffer.
@@ -281,7 +307,7 @@ impl SequenceParser {
     /// `GenericBinaryReader` with a buffer size that is a multiple of it hands them out, with
     /// only the last slice of the input shorter. `callback` gets the buffer whenever it is
     /// handed over, its sequences' bases already packed two bits each, which `.into()` turns
-    /// into io's `CompressedRead`.
+    /// into io's `CompressedRead`, and gives back a buffer for later: see [`SequenceBuffer`].
     ///
     /// The kernel costs one branch per call, always taken the same way: the blocks themselves
     /// run in a loop compiled for it, which inlines it. Larger slices make that branch rarer.
@@ -289,7 +315,11 @@ impl SequenceParser {
     /// # Panics
     ///
     /// If the previous slice since [`Self::reset`] was not a whole number of blocks.
-    pub fn parse_data(&mut self, data: &[u8], callback: impl FnMut(&SequenceBuffer)) {
+    pub fn parse_data(
+        &mut self,
+        data: &[u8],
+        callback: impl FnMut(SequenceBuffer) -> SequenceBuffer,
+    ) {
         assert!(
             !self.ended_short,
             "only the last slice of an input can be shorter than a whole number of blocks"
@@ -310,21 +340,33 @@ impl SequenceParser {
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
-    fn parse_data_avx2(&mut self, data: &[u8], callback: impl FnMut(&SequenceBuffer)) {
+    fn parse_data_avx2(
+        &mut self,
+        data: &[u8],
+        callback: impl FnMut(SequenceBuffer) -> SequenceBuffer,
+    ) {
         // SAFETY: this function only runs where AVX2 is enabled.
         unsafe { self.parse_blocks::<Avx2>(data, callback) }
     }
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "ssse3")]
-    fn parse_data_ssse3(&mut self, data: &[u8], callback: impl FnMut(&SequenceBuffer)) {
+    fn parse_data_ssse3(
+        &mut self,
+        data: &[u8],
+        callback: impl FnMut(SequenceBuffer) -> SequenceBuffer,
+    ) {
         // SAFETY: this function only runs where SSSE3 is enabled.
         unsafe { self.parse_blocks::<Ssse3>(data, callback) }
     }
 
     #[cfg(target_arch = "aarch64")]
     #[target_feature(enable = "neon")]
-    fn parse_data_neon(&mut self, data: &[u8], callback: impl FnMut(&SequenceBuffer)) {
+    fn parse_data_neon(
+        &mut self,
+        data: &[u8],
+        callback: impl FnMut(SequenceBuffer) -> SequenceBuffer,
+    ) {
         // SAFETY: this function only runs where NEON is enabled.
         unsafe { self.parse_blocks::<Neon>(data, callback) }
     }
@@ -344,7 +386,7 @@ impl SequenceParser {
     unsafe fn parse_blocks<K: Kernel>(
         &mut self,
         data: &[u8],
-        mut callback: impl FnMut(&SequenceBuffer),
+        mut callback: impl FnMut(SequenceBuffer) -> SequenceBuffer,
     ) {
         for block in data.chunks(BLOCK_SIZE) {
             // SAFETY: the caller's.
@@ -489,7 +531,7 @@ impl SequenceParser {
         block: &[u8],
         masks: &BlockMasks,
         processed_index: usize,
-        callback: &mut impl FnMut(&SequenceBuffer),
+        callback: &mut impl FnMut(SequenceBuffer) -> SequenceBuffer,
     ) -> Option<usize> {
         debug_assert!(processed_index < block.len());
         let line_feed = masks.line_feed_from(processed_index);
@@ -523,7 +565,7 @@ impl SequenceParser {
         block: &[u8],
         processed_index: usize,
         wrapped: bool,
-        callback: &mut impl FnMut(&SequenceBuffer),
+        callback: &mut impl FnMut(SequenceBuffer) -> SequenceBuffer,
     ) {
         let first = block[processed_index];
         self.state = if first == b'>' {
@@ -552,7 +594,7 @@ impl SequenceParser {
         block: &[u8],
         masks: &BlockMasks,
         processed_index: usize,
-        callback: &mut impl FnMut(&SequenceBuffer),
+        callback: &mut impl FnMut(SequenceBuffer) -> SequenceBuffer,
     ) -> usize {
         debug_assert!(processed_index < block.len());
         let line_feed = masks.line_feed_from(processed_index);
@@ -670,7 +712,7 @@ impl SequenceParser {
     /// kept, or to before the record if it kept none, and then its header goes too; the buffer
     /// is handed over if less than 1/16 of either capacity is left. Then starts the next record.
     #[inline(always)]
-    fn end_record(&mut self, callback: &mut impl FnMut(&SequenceBuffer)) {
+    fn end_record(&mut self, callback: &mut impl FnMut(SequenceBuffer) -> SequenceBuffer) {
         if self.record_bases > 0 {
             self.flush_sequence();
             self.close_run(self.record_bases_start + self.record_bases);
@@ -688,19 +730,34 @@ impl SequenceParser {
         self.start_record();
     }
 
-    /// Hands the buffer over, if it holds any sequence, and clears it.
+    /// Hands the buffer over by [`Self::give_buffer`], if it holds any sequence; else only
+    /// clears it.
     #[inline(always)]
-    fn hand_over(&mut self, callback: &mut impl FnMut(&SequenceBuffer)) {
-        if !self.buffer.is_empty() {
-            callback(&self.buffer);
+    fn hand_over(&mut self, callback: &mut impl FnMut(SequenceBuffer) -> SequenceBuffer) {
+        if self.buffer.is_empty() {
+            self.buffer.clear();
+        } else {
+            self.give_buffer(callback);
         }
-        self.buffer.clear();
+    }
+
+    /// Gives the buffer to `callback`, the next buffer taking its place, and keeps the one
+    /// `callback` gives back as the next, cleared and with the room [`Self::buffer_room`] says.
+    #[cold]
+    fn give_buffer(&mut self, callback: &mut impl FnMut(SequenceBuffer) -> SequenceBuffer) {
+        let next = std::mem::take(&mut self.next_buffer);
+        let full = std::mem::replace(&mut self.buffer, next);
+        let mut returned = callback(full);
+        let (bases, ident) = self.buffer_room();
+        returned.prepare(self.buffer.format, bases, ident);
+        self.next_buffer = returned;
     }
 
     /// Splits the current record, in the middle of its sequence as the buffer is full: its open
-    /// run of ACGT bases so far is added and the buffer handed over; then the record goes on in
-    /// the cleared buffer from its header and that run's last `copyback` bases. A run of
-    /// `copyback` bases or fewer, or too short to be kept, is only moved, unsplit.
+    /// run of ACGT bases so far is added and the buffer handed over, trimmed to its last
+    /// sequence; the record goes on in the next buffer, from its header and that run's last
+    /// `copyback` bases, copied there first. A run of `copyback` bases or fewer, or too short to
+    /// be kept, is only moved, unsplit.
     ///
     /// Copied a block at a time, the record's bases run to the end of the buffer between its
     /// blocks: so do the ones carried over, from the same place in their byte, and the next
@@ -711,7 +768,7 @@ impl SequenceParser {
         &mut self,
         copyback: usize,
         shifted: bool,
-        callback: &mut impl FnMut(&SequenceBuffer),
+        callback: &mut impl FnMut(SequenceBuffer) -> SequenceBuffer,
     ) {
         if shifted {
             self.flush_sequence();
@@ -729,13 +786,23 @@ impl SequenceParser {
         if keep_from > self.run_start {
             self.close_run(end);
         }
-        if !self.buffer.is_empty() {
-            callback(&self.buffer);
+        let (buffer, next) = (&mut self.buffer, &mut self.next_buffer);
+        debug_assert!(next.ident.is_empty() && next.bases.is_empty() && next.is_empty());
+        next.ident
+            .extend_from_slice(&buffer.ident[self.record_ident_start..]);
+        next.bases.extend_from_slice(&buffer.bases[keep_from / 4..]);
+        // As at the end of a record.
+        buffer.bases.truncate(self.kept_end);
+        if buffer.sequences.len() == self.record_sequences {
+            buffer.ident.truncate(self.record_ident_start);
         }
-        let buffer = &mut self.buffer;
-        buffer.sequences.clear();
-        buffer.ident.drain(..self.record_ident_start);
-        buffer.bases.drain(..keep_from / 4);
+        if buffer.is_empty() {
+            // Nothing to hand over: the next buffer takes its place, and it waits, emptied.
+            std::mem::swap(buffer, next);
+            next.clear();
+        } else {
+            self.give_buffer(callback);
+        }
         self.record_ident_start = 0;
         self.record_bases_start = keep_from % 4;
         self.record_bases = end - keep_from;
@@ -823,9 +890,9 @@ impl SequenceParser {
     /// ends: one a whole number of blocks long has no shorter last one.
     ///
     /// Only a sequence state can end with a record to add: a FASTA record's last line, or a
-    /// FASTQ sequence line cut by the end of the input, a `\r` there ending it. Elsewhere the record either was added
-    /// already or has no bases yet, and only its header is dropped.
-    pub fn finish(&mut self, mut callback: impl FnMut(&SequenceBuffer)) {
+    /// FASTQ sequence line cut by the end of the input, a `\r` there ending it. Elsewhere the
+    /// record either was added already or has no bases yet, and only its header is dropped.
+    pub fn finish(&mut self, mut callback: impl FnMut(SequenceBuffer) -> SequenceBuffer) {
         match self.state {
             ParserState::FastaLineStart { .. }
             | ParserState::FastaComment { .. }
