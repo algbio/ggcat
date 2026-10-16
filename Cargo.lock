@@ -1502,7 +1502,9 @@ dependencies = [
 name = "ggcat_simd_accel"
 version = "2.2.0"
 dependencies = [
+ "criterion",
  "ggcat_utils",
+ "rayon",
 ]
 
 [[package]]
