@@ -26,6 +26,10 @@ harness = false
 name = "simd-nthash-bench"
 harness = false
 
+[[bench]]
+name = "simd-minqueue-bench"
+harness = false
+
 [dev-dependencies]
 pcg_rand = "0.13.0"
 rand = "0.8.5"

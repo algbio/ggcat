@@ -1,12 +1,14 @@
 //! SIMD over lanes of bases: a packed buffer, or any sequence, read as [`SIMD_LANES`] lanes (or
 //! one) a block of [`BLOCK_BASES`] at a time, by [`BaseLanes`]; the vector operations on them,
-//! [`HashVector`], implemented for each [`HashKernel`] the CPU may have; and what runs on both,
-//! the ntHash of [`nthash`].
+//! [`HashVector`], implemented for each [`HashKernel`] the CPU may have; and what runs on both:
+//! the ntHash of [`nthash`], and the minimizer queue of [`minqueue`] fed by it.
 
 use crate::HashableSequence;
 
 mod kernels;
+pub mod minqueue;
 pub mod nthash;
+mod tasks;
 
 pub use kernels::{HashKernel, HashVector};
 

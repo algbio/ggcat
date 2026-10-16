@@ -29,10 +29,27 @@ use std::path::Path;
 use std::sync::Arc;
 use utils::dna_sequence::{DnaSequence, DnaSequencesFileType};
 
+/// A minimizer's m-mer: its index in the sequence, shifted left by one, with bit 0 set if its
+/// forward strand is the canonical one, as the SIMD minimizer queue's extras hold it
+/// (`hashes::simd::minqueue::MinimizerLanes::extra`). The index is kept modulo 2^31.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct MinimizerExtraData {
-    index: u32,
-    is_forward: bool,
+struct MinimizerExtraData(u32);
+
+impl MinimizerExtraData {
+    #[inline(always)]
+    fn new(index: usize, is_forward: bool) -> Self {
+        Self((index as u32) << 1 | is_forward as u32)
+    }
+
+    #[inline(always)]
+    fn index(self) -> u32 {
+        self.0 >> 1
+    }
+
+    #[inline(always)]
+    fn is_forward(self) -> bool {
+        self.0 & 1 != 0
+    }
 }
 
 pub struct AssemblerMinimizerBucketingExecutor<CD: MinimizerBucketingSeqColorData> {
@@ -200,10 +217,7 @@ impl<CD: MinimizerBucketingSeqColorData>
                         x.to_unextendable()
             // Set the unique flag if the minimizer is not rc_symmetric
             | (SEPARATE_DUPLICATES && !x.is_rc_symmetric()) as u64,
-                        MinimizerExtraData {
-                            index: index as u32,
-                            is_forward: x.is_forward(),
-                        },
+                        MinimizerExtraData::new(index, x.is_forward()),
                     )
                 }),
                 skip_before,
@@ -223,14 +237,14 @@ impl<CD: MinimizerBucketingSeqColorData>
                         cold();
                         (self.duplicates_bucket, false, 0)
                     } else {
-                        let rc = self.canonical && SEPARATE_DUPLICATES && !min_hash.1.is_forward;
+                        let rc = self.canonical && SEPARATE_DUPLICATES && !min_hash.1.is_forward();
                         (
                             MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
                             rc,
                             if rc {
-                                (index + self.global_data.k - 1 - (min_hash.1.index as usize) - self.global_data.m) as u16
+                                (index + self.global_data.k - 1 - (min_hash.1.index() as usize) - self.global_data.m) as u16
                             } else {
-                                (min_hash.1.index - (last_index as u32 - 1)) as u16
+                                (min_hash.1.index() - (last_index as u32 - 1)) as u16
                             },
                         )
                     };

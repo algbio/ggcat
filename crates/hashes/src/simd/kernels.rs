@@ -8,9 +8,9 @@ use std::arch::aarch64::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-/// The operations the hash needs, on `LANES` lanes of 32 bits: implemented here for each
-/// [`HashKernel`], and used by the [`BaseLanes`](super::BaseLanes) to hand out their chunks in
-/// the kernel's vectors.
+/// The operations the hash and the minimizer queue need, on `LANES` lanes of 32 bits:
+/// implemented here for each [`HashKernel`], and used by the [`BaseLanes`](super::BaseLanes) to
+/// hand out their chunks in the kernel's vectors.
 ///
 /// # Safety
 ///
@@ -21,6 +21,9 @@ use std::arch::x86_64::*;
 pub trait HashVector<const LANES: usize>: Copy {
     /// Four values to look up by base code.
     type Table: Copy;
+    /// Some of the lanes, as comparisons pick them: all ones or zero in each lane of a vector, or
+    /// the kernel's mask registers.
+    type Mask: Copy;
 
     unsafe fn table(values: [u32; 4]) -> Self::Table;
     unsafe fn from_array(values: [u32; LANES]) -> Self;
@@ -36,6 +39,17 @@ pub trait HashVector<const LANES: usize>: Copy {
     unsafe fn canonical(forward: Self, reverse: Self) -> Self;
     /// See [`NtHashLanes::forward`](super::nthash::NtHashLanes::forward).
     unsafe fn forward_mask(forward: Self, reverse: Self) -> u32;
+    unsafe fn splat(value: u32) -> Self;
+    /// The lanes where `self` and `other` are equal.
+    unsafe fn equal(self, other: Self) -> Self::Mask;
+    /// The lanes where `self` is below `other`, unsigned.
+    unsafe fn less(self, other: Self) -> Self::Mask;
+    /// `chosen` in the lanes of `mask`, `other` in the others.
+    unsafe fn select(mask: Self::Mask, chosen: Self, other: Self) -> Self;
+    /// `self` with bit 0, a minimizer queue's unique flag, cleared in the lanes of `mask`.
+    unsafe fn clear_flag(self, mask: Self::Mask) -> Self;
+    /// Bit `lane` set for each lane of `mask`.
+    unsafe fn mask_bits(mask: Self::Mask) -> u32;
     /// The chunks of block `block` of every lane of the packed `bases`, lane `i` from byte
     /// `first_bytes[i]`: chunk `j` is the 32 bits from byte `first_bytes[i] + 32 * block + 4 * j`
     /// of every lane, bytes past the buffer read as A. The first bytes go up with the lanes.
@@ -52,6 +66,7 @@ pub(super) struct Portable<const LANES: usize>([u32; LANES]);
 
 impl<const LANES: usize> HashVector<LANES> for Portable<LANES> {
     type Table = [u32; 4];
+    type Mask = [bool; LANES];
 
     #[inline(always)]
     unsafe fn table(values: [u32; 4]) -> Self::Table {
@@ -128,6 +143,56 @@ impl<const LANES: usize> HashVector<LANES> for Portable<LANES> {
     }
 
     #[inline(always)]
+    unsafe fn splat(value: u32) -> Self {
+        Self([value; LANES])
+    }
+
+    #[inline(always)]
+    unsafe fn equal(self, other: Self) -> Self::Mask {
+        let mut mask = [false; LANES];
+        for lane in 0..LANES {
+            mask[lane] = self.0[lane] == other.0[lane];
+        }
+        mask
+    }
+
+    #[inline(always)]
+    unsafe fn less(self, other: Self) -> Self::Mask {
+        let mut mask = [false; LANES];
+        for lane in 0..LANES {
+            mask[lane] = self.0[lane] < other.0[lane];
+        }
+        mask
+    }
+
+    #[inline(always)]
+    unsafe fn select(mask: Self::Mask, mut chosen: Self, other: Self) -> Self {
+        for lane in 0..LANES {
+            if !mask[lane] {
+                chosen.0[lane] = other.0[lane];
+            }
+        }
+        chosen
+    }
+
+    #[inline(always)]
+    unsafe fn clear_flag(mut self, mask: Self::Mask) -> Self {
+        for lane in 0..LANES {
+            self.0[lane] &= !(mask[lane] as u32);
+        }
+        self
+    }
+
+    #[inline(always)]
+    unsafe fn mask_bits(mask: Self::Mask) -> u32 {
+        let mut bits = 0;
+        for lane in 0..LANES {
+            bits |= (mask[lane] as u32) << lane;
+        }
+        bits
+    }
+
+    #[inline(always)]
     unsafe fn load_block(
         bases: &[u8],
         first_bytes: &[u32; LANES],
@@ -152,6 +217,7 @@ pub(super) struct Avx2(__m256i);
 #[cfg(target_arch = "x86_64")]
 impl HashVector<SIMD_LANES> for Avx2 {
     type Table = __m256i;
+    type Mask = __m256i;
 
     #[inline(always)]
     unsafe fn table(values: [u32; 4]) -> Self::Table {
@@ -231,6 +297,43 @@ impl HashVector<SIMD_LANES> for Avx2 {
     }
 
     #[inline(always)]
+    unsafe fn splat(value: u32) -> Self {
+        Self(unsafe { _mm256_set1_epi32(value as i32) })
+    }
+
+    #[inline(always)]
+    unsafe fn equal(self, other: Self) -> Self::Mask {
+        unsafe { _mm256_cmpeq_epi32(self.0, other.0) }
+    }
+
+    #[inline(always)]
+    unsafe fn less(self, other: Self) -> Self::Mask {
+        unsafe {
+            // No unsigned compare: signed, on flipped sign bits.
+            let sign = _mm256_set1_epi32(i32::MIN);
+            _mm256_cmpgt_epi32(
+                _mm256_xor_si256(other.0, sign),
+                _mm256_xor_si256(self.0, sign),
+            )
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn select(mask: Self::Mask, chosen: Self, other: Self) -> Self {
+        Self(unsafe { _mm256_blendv_epi8(other.0, chosen.0, mask) })
+    }
+
+    #[inline(always)]
+    unsafe fn clear_flag(self, mask: Self::Mask) -> Self {
+        Self(unsafe { _mm256_andnot_si256(_mm256_and_si256(mask, _mm256_set1_epi32(1)), self.0) })
+    }
+
+    #[inline(always)]
+    unsafe fn mask_bits(mask: Self::Mask) -> u32 {
+        unsafe { _mm256_movemask_ps(_mm256_castsi256_ps(mask)) as u32 }
+    }
+
+    #[inline(always)]
     unsafe fn load_block(
         bases: &[u8],
         first_bytes: &[u32; SIMD_LANES],
@@ -284,6 +387,7 @@ pub(super) struct Avx512(Avx2);
 #[cfg(target_arch = "x86_64")]
 impl HashVector<SIMD_LANES> for Avx512 {
     type Table = __m256i;
+    type Mask = __mmask8;
 
     #[inline(always)]
     unsafe fn table(values: [u32; 4]) -> Self::Table {
@@ -336,6 +440,40 @@ impl HashVector<SIMD_LANES> for Avx512 {
     }
 
     #[inline(always)]
+    unsafe fn splat(value: u32) -> Self {
+        Self(unsafe { Avx2::splat(value) })
+    }
+
+    #[inline(always)]
+    unsafe fn equal(self, other: Self) -> Self::Mask {
+        unsafe { _mm256_cmpeq_epi32_mask(self.0.0, other.0.0) }
+    }
+
+    #[inline(always)]
+    unsafe fn less(self, other: Self) -> Self::Mask {
+        unsafe { _mm256_cmplt_epu32_mask(self.0.0, other.0.0) }
+    }
+
+    #[inline(always)]
+    unsafe fn select(mask: Self::Mask, chosen: Self, other: Self) -> Self {
+        Self(Avx2(unsafe {
+            _mm256_mask_blend_epi32(mask, other.0.0, chosen.0.0)
+        }))
+    }
+
+    #[inline(always)]
+    unsafe fn clear_flag(self, mask: Self::Mask) -> Self {
+        let cleared =
+            unsafe { _mm256_mask_and_epi32(self.0.0, mask, self.0.0, _mm256_set1_epi32(!1)) };
+        Self(Avx2(cleared))
+    }
+
+    #[inline(always)]
+    unsafe fn mask_bits(mask: Self::Mask) -> u32 {
+        mask as u32
+    }
+
+    #[inline(always)]
     unsafe fn load_block(
         bases: &[u8],
         first_bytes: &[u32; SIMD_LANES],
@@ -365,6 +503,8 @@ pub(super) struct Ssse3([__m128i; 2]);
 impl HashVector<SIMD_LANES> for Ssse3 {
     /// The four values' 16 bytes, for the byte shuffle.
     type Table = __m128i;
+    /// A vector of all ones or zero per lane, for each register.
+    type Mask = [__m128i; 2];
 
     #[inline(always)]
     unsafe fn table(values: [u32; 4]) -> Self::Table {
@@ -441,6 +581,42 @@ impl HashVector<SIMD_LANES> for Ssse3 {
     }
 
     #[inline(always)]
+    unsafe fn splat(value: u32) -> Self {
+        let a = unsafe { _mm_set1_epi32(value as i32) };
+        Self([a, a])
+    }
+
+    #[inline(always)]
+    unsafe fn equal(self, other: Self) -> Self::Mask {
+        let ([a, b], [c, d]) = (self.0, other.0);
+        unsafe { [_mm_cmpeq_epi32(a, c), _mm_cmpeq_epi32(b, d)] }
+    }
+
+    #[inline(always)]
+    unsafe fn less(self, other: Self) -> Self::Mask {
+        let ([a, b], [c, d]) = (self.0, other.0);
+        unsafe { [ssse3::less(a, c), ssse3::less(b, d)] }
+    }
+
+    #[inline(always)]
+    unsafe fn select(mask: Self::Mask, chosen: Self, other: Self) -> Self {
+        let ([m, n], [a, b], [c, d]) = (mask, chosen.0, other.0);
+        unsafe { Self([ssse3::select(m, a, c), ssse3::select(n, b, d)]) }
+    }
+
+    #[inline(always)]
+    unsafe fn clear_flag(self, mask: Self::Mask) -> Self {
+        let ([a, b], [m, n]) = (self.0, mask);
+        unsafe { Self([ssse3::clear_flag(a, m), ssse3::clear_flag(b, n)]) }
+    }
+
+    #[inline(always)]
+    unsafe fn mask_bits(mask: Self::Mask) -> u32 {
+        let [m, n] = mask;
+        unsafe { ssse3::mask_bits(m) | ssse3::mask_bits(n) << 4 }
+    }
+
+    #[inline(always)]
     unsafe fn load_block(
         bases: &[u8],
         first_bytes: &[u32; SIMD_LANES],
@@ -513,7 +689,7 @@ mod ssse3 {
 
     /// All ones in the lanes where `forward` is below `reverse`, unsigned.
     #[inline(always)]
-    unsafe fn less(forward: __m128i, reverse: __m128i) -> __m128i {
+    pub(super) unsafe fn less(forward: __m128i, reverse: __m128i) -> __m128i {
         unsafe {
             let sign = _mm_set1_epi32(i32::MIN);
             _mm_cmpgt_epi32(_mm_xor_si128(reverse, sign), _mm_xor_si128(forward, sign))
@@ -535,6 +711,22 @@ mod ssse3 {
     #[inline(always)]
     pub(super) unsafe fn forward_mask(forward: __m128i, reverse: __m128i) -> u32 {
         unsafe { _mm_movemask_ps(_mm_castsi128_ps(less(forward, reverse))) as u32 }
+    }
+
+    /// `chosen` in the lanes of `mask`, `other` in the others: no blend before SSE4.1.
+    #[inline(always)]
+    pub(super) unsafe fn select(mask: __m128i, chosen: __m128i, other: __m128i) -> __m128i {
+        unsafe { _mm_or_si128(_mm_and_si128(mask, chosen), _mm_andnot_si128(mask, other)) }
+    }
+
+    #[inline(always)]
+    pub(super) unsafe fn clear_flag(a: __m128i, mask: __m128i) -> __m128i {
+        unsafe { _mm_andnot_si128(_mm_and_si128(mask, _mm_set1_epi32(1)), a) }
+    }
+
+    #[inline(always)]
+    pub(super) unsafe fn mask_bits(mask: __m128i) -> u32 {
+        unsafe { _mm_movemask_ps(_mm_castsi128_ps(mask)) as u32 }
     }
 
     /// Chunks 0-3 of four lanes, from 16 bytes per lane at `skip` bytes from their
@@ -572,6 +764,8 @@ pub(super) struct Neon([uint32x4_t; 2]);
 impl HashVector<SIMD_LANES> for Neon {
     /// The four values' 16 bytes, for the table lookup.
     type Table = uint8x16_t;
+    /// A vector of all ones or zero per lane, for each register.
+    type Mask = [uint32x4_t; 2];
 
     #[inline(always)]
     unsafe fn table(values: [u32; 4]) -> Self::Table {
@@ -615,7 +809,7 @@ impl HashVector<SIMD_LANES> for Neon {
     }
 
     #[inline(always)]
-    unsafe fn code(chunk: Self, offset: u32) -> Self {
+    unsafe fn packed_base_at(chunk: Self, offset: u32) -> Self {
         let [a, b] = chunk.0;
         unsafe {
             // A negative shift shifts right.
@@ -640,6 +834,42 @@ impl HashVector<SIMD_LANES> for Neon {
     unsafe fn forward_mask(forward: Self, reverse: Self) -> u32 {
         let ([a, b], [c, d]) = (forward.0, reverse.0);
         unsafe { neon::forward_mask(a, c) | neon::forward_mask(b, d) << 4 }
+    }
+
+    #[inline(always)]
+    unsafe fn splat(value: u32) -> Self {
+        let a = unsafe { vdupq_n_u32(value) };
+        Self([a, a])
+    }
+
+    #[inline(always)]
+    unsafe fn equal(self, other: Self) -> Self::Mask {
+        let ([a, b], [c, d]) = (self.0, other.0);
+        unsafe { [vceqq_u32(a, c), vceqq_u32(b, d)] }
+    }
+
+    #[inline(always)]
+    unsafe fn less(self, other: Self) -> Self::Mask {
+        let ([a, b], [c, d]) = (self.0, other.0);
+        unsafe { [vcltq_u32(a, c), vcltq_u32(b, d)] }
+    }
+
+    #[inline(always)]
+    unsafe fn select(mask: Self::Mask, chosen: Self, other: Self) -> Self {
+        let ([m, n], [a, b], [c, d]) = (mask, chosen.0, other.0);
+        unsafe { Self([vbslq_u32(m, a, c), vbslq_u32(n, b, d)]) }
+    }
+
+    #[inline(always)]
+    unsafe fn clear_flag(self, mask: Self::Mask) -> Self {
+        let ([a, b], [m, n]) = (self.0, mask);
+        unsafe { Self([neon::clear_flag(a, m), neon::clear_flag(b, n)]) }
+    }
+
+    #[inline(always)]
+    unsafe fn mask_bits(mask: Self::Mask) -> u32 {
+        let [m, n] = mask;
+        unsafe { neon::mask_bits(m) | neon::mask_bits(n) << 4 }
     }
 
     #[inline(always)]
@@ -726,6 +956,19 @@ mod neon {
             let bits = [1, 2, 4, 8];
             let less = vcltq_u32(forward, reverse);
             vaddvq_u32(vandq_u32(less, vld1q_u32(bits.as_ptr())))
+        }
+    }
+
+    #[inline(always)]
+    pub(super) unsafe fn clear_flag(a: uint32x4_t, mask: uint32x4_t) -> uint32x4_t {
+        unsafe { vbicq_u32(a, vandq_u32(mask, vdupq_n_u32(1))) }
+    }
+
+    #[inline(always)]
+    pub(super) unsafe fn mask_bits(mask: uint32x4_t) -> u32 {
+        unsafe {
+            let bits = [1, 2, 4, 8];
+            vaddvq_u32(vandq_u32(mask, vld1q_u32(bits.as_ptr())))
         }
     }
 
