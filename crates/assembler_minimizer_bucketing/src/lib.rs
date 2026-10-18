@@ -11,14 +11,17 @@ use config::{READ_FLAG_INCL_BEGIN, READ_FLAG_INCL_END};
 use hashes::HashFunction;
 use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
+use hashes::simd::{HashKernel, SIMD_LANES};
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::TempBuffer;
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
+use io::simd::SequenceBuffer;
+use minimizer_bucketing::buffer_minimizers::BufferMinimizers;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
-    MinimizerBucketingExecutorFactory, MinimizerInputSequence,
+    MinimizerBucketingExecutorFactory, MinimizerInputSequence, process_buffer_by_sequences,
 };
 use minimizer_bucketing::{MinimzerBucketingFilesReaderInputPacket, PushSequenceInfo};
 use parallel_processor::buckets::{BucketsCount, MultiChunkBucket};
@@ -54,6 +57,8 @@ impl MinimizerExtraData {
 
 pub struct AssemblerMinimizerBucketingExecutor<CD: MinimizerBucketingSeqColorData> {
     minimizer_queue: BatchMinQueue<MinimizerExtraData>,
+    /// For whole buffers of input sequences; none for windows of a single m-mer.
+    buffer_minimizers: Option<BufferMinimizers>,
     global_data: Arc<MinimizerBucketingCommonData<()>>,
     pub duplicates_bucket: BucketIndexType,
     _phantom: PhantomData<CD>,
@@ -74,6 +79,95 @@ impl<CD: MinimizerBucketingSeqColorData> Default for AssemblerPreprocessInfo<CD>
             color_info_buffer: CD::new_temp_buffer(),
             include_first: false,
             include_last: false,
+        }
+    }
+}
+
+/// The whole-buffer SIMD queue for super-k-mers of `k`-mers with minimizers of `m` bases: their
+/// windows of `k - m` m-mers, a k-mer less a base, two at least.
+fn buffer_minimizers(k: usize, m: usize) -> Option<BufferMinimizers> {
+    (k - m >= 2).then(|| BufferMinimizers::new(k, m, k - m, HashKernel::detect()))
+}
+
+#[inline]
+#[cold]
+fn cold() {}
+
+/// What cutting a super-k-mer out of a sequence takes from the executor.
+#[derive(Copy, Clone)]
+struct SuperkmerFormat {
+    k: usize,
+    m: usize,
+    canonical: bool,
+    duplicates_bucket: BucketIndexType,
+}
+
+impl SuperkmerFormat {
+    /// Hands `push_sequence` the super-k-mer of the part of `sequence` from its base `offset`
+    /// whose windows, of k - 1 bases, run from `last_index - 1` to `index`, as the scalar queue's
+    /// split callback numbers them on that part, with its minimizer `min_hash`, its m-mer counted
+    /// from the part's start, and whether it includes the first and the last k-mer it holds.
+    #[inline(always)]
+    fn push<
+        S: MinimizerInputSequence,
+        CD: MinimizerBucketingSeqColorData,
+        F: FnMut(PushSequenceInfo<S, AssemblerMinimizerBucketingExecutorFactory<CD>>),
+        const SEPARATE_DUPLICATES: bool,
+    >(
+        self,
+        preprocess_info: &AssemblerPreprocessInfo<CD>,
+        sequence: S,
+        offset: usize,
+        (last_index, index): (usize, usize),
+        min_hash: (u64, MinimizerExtraData),
+        (include_first, include_last): (bool, bool),
+        (used_bits, first_bits, second_bits): (usize, usize, usize),
+        push_sequence: &mut F,
+    ) {
+        // HS2
+        let (bucket, rc, minimizer_pos) = if SEPARATE_DUPLICATES
+            && (min_hash.0
+                & BatchMinQueue::<MinimizerExtraData>::unique_flag::<SEPARATE_DUPLICATES>()
+                == 0)
+        {
+            cold();
+            (self.duplicates_bucket, false, 0)
+        } else {
+            let rc = self.canonical && SEPARATE_DUPLICATES && !min_hash.1.is_forward();
+            (
+                MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
+                rc,
+                if rc {
+                    (index + self.k - 1 - (min_hash.1.index() as usize) - self.m) as u16
+                } else {
+                    (min_hash.1.index() - (last_index as u32 - 1)) as u16
+                },
+            )
+        };
+
+        push_sequence(PushSequenceInfo {
+            bucket,
+            second_bucket: MNHFactory::get_bucket(used_bits + first_bits, second_bits, min_hash.0),
+            sequence: sequence
+                .get_subslice((offset + last_index - 1)..(offset + index + self.k - 1)),
+            extra_data: preprocess_info
+                .color_info
+                .get_subslice((offset + last_index - 1)..(offset + index), rc), // FIXME: Check if the subslice is correct
+            temp_buffer: &preprocess_info.color_info_buffer,
+            minimizer_pos,
+            flags: ((include_first as u8) << (rc as u8)) | ((include_last as u8) << (!rc as u8)),
+            rc,
+        });
+    }
+}
+
+impl<CD: MinimizerBucketingSeqColorData> AssemblerMinimizerBucketingExecutor<CD> {
+    fn superkmer_format(&self) -> SuperkmerFormat {
+        SuperkmerFormat {
+            k: self.global_data.k,
+            m: self.global_data.m,
+            canonical: self.canonical,
+            duplicates_bucket: self.duplicates_bucket,
         }
     }
 }
@@ -110,6 +204,7 @@ impl<CD: MinimizerBucketingSeqColorData> MinimizerBucketingExecutorFactory
     ) -> Self::ExecutorType {
         Self::ExecutorType {
             minimizer_queue: BatchMinQueue::new(global_data.k - global_data.m),
+            buffer_minimizers: buffer_minimizers(global_data.k, global_data.m),
             global_data: global_data.clone(),
             duplicates_bucket: global_data.buckets_count.normal_buckets_count as u16,
             canonical: global_data.canonical,
@@ -125,6 +220,7 @@ impl<CD: MinimizerBucketingSeqColorData> AssemblerMinimizerBucketingExecutorFact
     ) -> AssemblerMinimizerBucketingExecutor<CD> {
         AssemblerMinimizerBucketingExecutor {
             minimizer_queue: BatchMinQueue::new(global_data.k - global_data.m),
+            buffer_minimizers: buffer_minimizers(global_data.k, global_data.m),
             global_data: global_data.clone(),
             duplicates_bucket,
             canonical: global_data.canonical,
@@ -206,10 +302,7 @@ impl<CD: MinimizerBucketingSeqColorData>
         let skip_before = if !include_first { 1 } else { 0 };
         let skip_after = if !preprocess_info.include_last { 1 } else { 0 };
 
-        #[inline]
-        #[cold]
-        fn cold() {}
-
+        let format = self.superkmer_format();
         self.minimizer_queue
             .get_minimizer_splits::<_, SEPARATE_DUPLICATES>(
                 hashes.iter_enumerate().map(|(index, x)| {
@@ -225,60 +318,96 @@ impl<CD: MinimizerBucketingSeqColorData>
                 #[inline(always)]
                 |index, min_hash, is_last| {
                     let include_last = preprocess_info.include_last && is_last;
-
-                    // HS2
-                    let (bucket, rc, minimizer_pos) = if SEPARATE_DUPLICATES
-                        && (min_hash.0
-                            & BatchMinQueue::<MinimizerExtraData>::unique_flag::<
-                                SEPARATE_DUPLICATES,
-                            >()
-                            == 0)
-                    {
-                        cold();
-                        (self.duplicates_bucket, false, 0)
-                    } else {
-                        let rc = self.canonical && SEPARATE_DUPLICATES && !min_hash.1.is_forward();
-                        (
-                            MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
-                            rc,
-                            if rc {
-                                (index + self.global_data.k - 1 - (min_hash.1.index() as usize) - self.global_data.m) as u16
-                            } else {
-                                (min_hash.1.index() - (last_index as u32 - 1)) as u16
-                            },
-                        )
-                    };
-
-                    // println!("Push sequence: {} bucket={}, second_bucket={}, minimizer_pos={}, rc={}, include_first={}, include_last={}, sequence_len={} db={}", 
-                    //     sequence.get_subslice((last_index - 1)..(index + self.global_data.k - 1)).debug_to_string(),
-                    //     MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
-                    //     MNHFactory::get_bucket(used_bits + first_bits, second_bits, min_hash.0),
-                    //     minimizer_pos,
-                    //     rc,
-                    //     include_first,
-                    //     include_last,
-                    //     index + self.global_data.k - 1 - (last_index - 1),
-                    //     self.duplicates_bucket
-                    // );
-
-                    push_sequence(
-                        PushSequenceInfo {
-                            bucket,
-                            second_bucket: MNHFactory::get_bucket(used_bits + first_bits, second_bits, min_hash.0),
-                            sequence: sequence.get_subslice((last_index - 1)..(index + self.global_data.k - 1)),
-                            extra_data: preprocess_info
-                                .color_info
-                                .get_subslice((last_index - 1)..index, rc), // FIXME: Check if the subslice is correct
-                            temp_buffer: &preprocess_info.color_info_buffer,
-                            minimizer_pos,
-                            flags: ((include_first as u8) << (rc as u8)) | ((include_last as u8) << (!rc as u8)),
-                            rc,
-                        },
+                    format.push::<_, _, _, SEPARATE_DUPLICATES>(
+                        preprocess_info,
+                        sequence,
+                        0,
+                        (last_index, index),
+                        min_hash,
+                        (include_first, include_last),
+                        (used_bits, first_bits, second_bits),
+                        &mut push_sequence,
                     );
                     last_index = index;
                     include_first = false;
                 },
             );
+    }
+
+    /// The input sequences of `buffer` split all at once, by the SIMD minimizer queue on the
+    /// whole buffer: each run of windows it finds in a part of a sequence is the super-k-mer the
+    /// scalar queue's split would give on that part, as the same callback cuts it out. The parts
+    /// of a sequence in two lanes overlap by k - 1 bases, as the parts of one too long for a
+    /// buffer do: each k-mer is in one. Each lane keeps the preprocessing of the sequence it is
+    /// in.
+    fn process_buffer<
+        F: FnMut(PushSequenceInfo<CompressedRead, AssemblerMinimizerBucketingExecutorFactory<CD>>),
+    >(
+        &mut self,
+        stream_info: &InputFileInfo,
+        sequence_info: SequenceInfo,
+        buffer: &SequenceBuffer,
+        used_bits: usize,
+        first_bits: usize,
+        second_bits: usize,
+        mut push_sequence: F,
+    ) {
+        let Some(mut minimizers) = self.buffer_minimizers.take() else {
+            process_buffer_by_sequences(
+                self,
+                stream_info,
+                sequence_info,
+                buffer,
+                used_bits,
+                first_bits,
+                second_bits,
+                push_sequence,
+            );
+            return;
+        };
+        let format = self.superkmer_format();
+        let (descriptions, record_indices) = (buffer.descriptions(), buffer.record_indices());
+        let mut lane_infos: [AssemblerPreprocessInfo<CD>; SIMD_LANES] = Default::default();
+        let mut lane_sequences = [usize::MAX; SIMD_LANES];
+        minimizers.runs::<true>(buffer, |run| {
+            let simd_sequence = buffer.sequence(&descriptions[run.sequence]);
+            let sequence = DnaSequence {
+                ident_data: simd_sequence.ident_data,
+                seq: CompressedRead::from(simd_sequence.seq),
+                format: simd_sequence.format,
+            };
+            let info = &mut lane_infos[run.lane];
+            if lane_sequences[run.lane] != run.sequence {
+                self.preprocess_dna_sequence(
+                    stream_info,
+                    sequence_info,
+                    record_indices.get(run.sequence).copied().unwrap_or(0),
+                    &sequence,
+                    info,
+                );
+                lane_sequences[run.lane] = run.sequence;
+            }
+            // Input sequences hold all their k-mers: no m-mer to skip at either end.
+            debug_assert!(info.include_first && info.include_last);
+            // As the scalar queue's split callback numbers them: the windows from the one before
+            // the run, but at the part's start, to the one after, but at its end.
+            let is_last = run.end == run.windows;
+            let (last_index, index) = (run.start.max(1), run.end - is_last as usize);
+            format.push::<_, _, _, true>(
+                info,
+                sequence.seq,
+                run.offset,
+                (last_index, index),
+                (
+                    run.value as u64,
+                    MinimizerExtraData::new(run.position, run.is_forward),
+                ),
+                (run.start == 0, is_last),
+                (used_bits, first_bits, second_bits),
+                &mut push_sequence,
+            );
+        });
+        self.buffer_minimizers = Some(minimizers);
     }
 }
 

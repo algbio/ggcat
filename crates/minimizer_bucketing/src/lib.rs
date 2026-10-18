@@ -1,3 +1,4 @@
+pub mod buffer_minimizers;
 pub mod compactor;
 pub mod decode_helper;
 pub mod deduplicator;
@@ -26,7 +27,7 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression, TempBuffer,
 };
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
-use io::simd::{DEFAULT_IDENT_CAPACITY, ParserSettings};
+use io::simd::{DEFAULT_IDENT_CAPACITY, ParserSettings, SequenceBuffer};
 use parallel_processor::buckets::writers::compressed_binary_writer::{
     CompressedBinaryWriter, CompressionLevelInfo, EncoderMemoryUsage,
 };
@@ -190,6 +191,77 @@ pub trait MinimizerBucketingExecutor<Factory: MinimizerBucketingExecutorFactory>
         second_bits: usize,
         push_sequence: F,
     );
+
+    /// Splits the sequences of `buffer`, all of one input, into super-k-mers for
+    /// `push_sequence`, separating the duplicates: by default a sequence at a time, as
+    /// [`process_buffer_by_sequences`] does.
+    fn process_buffer<F: FnMut(PushSequenceInfo<CompressedRead, Factory>)>(
+        &mut self,
+        stream_info: &Factory::StreamInfo,
+        sequence_info: SequenceInfo,
+        buffer: &SequenceBuffer,
+        used_bits: usize,
+        first_bits: usize,
+        second_bits: usize,
+        push_sequence: F,
+    ) where
+        Self: Sized,
+    {
+        process_buffer_by_sequences(
+            self,
+            stream_info,
+            sequence_info,
+            buffer,
+            used_bits,
+            first_bits,
+            second_bits,
+            push_sequence,
+        );
+    }
+}
+
+/// Splits the sequences of `buffer`, all of one input, into super-k-mers for `push_sequence`, a
+/// sequence at a time: each preprocessed, then split by
+/// [`MinimizerBucketingExecutor::process_sequence`], separating the duplicates.
+pub fn process_buffer_by_sequences<
+    Factory: MinimizerBucketingExecutorFactory,
+    E: MinimizerBucketingExecutor<Factory>,
+>(
+    executor: &mut E,
+    stream_info: &Factory::StreamInfo,
+    sequence_info: SequenceInfo,
+    buffer: &SequenceBuffer,
+    used_bits: usize,
+    first_bits: usize,
+    second_bits: usize,
+    mut push_sequence: impl FnMut(PushSequenceInfo<CompressedRead, Factory>),
+) {
+    let mut preprocess_info = Default::default();
+    let record_indices = buffer.record_indices();
+    for (index, sequence) in buffer.sequences().enumerate() {
+        let sequence = DnaSequence {
+            ident_data: sequence.ident_data,
+            seq: CompressedRead::from(sequence.seq),
+            format: sequence.format,
+        };
+        executor.preprocess_dna_sequence(
+            stream_info,
+            sequence_info,
+            record_indices.get(index).copied().unwrap_or(0),
+            &sequence,
+            &mut preprocess_info,
+        );
+        let bases = sequence.seq.bases_count();
+        executor.process_sequence::<_, _, true>(
+            &preprocess_info,
+            sequence.seq,
+            0..bases,
+            used_bits,
+            first_bits,
+            second_bits,
+            &mut push_sequence,
+        );
+    }
 }
 
 pub struct MinimizerBucketingCommonData<GlobalData> {
@@ -373,7 +445,6 @@ impl<
 
             let mut sequences_count = 0;
 
-            let mut preprocess_info = Default::default();
             let input_packet = input_packet.deref();
 
             stats!(
@@ -382,84 +453,70 @@ impl<
 
             // Already split at the bytes that are not ACGT, those shorter than k left out.
             let buffer = &input_packet.buffer;
-            let record_indices = buffer.record_indices();
-            for (index, sequence) in buffer.sequences().enumerate() {
-                let sequence = DnaSequence {
-                    ident_data: sequence.ident_data,
-                    seq: CompressedRead::from(sequence.seq),
-                    format: sequence.format,
-                };
-                let bases = sequence.seq.bases_count();
-                total_bases += bases as u64;
-                buckets_processor.preprocess_dna_sequence(
-                    &input_packet.stream_info,
-                    input_packet.sequence_info,
-                    record_indices.get(index).copied().unwrap_or(0),
-                    &sequence,
-                    &mut preprocess_info,
-                );
+            sequences_count += buffer.len() as u64;
+            total_bases += buffer
+                .descriptions()
+                .iter()
+                .map(|sequence| sequence.bases_len as u64)
+                .sum::<u64>();
+            buckets_processor.process_buffer(
+                &input_packet.stream_info,
+                input_packet.sequence_info,
+                buffer,
+                0,
+                context.common.buckets_count.normal_buckets_count_log,
+                context.common.second_buckets_count.normal_buckets_count_log,
+                |info| {
+                    let PushSequenceInfo {
+                        bucket,
+                        second_bucket,
+                        sequence,
+                        minimizer_pos,
+                        flags,
+                        extra_data,
+                        temp_buffer,
+                        rc,
+                    } = info;
 
-                buckets_processor.process_sequence::<_, _, true>(
-                    &preprocess_info,
-                    sequence.seq,
-                    0..bases,
-                    0,
-                    context.common.buckets_count.normal_buckets_count_log,
-                    context.common.second_buckets_count.normal_buckets_count_log,
-                    |info| {
-                        let PushSequenceInfo {
-                            bucket,
-                            second_bucket,
+                    let chunking_status = tmp_reads_buffer.add_element_extended(
+                        bucket,
+                        &extra_data,
+                        temp_buffer,
+                        &CompressedReadsBucketData::new_packed_opt_rc(
                             sequence,
-                            minimizer_pos,
                             flags,
-                            extra_data,
-                            temp_buffer,
+                            second_bucket as u8,
                             rc,
-                        } = info;
+                            minimizer_pos,
+                        ),
+                    );
 
-                        let chunking_status = tmp_reads_buffer.add_element_extended(
-                            bucket,
-                            &extra_data,
-                            temp_buffer,
-                            &CompressedReadsBucketData::new_packed_opt_rc(
-                                sequence,
-                                flags,
-                                second_bucket as u8,
-                                rc,
-                                minimizer_pos,
-                            ),
-                        );
-
-                        // A new chunk was produced, compact it
-                        if let ChunkingStatus::NewChunk = chunking_status {
-                            if compactor.is_none() {
-                                *compactor = Some(BucketsCompactor::new(
-                                    context.common.k,
-                                    &context.common.second_buckets_count,
-                                    context.target_chunk_size,
-                                ));
-                            }
-                            let compactor = unsafe { compactor.as_mut().unwrap_unchecked() };
-
-                            // Only some of the buckets may have stood down, and the
-                            // set does not exist at all until one does.
-                            let narrow = context.narrow_buckets.peek();
-                            compactor.compact_buckets(
-                                &uncompacted_buckets.get_stored_buckets()[bucket as usize],
-                                narrow
-                                    .as_ref()
-                                    .map(|n| &n.get_stored_buckets()[bucket as usize]),
-                                &context.compacted_buckets.as_ref().unwrap()[bucket as usize],
-                                bucket as usize,
-                                &context.output_path,
-                            );
+                    // A new chunk was produced, compact it
+                    if let ChunkingStatus::NewChunk = chunking_status {
+                        if compactor.is_none() {
+                            *compactor = Some(BucketsCompactor::new(
+                                context.common.k,
+                                &context.common.second_buckets_count,
+                                context.target_chunk_size,
+                            ));
                         }
-                    },
-                );
+                        let compactor = unsafe { compactor.as_mut().unwrap_unchecked() };
 
-                sequences_count += 1;
-            }
+                        // Only some of the buckets may have stood down, and the
+                        // set does not exist at all until one does.
+                        let narrow = context.narrow_buckets.peek();
+                        compactor.compact_buckets(
+                            &uncompacted_buckets.get_stored_buckets()[bucket as usize],
+                            narrow
+                                .as_ref()
+                                .map(|n| &n.get_stored_buckets()[bucket as usize]),
+                            &context.compacted_buckets.as_ref().unwrap()[bucket as usize],
+                            bucket as usize,
+                            &context.output_path,
+                        );
+                    }
+                },
+            );
 
             context
                 .seq_count

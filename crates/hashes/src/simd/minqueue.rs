@@ -112,7 +112,7 @@ impl BatchMinQueueLanes {
             values,
             extras,
         } = self;
-        let mut output = Splits {
+        let mut output = Splits::<_, ENABLE_DUPLICATE_CHECKING> {
             callback: splits_callback,
             skip_beginning_count,
             // As the scalar queue's: a lane's m-mers, the skipped ones too, less a window.
@@ -185,7 +185,7 @@ impl<F: FnMut(usize, &MinimizerLanes), G: FnMut(bool)> WindowsOutput for Minimiz
 /// The parts of each lane, a part ending where its windows' minimum changes: what
 /// `get_minimizer_splits` hands out. A window's minima stay in vectors; only those of the lanes
 /// whose part ends are taken out, for the callback.
-struct Splits<F> {
+struct Splits<F, const DUPLICATES: bool> {
     callback: F,
     skip_beginning_count: usize,
     /// Where the last part of a lane ends.
@@ -195,7 +195,9 @@ struct Splits<F> {
     splitting: u32,
 }
 
-impl<F: FnMut(usize, usize, (u32, u32), bool)> WindowsOutput for Splits<F> {
+impl<F: FnMut(usize, usize, (u32, u32), bool), const DUPLICATES: bool> WindowsOutput
+    for Splits<F, DUPLICATES>
+{
     #[inline(always)]
     unsafe fn window<V: HashVector<SIMD_LANES>>(
         &mut self,
@@ -203,10 +205,17 @@ impl<F: FnMut(usize, usize, (u32, u32), bool)> WindowsOutput for Splits<F> {
         (value, extra): (V, V),
         (before_value, before_extra): (V, V),
     ) {
-        let same = unsafe {
-            V::mask_bits(value.equal(before_value)) & V::mask_bits(extra.equal(before_extra))
+        // As the scalar queue's splits: a duplicated minimizer only where its value changes.
+        let mut changed = unsafe {
+            let same_value = V::mask_bits(value.equal(before_value));
+            let same_extra = V::mask_bits(extra.equal(before_extra));
+            let unique = if DUPLICATES {
+                !V::mask_bits(value.equal(value.without_flag()))
+            } else {
+                LANES_MASK
+            };
+            (!same_value | (!same_extra & unique)) & self.splitting
         };
-        let mut changed = !same & self.splitting;
         self.splitting = LANES_MASK;
         if changed != 0 {
             // The parts of the lanes whose minimum changes end before this window, with the
@@ -349,6 +358,20 @@ impl<V: HashVector<SIMD_LANES>, O: WindowsOutput, const DUPLICATES: bool>
         }
     }
 
+    /// What the queue compares of `value`: with duplicate checking, all but its unique flag.
+    ///
+    /// # Safety
+    ///
+    /// As [`HashVector`]'s.
+    #[inline(always)]
+    unsafe fn key(value: V) -> V {
+        if DUPLICATES {
+            unsafe { value.without_flag() }
+        } else {
+            value
+        }
+    }
+
     /// The windows the m-mers of the current batch end, `filled` of them, with their minima:
     /// the scalar queue's loop over a batch, its branches on duplicates turned to masks.
     ///
@@ -358,46 +381,54 @@ impl<V: HashVector<SIMD_LANES>, O: WindowsOutput, const DUPLICATES: bool>
     #[inline(always)]
     unsafe fn windows_of(&mut self, is_last: bool) {
         unsafe {
+            // The scalar queue's leftmost minimum, in every lane: of an m-mer and a later one,
+            // the later only if smaller; the flag takes no part in the comparison, and two that
+            // compare equal clear it.
+            let key = Self::key;
             // The minima of the batch before, from each of its m-mers to its end. Each comes from
             // the one after, kept in registers: stored, for the windows, and not read back.
             let (mut next_value, mut next_extra) = self.previous_at(self.batch - 1);
             for index in (0..self.batch - 1).rev() {
                 let (mut value, extra) = self.previous_at(index);
+                let (value_key, next_key) = (key(value), key(next_value));
                 if DUPLICATES {
-                    value = value.clear_flag(value.equal(next_value));
+                    value = value.clear_flag(value_key.equal(next_key));
                 }
-                let next = next_value.less(value);
+                let next = next_key.less(value_key);
                 next_value = V::select(next, next_value, value);
                 next_extra = V::select(next, next_extra, extra);
                 *self.previous.0.get_unchecked_mut(index) = next_value.to_array();
                 *self.previous.1.get_unchecked_mut(index) = next_extra.to_array();
             }
-            // A window's minimum: of the batch before, from the window's first m-mer, and of the
-            // batch coming in, up to its last.
+            // A window's minimum: of the batch before, from the window's first m-mer, which come
+            // before those of the batch coming in, up to its last.
             let (value, extra) = self.current_at(0);
             let (before_value, before_extra) = self.previous_at(0);
-            let before = before_value.less(value);
-            let mut minimum = V::select(before, before_value, value);
+            let (value_key, before_key) = (key(value), key(before_value));
+            let coming = value_key.less(before_key);
+            let mut minimum = V::select(coming, value, before_value);
             if DUPLICATES {
-                minimum = minimum.clear_flag(value.equal(before_value));
+                minimum = minimum.clear_flag(value_key.equal(before_key));
             }
-            self.window(minimum, V::select(before, before_extra, extra));
+            self.window(minimum, V::select(coming, extra, before_extra));
             let (mut coming_value, mut coming_extra) = (value, extra);
             for index in 1..self.filled {
                 let (value, extra) = self.current_at(index);
                 let (before_value, before_extra) = self.previous_at(index);
+                let (value_key, coming_key) = (key(value), key(coming_value));
                 if DUPLICATES {
-                    coming_value = coming_value.clear_flag(value.equal(coming_value));
+                    coming_value = coming_value.clear_flag(value_key.equal(coming_key));
                 }
-                let new = value.less(coming_value);
+                let new = value_key.less(coming_key);
                 coming_value = V::select(new, value, coming_value);
                 coming_extra = V::select(new, extra, coming_extra);
-                let before = before_value.less(coming_value);
-                let mut minimum = V::select(before, before_value, coming_value);
+                let (coming_key, before_key) = (key(coming_value), key(before_value));
+                let coming = coming_key.less(before_key);
+                let mut minimum = V::select(coming, coming_value, before_value);
                 if DUPLICATES {
-                    minimum = minimum.clear_flag(coming_value.equal(before_value));
+                    minimum = minimum.clear_flag(coming_key.equal(before_key));
                 }
-                self.window(minimum, V::select(before, before_extra, coming_extra));
+                self.window(minimum, V::select(coming, coming_extra, before_extra));
             }
             self.output.flush(is_last, self.last);
         }

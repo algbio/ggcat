@@ -48,6 +48,8 @@ pub trait HashVector<const LANES: usize>: Copy {
     unsafe fn select(mask: Self::Mask, chosen: Self, other: Self) -> Self;
     /// `self` with bit 0, a minimizer queue's unique flag, cleared in the lanes of `mask`.
     unsafe fn clear_flag(self, mask: Self::Mask) -> Self;
+    /// `self` with bit 0 cleared in every lane: what the queue compares, the flag aside.
+    unsafe fn without_flag(self) -> Self;
     /// Bit `lane` set for each lane of `mask`.
     unsafe fn mask_bits(mask: Self::Mask) -> u32;
     /// The chunks of block `block` of every lane of the packed `bases`, lane `i` from byte
@@ -179,6 +181,14 @@ impl<const LANES: usize> HashVector<LANES> for Portable<LANES> {
     unsafe fn clear_flag(mut self, mask: Self::Mask) -> Self {
         for lane in 0..LANES {
             self.0[lane] &= !(mask[lane] as u32);
+        }
+        self
+    }
+
+    #[inline(always)]
+    unsafe fn without_flag(mut self) -> Self {
+        for value in &mut self.0 {
+            *value &= !1;
         }
         self
     }
@@ -329,6 +339,11 @@ impl HashVector<SIMD_LANES> for Avx2 {
     }
 
     #[inline(always)]
+    unsafe fn without_flag(self) -> Self {
+        Self(unsafe { _mm256_and_si256(self.0, _mm256_set1_epi32(!1)) })
+    }
+
+    #[inline(always)]
     unsafe fn mask_bits(mask: Self::Mask) -> u32 {
         unsafe { _mm256_movemask_ps(_mm256_castsi256_ps(mask)) as u32 }
     }
@@ -466,6 +481,11 @@ impl HashVector<SIMD_LANES> for Avx512 {
         let cleared =
             unsafe { _mm256_mask_and_epi32(self.0.0, mask, self.0.0, _mm256_set1_epi32(!1)) };
         Self(Avx2(cleared))
+    }
+
+    #[inline(always)]
+    unsafe fn without_flag(self) -> Self {
+        Self(unsafe { self.0.without_flag() })
     }
 
     #[inline(always)]
@@ -608,6 +628,15 @@ impl HashVector<SIMD_LANES> for Ssse3 {
     unsafe fn clear_flag(self, mask: Self::Mask) -> Self {
         let ([a, b], [m, n]) = (self.0, mask);
         unsafe { Self([ssse3::clear_flag(a, m), ssse3::clear_flag(b, n)]) }
+    }
+
+    #[inline(always)]
+    unsafe fn without_flag(self) -> Self {
+        let [a, b] = self.0;
+        unsafe {
+            let flag = _mm_set1_epi32(1);
+            Self([_mm_andnot_si128(flag, a), _mm_andnot_si128(flag, b)])
+        }
     }
 
     #[inline(always)]
@@ -864,6 +893,15 @@ impl HashVector<SIMD_LANES> for Neon {
     unsafe fn clear_flag(self, mask: Self::Mask) -> Self {
         let ([a, b], [m, n]) = (self.0, mask);
         unsafe { Self([neon::clear_flag(a, m), neon::clear_flag(b, n)]) }
+    }
+
+    #[inline(always)]
+    unsafe fn without_flag(self) -> Self {
+        let [a, b] = self.0;
+        unsafe {
+            let flag = vdupq_n_u32(1);
+            Self([vbicq_u32(a, flag), vbicq_u32(b, flag)])
+        }
     }
 
     #[inline(always)]

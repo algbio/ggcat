@@ -34,6 +34,33 @@ impl<X: Clone + Copy + Default + Debug + PartialEq> BatchMinQueue<X> {
         !Self::unique_flag::<ENABLE_DUPLICATE_CHECKING>()
     }
 
+    /// The minimum of an item and a later one: the later only if smaller, so that a window's
+    /// minimum is the leftmost copy of its smallest value, however its items are grouped, and
+    /// the same wherever the batches start. With duplicate checking the unique flag, bit 0,
+    /// takes no part in the comparison, and two items that compare equal clear it: it stays set
+    /// only on a minimum the window holds once.
+    #[inline(always)]
+    fn leftmost_minimum<const ENABLE_DUPLICATE_CHECKING: bool>(
+        earlier: (u64, X),
+        later: (u64, X),
+    ) -> (u64, X) {
+        let flag = Self::unique_flag::<ENABLE_DUPLICATE_CHECKING>();
+        let (earlier_key, later_key) = (earlier.0 | flag, later.0 | flag);
+        if later_key < earlier_key {
+            later
+        } else if ENABLE_DUPLICATE_CHECKING && later_key == earlier_key {
+            cold();
+            (earlier.0 & !flag, earlier.1)
+        } else {
+            earlier
+        }
+    }
+
+    /// Calls `minimizers_callback` with the minimum of every window of `size` items of `iter`,
+    /// but for its last `skip_ending_count`, and the window's index, and `minimizers_flush` after
+    /// each batch of `size - 1` windows, with whether it is the last. A window's minimum is the
+    /// leftmost copy of its smallest value, with duplicate checking its unique flag aside, and
+    /// with the flag cleared if the window holds that value more than once.
     pub fn get_minimizers<
         I: ExactSizeIterator<Item = (u64, X)>,
         const ENABLE_DUPLICATE_CHECKING: bool,
@@ -57,32 +84,21 @@ impl<X: Clone + Copy + Default + Debug + PartialEq> BatchMinQueue<X> {
             while offset < size {
                 let remaining = (size - offset).min(self.backward.len());
 
+                // The minima of the batch before, from each of its items to its end.
                 for i in (0..(self.backward.len() - 1)).rev() {
-                    let mut current = *self.backward.get_unchecked(i);
+                    let current = *self.backward.get_unchecked(i);
                     let next = *self.backward.get_unchecked(i + 1);
-
-                    let is_duplicated = current.0 == next.0;
-                    if ENABLE_DUPLICATE_CHECKING && is_duplicated {
-                        cold();
-                        current.0 &= Self::hash_mask::<ENABLE_DUPLICATE_CHECKING>();
-                    }
-
                     *self.backward.get_unchecked_mut(i) =
-                        std::cmp::min_by_key(current, next, |a| a.0);
+                        Self::leftmost_minimum::<ENABLE_DUPLICATE_CHECKING>(current, next);
                 }
 
+                // A window's minimum: of the batch before, from the window's first item, which
+                // come before those of the batch coming in, up to its last.
                 let new_item = iter.next().unwrap_unchecked();
-
-                let mut first_minimum =
-                    std::cmp::min_by_key(new_item, *self.backward.get_unchecked(0), |a| a.0);
-
-                let is_duplicated = new_item.0 == self.backward.get_unchecked(0).0;
-
-                if ENABLE_DUPLICATE_CHECKING && is_duplicated {
-                    cold();
-                    first_minimum.0 &= Self::hash_mask::<ENABLE_DUPLICATE_CHECKING>();
-                }
-
+                let first_minimum = Self::leftmost_minimum::<ENABLE_DUPLICATE_CHECKING>(
+                    *self.backward.get_unchecked(0),
+                    new_item,
+                );
                 minimizers_callback((first_minimum.0, first_minimum.1), offset);
 
                 let mut last_forward = new_item;
@@ -92,27 +108,12 @@ impl<X: Clone + Copy + Default + Debug + PartialEq> BatchMinQueue<X> {
                     let new_item = iter.next().unwrap_unchecked();
                     let current_backward = self.backward.get_unchecked_mut(i);
 
-                    // If the new item is equal to the forward part, then it is for sure duplicated till the end of the current batch
-                    let new_item_duplicated = new_item.0 == last_forward.0;
-                    if ENABLE_DUPLICATE_CHECKING && new_item_duplicated {
-                        cold();
-                        last_forward.0 &= Self::hash_mask::<ENABLE_DUPLICATE_CHECKING>();
-                    }
-
-                    last_forward = std::cmp::min_by_key(last_forward, new_item, |a| a.0);
-
-                    let mut current_minimum =
-                        std::cmp::min_by_key(last_forward, *current_backward, |a| a.0);
-
-                    // If the forward and backward minimums match, there is a duplicate ONLY for the current minimum
-                    let is_duplicated = last_forward.0 == current_backward.0;
-
-                    if ENABLE_DUPLICATE_CHECKING && is_duplicated {
-                        cold();
-                        current_minimum.0 &= Self::hash_mask::<ENABLE_DUPLICATE_CHECKING>();
-                        // If current minimum is duplicated, then clear the uniqueness flag also for the last out
-                    }
-
+                    last_forward =
+                        Self::leftmost_minimum::<ENABLE_DUPLICATE_CHECKING>(last_forward, new_item);
+                    let current_minimum = Self::leftmost_minimum::<ENABLE_DUPLICATE_CHECKING>(
+                        *current_backward,
+                        last_forward,
+                    );
                     minimizers_callback((current_minimum.0, current_minimum.1), offset + i);
 
                     *current_backward = new_item;
@@ -125,11 +126,18 @@ impl<X: Clone + Copy + Default + Debug + PartialEq> BatchMinQueue<X> {
 
     /// Splits `iter`, but for its first `skip_beginning_count` and last `skip_ending_count` items,
     /// where the minimizer of its windows changes: to another value, the unique flag included,
-    /// or to another item, as its `X` tells, which holds the item's position. So every part has
-    /// a single minimizer item, and spans at most `size` windows: with windows of the
-    /// k - m + 1 m-mers of a k-mer, at most 2k - m bases. `splits_callback` gets each part's
-    /// end, the index of the window after it (of its last window for the input's last part),
-    /// with its minimizer, and whether it is the last.
+    /// or, for a minimizer its windows hold once, to another item, as its `X` tells, which holds
+    /// the item's position. A part of such a minimizer has a single minimizer item, and spans at
+    /// most `size` windows: with windows of the k - m + 1 m-mers of a k-mer, at most 2k - m bases.
+    ///
+    /// With duplicate checking, a minimizer its windows hold more than once splits only where
+    /// its value changes, as which copy is its item depends on the strand the sequence is read
+    /// on: a k-mer between two of its copies would be a split point on one strand only, and the
+    /// k-mers merge counts one twice where it splits. Its parts may span more than `size`
+    /// windows.
+    ///
+    /// `splits_callback` gets each part's end, the index of the window after it (of its last
+    /// window for the input's last part), with its minimizer, and whether it is the last.
     #[inline(always)]
     pub fn get_minimizer_splits<
         I: ExactSizeIterator<Item = (u64, X)>,
@@ -159,8 +167,10 @@ impl<X: Clone + Copy + Default + Debug + PartialEq> BatchMinQueue<X> {
             skip_ending_count,
             #[inline(always)]
             |m, index| {
-                let has_different_value =
-                    !is_first && (last_value.get().0 != m.0 || last_value.get().1 != m.1);
+                let unique = !ENABLE_DUPLICATE_CHECKING
+                    || m.0 & Self::unique_flag::<ENABLE_DUPLICATE_CHECKING>() != 0;
+                let has_different_value = !is_first
+                    && (last_value.get().0 != m.0 || (last_value.get().1 != m.1 && unique));
 
                 unsafe {
                     let splits_pos = &mut *splits_ptr.get();
@@ -228,6 +238,62 @@ mod tests {
         found
     }
 
+    /// A window's minimum by its definition, with its position: the leftmost copy of its smallest
+    /// value, with duplicate checking the unique flag aside, the flag cleared if the window holds
+    /// the value more than once.
+    fn expected_minimum<const DUP: bool>(items: &[u64], start: usize, size: usize) -> (u64, usize) {
+        let flag = DUP as u64;
+        let window = &items[start..start + size];
+        let key = window.iter().map(|value| value | flag).min().unwrap();
+        let copies: Vec<usize> = (0..size).filter(|&i| window[i] | flag == key).collect();
+        let position = start + copies[0];
+        let value = if DUP && copies.len() > 1 {
+            key & !flag
+        } else {
+            items[position]
+        };
+        (value, position)
+    }
+
+    #[test]
+    fn every_window_reports_the_leftmost_copy_of_its_minimum() {
+        for size in [2, 3, 5, 13, 31] {
+            for seed in 1..20 {
+                let items = items(400, seed);
+                for (index, found) in windows::<true>(&items, size, 0).into_iter().enumerate() {
+                    let expected = expected_minimum::<true>(&items, index, size);
+                    assert_eq!(found, expected, "duplicates, size {size}, window {index}");
+                }
+                for (index, found) in windows::<false>(&items, size, 0).into_iter().enumerate() {
+                    let expected = expected_minimum::<false>(&items, index, size);
+                    assert_eq!(found, expected, "size {size}, window {index}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_windows_minimum_is_the_same_wherever_the_batches_start() {
+        // Items before the input, larger than any of it, move the batches against it.
+        for size in [2, 3, 5, 19, 31] {
+            for seed in 1..10 {
+                let items = items(300, seed);
+                let reference = windows::<true>(&items, size, 0);
+                for shift in 1..size {
+                    let shifted: Vec<u64> = (0..shift)
+                        .map(|i| u64::MAX - 2 * i as u64)
+                        .chain(items.iter().copied())
+                        .collect();
+                    let found: Vec<_> = windows::<true>(&shifted, size, 0)[shift..]
+                        .iter()
+                        .map(|&(value, position)| (value, position - shift))
+                        .collect();
+                    assert_eq!(found, reference, "size {size}, seed {seed}, shift {shift}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn every_window_reports_its_minimum_with_its_items_extra() {
         let mask = BatchMinQueue::<usize>::hash_mask::<true>();
@@ -265,7 +331,7 @@ mod tests {
 
     /// The splits `get_minimizer_splits` makes of `items`, their positions as their `X`,
     /// against those their windows' minima call for: a part ends where its minimizer's value
-    /// or position changes, and spans `size` windows at most.
+    /// changes, or the position of one held once, and then spans `size` windows at most.
     fn splits_follow_the_minimizer_position<const DUP: bool>(
         items: &[u64],
         size: usize,
@@ -289,7 +355,10 @@ mod tests {
             .collect();
         let mut expected = Vec::new();
         for pair in 1..windows.len() {
-            if windows[pair] != windows[pair - 1] {
+            let ((value, position), (last_value, last_position)) =
+                (windows[pair], windows[pair - 1]);
+            let unique = !DUP || value & 1 == 1;
+            if value != last_value || (position != last_position && unique) {
                 expected.push((pair + skip_begin, windows[pair - 1], false));
             }
         }
@@ -301,9 +370,10 @@ mod tests {
             "size {size}, skips {skip_begin} {skip_end}"
         );
         let mut start = skip_begin;
-        for &(end, _, last) in &found[..found.len().saturating_sub(1)] {
+        for &(end, (value, _), last) in &found[..found.len().saturating_sub(1)] {
+            // The parts of a duplicated minimizer only may be longer.
             assert!(
-                end - start <= size,
+                end - start <= size || (DUP && value & 1 == 0),
                 "a part of {} windows, size {size}",
                 end - start
             );
@@ -313,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn super_kmers_split_at_every_change_of_the_minimizer_position() {
+    fn super_kmers_split_where_the_value_or_a_unique_minimizers_position_changes() {
         for size in [2, 3, 5, 13, 31] {
             for seed in 1..20 {
                 let items = items(400, seed);

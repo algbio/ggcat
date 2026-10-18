@@ -4,12 +4,15 @@ use colors::colors_manager::{ColorsManager, MinimizerBucketingSeqColorData};
 use colors::parsers::{SequenceIdent, SingleSequenceInfo};
 use hashes::default::MNHFactory;
 use hashes::rolling::batch_minqueue::BatchMinQueue;
+use hashes::simd::{HashKernel, SIMD_LANES};
 use hashes::{ExtendableHashTraitType, HashFunctionFactory};
 use hashes::{HashFunction, HashableSequence};
 use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{SequenceExtraDataTempBufferManagement, TempBuffer};
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::file::FileSequencesStream;
+use io::simd::SequenceBuffer;
+use minimizer_bucketing::buffer_minimizers::BufferMinimizers;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
     MinimizerBucketingExecutorFactory, MinimizerInputSequence,
@@ -68,11 +71,53 @@ pub struct QuerierMinimizerBucketingGlobalData {
 
 pub struct QuerierMinimizerBucketingExecutor<CX: ColorsManager> {
     minimizer_queue: BatchMinQueue<()>,
+    /// For whole buffers of input sequences, on windows of a k-mer's m-mers; taken out while
+    /// in use.
+    buffer_minimizers: Option<BufferMinimizers>,
     global_data: Arc<MinimizerBucketingCommonData<QuerierMinimizerBucketingGlobalData>>,
     _phantom: PhantomData<CX>,
 }
 
 pub struct QuerierMinimizerBucketingExecutorFactory<CX: ColorsManager>(PhantomData<CX>);
+
+/// Hands `push_sequence` the super-k-mer of the part of `sequence` from its base `offset` whose
+/// k-mers run from `last_index` to `index`, that one included for the last, as the scalar queue's
+/// split callback numbers them on that part, with its minimizer's hash `min_hash`.
+#[inline(always)]
+fn push_superkmer<
+    S: MinimizerInputSequence,
+    CX: ColorsManager,
+    F: FnMut(PushSequenceInfo<S, QuerierMinimizerBucketingExecutorFactory<CX>>),
+>(
+    k: usize,
+    preprocess_info: &ReadTypeBuffered<CX>,
+    sequence: S,
+    offset: usize,
+    (last_index, index): (usize, usize),
+    min_hash: u64,
+    is_last: bool,
+    (used_bits, first_bits, second_bits): (usize, usize, usize),
+    push_sequence: &mut F,
+) {
+    push_sequence(PushSequenceInfo {
+        bucket: MNHFactory::get_bucket(used_bits, first_bits, min_hash),
+        second_bucket: MNHFactory::get_bucket(used_bits + first_bits, second_bits, min_hash),
+        sequence: sequence
+            .get_subslice((offset + last_index)..(offset + index + k - !is_last as usize)),
+        extra_data: match &preprocess_info.read_type {
+            ReadType::Graph { color } => QueryKmersReferenceData::Graph(color.get_subslice(
+                (offset + last_index)..(offset + index + is_last as usize),
+                false,
+            )),
+
+            ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
+        },
+        temp_buffer: &preprocess_info.colors_buffer,
+        minimizer_pos: 0,
+        flags: 0,
+        rc: false,
+    });
+}
 
 impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
     for QuerierMinimizerBucketingExecutorFactory<CX>
@@ -96,6 +141,12 @@ impl<CX: ColorsManager> MinimizerBucketingExecutorFactory
     ) -> Self::ExecutorType {
         Self::ExecutorType {
             minimizer_queue: BatchMinQueue::new(global_data.k - global_data.m + 1),
+            buffer_minimizers: Some(BufferMinimizers::new(
+                global_data.k,
+                global_data.m,
+                global_data.k - global_data.m + 1,
+                HashKernel::detect(),
+            )),
             global_data: global_data.clone(),
             _phantom: PhantomData,
         }
@@ -203,31 +254,82 @@ impl<CX: ColorsManager> MinimizerBucketingExecutor<QuerierMinimizerBucketingExec
             0,
             #[inline(always)]
             |index, min_hash, is_last| {
-                push_sequence(PushSequenceInfo {
-                    bucket: MNHFactory::get_bucket(used_bits, first_bits, min_hash.0),
-                    second_bucket: MNHFactory::get_bucket(
-                        used_bits + first_bits,
-                        second_bits,
-                        min_hash.0,
-                    ),
-                    sequence: sequence
-                        .get_subslice(last_index..(index + self.global_data.k - !is_last as usize)),
-                    extra_data: match &preprocess_info.read_type {
-                        ReadType::Graph { color } => QueryKmersReferenceData::Graph(
-                            color.get_subslice(last_index..index + is_last as usize, false),
-                        ),
-
-                        ReadType::Query(val) => QueryKmersReferenceData::Query(*val),
-                    },
-                    temp_buffer: &preprocess_info.colors_buffer,
-                    minimizer_pos: 0,
-                    flags: 0,
-                    rc: false,
-                });
-
+                push_superkmer(
+                    self.global_data.k,
+                    preprocess_info,
+                    sequence,
+                    0,
+                    (last_index, index),
+                    min_hash.0,
+                    is_last,
+                    (used_bits, first_bits, second_bits),
+                    &mut push_sequence,
+                );
                 last_index = index;
             },
         );
+    }
+
+    /// The input sequences of `buffer` split all at once, by the SIMD minimizer queue on the
+    /// whole buffer: each run of k-mers it finds in a part of a sequence is the super-k-mer the
+    /// scalar queue's split would give on that part, as the same callback cuts it out, but that it
+    /// also splits where the minimizer's position changes. The parts of a sequence in two lanes
+    /// overlap by k - 1 bases: each k-mer is in one. Each lane keeps the preprocessing of the
+    /// sequence it is in.
+    fn process_buffer<
+        F: FnMut(PushSequenceInfo<CompressedRead, QuerierMinimizerBucketingExecutorFactory<CX>>),
+    >(
+        &mut self,
+        stream_info: &FileType,
+        sequence_info: SequenceInfo,
+        buffer: &SequenceBuffer,
+        used_bits: usize,
+        first_bits: usize,
+        second_bits: usize,
+        mut push_sequence: F,
+    ) {
+        let mut minimizers = self
+            .buffer_minimizers
+            .take()
+            .expect("the buffer queue is only taken while in use");
+        let k = self.global_data.k;
+        let (descriptions, record_indices) = (buffer.descriptions(), buffer.record_indices());
+        let mut lane_infos: [ReadTypeBuffered<CX>; SIMD_LANES] = Default::default();
+        let mut lane_sequences = [usize::MAX; SIMD_LANES];
+        minimizers.runs::<false>(buffer, |run| {
+            let simd_sequence = buffer.sequence(&descriptions[run.sequence]);
+            let sequence = DnaSequence {
+                ident_data: simd_sequence.ident_data,
+                seq: CompressedRead::from(simd_sequence.seq),
+                format: simd_sequence.format,
+            };
+            let info = &mut lane_infos[run.lane];
+            if lane_sequences[run.lane] != run.sequence {
+                self.preprocess_dna_sequence(
+                    stream_info,
+                    sequence_info,
+                    record_indices.get(run.sequence).copied().unwrap_or(0),
+                    &sequence,
+                    info,
+                );
+                lane_sequences[run.lane] = run.sequence;
+            }
+            // As the scalar queue's split callback numbers them: the k-mers from the run's first
+            // to the next run's, the run's last itself at the part's end.
+            let is_last = run.end == run.windows;
+            push_superkmer(
+                k,
+                info,
+                sequence.seq,
+                run.offset,
+                (run.start, run.end - is_last as usize),
+                run.value as u64,
+                is_last,
+                (used_bits, first_bits, second_bits),
+                &mut push_sequence,
+            );
+        });
+        self.buffer_minimizers = Some(minimizers);
     }
 }
 
