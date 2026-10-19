@@ -61,21 +61,21 @@ pub fn log(level: MessageLevel, message: &str) {
 #[macro_export]
 macro_rules! info {
     ($($arg:tt)*) => {
-        $crate::log($crate::MessageLevel::Info, &format!($($arg)*));
+        $crate::log($crate::MessageLevel::Info, &format!($($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! warn {
     ($($arg:tt)*) => {
-        $crate::log($crate::MessageLevel::Warning, &format!($($arg)*));
+        $crate::log($crate::MessageLevel::Warning, &format!($($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! error {
     ($($arg:tt)*) => {
-        $crate::log($crate::MessageLevel::Error, &format!($($arg)*));
+        $crate::log($crate::MessageLevel::Error, &format!($($arg)*))
     };
 }
 
