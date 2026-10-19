@@ -162,7 +162,12 @@ struct AssemblerArgs {
     #[arg(short, long)]
     pub colors: bool,
 
-    /// The lists of input files with colors in format <COLOR_NAME><TAB><FILE_PATH>
+    /// The lists of input files with colors in format <COLOR_NAME><TAB><FILE_PATH>. A tar
+    /// archive is mapped whole as archive.tar, a member of it as archive.tar:member.fa, and an
+    /// archive nested in it as archive.tar:inner.tgz; each member takes the most specific
+    /// mapping it has, and those with none get a color each, named archive.tar:member.fa. A line
+    /// with a <FILE_PATH> only gives it the colors it has without a list: a file its own, named
+    /// after it, an archive one for each member. Every archive is read in full.
     #[arg(short = 'd', long = "colored-input-lists")]
     pub colored_input_lists: Vec<PathBuf>,
 
@@ -394,15 +399,21 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
     }
 
     let color_names: Vec<_> = if args.colored_input_lists.is_empty() {
-        // Standard colors (input file names)
-        inputs
-            .iter()
-            .map(|f| f.0.file_name().unwrap().to_string_lossy().to_string())
-            .collect()
+        // Standard colors: each input file its own, in their order, named after it; the members
+        // of archives get theirs as they are read.
+        let mut names = Vec::new();
+        for (path, color) in &mut inputs {
+            if io::binary_reader::split_archive_member(path).is_none() {
+                *color = Some(names.len() as ColorIndexType);
+                names.push(path.file_name().unwrap().to_string_lossy().to_string());
+            }
+        }
+        names
     } else {
-        // Mapped colors
+        // Mapped colors, by the order they first appear in. A line with a path only reads it
+        // with the colors it has without a list: a file its own, an archive one per member.
         let mut colors = HashMap::default();
-        let mut next_index = 0;
+        let mut names = Vec::new();
 
         for list in args.colored_input_lists {
             for input in BufReader::new(
@@ -424,25 +435,8 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
                     }
 
                     let parts = input.split("\t").collect::<Vec<_>>();
-                    if parts.len() < 2 {
-                        println!("Invalid line in colored input list: {}", input);
-                        exit(1);
-                    }
-
                     let color_name = parts[0..parts.len() - 1].join("\t");
                     let file_name = parts.last().unwrap().to_string();
-
-                    let index = *colors.entry(color_name).or_insert_with(|| {
-                        let index = next_index;
-                        next_index += 1;
-                        index
-                    });
-
-                    println!(
-                        "Add index with color {} => {}",
-                        parts[0..parts.len() - 1].join("\t"),
-                        index
-                    );
 
                     let file_name = if <String as AsRef<Path>>::as_ref(&file_name).is_relative() {
                         list.parent().unwrap().join(file_name)
@@ -450,14 +444,28 @@ fn run_assembler_from_args(instance: &GGCATInstance, args: AssemblerArgs) {
                         PathBuf::from(file_name)
                     };
 
+                    let index = if parts.len() > 1 {
+                        *colors.entry(color_name.clone()).or_insert_with(|| {
+                            names.push(color_name.clone());
+                            (names.len() - 1) as ColorIndexType
+                        })
+                    } else if io::binary_reader::split_archive_member(&file_name).is_none() {
+                        names.push(file_name.file_name().unwrap().to_string_lossy().to_string());
+                        (names.len() - 1) as ColorIndexType
+                    } else {
+                        println!("Add {} with a color for each member", file_name.display());
+                        inputs.push((file_name, None));
+                        continue;
+                    };
+
+                    println!("Add index with color {} => {}", names[index as usize], index);
+
                     inputs.push((file_name, Some(index)));
                 }
             }
         }
-        let mut colors: Vec<_> = colors.into_iter().collect();
-        colors.sort_by_key(|(_, i)| *i);
 
-        colors.into_iter().map(|(c, _)| c).collect()
+        names
     };
 
     if inputs.is_empty() {

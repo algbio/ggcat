@@ -52,6 +52,9 @@ impl<Factory: MinimizerBucketingExecutorFactory, SequencesStream: GenericSequenc
             let records = sequences_stream.read_block(
                 &input_packet.sequences,
                 &context.parser_settings,
+                |name, info| {
+                    Factory::file_info(&context.common.global_data, &stream_info, name, info)
+                },
                 |buffer, sequence_info| {
                     let mut packet = packets_pool.alloc_packet();
                     let data = packet.deref_mut();

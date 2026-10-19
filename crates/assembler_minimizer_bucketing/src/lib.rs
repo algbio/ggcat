@@ -1,6 +1,7 @@
 pub mod rewrite_bucket;
 
 use ::dynamic_dispatch::dynamic_dispatch;
+use colors::color_assigner::ColorAssigner;
 use colors::colors_manager::color_types::{
     MinimizerBucketingMultipleSeqColorDataType, MinimizerBucketingSeqColorDataType,
 };
@@ -174,7 +175,12 @@ impl<CD: MinimizerBucketingSeqColorData> AssemblerMinimizerBucketingExecutor<CD>
 
 #[derive(Clone, Default)]
 pub struct InputFileInfo {
+    /// The colour of the input's sequences that come with none.
     file_color: ColorIndexType,
+    /// The input's index in the inputs of `colors`, which gives the colours of its files as
+    /// they start, when building a coloured graph.
+    input: usize,
+    colors: Option<Arc<ColorAssigner>>,
 }
 
 pub trait CanonicalMode {
@@ -209,6 +215,20 @@ impl<CD: MinimizerBucketingSeqColorData> MinimizerBucketingExecutorFactory
             duplicates_bucket: global_data.buckets_count.normal_buckets_count as u16,
             canonical: global_data.canonical,
             _phantom: PhantomData,
+        }
+    }
+
+    fn file_info(
+        _global_data: &Self::GlobalData,
+        stream_info: &Self::StreamInfo,
+        name: &str,
+        info: SequenceInfo,
+    ) -> SequenceInfo {
+        match &stream_info.colors {
+            Some(colors) => SequenceInfo {
+                color: Some(colors.file_color(stream_info.input, name)),
+            },
+            None => info,
         }
     }
 }
@@ -411,6 +431,9 @@ impl<CD: MinimizerBucketingSeqColorData>
     }
 }
 
+/// Splits the sequences of `input_blocks`, of the estimated `input_sizes`, into the buckets
+/// of their minimizers. For a coloured graph, `colors` gives the colours of the inputs' files,
+/// archives' members each as it starts: the inputs are those it gives, in its order.
 #[dynamic_dispatch(H = [
     hashes::cn_nthash::CanonicalNtHashIteratorFactory,
 ], CX = [
@@ -420,6 +443,7 @@ impl<CD: MinimizerBucketingSeqColorData>
 pub fn minimizer_bucketing<CX: ColorsManager>(
     input_blocks: Vec<GeneralSequenceBlockData>,
     input_sizes: Vec<u64>,
+    colors: Option<Arc<ColorAssigner>>,
     output_path: &Path,
     buckets_count: BucketsCount,
     second_buckets_count: BucketsCount,
@@ -448,7 +472,11 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
                 MinimzerBucketingFilesReaderInputPacket {
                     sequences,
                     stream_info: InputFileInfo {
-                        file_color: i as ColorIndexType,
+                        file_color: colors
+                            .as_ref()
+                            .map_or(i as ColorIndexType, |colors| colors.input_color(i)),
+                        input: i,
+                        colors: colors.clone(),
                     },
                 },
             )

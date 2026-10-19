@@ -58,6 +58,22 @@ impl SimdSequencesReader {
         &mut self,
         source: impl AsRef<Path>,
         settings: &ParserSettings,
+        func: F,
+        remove_file: bool,
+    ) -> u64 {
+        self.process_file_with_names(source, settings, |_| {}, func, remove_file)
+    }
+
+    /// As [`Self::process_file_extended`], calling `on_file` with the name of each file it reads
+    /// sequences from as it starts, before any buffer of its sequences: the source itself, or
+    /// each member of the archive it is that holds FASTA or FASTQ, named `archive:member` as
+    /// [`BinaryEvent::FilePath`] names it. Each buffer `func` gets holds the sequences of the
+    /// file named last only.
+    pub fn process_file_with_names<F: FnMut(SequenceBuffer) -> SequenceBuffer>(
+        &mut self,
+        source: impl AsRef<Path>,
+        settings: &ParserSettings,
+        mut on_file: impl FnMut(&str),
         mut func: F,
         remove_file: bool,
     ) -> u64 {
@@ -76,6 +92,7 @@ impl SimdSequencesReader {
                 parsing = match DnaSequencesFileType::from_name(name) {
                     Some(format @ (DnaSequencesFileType::FASTA | DnaSequencesFileType::FASTQ)) => {
                         parser.reset(format);
+                        on_file(name);
                         true
                     }
                     Some(DnaSequencesFileType::GFA) => todo!(),

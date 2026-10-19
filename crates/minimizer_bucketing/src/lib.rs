@@ -146,6 +146,18 @@ pub trait MinimizerBucketingExecutorFactory: Sync + Send + Sized + 'static {
     fn new(global_data: &Arc<MinimizerBucketingCommonData<Self::GlobalData>>)
     -> Self::ExecutorType;
 
+    /// The information of the sequences of a file of an input of `stream_info`, as a reader
+    /// starts it: the input itself, or a member of the archive it is, named `archive:member`.
+    /// `info` is what the input gives them, and what they keep by default.
+    fn file_info(
+        _global_data: &Self::GlobalData,
+        _stream_info: &Self::StreamInfo,
+        _name: &str,
+        info: SequenceInfo,
+    ) -> SequenceInfo {
+        info
+    }
+
     /// Called by a reader once it has read an input of `stream_info`: `records` is how many
     /// records it held, numbered as the record indices are, those that gave no sequence
     /// included.

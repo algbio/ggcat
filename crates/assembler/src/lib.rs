@@ -11,6 +11,7 @@ use assembler_pipeline::eulertigs::build_eulertigs;
 use assembler_pipeline::extend_unitigs::extend_unitigs;
 use assembler_pipeline::get_final_output_writer;
 use assembler_pipeline::maximal_unitig_links::build_maximal_unitigs_links;
+use colors::color_assigner::ColorAssigner;
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
@@ -111,6 +112,11 @@ pub fn run_assembler<
 
     stats!(let stats.start_time = Instant::now());
 
+    // The inputs to read, each archive once, and the colours of their files: the members of
+    // archives can be given theirs only as they are read.
+    let (color_assigner, input_blocks) = ColorAssigner::new(input_blocks, color_names)?;
+    let color_assigner = Arc::new(color_assigner);
+
     // Resuming past the bucketing reuses what it was planned with, when it was saved.
     let resumed = if step > AssemblerPhase::MinimizerBucketing
         && temp_dir.join("minimizer-inputs.debug").exists()
@@ -119,13 +125,13 @@ pub fn run_assembler<
     } else {
         None
     };
-    let (color_names, file_stats, input_sizes) = match resumed {
-        Some((color_names, file_stats)) => (color_names, file_stats, Vec::new()),
+    let (resumed_color_names, file_stats, input_sizes) = match resumed {
+        Some((color_names, file_stats)) => (Some(color_names), file_stats, Vec::new()),
         None => {
             // Estimated once: the sizes pick the buckets and the order the inputs are read in.
             let input_sizes = io::input_size::estimate_blocks(&input_blocks)?;
             let file_stats = compute_stats_from_input_sizes(&input_sizes);
-            (color_names.to_vec(), file_stats, input_sizes)
+            (None, file_stats, input_sizes)
         }
     };
 
@@ -146,17 +152,6 @@ pub fn run_assembler<
         INTERMEDIATE_COMPRESSION_LEVEL_SLOW.store(default_compression_level, Ordering::Relaxed);
         INTERMEDIATE_COMPRESSION_LEVEL_FAST.store(default_compression_level, Ordering::Relaxed);
     }
-
-    let colormap_threads_count = (threads_count / 2).max(1).min(MAX_COLORMAP_WRITING_THREADS);
-
-    let global_colors_table = Arc::new(
-        AssemblerColorsManager::ColorsMergeManagerType::create_colors_table(
-            output_file.with_extension("colors.dat"),
-            &color_names,
-            colormap_threads_count,
-            true,
-        )?,
-    );
 
     stats!(
         stats.assembler.preprocess_time = ggcat_logging::get_stat_opt!(stats.start_time)
@@ -179,6 +174,7 @@ pub fn run_assembler<
             (AssemblerColorsManager::dynamic_dispatch_id(),),
             input_blocks,
             input_sizes,
+            AssemblerColorsManager::COLORS_ENABLED.then(|| color_assigner.clone()),
             temp_dir.as_path(),
             first_phase_buckets_count,
             second_buckets_count,
@@ -203,6 +199,25 @@ pub fn run_assembler<
         buckets.len(),
         buckets.iter().map(|x| x.chunks.len()).sum::<usize>()
     );
+
+    // The colours are all known once the inputs are read, or from the run resumed.
+    let color_names = match resumed_color_names {
+        Some(color_names) => color_names,
+        None => {
+            let read = step <= AssemblerPhase::MinimizerBucketing;
+            anyhow::ensure!(
+                read || !AssemblerColorsManager::COLORS_ENABLED
+                    || !color_assigner.assigns_while_reading(),
+                "Resuming archive inputs requires the minimizer-inputs.debug checkpoint"
+            );
+            if read && AssemblerColorsManager::COLORS_ENABLED {
+                for mapping in color_assigner.unmatched_mappings() {
+                    ggcat_logging::info!("Unmatched archive color mapping: {mapping}");
+                }
+            }
+            color_assigner.color_names()
+        }
+    };
 
     if KEEP_FILES.load(Ordering::Relaxed) || last_step < AssemblerPhase::FinalStep {
         debug_save_buckets(&temp_dir, "minimizer-bucketing.debug", &buckets);
@@ -244,6 +259,17 @@ pub fn run_assembler<
         });
         return Ok(PathBuf::new());
     }
+
+    // Made only now that all the colours are known: their names start the colormap's file.
+    let colormap_threads_count = (threads_count / 2).max(1).min(MAX_COLORMAP_WRITING_THREADS);
+    let global_colors_table = Arc::new(
+        AssemblerColorsManager::ColorsMergeManagerType::create_colors_table(
+            output_file.with_extension("colors.dat"),
+            &color_names,
+            colormap_threads_count,
+            true,
+        )?,
+    );
 
     let buckets_count = BucketsCount::new(buckets_count_log, ExtraBuckets::None);
 

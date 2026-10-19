@@ -55,13 +55,14 @@ impl GenericSequencesStream for GeneralSequencesStream {
         &mut self,
         block: &Self::SequenceBlockData,
         settings: &ParserSettings,
+        file_info: impl FnMut(&str, SequenceInfo) -> SequenceInfo,
         mut callback: impl FnMut(SequenceBuffer, SequenceInfo) -> SequenceBuffer,
     ) -> u64 {
         match block {
             GeneralSequenceBlockData::FILE(block) => self
                 .file_reader
                 .get_or_insert_with(FileSequencesStream::new)
-                .read_block(block, settings, callback),
+                .read_block(block, settings, file_info, callback),
             GeneralSequenceBlockData::Dynamic((reader, index)) => {
                 // The stream hands over a record at a time, each with its own format and
                 // information, and a buffer holds sequences of only one of each: a record that

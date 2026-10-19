@@ -12,7 +12,7 @@ use anyhow::{Context, Result, anyhow};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
 use std::fs::File;
 use std::io::{BufRead, ErrorKind, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use streaming_libdeflate_rs::{
     LibdeflateDecompressResult, LibdeflateGzipFileDecompressor, LibdeflateGzipPushDecompressor,
 };
@@ -63,6 +63,30 @@ pub(crate) fn is_archive(path: &Path) -> bool {
         && Path::new(path.file_stem().unwrap_or_default())
             .extension()
             .is_some_and(|extension| extension == "tar")
+}
+
+/// The archives that the name of a member, as [`BinaryEvent::FilePath`] names them, is nested
+/// in, outermost first: the prefixes of `name` that are an archive's name followed by `:`. For
+/// `x.tar:dir/inner.tgz:a.fa`, `x.tar` and `x.tar:dir/inner.tgz`. The colons that follow no
+/// archive's name, as a directory's, do not end one.
+pub fn archive_prefixes(name: &str) -> impl Iterator<Item = &str> {
+    name.match_indices(':')
+        .map(|(index, _)| &name[..index])
+        .filter(|prefix| is_archive(Path::new(prefix)))
+}
+
+/// The archive `path` names, and its member if it names one, as colour lists write them:
+/// `x.tar.gz:dir/a.fa` is the member `dir/a.fa` of `x.tar.gz`, and `x.tar.gz` the whole archive.
+/// The split is at the first of its [`archive_prefixes`], so that the colons of the directories
+/// before it, and those of the archives nested in it (`x.tar:inner.tgz:a.fa`), are kept. None if
+/// `path` names no archive, or is not UTF-8.
+pub fn split_archive_member(path: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
+    let name = path.to_str()?;
+    if let Some(archive) = archive_prefixes(name).next() {
+        let member = PathBuf::from(&name[archive.len() + 1..]);
+        return Some((PathBuf::from(archive), Some(member)));
+    }
+    is_archive(path).then(|| (path.to_owned(), None))
 }
 
 /// `source` decompressed by `codec`, as a reader. Every decoder but lz4's reads on past the end
@@ -910,6 +934,35 @@ mod tests {
         for name in ["x.fa", "x.fa.gz", "tar", "x.tar.fa", "x.gz", "x.tgz.fa"] {
             assert!(!is_archive(Path::new(name)), "{name}");
         }
+    }
+
+    #[test]
+    fn a_member_is_split_from_its_archive_at_the_first_archive_name() {
+        let split = |name: &str| split_archive_member(Path::new(name));
+        let member = |archive: &str, member: &str| {
+            Some((PathBuf::from(archive), Some(PathBuf::from(member))))
+        };
+        assert_eq!(split("/d/x.tar.gz:dir/a.fa"), member("/d/x.tar.gz", "dir/a.fa"));
+        // The colons of the directories before it are not splits.
+        assert_eq!(split("/d/a:b/x.tgz:a.fa"), member("/d/a:b/x.tgz", "a.fa"));
+        // Those of nested archives stay in the member, as the reader names it.
+        assert_eq!(split("x.tar:in.tar.xz:a.fa"), member("x.tar", "in.tar.xz:a.fa"));
+        assert_eq!(split("x.tar:"), member("x.tar", ""));
+        assert_eq!(split("/d/x.tar.zst"), Some((PathBuf::from("/d/x.tar.zst"), None)));
+        assert_eq!(split("/d/x.fa"), None);
+        assert_eq!(split("/d/a:b/x.fa.gz"), None);
+    }
+
+    #[test]
+    fn a_members_name_has_a_prefix_for_each_archive_it_is_nested_in() {
+        let prefixes = |name| archive_prefixes(name).collect::<Vec<_>>();
+        assert_eq!(
+            prefixes("/d/x.tar:dir/in.tgz:a:b/deep.tar.xz:c.fa"),
+            ["/d/x.tar", "/d/x.tar:dir/in.tgz", "/d/x.tar:dir/in.tgz:a:b/deep.tar.xz"]
+        );
+        assert_eq!(prefixes("in.tgz:a.fa"), ["in.tgz"]);
+        assert!(prefixes("/d/a:b/x.fa").is_empty());
+        assert!(prefixes("/d/x.tar").is_empty());
     }
 
     #[test]

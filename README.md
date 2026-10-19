@@ -54,6 +54,36 @@ Then the graph can be built with the command:
 ggcat build -k <k_value> -j <threads_count> -c -d color_mapping.in -o <output_file>
 ```
 
+#### Tar archives as inputs (with optional colors)
+
+Inputs can also be tar archives, given directly or through input lists: `.tar`, optionally
+compressed as `.tar.gz`, `.tar.bz2`, `.tar.xz`, `.tar.zst`, `.tar.zstd` or `.tar.lz4`, or with
+the short names `.tgz`, `.taz`, `.tbz`, `.tbz2`, `.tb2`, `.tz2`, `.txz`, `.tzst` and `.tlz4`.
+Their members are read as FASTA or FASTQ by their names (`.fa`, `.fasta`, `.fna`, `.ffn`, `.fq`,
+`.fastq`), optionally compressed, archives inside archives included; other members are skipped.
+
+With `-c`, each member gets a color named `<archive-path>:<member-path>`; members with the same
+path in the same archive share it. These colors are numbered after those of the other inputs,
+in the order the members are read, which can change from one run to the next when several
+archives are read at once.
+
+Colored input lists (`-d`) can map a whole archive, a member of one, or an archive nested in
+one, whose members are named after it in turn:
+
+```
+shared-color	reads.tar.gz
+special-color	reads.tar.gz:samples/sample.fa
+nested-color	reads.tar.gz:samples/more.tar.xz
+deeper-color	reads.tar.gz:samples/more.tar.xz:b.fa
+```
+
+Each member takes the most specific mapping it has: its own, then that of the innermost archive
+it is nested in, then the whole archive's. The members with none get their own
+archive-qualified colors.
+
+A line with a path only, and no color, reads it with the colors it would have without a list:
+a file gets its own color, named after it, and an archive a color for each member.
+
 #### Building links
 
 To build links between maximal unitigs in BCALM2 like format, use the `-e` flag
