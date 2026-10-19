@@ -68,7 +68,8 @@ pub struct CompactReport {
     pub report_id: StatId,
     pub bucket_index: usize,
     pub input_files: Vec<InputFileStats>,
-    pub output_file: PathBuf,
+    /// The multi-chunk file, if any, then the single-chunk file
+    pub output_files: Vec<PathBuf>,
     pub start_time: PrintableDuration,
     pub end_time: PrintableDuration,
     pub subbucket_reports: Vec<SubbucketReport>,

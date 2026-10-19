@@ -60,8 +60,6 @@ support_kmer_counters = [
 
 # Features used to filter ggcat capabilites
 full = [
-    "hash-16bit",
-    "hash-32bit",
     "hash-64bit",
     "hash-128bit",
     "hash-rkarp",

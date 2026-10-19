@@ -39,8 +39,6 @@ detailed-stats = ["ggcat-logging/detailed-stats"]
 # Features used to filter ggcat capabilites
 default = ["full"]
 full = [
-    "hash-16bit",
-    "hash-32bit",
     "hash-64bit",
     "hash-128bit",
     "hash-rkarp",

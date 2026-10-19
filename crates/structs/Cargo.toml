@@ -13,4 +13,4 @@ typenum = "1.20.0"
 
 
 [features]
-support_kmer_counters = []
+support_kmer_counters = ["io/support_kmer_counters"]

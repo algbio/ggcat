@@ -47,6 +47,7 @@ rayon = "1.10.0"
 
 [features]
 support_kmer_counters = [
+    "io/support_kmer_counters",
     "colors/support_kmer_counters",
     "structs/support_kmer_counters",
     "sequence_output/support_kmer_counters",
@@ -54,18 +55,16 @@ support_kmer_counters = [
 
 # Features used to filter ggcat capabilites
 full = [
-    "hash-16bit",
-    "hash-32bit",
     "hash-64bit",
     "hash-128bit",
     "hash-rkarp",
     "hash-forward",
     "enable-colors",
 ]
-hash-16bit = []    # Support 16bit hashing (optimization for k <= 8)
-hash-32bit = []    # Support 32bit hashing (optimization for k <= 16)
-hash-64bit = []    # Support 64bit hashing (optimization for k <= 32)
-hash-128bit = []   # Support 128bit hashing (k <= 64)
-hash-rkarp = []    # Support 128bit rabin-karp hashing (k > 64)
-hash-forward = []  # Support non-canonical hashing
-enable-colors = [] # Support colors
+hash-16bit = ["assembler_minimizer_bucketing/hash-16bit"]    # Support 16bit hashing (optimization for k <= 8)
+hash-32bit = ["assembler_minimizer_bucketing/hash-32bit"]    # Support 32bit hashing (optimization for k <= 16)
+hash-64bit = ["assembler_minimizer_bucketing/hash-64bit"]    # Support 64bit hashing (optimization for k <= 32)
+hash-128bit = ["assembler_minimizer_bucketing/hash-128bit"]   # Support 128bit hashing (k <= 64)
+hash-rkarp = ["assembler_minimizer_bucketing/hash-rkarp"]    # Support 128bit rabin-karp hashing (k > 64)
+hash-forward = ["assembler_minimizer_bucketing/hash-forward"]  # Support non-canonical hashing
+enable-colors = ["assembler_minimizer_bucketing/enable-colors"] # Support colors

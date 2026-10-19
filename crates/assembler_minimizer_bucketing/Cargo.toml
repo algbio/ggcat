@@ -28,8 +28,6 @@ typenum = "1.18.0"
 [features]
 # Features used to filter ggcat capabilites
 full = [
-    "hash-16bit",
-    "hash-32bit",
     "hash-64bit",
     "hash-128bit",
     "hash-rkarp",

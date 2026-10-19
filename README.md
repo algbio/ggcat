@@ -221,7 +221,7 @@ Advanced Options:
 
 ## Building from source
 
-To build the tool the Rust stable (>= 1.75) toolchain is required, and can be downloaded with the following commands:
+To build the tool the Rust stable (>= 1.90) toolchain is required, and can be downloaded with the following commands:
 
 ### Linux/Mac
 
@@ -241,6 +241,7 @@ https://rustup.rs/
 Additional features can be enabled by specifying them in the command line while building/installing GGCAT (ex. --features "feature1,feature2"):
 
 - **kmer-counters**: Adds kmer abundance for each unitig, in a BCALM2 compatible format. If enabled GGCAT uses more memory while building colored graphs
+- **hash-16bit**, **hash-32bit**: Dedicated 16 and 32 bit k-mer hashes, an optimization for k <= 8 and k <= 16. Without them, these values of k use the 64 bit hash and give the same graph; each one enlarges the binary and its build time
 
 ### Building
 
@@ -255,6 +256,11 @@ cargo install --path crates/cmdline/ --locked
 the binary is automatically copied to `$HOME/.cargo/bin`
 
 To launch the tool directly from the command line, the above directory should be added to the `$PATH` variable.
+
+#### Binary size optimization
+On x86_64 Linux the linker folds identical functions to reduce the binary size (`.cargo/config.toml`). Setting the `RUSTFLAGS` environment variable replaces that setting: to keep it, add `-C link-arg=-Wl,--icf=all` to the variable, ex. `RUSTFLAGS="-C target-cpu=native -C link-arg=-Wl,--icf=all"`.
+
+
 
 ## API usage
 

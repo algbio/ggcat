@@ -944,7 +944,8 @@ impl<
         bucket.chunks.push(new_path_single.clone());
 
         let output_files_size = new_path
-            .map(|new_path| MemoryFs::get_file_size(&new_path).unwrap())
+            .as_ref()
+            .map(|new_path| MemoryFs::get_file_size(new_path).unwrap())
             .unwrap_or(0)
             + MemoryFs::get_file_size(&new_path_single).unwrap();
         let _compression_ratio = input_files_size as f64 / output_files_size as f64;
@@ -971,7 +972,7 @@ impl<
                     report_id: generate_stat_id!(),
                     bucket_index: _bucket_index,
                     input_files: pop_stats,
-                    output_file: new_path,
+                    output_files: new_path.into_iter().chain([new_path_single]).collect(),
                     start_time: stat_start_time.into(),
                     end_time: end_time.into(),
                     subbucket_reports: vec![],

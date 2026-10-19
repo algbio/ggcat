@@ -57,7 +57,7 @@ assembler = { package = "ggcat_assembler", path = "../assembler" }
 instrumenter = "0.1.3"
 
 querier = { package = "ggcat_querier", path = "../querier" }
-ggcat-api = { version = "2.2.0", path = "../api" }
+ggcat-api = { version = "2.2.0", path = "../api", default-features = false }
 ggcat-logging = { version = "2.2.0", path = "../logging" }
 clap = { version = "4.5.50", features = ["derive"] }
 
@@ -74,8 +74,6 @@ kmer-counters = ["assembler/support_kmer_counters"]
 
 # Features used to filter ggcat capabilites
 full = [
-    "hash-16bit",
-    "hash-32bit",
     "hash-64bit",
     "hash-128bit",
     "hash-rkarp",
@@ -84,14 +82,14 @@ full = [
     "enable-gfa",
 ]
 
-hash-16bit = ["assembler/hash-16bit", "querier/hash-16bit"]    # Support 16bit hashing (optimization for k <= 8)
-hash-32bit = ["assembler/hash-32bit", "querier/hash-32bit"]    # Support 32bit hashing (optimization for k <= 16)
-hash-64bit = ["assembler/hash-64bit", "querier/hash-64bit"]    # Support 64bit hashing (optimization for k <= 32)
-hash-128bit = ["assembler/hash-128bit", "querier/hash-128bit"]   # Support 128bit hashing (k <= 64)
-hash-rkarp = ["assembler/hash-rkarp", "querier/hash-rkarp"]    # Support 128bit rabin-karp hashing (k > 64)
-hash-forward = ["assembler/hash-forward", "querier/hash-forward"]  # Support non-canonical hashing
-enable-colors = ["assembler/enable-colors", "querier/enable-colors"] # Support colors
-enable-gfa = ["assembler/enable-gfa", "querier/enable-gfa"]    # Support gfa output
+hash-16bit = ["assembler/hash-16bit", "querier/hash-16bit", "ggcat-api/hash-16bit"]    # Support 16bit hashing (optimization for k <= 8)
+hash-32bit = ["assembler/hash-32bit", "querier/hash-32bit", "ggcat-api/hash-32bit"]    # Support 32bit hashing (optimization for k <= 16)
+hash-64bit = ["assembler/hash-64bit", "querier/hash-64bit", "ggcat-api/hash-64bit"]    # Support 64bit hashing (optimization for k <= 32)
+hash-128bit = ["assembler/hash-128bit", "querier/hash-128bit", "ggcat-api/hash-128bit"]   # Support 128bit hashing (k <= 64)
+hash-rkarp = ["assembler/hash-rkarp", "querier/hash-rkarp", "ggcat-api/hash-rkarp"]    # Support 128bit rabin-karp hashing (k > 64)
+hash-forward = ["assembler/hash-forward", "querier/hash-forward", "ggcat-api/hash-forward"]  # Support non-canonical hashing
+enable-colors = ["assembler/enable-colors", "querier/enable-colors", "ggcat-api/enable-colors"] # Support colors
+enable-gfa = ["assembler/enable-gfa", "querier/enable-gfa", "ggcat-api/enable-gfa"]    # Support gfa output
 
 
 [build-dependencies]

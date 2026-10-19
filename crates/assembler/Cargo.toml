@@ -54,14 +54,13 @@ support_kmer_counters = [
     "io/support_kmer_counters",
     "colors/support_kmer_counters",
     "structs/support_kmer_counters",
+    "sequence_output/support_kmer_counters",
     "assembler_pipeline/support_kmer_counters",
     "assembler_kmers_merge/support_kmer_counters",
 ]
 
 # Features used to filter ggcat capabilites
 full = [
-    "hash-16bit",
-    "hash-32bit",
     "hash-64bit",
     "hash-128bit",
     "hash-rkarp",

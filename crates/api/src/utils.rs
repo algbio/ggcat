@@ -27,13 +27,14 @@ pub(crate) fn get_hash_static_id(
 
     match hash_type {
         HashType::SeqHash => {
-            if k <= 8 {
+            // The 16 and 32 bit hashes are opt-in features: without them, small k use the 64 bit hash
+            if k <= 8 && cfg!(feature = "hash-16bit") {
                 if forward_only {
                     fw_seqhash::u16::ForwardSeqHashFactory::dynamic_dispatch_id()
                 } else {
                     cn_seqhash::u16::CanonicalSeqHashFactory::dynamic_dispatch_id()
                 }
-            } else if k <= 16 {
+            } else if k <= 16 && cfg!(feature = "hash-32bit") {
                 if forward_only {
                     fw_seqhash::u32::ForwardSeqHashFactory::dynamic_dispatch_id()
                 } else {
