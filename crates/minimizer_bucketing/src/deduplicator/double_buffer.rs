@@ -5,7 +5,7 @@
 //! monotone rather than a flag so that "this is still the buffer I saw" stays
 //! decidable, which is what rules out an ABA on the index. An append takes the
 //! buffer's gate for *reading*, carves out a range with one bounded
-//! `fetch_update` — the reservation idiom of
+//! `try_update` — the reservation idiom of
 //! `AllocatedChunk::write_bytes_noextend` — and copies into it. A reservation
 //! that would pass the end is refused rather than taken, so the cursor is at
 //! every moment exactly the number of valid bytes, with no burnt space to
@@ -145,7 +145,7 @@ impl Slot {
         let capacity = self.data.len();
         let reserved = self
             .len
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |len| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |len| {
                 (len + slice.len() <= capacity).then_some(len + slice.len())
             });
         match reserved {

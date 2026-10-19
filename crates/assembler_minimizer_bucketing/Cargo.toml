@@ -21,7 +21,7 @@ io = { package = "ggcat_io", path = "../io" }
 colors = { package = "ggcat_colors", path = "../colors" }
 structs = { package = "ggcat_structs", path = "../structs" }
 minimizer_bucketing = { package = "ggcat_minimizer_bucketing", path = "../minimizer_bucketing" }
-typenum = "1.18.0"
+typenum = "1.20.1"
 
 # Other libraries
 

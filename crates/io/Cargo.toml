@@ -19,35 +19,35 @@ simd_accel = { package = "ggcat_simd_accel", path = "../simd-accel" }
 # Common libraries
 parallel-processor = "0.3.2"
 streaming-libdeflate-rs = "0.3.0"
-nightly-quirks = "0.1.4"
+nightly-quirks = "0.1.5"
 
 # Pipeline libraries
 hashes = { package = "ggcat_hashes", path = "../hashes" }
 
-parking_lot = "0.12.3"
+parking_lot = "0.12.5"
 byteorder = "1.5.0"
-lz4 = "1.25.0"
+lz4 = "1.28.1"
 bzip2 = "0.4.4"
-zstd = "0.13.2"
-flate2 = "1.0.30"
-bstr = "1.9.1"
+zstd = "0.13.3"
+flate2 = "1.1.10"
+bstr = "1.13.1"
 ggcat-logging = { version = "2.2.0", path = "../logging" }
-anyhow = "1.0.89"
+anyhow = "1.0.104"
 dynamic-dispatch = "0.5.6"
-rustc-hash = "2.1.1"
+rustc-hash = "2.1.3"
 bincode = "2.0.1"
-typenum = "1.18.0"
-bitbound = "0.1.0"
-serde = "1.0.228"
+typenum = "1.20.1"
+bitbound = "0.1.1"
+serde = "1.0.229"
 deko = "0.6.0"
-liblzma = "0.4.7"
-tar = { version = "0.4.44", default-features = false }
-crc32fast = "1.4"
-memchr = "2.8.2"
+liblzma = "0.4.9"
+tar = { version = "0.4.46", default-features = false }
+crc32fast = "1.5"
+memchr = "2.8.3"
 maligned = "0.2.1"
 
 [dev-dependencies]
-rand = "0.8.5"
+rand = "0.8.8"
 
 
 [features]

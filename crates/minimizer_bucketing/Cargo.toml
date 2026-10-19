@@ -10,24 +10,24 @@ config = { package = "ggcat_config", path = "../config" }
 # Common libraries
 parallel-processor = "0.3.2"
 streaming-libdeflate-rs = "0.3.0"
-nightly-quirks = "0.1.4"
+nightly-quirks = "0.1.5"
 
 # Pipeline libraries
 hashes = { package = "ggcat_hashes", path = "../hashes" }
 io = { package = "ggcat_io", path = "../io" }
 
 # Other libraries
-replace_with = "0.1.7"
-parking_lot = "0.12.3"
+replace_with = "0.1.8"
+parking_lot = "0.12.5"
 ggcat-logging = { version = "2.2.0", path = "../logging" }
-tokio = "1.38.0"
+tokio = "1.54.0"
 
 # Utils
 utils = { package = "ggcat_utils", path = "../utils" }
 colors = { package = "ggcat_colors", path = "../colors" }
 byteorder = "1.5.0"
-rustc-hash = "2.1.0"
-hashbrown = "0.15.3"
+rustc-hash = "2.1.3"
+hashbrown = "0.15.5"
 bincode = "2.0.1"
-typenum = "1.18.0"
-arc-swap = "1.7.1"
+typenum = "1.20.1"
+arc-swap = "1.9.3"

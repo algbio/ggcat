@@ -3,9 +3,9 @@ name = "ggcat_utils"
 version = "2.2.0"
 edition = "2024"
 [dependencies]
-parking_lot = "0.12.3"
-rand = "0.8.5"
+parking_lot = "0.12.5"
+rand = "0.8.8"
 
 parallel-processor = "0.3.2"
-rustc-hash = "2.1.1"
-hashbrown = "0.15.4"
+rustc-hash = "2.1.3"
+hashbrown = "0.15.5"
