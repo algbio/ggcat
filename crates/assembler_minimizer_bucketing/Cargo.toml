@@ -9,11 +9,11 @@ config = { package = "ggcat_config", path = "../config" }
 utils = { package = "ggcat_utils", path = "../utils" }
 
 # Common libraries
-parallel-processor = "0.3.1"
+parallel-processor = "0.3.2"
 streaming-libdeflate-rs = "0.3.0"
 
 # Static dispatch
-dynamic-dispatch = "0.5.4"
+dynamic-dispatch = "0.5.6"
 
 # Common pipeline libraries
 hashes = { package = "ggcat_hashes", path = "../hashes" }

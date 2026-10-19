@@ -8,10 +8,10 @@ edition = "2024"
 config = { package = "ggcat_config", path = "../config" }
 
 # Static dispatch
-dynamic-dispatch = "0.5.4"
+dynamic-dispatch = "0.5.6"
 
 # Common libraries
-parallel-processor = "0.3.1"
+parallel-processor = "0.3.2"
 streaming-libdeflate-rs = "0.3.0"
 nightly-quirks = "0.1.4"
 

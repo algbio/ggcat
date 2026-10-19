@@ -17,7 +17,7 @@ simd_accel = { package = "ggcat_simd_accel", path = "../simd-accel" }
 
 
 # Common libraries
-parallel-processor = "0.3.1"
+parallel-processor = "0.3.2"
 streaming-libdeflate-rs = "0.3.0"
 nightly-quirks = "0.1.4"
 
@@ -33,7 +33,7 @@ flate2 = "1.0.30"
 bstr = "1.9.1"
 ggcat-logging = { version = "2.2.0", path = "../logging" }
 anyhow = "1.0.89"
-dynamic-dispatch = "0.5.4"
+dynamic-dispatch = "0.5.6"
 rustc-hash = "2.1.1"
 bincode = "2.0.1"
 typenum = "1.18.0"
