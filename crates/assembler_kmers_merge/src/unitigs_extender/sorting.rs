@@ -642,6 +642,48 @@ impl<CX: ColorsManager> SortingExtender<CX> {
         self.supertigs.clear();
     }
 
+    /// [`Self::process_reads`] with `COMPUTE_SIMPLITIGS` chosen at runtime, so that only the
+    /// extension is compiled twice, not its callers
+    pub fn process_reads_runtime<MH: HashFunctionFactory, const EVEN_K: bool>(
+        &mut self,
+        compute_simplitigs: bool,
+        colors_data: &mut UnitigExtensionColorsData<CX>,
+        reads: &mut [DeserializedReadIndependent<MinimizerBucketingMultipleSeqColorDataType<CX>>],
+        extra_buffer: &TempBuffer<MinimizerBucketingMultipleSeqColorDataType<CX>>,
+        superkmers_storage: &[u8],
+        k: usize,
+        abundance_cutoff: usize,
+        output_unitig: impl FnMut(
+            &mut UnitigExtensionColorsData<CX>,
+            CompressedRead,
+            Option<DelayedHashComputation>,
+            Option<DelayedHashComputation>,
+            SequenceAbundanceType,
+        ),
+    ) {
+        if compute_simplitigs {
+            self.process_reads::<MH, true, EVEN_K>(
+                colors_data,
+                reads,
+                extra_buffer,
+                superkmers_storage,
+                k,
+                abundance_cutoff,
+                output_unitig,
+            )
+        } else {
+            self.process_reads::<MH, false, EVEN_K>(
+                colors_data,
+                reads,
+                extra_buffer,
+                superkmers_storage,
+                k,
+                abundance_cutoff,
+                output_unitig,
+            )
+        }
+    }
+
     pub fn process_reads<
         MH: HashFunctionFactory,
         const COMPUTE_SIMPLITIGS: bool,

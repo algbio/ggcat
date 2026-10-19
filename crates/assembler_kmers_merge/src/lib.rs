@@ -49,6 +49,9 @@ pub struct GlobalMergeData<CX: ColorsManager> {
     _buckets_count: BucketsCount,
     sequential_partitions_count: BucketsCount,
     min_multiplicity: usize,
+    /// Only the unitig extenders depend on it, as a const generic chosen at each call: the rest of
+    /// the merge is compiled once for both modes
+    compute_simplitigs: bool,
     colors_global_table: Arc<GlobalColorsTableWriter<CX>>,
     output_results_buckets: Arc<MultiThreadBuckets<CompressedBinaryWriter>>,
     final_unitigs_file: Arc<dyn DynSequenceWriter<CX>>,
@@ -73,14 +76,12 @@ impl<CX: ColorsManager> KmersTransformGlobalExtraData for GlobalMergeData<CX> {
     }
 }
 
-pub struct ParallelKmersMergeFactory<
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-    const COMPUTE_SIMPLITIGS: bool,
->(PhantomData<(MH, CX)>);
+pub struct ParallelKmersMergeFactory<MH: HashFunctionFactory, CX: ColorsManager>(
+    PhantomData<(MH, CX)>,
+);
 
-impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
-    KmersTransformExecutorFactory for ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS>
+impl<MH: HashFunctionFactory, CX: ColorsManager>
+    KmersTransformExecutorFactory for ParallelKmersMergeFactory<MH, CX>
 {
     type KmersTransformPacketInitData = GlobalExtenderParams;
     type SequencesResplitterFactory =
@@ -90,8 +91,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
     type AssociatedExtraDataWithMultiplicity = MinimizerBucketingMultipleSeqColorDataType<CX>;
 
     type PreprocessorType = RewriteBucketComputeAssembler;
-    type MapProcessorType = ParallelKmersMergeMapProcessor<MH, CX, COMPUTE_SIMPLITIGS>;
-    type FinalExecutorType = ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>;
+    type MapProcessorType = ParallelKmersMergeMapProcessor<MH, CX>;
+    type FinalExecutorType = ParallelKmersMergeFinalExecutor<MH, CX>;
 
     type FlagsCount = typenum::U2;
     const HAS_COLORS: bool = CX::COLORS_ENABLED;
@@ -213,6 +214,7 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager>(
         _buckets_count: buckets_count,
         sequential_partitions_count,
         min_multiplicity,
+        compute_simplitigs,
         colors_global_table,
         output_results_buckets: Arc::new(reads_buckets),
         final_unitigs_file,
@@ -233,29 +235,16 @@ pub fn kmers_merge<MH: HashFunctionFactory, CX: ColorsManager>(
         kmer_batches_count: AtomicU64::new(0),
     });
 
-    if compute_simplitigs {
-        KmersTransform::<ParallelKmersMergeFactory<MH, CX, true>>::new(
-            file_inputs,
-            out_directory,
-            buckets_count,
-            second_buckets_count,
-            global_data.clone(),
-            threads_count,
-            k,
-        )
-        .parallel_kmers_transform();
-    } else {
-        KmersTransform::<ParallelKmersMergeFactory<MH, CX, false>>::new(
-            file_inputs,
-            out_directory,
-            buckets_count,
-            second_buckets_count,
-            global_data.clone(),
-            threads_count,
-            k,
-        )
-        .parallel_kmers_transform();
-    }
+    KmersTransform::<ParallelKmersMergeFactory<MH, CX>>::new(
+        file_inputs,
+        out_directory,
+        buckets_count,
+        second_buckets_count,
+        global_data.clone(),
+        threads_count,
+        k,
+    )
+    .parallel_kmers_transform();
 
     let Ok(global_data) = Arc::try_unwrap(global_data) else {
         unreachable!()
@@ -293,7 +282,7 @@ mod tests {
     fn test_deserialization_mismatch() {
         let mut bucket_chunks = vec![];
 
-        type F = ParallelKmersMergeFactory<CanonicalSeqHashFactory, NonColoredManager, false>;
+        type F = ParallelKmersMergeFactory<CanonicalSeqHashFactory, NonColoredManager>;
 
         let paths = [
             "../../.temp_files/build_graph_8a973650-c549-4eb9-b9b1-ccac626dcfbe/comp-single-15123.dat.0",

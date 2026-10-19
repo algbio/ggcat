@@ -71,5 +71,27 @@ pub trait UnitigsExtenderTrait<MH: HashFunctionFactory, CX: ColorsManager> {
         ),
         compute_circular: bool,
     );
+    /// [`Self::compute_unitigs`] with `COMPUTE_SIMPLITIGS` chosen at runtime, so that only the
+    /// extension is compiled twice, not its callers
+    fn compute_unitigs_runtime(
+        &mut self,
+        compute_simplitigs: bool,
+        colors_manager: &mut UnitigExtensionColorsData<CX>,
+        output_unitig: impl FnMut(
+            &mut UnitigExtensionColorsData<CX>,
+            CompressedRead,
+            Option<PrecomputedHash<MH>>,
+            Option<PrecomputedHash<MH>>,
+            bool,
+            SequenceAbundanceType,
+        ),
+        compute_circular: bool,
+    ) {
+        if compute_simplitigs {
+            self.compute_unitigs::<true>(colors_manager, output_unitig, compute_circular)
+        } else {
+            self.compute_unitigs::<false>(colors_manager, output_unitig, compute_circular)
+        }
+    }
     fn set_suggested_sizes(&mut self, hashmap_size: u64, sequences_size: u64);
 }

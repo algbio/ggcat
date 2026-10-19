@@ -37,11 +37,7 @@ use typenum::U4;
 
 local_setup_instrumenter!();
 
-pub struct ParallelKmersMergeFinalExecutor<
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-    const COMPUTE_SIMPLITIGS: bool,
-> {
+pub struct ParallelKmersMergeFinalExecutor<MH: HashFunctionFactory, CX: ColorsManager> {
     unitigs_tmp: BucketsThreadDispatcher<
         CompressedBinaryWriter,
         CompressedReadsBucketDataSerializer<
@@ -58,9 +54,7 @@ pub struct ParallelKmersMergeFinalExecutor<
     _phantom: PhantomData<MH>,
 }
 
-impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
-    ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>
-{
+impl<MH: HashFunctionFactory, CX: ColorsManager> ParallelKmersMergeFinalExecutor<MH, CX> {
     pub fn new(global_data: &GlobalMergeData<CX>) -> Self {
         let unitigs_out_buffer = BucketsThreadBuffer::new(
             DEFAULT_PER_CPU_BUFFER_SIZE,
@@ -87,9 +81,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
 // static DEBUG_MAPS_HOLDER: Mutex<Vec<Box<dyn Any + Sync + Send>>> = const_mutex(Vec::new());
 
-impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
-    ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>
-{
+impl<MH: HashFunctionFactory, CX: ColorsManager> ParallelKmersMergeFinalExecutor<MH, CX> {
     #[inline]
     fn output_sequence<'a, H: HashGenerator<MH>>(
         lonely_circular_unitigs: Option<&mut (dyn DynConcurrentBuffer<CX> + 'a)>,
@@ -252,16 +244,18 @@ pub fn check_problematic_self_complemental_kmer<MH: HashFunctionFactory>(
     }
 }
 
-impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
-    KmersTransformFinalExecutor<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS>>
-    for ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>
+impl<MH: HashFunctionFactory, CX: ColorsManager>
+    KmersTransformFinalExecutor<ParallelKmersMergeFactory<MH, CX>>
+    for ParallelKmersMergeFinalExecutor<MH, CX>
 {
     type MapStruct = ParallelKmersMergeMapPacket<MH, CX>;
 
     #[instrumenter::track(fields(map_capacity = map_struct_packet.rhash_map.capacity(), map_size = map_struct_packet.rhash_map.len()))]
     fn process_map<const EVEN_K: bool>(
         &mut self,
-        global_data: &Arc<<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData>,
+        global_data: &Arc<
+            <ParallelKmersMergeFactory<MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
+        >,
         mut map_struct_packet: Packet<Self::MapStruct>,
     ) -> Packet<Self::MapStruct> {
         stats!(
@@ -292,9 +286,9 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
         if !map_struct.is_duplicate && !map_struct.is_outlier {
             let mut process_fn = |minimizer_elements: &mut [DeserializedReadIndependent<<
-                ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>],
+                ParallelKmersMergeFactory<MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>],
                 superkmers_storage: &[u8],
-                superkmers_extra_buffer: &TempBuffer<<ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>| {
+                superkmers_extra_buffer: &TempBuffer<<ParallelKmersMergeFactory<MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>| {
                     if minimizer_elements.len() <= 1
                     {
                         if (minimizer_elements[0].multiplicity as usize) < global_data.min_multiplicity {
@@ -391,7 +385,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                     }
 
                     sorting_extender.clear_supertigs();
-                    sorting_extender.process_reads::<MH, COMPUTE_SIMPLITIGS, EVEN_K>(
+                    sorting_extender.process_reads_runtime::<MH, EVEN_K>(
+                        global_data.compute_simplitigs,
                         &mut self.colors_data,
                         minimizer_elements,
                         superkmers_extra_buffer,
@@ -432,7 +427,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                     };
 
                     memstorage_decode_reads::<
-                        <ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
+                        <ParallelKmersMergeFactory<MH, CX> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
                         WithMultiplicity,
                         AssemblerMinimizerPosition,
                         false,
@@ -453,7 +448,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
             );
         } else {
             let compute_circular = tmp_circular_final_unitigs_buffer.is_some();
-            map_struct.extender.compute_unitigs::<COMPUTE_SIMPLITIGS>(
+            map_struct.extender.compute_unitigs_runtime(
+                global_data.compute_simplitigs,
                 &mut self.colors_data,
                 #[inline(always)]
                 |colors_data, out_seq, fw_hash, bw_hash, is_circular, _abundance| {
@@ -492,7 +488,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
 
     fn finalize(
         self,
-        _global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
+        _global_data: &<ParallelKmersMergeFactory<MH, CX> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) {
         self.unitigs_tmp.finalize();
     }
