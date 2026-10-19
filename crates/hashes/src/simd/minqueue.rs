@@ -34,7 +34,20 @@ pub struct BatchMinQueueLanes {
     /// The canonical hashes and the extras of two batches: the one before, and the one coming in.
     values: [Batches; 2],
     extras: [Batches; 2],
+    /// The splits of a batch's windows, handed out after it.
+    splits: SplitsBuffers,
 }
+
+/// The windows of a batch, as [`Splits`] keeps them to hand out its splits after it: the lanes
+/// each window ends a part of, a byte each, bit `lane` for each lane, read eight windows to a
+/// `u64`; and the minimum of the window before, value and extra, those parts' minimizer.
+struct SplitsBuffers {
+    changed: Vec<u8>,
+    values: Batches,
+    extras: Batches,
+}
+
+const _: () = assert!(SIMD_LANES <= 8, "a window's changed lanes are kept in a byte");
 
 /// A batch's values or extras, a vector per position.
 type Batches = Vec<[u32; SIMD_LANES]>;
@@ -49,6 +62,11 @@ impl BatchMinQueueLanes {
             size,
             values: [batch(), batch()],
             extras: [batch(), batch()],
+            splits: SplitsBuffers {
+                changed: vec![0; size.next_multiple_of(8)],
+                values: batch(),
+                extras: batch(),
+            },
         }
     }
 
@@ -74,6 +92,7 @@ impl BatchMinQueueLanes {
             size,
             values,
             extras,
+            ..
         } = self;
         let mut output = Minimizers {
             callback: minimizers_callback,
@@ -111,6 +130,7 @@ impl BatchMinQueueLanes {
             size,
             values,
             extras,
+            splits,
         } = self;
         let mut output = Splits::<_, ENABLE_DUPLICATE_CHECKING> {
             callback: splits_callback,
@@ -118,6 +138,9 @@ impl BatchMinQueueLanes {
             // As the scalar queue's: a lane's m-mers, the skipped ones too, less a window.
             last_index: hashes.len().wrapping_sub(*size),
             splitting: 0,
+            buffers: splits,
+            first: 0,
+            kept: 0,
         };
         let task = Queue::<_, ENABLE_DUPLICATE_CHECKING>::new(
             (*size, values, extras),
@@ -183,9 +206,9 @@ impl<F: FnMut(usize, &MinimizerLanes), G: FnMut(bool)> WindowsOutput for Minimiz
 }
 
 /// The parts of each lane, a part ending where its windows' minimum changes: what
-/// `get_minimizer_splits` hands out. A window's minima stay in vectors; only those of the lanes
-/// whose part ends are taken out, for the callback.
-struct Splits<F, const DUPLICATES: bool> {
+/// `get_minimizer_splits` hands out. Each window's changed lanes, and the minimum of the window
+/// before, are kept as the windows come; the parts are handed out after each batch.
+struct Splits<'a, F, const DUPLICATES: bool> {
     callback: F,
     skip_beginning_count: usize,
     /// Where the last part of a lane ends.
@@ -193,20 +216,28 @@ struct Splits<F, const DUPLICATES: bool> {
     /// The lanes whose part a change of minimum ends: none at the first window, before which
     /// no part ends.
     splitting: u32,
+    /// The windows of the batch, `kept` so far, the first of them window `first`.
+    buffers: &'a mut SplitsBuffers,
+    first: usize,
+    kept: usize,
 }
 
 impl<F: FnMut(usize, usize, (u32, u32), bool), const DUPLICATES: bool> WindowsOutput
-    for Splits<F, DUPLICATES>
+    for Splits<'_, F, DUPLICATES>
 {
+    /// Keeps the lanes the window ends a part of, and the window before's minimum, with no
+    /// branch: some lane's minimum changes at most windows, too irregularly for a branch on it
+    /// to be predicted, and a branch or a call in the loop over the windows can make it keep
+    /// its vectors on the stack.
     #[inline(always)]
     unsafe fn window<V: HashVector<SIMD_LANES>>(
         &mut self,
-        index: usize,
+        _index: usize,
         (value, extra): (V, V),
         (before_value, before_extra): (V, V),
     ) {
         // As the scalar queue's splits: a duplicated minimizer only where its value changes.
-        let mut changed = unsafe {
+        let changed = unsafe {
             let same_value = V::mask_bits(value.equal(before_value));
             let same_extra = V::mask_bits(extra.equal(before_extra));
             let unique = if DUPLICATES {
@@ -217,21 +248,44 @@ impl<F: FnMut(usize, usize, (u32, u32), bool), const DUPLICATES: bool> WindowsOu
             (!same_value | (!same_extra & unique)) & self.splitting
         };
         self.splitting = LANES_MASK;
-        if changed != 0 {
-            // The parts of the lanes whose minimum changes end before this window, with the
-            // window before's minimizer.
-            let (values, extras) = unsafe { (before_value.to_array(), before_extra.to_array()) };
-            while changed != 0 {
-                let lane = changed.trailing_zeros() as usize;
-                let minimizer = (values[lane], extras[lane]);
-                (self.callback)(lane, index + self.skip_beginning_count, minimizer, false);
-                changed &= changed - 1;
-            }
+        let slot = self.kept;
+        debug_assert!(slot < self.buffers.values.len(), "more windows than a batch");
+        // SAFETY: a batch has fewer windows than the buffers' slots, and `kept` restarts at
+        // each batch.
+        unsafe {
+            *self.buffers.changed.get_unchecked_mut(slot) = changed as u8;
+            *self.buffers.values.get_unchecked_mut(slot) = before_value.to_array();
+            *self.buffers.extras.get_unchecked_mut(slot) = before_extra.to_array();
         }
+        self.kept += 1;
     }
 
+    /// Hands out the splits of the batch's windows, window by window and lane by lane in each,
+    /// as they came: the parts of the lanes whose minimum changes end before the window, with
+    /// the window before's minimizer.
     #[inline(always)]
     unsafe fn flush<V: HashVector<SIMD_LANES>>(&mut self, is_last: bool, (value, extra): (V, V)) {
+        let SplitsBuffers {
+            changed,
+            values,
+            extras,
+        } = &*self.buffers;
+        let groups = changed.as_chunks::<8>().0;
+        for (word, &group) in groups.iter().take(self.kept.div_ceil(8)).enumerate() {
+            // The windows past the batch's in the last group are left out.
+            let windows = (self.kept - 8 * word).min(8);
+            let mut bits = u64::from_le_bytes(group) & (u64::MAX >> (64 - 8 * windows));
+            while bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                let (slot, lane) = (8 * word + bit / 8, bit % 8);
+                let minimizer = (values[slot][lane], extras[slot][lane]);
+                let end = self.first + slot + self.skip_beginning_count;
+                (self.callback)(lane, end, minimizer, false);
+                bits &= bits - 1;
+            }
+        }
+        self.first += self.kept;
+        self.kept = 0;
         if is_last {
             let (values, extras) = unsafe { (value.to_array(), extra.to_array()) };
             for lane in 0..SIMD_LANES {
@@ -294,6 +348,7 @@ impl<O: WindowsOutput, const DUPLICATES: bool> LanesTask<SIMD_LANES> for Queue<'
             windows: 0,
             // SAFETY: the caller's.
             last: unsafe { (V::splat(0), V::splat(0)) },
+            index_extra: unsafe { V::splat(0) },
             output: self.output,
         };
         unsafe { roll::<S, V, _, SIMD_LANES>(seq, m, &mut consumer) }
@@ -326,6 +381,9 @@ struct QueueConsumer<'a, V, O, const DUPLICATES: bool> {
     windows: usize,
     /// The last window's minimum, value and extra.
     last: (V, V),
+    /// The extra of the position coming next, its strand bit aside: its index shifted left by
+    /// one, in every lane. Each position adds two, instead of the index being broadcast.
+    index_extra: V,
     output: &'a mut O,
 }
 
@@ -479,9 +537,11 @@ impl<V: HashVector<SIMD_LANES>, O: WindowsOutput, const DUPLICATES: bool>
     #[inline(always)]
     unsafe fn consume(&mut self, index: usize, forward: V, reverse: V) {
         unsafe {
+            debug_assert_eq!(self.index_extra.to_array(), [(index as u32) << 1; SIMD_LANES]);
             let value = V::canonical(forward, reverse);
-            let base = (index as u32) << 1;
-            let extra = V::select(forward.less(reverse), V::splat(base | 1), V::splat(base));
+            let base = self.index_extra;
+            let extra = V::select(forward.less(reverse), base.xor(V::splat(1)), base);
+            self.index_extra = base.add(V::splat(2));
             // SAFETY: `filled` is at most a batch, and the buffers have a slot more.
             *self.current.0.get_unchecked_mut(self.filled) = value.to_array();
             *self.current.1.get_unchecked_mut(self.filled) = extra.to_array();

@@ -4,8 +4,8 @@
 //! pipeline's 64-bit scalar hash through the scalar queue, a lane at a time. On one thread, and
 //! on 16 at once, each thread splitting the whole input `REPETITIONS` times.
 //!
-//! The defaults are those of the queue benches of the `simd-accel` crate: m = 31, windows of 31
-//! m-mers, eight lanes of 16 Ki random bases each, apart.
+//! The defaults are those of the assembler's input bucketing for k = 31: m as it picks it, windows
+//! of k - m m-mers, and one bucketing packet of random bases, 512 Ki, in eight lanes, apart.
 
 use criterion::*;
 use ggcat_hashes::rolling::batch_minqueue::BatchMinQueue;
@@ -21,9 +21,8 @@ use std::time::Duration;
 
 /// The bases of a lane, unless `MINQUEUE_BENCH_LANE_BASES` sets another number, a multiple of
 /// four; `MINQUEUE_BENCH_M` and `MINQUEUE_BENCH_WINDOW` set m and the window likewise.
-const LANE_BASES: usize = 16 * 1024;
-const M: usize = 31;
-const WINDOW: usize = 31;
+const LANE_BASES: usize = 512 * 1024 / SIMD_LANES;
+const K: usize = 31;
 const THREADS: usize = 16;
 /// The splits of the whole input each thread makes per iteration: enough for the pool's
 /// dispatch to be small against them.
@@ -130,8 +129,8 @@ type Version<'a> = Box<dyn Fn() -> Box<dyn FnMut() -> u64 + Send + 'a> + Sync + 
 
 fn bench(c: &mut Criterion) {
     let lane_bases = setting("MINQUEUE_BENCH_LANE_BASES", LANE_BASES);
-    let m = setting("MINQUEUE_BENCH_M", M);
-    let window = setting("MINQUEUE_BENCH_WINDOW", WINDOW);
+    let m = setting("MINQUEUE_BENCH_M", utils::compute_best_m(K));
+    let window = setting("MINQUEUE_BENCH_WINDOW", K - m);
     let data = packed_bases(lane_bases * SIMD_LANES);
     let bases: &[u8] = &data;
     let mut versions: Vec<(String, Version)> = vec![(

@@ -29,6 +29,8 @@ pub trait HashVector<const LANES: usize>: Copy {
     unsafe fn from_array(values: [u32; LANES]) -> Self;
     unsafe fn to_array(self) -> [u32; LANES];
     unsafe fn xor(self, other: Self) -> Self;
+    /// The sums of the lanes, wrapping.
+    unsafe fn add(self, other: Self) -> Self;
     unsafe fn rotate_left_1(self) -> Self;
     unsafe fn rotate_right_1(self) -> Self;
     /// The packed base at `offset` of every lane's chunk.
@@ -89,6 +91,14 @@ impl<const LANES: usize> HashVector<LANES> for Portable<LANES> {
     unsafe fn xor(mut self, other: Self) -> Self {
         for lane in 0..LANES {
             self.0[lane] ^= other.0[lane];
+        }
+        self
+    }
+
+    #[inline(always)]
+    unsafe fn add(mut self, other: Self) -> Self {
+        for lane in 0..LANES {
+            self.0[lane] = self.0[lane].wrapping_add(other.0[lane]);
         }
         self
     }
@@ -250,6 +260,11 @@ impl HashVector<SIMD_LANES> for Avx2 {
     #[inline(always)]
     unsafe fn xor(self, other: Self) -> Self {
         Self(unsafe { _mm256_xor_si256(self.0, other.0) })
+    }
+
+    #[inline(always)]
+    unsafe fn add(self, other: Self) -> Self {
+        Self(unsafe { _mm256_add_epi32(self.0, other.0) })
     }
 
     #[inline(always)]
@@ -425,6 +440,11 @@ impl HashVector<SIMD_LANES> for Avx512 {
     }
 
     #[inline(always)]
+    unsafe fn add(self, other: Self) -> Self {
+        Self(unsafe { self.0.add(other.0) })
+    }
+
+    #[inline(always)]
     unsafe fn rotate_left_1(self) -> Self {
         Self(Avx2(unsafe { _mm256_rol_epi32::<1>(self.0.0) }))
     }
@@ -559,6 +579,13 @@ impl HashVector<SIMD_LANES> for Ssse3 {
         let [a, b] = self.0;
         let [c, d] = other.0;
         unsafe { Self([_mm_xor_si128(a, c), _mm_xor_si128(b, d)]) }
+    }
+
+    #[inline(always)]
+    unsafe fn add(self, other: Self) -> Self {
+        let [a, b] = self.0;
+        let [c, d] = other.0;
+        unsafe { Self([_mm_add_epi32(a, c), _mm_add_epi32(b, d)]) }
     }
 
     #[inline(always)]
@@ -823,6 +850,13 @@ impl HashVector<SIMD_LANES> for Neon {
         let [a, b] = self.0;
         let [c, d] = other.0;
         unsafe { Self([veorq_u32(a, c), veorq_u32(b, d)]) }
+    }
+
+    #[inline(always)]
+    unsafe fn add(self, other: Self) -> Self {
+        let [a, b] = self.0;
+        let [c, d] = other.0;
+        unsafe { Self([vaddq_u32(a, c), vaddq_u32(b, d)]) }
     }
 
     #[inline(always)]

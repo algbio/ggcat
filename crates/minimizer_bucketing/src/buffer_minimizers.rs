@@ -10,7 +10,7 @@
 use hashes::simd::minqueue::BatchMinQueueLanes;
 use hashes::simd::nthash::CanonicalNtHashLanes;
 use hashes::simd::{BaseLanes, HashKernel, PackedLanes, SIMD_LANES};
-use io::simd::SequenceBuffer;
+use io::simd::{SequenceBuffer, SequenceDescription};
 
 /// A run of windows that share a minimizer, of the part of a sequence one lane holds.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -37,11 +37,71 @@ pub struct SequenceRun {
     pub is_forward: bool,
 }
 
+/// The part of a sequence a lane holds, a k-mer at least, with its windows in the buffer: those
+/// from `start`, its first base, to `start + windows`.
+#[derive(Copy, Clone)]
+struct LanePart {
+    /// The sequence, by its index in the buffer's descriptions.
+    sequence: usize,
+    start: usize,
+    /// Its first base in the sequence.
+    offset: usize,
+    bases: usize,
+    windows: usize,
+}
+
+impl LanePart {
+    /// Past the lane's last part: no window of the buffer is in it.
+    const NONE: Self = Self {
+        sequence: usize::MAX,
+        start: usize::MAX,
+        offset: 0,
+        bases: 0,
+        windows: 0,
+    };
+
+    /// The first part a k-mer long at least, in the lane of the bases from `lane_start` to
+    /// `lane_end`, of the sequences of `descriptions` from `index` on: those of windows of
+    /// `window_bases` bases.
+    fn first_from(
+        descriptions: &[SequenceDescription],
+        mut index: usize,
+        (lane_start, lane_end): (usize, usize),
+        k: usize,
+        window_bases: usize,
+    ) -> Self {
+        while let Some(sequence) = descriptions.get(index) {
+            if sequence.bases_start >= lane_end {
+                break;
+            }
+            let start = sequence.bases_start.max(lane_start);
+            let end = (sequence.bases_start + sequence.bases_len).min(lane_end);
+            if end >= start + k {
+                return Self {
+                    sequence: index,
+                    start,
+                    offset: start - sequence.bases_start,
+                    bases: end - start,
+                    windows: end - start + 1 - window_bases,
+                };
+            }
+            index += 1;
+        }
+        Self::NONE
+    }
+
+    /// Where its windows end in the buffer.
+    fn windows_end(&self) -> usize {
+        self.start + self.windows
+    }
+}
+
 /// Where a lane is in the buffer's sequences.
 #[derive(Copy, Clone)]
 struct LaneCursor {
-    /// The sequence of the last minimizer, or the first not ending before it.
-    sequence: usize,
+    /// The lane's first part whose windows do not all come before its next run: the parts'
+    /// windows come one after the other, in the order of the sequences, as the runs do.
+    part: LanePart,
     /// The window that starts the lane's next run, counted from the lane's first.
     run_start: usize,
 }
@@ -98,9 +158,21 @@ impl BufferMinimizers {
             return;
         };
         let (offsets, lane_bases) = (lanes.offsets(), lanes.lane_bases());
+        let next_part = |index, offset| {
+            LanePart::first_from(
+                descriptions,
+                index,
+                (offset, offset + lane_bases),
+                k,
+                window_bases,
+            )
+        };
         let mut cursors = offsets.map(|offset| LaneCursor {
-            sequence: descriptions
-                .partition_point(|sequence| sequence.bases_start + sequence.bases_len <= offset),
+            part: next_part(
+                descriptions
+                    .partition_point(|sequence| sequence.bases_start + sequence.bases_len <= offset),
+                offset,
+            ),
             run_start: 0,
         });
         self.queue.get_minimizer_splits::<_, DUPLICATES>(
@@ -116,45 +188,41 @@ impl BufferMinimizers {
                 let run_start = offset + cursor.run_start;
                 let run_end = offset + end + is_last as usize;
                 cursor.run_start = end;
-                // The lane's runs come in order: the sequences with no window from this run's
-                // first on are done with.
-                while descriptions.get(cursor.sequence).is_some_and(|sequence| {
-                    sequence.bases_start + sequence.bases_len < run_start + window_bases
-                }) {
-                    cursor.sequence += 1;
+                // The lane's runs come in order: the parts whose windows all come before this
+                // run are done with.
+                while cursor.part.windows_end() <= run_start {
+                    cursor.part = next_part(cursor.part.sequence + 1, offset);
                 }
-                // The run trimmed to each part it has windows of. A unique minimizer is in every
-                // window of its run, so in one part only; the run of a duplicated one does not
-                // follow its position, and can go on from a sequence to the next.
+                // The run trimmed to each part it has windows of: nearly always all in the
+                // cursor's. A unique minimizer is in every window of its run, so in one part
+                // only; the run of a duplicated one does not follow its position, and can go on
+                // from a sequence to the next.
                 let position = offset + (extra >> 1) as usize;
-                let mut index = cursor.sequence;
-                while let Some(sequence) = descriptions.get(index) {
-                    if sequence.bases_start >= run_end {
+                loop {
+                    let part = cursor.part;
+                    let start = run_start.max(part.start);
+                    let end = run_end.min(part.windows_end());
+                    if start >= end {
                         break;
                     }
-                    let part_start = sequence.bases_start.max(offset);
-                    let part_end =
-                        (sequence.bases_start + sequence.bases_len).min(offset + lane_bases);
-                    if part_end >= part_start + k {
-                        let windows = part_end - part_start + 1 - window_bases;
-                        let start = run_start.max(part_start);
-                        let end = run_end.min(part_start + windows);
-                        if start < end {
-                            on_run(&SequenceRun {
-                                lane,
-                                sequence: index,
-                                offset: part_start - sequence.bases_start,
-                                bases: part_end - part_start,
-                                start: start - part_start,
-                                end: end - part_start,
-                                windows,
-                                value,
-                                position: position.clamp(part_start, part_end - m) - part_start,
-                                is_forward: extra & 1 == 1,
-                            });
-                        }
+                    on_run(&SequenceRun {
+                        lane,
+                        sequence: part.sequence,
+                        offset: part.offset,
+                        bases: part.bases,
+                        start: start - part.start,
+                        end: end - part.start,
+                        windows: part.windows,
+                        value,
+                        position: position.clamp(part.start, part.start + part.bases - m)
+                            - part.start,
+                        is_forward: extra & 1 == 1,
+                    });
+                    if run_end <= part.windows_end() {
+                        break;
                     }
-                    index += 1;
+                    // The run goes on past the part, which no later run reaches.
+                    cursor.part = next_part(part.sequence + 1, offset);
                 }
             },
         );
