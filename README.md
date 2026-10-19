@@ -64,8 +64,8 @@ Their members are read as FASTA or FASTQ by their names (`.fa`, `.fasta`, `.fna`
 
 With `-c`, each member gets a color named `<archive-path>:<member-path>`; members with the same
 path in the same archive share it. These colors are numbered after those of the other inputs,
-in the order the members are read, which can change from one run to the next when several
-archives are read at once.
+archive by archive in the order of the inputs, each archive's members, nested ones included, in
+the order they are stored in it.
 
 Colored input lists (`-d`) can map a whole archive, a member of one, or an archive nested in
 one, whose members are named after it in turn:

@@ -1,5 +1,6 @@
 use crate::DefaultColorsSerializer;
 use crate::bucket_colors::ColorRun;
+use crate::color_assigner::ColorRemap;
 use crate::colors_manager::ColorsMergeManager;
 use crate::storage::deserializer::ColorsDeserializer;
 use config::COLORS_BUFFER_DEFAULT_SIZE;
@@ -31,6 +32,7 @@ impl ColorsMergeManager for SingleColorManager {
     fn create_colors_table(
         _path: impl AsRef<Path>,
         _color_names: &[String],
+        _color_remap: Option<ColorRemap>,
         _threads_count: usize,
         _print_stats: bool,
     ) -> anyhow::Result<Self::GlobalColorsTableWriter> {

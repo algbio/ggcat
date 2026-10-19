@@ -1,4 +1,5 @@
 use crate::bucket_colors::ColorRun;
+use crate::color_assigner::ColorRemap;
 use crate::colors_manager::{
     ColorsManager, ColorsMergeManager, ColorsParser, MinimizerBucketingSeqColorData,
     MinimizerBucketingSeqColorDataIterable,
@@ -218,6 +219,7 @@ impl ColorsMergeManager for NonColoredManager {
     fn create_colors_table(
         _path: impl AsRef<Path>,
         _color_names: &[String],
+        _color_remap: Option<ColorRemap>,
         _threads_count: usize,
         _print_stats: bool,
     ) -> anyhow::Result<Self::GlobalColorsTableWriter> {

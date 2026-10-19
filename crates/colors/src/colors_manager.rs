@@ -1,4 +1,5 @@
 use crate::bucket_colors::ColorRun;
+use crate::color_assigner::ColorRemap;
 use crate::parsers::SingleSequenceInfo;
 use config::{BucketIndexType, ColorCounterType, ColorIndexType};
 use dynamic_dispatch::dynamic_dispatch;
@@ -130,10 +131,13 @@ pub trait ColorsMergeManager: Sized {
     type GlobalColorsTableWriter: Sync + Send + 'static;
     type GlobalColorsTableReader: ColorMapReader + Sync + Send + 'static;
 
-    /// Creates a new colors table at the given path
+    /// Creates a new colors table at the given path, of the colors `color_names` names. With a
+    /// `color_remap`, the sets of colors it is given are remapped as they are written: the
+    /// names are of the colors after it.
     fn create_colors_table(
         path: impl AsRef<Path>,
         color_names: &[String],
+        color_remap: Option<ColorRemap>,
         threads_count: usize,
         print_stats: bool,
     ) -> anyhow::Result<Self::GlobalColorsTableWriter>;

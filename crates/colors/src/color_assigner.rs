@@ -2,6 +2,7 @@
 //! members can each have a colour of their own, so the colours, and their names for the
 //! colormap, are all known only once the inputs are read.
 
+use crate::bucket_colors::{ColorRun, canonicalize};
 use anyhow::{Result, bail};
 use config::ColorIndexType;
 use io::binary_reader::{archive_prefixes, split_archive_member};
@@ -9,8 +10,17 @@ use io::sequences_stream::general::GeneralSequenceBlockData;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+/// The colours decided before reading, and one range preallocated for each archive whose
+/// members can get new colours, are kept under this many.
+const PREALLOCATION_BOUND: u64 = 1 << 29;
+/// The colours of a range preallocated for an archive's members: a power of two, at most and at
+/// least these.
+const MAX_PREALLOCATION: ColorIndexType = 2048;
+const MIN_PREALLOCATION: ColorIndexType = 8;
 
 /// The colours of the files of a coloured graph's inputs, and their names.
 ///
@@ -24,11 +34,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 ///
 /// A member takes the most specific of these that the list has. The members that the list maps
 /// to no colour are each given a new one as they are read, named `x.tar:dir/a.fa`, after all
-/// the others. They are numbered in the order they
-/// are read in, the same within an archive, but not across archives from one run to the next.
+/// the others. Those of an archive, nested ones included, get consecutive colours in the order
+/// they are read in: from a range of colours preallocated for the archive when it needs one,
+/// and the next range when it is used up, which other archives' ranges can come before.
+///
+/// Once the inputs are read, [`Self::packed_colors`] closes the gaps the ranges leave and puts
+/// the archives' colours in the order of the inputs, whatever order they were read in.
 pub struct ColorAssigner {
     /// By the index of the input in the inputs to read, as [`Self::new`] gives them.
     inputs: Vec<InputColors>,
+    /// The colours decided before reading: those below this.
+    decided: ColorIndexType,
+    /// The colours of each range preallocated for an archive, a power of two: each range is
+    /// a block of this many colours, from a multiple of it.
+    prealloc_count: ColorIndexType,
     named: Mutex<NamedColors>,
 }
 
@@ -53,11 +72,67 @@ struct MappedMember {
     found: AtomicBool,
 }
 
-/// The names of the colours so far, by their index, and the colours given to members as they
-/// were read, by the members' names.
+/// The names of the colours so far, by their index, those of the ranges preallocated for
+/// archives included, empty until given; the colours given to members as they were read, by the
+/// members' names; and the ranges of each archive, by its input.
 struct NamedColors {
     names: Vec<String>,
     members: HashMap<String, ColorIndexType>,
+    archives: HashMap<usize, ArchiveRanges>,
+}
+
+/// The ranges an archive took for its members' colours, in order, by their blocks, and the
+/// colours left of the last.
+#[derive(Default)]
+struct ArchiveRanges {
+    blocks: Vec<ColorIndexType>,
+    left: Range<ColorIndexType>,
+}
+
+/// Where the colours that a [`ColorAssigner`] gave go once packed, by
+/// [`ColorAssigner::packed_colors`]: each block of `1 << shift` colours, as large as the ranges
+/// preallocated for archives, moves by an offset of its own, so that a colour takes a single
+/// lookup. The offsets are added wrapping, as a block can move down.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ColorRemap {
+    shift: u32,
+    offsets: Vec<ColorIndexType>,
+}
+
+impl ColorRemap {
+    /// The remap of the blocks of `1 << shift` colours by `offsets`, as [`Self::parts`] gives
+    /// them.
+    pub fn from_parts(shift: u32, offsets: Vec<ColorIndexType>) -> Self {
+        Self { shift, offsets }
+    }
+
+    /// The blocks' size, as a shift, and their offsets: what [`Self::from_parts`] takes.
+    pub fn parts(&self) -> (u32, &[ColorIndexType]) {
+        (self.shift, &self.offsets)
+    }
+
+    /// Where `color` goes. Only for the colours given: those of a range that no member got
+    /// go anywhere.
+    #[inline(always)]
+    pub fn map(&self, color: ColorIndexType) -> ColorIndexType {
+        color.wrapping_add(self.offsets[(color >> self.shift) as usize])
+    }
+
+    /// The set of `runs` remapped, in `out`, in its canonical form: each run cut at the bounds
+    /// of the blocks, which can move apart.
+    pub fn map_runs<'a>(&self, runs: &[ColorRun], out: &'a mut Vec<ColorRun>) -> &'a [ColorRun] {
+        out.clear();
+        for run in runs {
+            let mut start = run.start() as u64;
+            while start < run.end() {
+                let end = run.end().min(((start >> self.shift) + 1) << self.shift);
+                let mapped = self.map(start as ColorIndexType);
+                out.push(ColorRun::from_bounds(mapped, mapped as u64 + (end - start)));
+                start = end;
+            }
+        }
+        canonicalize(out)
+    }
 }
 
 impl ColorAssigner {
@@ -159,11 +234,18 @@ impl ColorAssigner {
             }
         }
 
+        let reading_archives = inputs
+            .iter()
+            .filter(|input| matches!(input, InputColors::Archive { color: None, .. }))
+            .count();
         let assigner = Self {
+            prealloc_count: prealloc_count(named.len(), reading_archives),
+            decided: named.len() as ColorIndexType,
             inputs,
             named: Mutex::new(NamedColors {
                 names: named,
                 members: HashMap::new(),
+                archives: HashMap::new(),
             }),
         };
         Ok((assigner, to_read))
@@ -172,7 +254,7 @@ impl ColorAssigner {
     /// The colour of the file `name` of input `input`, as it starts being read. A member of an
     /// archive, named `archive:member`, has the colour mapped to it, or else to the innermost
     /// archive it is nested in that is mapped one, or else to the archive, or else a new one
-    /// named `name`: the same for every member of that name.
+    /// named `name`, the next of the archive's range: the same for every member of that name.
     pub fn file_color(&self, input: usize, name: &str) -> ColorIndexType {
         let (prefix, color, members) = match &self.inputs[input] {
             InputColors::Fixed(color) => return *color,
@@ -202,11 +284,30 @@ impl ColorAssigner {
             return *color;
         }
         let mut named = self.named.lock();
-        let NamedColors { names, members } = &mut *named;
-        *members.entry(name.to_owned()).or_insert_with(|| {
-            names.push(name.to_owned());
-            (names.len() - 1) as ColorIndexType
-        })
+        let NamedColors {
+            names,
+            members,
+            archives,
+        } = &mut *named;
+        if let Some(&color) = members.get(name) {
+            return color;
+        }
+        let ranges = archives.entry(input).or_default();
+        if ranges.left.is_empty() {
+            // A range after all the colours so far, from a multiple of its size, so that its
+            // block is a colour shifted. Its colours have no name until given.
+            let size = self.prealloc_count;
+            let start = names.len().next_multiple_of(size as usize);
+            names.resize(start + size as usize, String::new());
+            let start = start as ColorIndexType;
+            ranges.blocks.push(start / size);
+            ranges.left = start..start + size;
+        }
+        let color = ranges.left.start;
+        ranges.left.start += 1;
+        names[color as usize] = name.to_owned();
+        members.insert(name.to_owned(), color);
+        color
     }
 
     /// The colour of the sequences of input `input` that come with none and from no file
@@ -227,10 +328,47 @@ impl ColorAssigner {
             .any(|input| matches!(input, InputColors::Archive { color: None, .. }))
     }
 
-    /// The names of all the colours so far, by their index: once the inputs are read, all of
-    /// them, those given to members included.
-    pub fn color_names(&self) -> Vec<String> {
+    /// The names of all the colours so far, by their index, as [`Self::file_color`] gave them,
+    /// those of the ranges that no member got empty.
+    #[cfg(test)]
+    fn color_names(&self) -> Vec<String> {
         self.named.lock().names.clone()
+    }
+
+    /// The colours packed, once the inputs are read: the remap of those that
+    /// [`Self::file_color`] gave, if any moves, and the names of the packed colours, by their
+    /// index, with no colour unnamed between them. The colours decided before reading keep
+    /// theirs. The archives' members follow them, archive by archive in the order of the inputs,
+    /// each archive's in the order they were read in: an order that does not depend on the
+    /// order the archives were read in.
+    pub fn packed_colors(&self) -> (Option<ColorRemap>, Vec<String>) {
+        let named = self.named.lock();
+        if named.archives.is_empty() {
+            return (None, named.names.clone());
+        }
+        let size = self.prealloc_count;
+        let mut offsets = vec![0; named.names.len() / size as usize];
+        let mut names = named.names[..self.decided as usize].to_vec();
+        for input in 0..self.inputs.len() {
+            let Some(ranges) = named.archives.get(&input) else {
+                continue;
+            };
+            for (index, &block) in ranges.blocks.iter().enumerate() {
+                let start = block * size;
+                // All of each range is given, but what is left of the last.
+                let end = match index + 1 == ranges.blocks.len() {
+                    true => ranges.left.start,
+                    false => start + size,
+                };
+                offsets[block as usize] = (names.len() as ColorIndexType).wrapping_sub(start);
+                names.extend_from_slice(&named.names[start as usize..end as usize]);
+            }
+        }
+        let remap = ColorRemap {
+            shift: size.trailing_zeros(),
+            offsets,
+        };
+        (Some(remap), names)
     }
 
     /// The members and nested archives mapped to a colour that no file read was or was in, as
@@ -252,6 +390,20 @@ impl ColorAssigner {
         unmatched.sort();
         unmatched
     }
+}
+
+/// The colours of each range preallocated for an archive's members, with `assigned` colours
+/// decided and `archives` archives whose members can get new colours: the largest power of two
+/// up to [`MAX_PREALLOCATION`] that keeps all of them, and one range for each archive, under
+/// [`PREALLOCATION_BOUND`], but [`MIN_PREALLOCATION`] at least.
+fn prealloc_count(assigned: usize, archives: usize) -> ColorIndexType {
+    let mut count = MAX_PREALLOCATION;
+    while count > MIN_PREALLOCATION
+        && assigned as u64 + archives as u64 * count as u64 >= PREALLOCATION_BOUND
+    {
+        count /= 2;
+    }
+    count
 }
 
 /// Makes `color` one of `names`, named `name()` unless it has a name already.
@@ -299,6 +451,23 @@ mod tests {
         names.iter().map(|name| name.to_string()).collect()
     }
 
+    /// The colours that have a name, and how many colours there are, unnamed ones included.
+    fn named(assigner: &ColorAssigner) -> (Vec<(usize, String)>, usize) {
+        let all = assigner.color_names();
+        let named = all.iter().cloned().enumerate();
+        (
+            named.filter(|(_, name)| !name.is_empty()).collect(),
+            all.len(),
+        )
+    }
+
+    fn indexed(names: &[(usize, &str)]) -> Vec<(usize, String)> {
+        names
+            .iter()
+            .map(|(color, name)| (*color, name.to_string()))
+            .collect()
+    }
+
     #[test]
     fn files_take_the_input_order_and_members_new_colors_as_they_are_read() {
         let blocks = vec![
@@ -312,14 +481,35 @@ mod tests {
             [("a.fa", Some(0)), ("d/x.tar", None), ("b.fq.gz", Some(1))]
         );
         assert_eq!(assigner.file_color(0, "a.fa"), 0);
-        assert_eq!(assigner.file_color(1, "d/x.tar:m.fa"), 2);
-        assert_eq!(assigner.file_color(1, "d/x.tar:dir/n.fq"), 3);
+        // The members' colours come from a range of 2048, from a multiple of 2048, the rest of
+        // it unnamed.
+        assert_eq!(assigner.file_color(1, "d/x.tar:m.fa"), 2048);
+        assert_eq!(assigner.file_color(1, "d/x.tar:dir/n.fq"), 2049);
         // A member of the same name again: the same colour.
-        assert_eq!(assigner.file_color(1, "d/x.tar:m.fa"), 2);
+        assert_eq!(assigner.file_color(1, "d/x.tar:m.fa"), 2048);
         assert_eq!(assigner.file_color(2, "b.fq.gz"), 1);
         assert_eq!(
-            assigner.color_names(),
+            named(&assigner),
+            (
+                indexed(&[
+                    (0, "a.fa"),
+                    (1, "b.fq.gz"),
+                    (2048, "d/x.tar:m.fa"),
+                    (2049, "d/x.tar:dir/n.fq")
+                ]),
+                2 * 2048
+            )
+        );
+        // Packed: no colour without a name.
+        let (remap, packed) = assigner.packed_colors();
+        let remap = remap.unwrap();
+        assert_eq!(
+            packed,
             names(&["a.fa", "b.fq.gz", "d/x.tar:m.fa", "d/x.tar:dir/n.fq"])
+        );
+        assert_eq!(
+            [0, 1, 2048, 2049].map(|color| remap.map(color)),
+            [0, 1, 2, 3]
         );
         assert!(assigner.assigns_while_reading());
         assert!(assigner.unmatched_mappings().is_empty());
@@ -348,11 +538,22 @@ mod tests {
         assert_eq!(assigner.file_color(2, "d/y.tar:b.fa"), 1);
         // Member paths are compared by their components.
         assert_eq!(assigner.file_color(2, "d/y.tar:dir/c.fa"), 0);
-        assert_eq!(assigner.file_color(2, "d/y.tar:e.fa"), 3);
+        assert_eq!(assigner.file_color(2, "d/y.tar:e.fa"), 2048);
         assert_eq!(
-            assigner.color_names(),
-            names(&["all", "special", "loose", "d/y.tar:e.fa"])
+            named(&assigner),
+            (
+                indexed(&[
+                    (0, "all"),
+                    (1, "special"),
+                    (2, "loose"),
+                    (2048, "d/y.tar:e.fa")
+                ]),
+                2 * 2048
+            )
         );
+        let (remap, packed) = assigner.packed_colors();
+        assert_eq!(packed, names(&["all", "special", "loose", "d/y.tar:e.fa"]));
+        assert_eq!(remap.unwrap().map(2048), 3);
         assert_eq!(assigner.unmatched_mappings(), ["d/x.tar.gz:missing.fa"]);
         assert!(assigner.assigns_while_reading());
     }
@@ -386,12 +587,14 @@ mod tests {
         // With no colour for the outer archive, its other members get their own.
         assert_eq!(assigner.file_color(1, "d/y.tar:dir/in.tar:own.fa"), 1);
         assert_eq!(assigner.file_color(1, "d/y.tar:dir/in.tar:b.fa"), 2);
-        assert_eq!(assigner.file_color(1, "d/y.tar:c.fa"), 4);
+        assert_eq!(assigner.file_color(1, "d/y.tar:c.fa"), 2048);
         assert_eq!(assigner.unmatched_mappings(), ["d/x.tar:never.tar"]);
+        let (remap, packed) = assigner.packed_colors();
         assert_eq!(
-            assigner.color_names(),
+            packed,
             names(&["outer", "inner", "deep", "own", "d/y.tar:c.fa"])
         );
+        assert_eq!(remap.unwrap().map(2048), 4);
     }
 
     #[test]
@@ -456,10 +659,137 @@ mod tests {
             ]
         );
         assert_eq!(assigner.input_color(2), 2);
-        assert_eq!(assigner.file_color(1, "x.tar:m.fa"), 4);
+        assert_eq!(assigner.file_color(1, "x.tar:m.fa"), 2048);
+        let (remap, packed) = assigner.packed_colors();
+        assert_eq!(packed, names(&["n0", "n1", "n2", "n3", "x.tar:m.fa"]));
+        assert_eq!(remap.unwrap().map(2048), 4);
+    }
+
+    #[test]
+    fn the_ranges_are_as_large_as_the_bound_allows_from_8_to_2048() {
+        assert_eq!(prealloc_count(0, 1), 2048);
+        assert_eq!(prealloc_count(100_000, 1000), 2048);
+        // 2^18 archives: 2048 colours each would reach 2^29 exactly.
+        assert_eq!(prealloc_count(0, 1 << 18), 1024);
+        // One archive fewer leaves room for 2048 colours decided, not one more.
+        assert_eq!(prealloc_count(2047, (1 << 18) - 1), 2048);
+        assert_eq!(prealloc_count(2048, (1 << 18) - 1), 1024);
+        // At least 8, even past the bound.
+        assert_eq!(prealloc_count(0, 1 << 26), 8);
+        assert_eq!(prealloc_count((1 << 29) - 1, 1), 8);
+        assert_eq!(prealloc_count(0, 0), 2048);
+    }
+
+    /// `a.fa`, then the archives `x.tar` and `y.tar`, read with their members interleaved:
+    /// x's first 2048 and one more, y's three, in `x_first` order or y's first.
+    fn read_interleaved(x_first: bool) -> ColorAssigner {
+        let blocks = vec![file("a.fa", None), file("x.tar", None), file("y.tar", None)];
+        let (assigner, _) = ColorAssigner::new(blocks, &[]).unwrap();
+        let mut x = vec!["x.tar:m0.fa".to_string(), "x.tar:m1.fa".to_string()];
+        // A nested archive's members are the outer archive's.
+        x.push("x.tar:in.tgz:a.fa".to_string());
+        x.extend((3..2048).map(|member| format!("x.tar:m{member}.fa")));
+        x.push("x.tar:last.fa".to_string());
+        let y = ["y.tar:n0.fa", "y.tar:n1.fa", "y.tar:n2.fa"];
+        let (mut x, mut y) = (x.iter(), y.iter());
+        loop {
+            let (first, second) = match x_first {
+                true => (
+                    x.next().map(|name| (1, name.as_str())),
+                    y.next().map(|name| (2, *name)),
+                ),
+                false => (
+                    y.next().map(|name| (2, *name)),
+                    x.next().map(|name| (1, name.as_str())),
+                ),
+            };
+            if first.is_none() && second.is_none() {
+                break;
+            }
+            for (input, name) in first.into_iter().chain(second) {
+                assigner.file_color(input, name);
+            }
+        }
+        assigner
+    }
+
+    #[test]
+    fn each_archive_gives_its_members_consecutive_colors_range_after_range() {
+        let assigner = read_interleaved(true);
+        let color = |input, name| assigner.file_color(input, name);
+        // x's first range, after a's block, then y's, then x's second.
+        assert_eq!(color(1, "x.tar:m0.fa"), 2048);
+        assert_eq!(color(2, "y.tar:n0.fa"), 2 * 2048);
+        assert_eq!(color(1, "x.tar:m1.fa"), 2049);
+        assert_eq!(color(1, "x.tar:in.tgz:a.fa"), 2050);
+        assert_eq!(color(1, "x.tar:m2047.fa"), 2 * 2048 - 1);
+        assert_eq!(color(2, "y.tar:n2.fa"), 2 * 2048 + 2);
+        assert_eq!(color(1, "x.tar:last.fa"), 3 * 2048);
+        let names = assigner.color_names();
+        assert_eq!(names.len(), 4 * 2048);
+        assert!(names[1..2048].iter().all(String::is_empty));
+        assert!(names[2 * 2048 + 3..3 * 2048].iter().all(String::is_empty));
+        assert!(names[3 * 2048 + 1..].iter().all(String::is_empty));
+    }
+
+    #[test]
+    fn packed_colors_follow_the_inputs_with_no_gap_whatever_order_they_are_read_in() {
+        let x_first = read_interleaved(true);
+        let y_first = read_interleaved(false);
+        let (remap, packed) = x_first.packed_colors();
+        let remap = remap.unwrap();
+        // a, then x's 2049 members in order, then y's 3.
+        assert_eq!(packed.len(), 1 + 2049 + 3);
+        assert_eq!(packed[0], "a.fa");
+        assert_eq!(packed[3], "x.tar:in.tgz:a.fa");
+        assert_eq!(packed[2049], "x.tar:last.fa");
         assert_eq!(
-            assigner.color_names(),
-            names(&["n0", "n1", "n2", "n3", "x.tar:m.fa"])
+            packed[2050..],
+            names(&["y.tar:n0.fa", "y.tar:n1.fa", "y.tar:n2.fa"])
         );
+        let (other_remap, other_packed) = y_first.packed_colors();
+        let other_remap = other_remap.unwrap();
+        assert_eq!(packed, other_packed);
+        for (packed_color, name) in packed.iter().enumerate().skip(1) {
+            let input = if name.starts_with("x.tar") { 1 } else { 2 };
+            let color = x_first.file_color(input, name);
+            let other_color = y_first.file_color(input, name);
+            assert_eq!(remap.map(color) as usize, packed_color, "{name}");
+            assert_eq!(
+                other_remap.map(other_color) as usize,
+                packed_color,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn remapped_runs_are_cut_at_the_blocks_and_canonical() {
+        let assigner = read_interleaved(true);
+        let remap = assigner.packed_colors().0.unwrap();
+        // a; x's m2047 and y's n0, consecutive before the remap only; x's last.
+        let runs = [
+            ColorRun::new(0, 1),
+            ColorRun::new(2 * 2048 - 1, 2),
+            ColorRun::new(3 * 2048, 1),
+        ];
+        let mut out = Vec::new();
+        // a stays; m2047, last and n0 become 2048, 2049 and 2050: one run.
+        assert_eq!(
+            remap.map_runs(&runs, &mut out),
+            [ColorRun::new(0, 1), ColorRun::new(2048, 3)]
+        );
+        // y's n0 and n1 alone: one run both before and after.
+        assert_eq!(
+            remap.map_runs(&[ColorRun::new(2 * 2048, 2)], &mut out),
+            [ColorRun::new(2050, 2)]
+        );
+    }
+
+    #[test]
+    fn with_no_archive_read_nothing_is_remapped() {
+        let blocks = vec![file("a.fa", None), file("b.fa", None)];
+        let (assigner, _) = ColorAssigner::new(blocks, &[]).unwrap();
+        assert_eq!(assigner.packed_colors(), (None, names(&["a.fa", "b.fa"])));
     }
 }

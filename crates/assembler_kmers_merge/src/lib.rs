@@ -446,7 +446,7 @@ mod tests {
         let counters = Path::new(TEMP_DIR).join("buckets-counters.dat");
 
         let global_colors_table = Arc::new(
-            <<NonColoredManager as ColorsManager>::ColorsMergeManagerType as ColorsMergeManager>::create_colors_table("", &[], 1, false).unwrap(),
+            <<NonColoredManager as ColorsManager>::ColorsMergeManagerType as ColorsMergeManager>::create_colors_table("", &[], None, 1, false).unwrap(),
         );
 
         let k = 63;

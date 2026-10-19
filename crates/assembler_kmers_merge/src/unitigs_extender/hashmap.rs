@@ -674,7 +674,7 @@ mod canonical_color_tests {
                 std::process::id()
             ));
             let names: Vec<_> = (0..16).map(|i| i.to_string()).collect();
-            let table = Arc::new(M::create_colors_table(&path, &names, 1, false).unwrap());
+            let table = Arc::new(M::create_colors_table(&path, &names, None, 1, false).unwrap());
             let mut extender = HashMapUnitigsExtender::<H, C>::new(&GlobalExtenderParams {
                 k: 15,
                 m: 7,

@@ -1,5 +1,6 @@
 use crate::DefaultColorsSerializer;
 use crate::bucket_colors::{ColorArena, ColorHandle, ColorRun};
+use crate::color_assigner::ColorRemap;
 use crate::colors_manager::ColorsMergeManager;
 use crate::colors_memmap_writer::ColorsMemMapWriter;
 use atoi::{FromRadix10, FromRadix16};
@@ -67,10 +68,11 @@ impl ColorsMergeManager for MultipleColorsManager {
     fn create_colors_table(
         path: impl AsRef<Path>,
         color_names: &[String],
+        color_remap: Option<ColorRemap>,
         threads_count: usize,
         print_stats: bool,
     ) -> anyhow::Result<Self::GlobalColorsTableWriter> {
-        ColorsMemMapWriter::new(path, color_names, threads_count, print_stats)
+        ColorsMemMapWriter::new(path, color_names, color_remap, threads_count, print_stats)
     }
 
     fn open_colors_table(_path: impl AsRef<Path>) -> anyhow::Result<Self::GlobalColorsTableReader> {

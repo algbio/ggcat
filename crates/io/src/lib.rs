@@ -63,40 +63,42 @@ pub fn debug_load_buckets(temp_dir: &Path, file: &str) -> anyhow::Result<Vec<Mul
 }
 
 /// Version of the inputs checkpoint, the first field of the file.
-const INPUTS_CHECKPOINT_VERSION: u32 = 1;
+const INPUTS_CHECKPOINT_VERSION: u32 = 2;
 
-/// Saves what the minimizer bucketing was planned with: the color names and the statistics
-/// that chose the buckets. A run resuming past it reads them back with
-/// [`debug_load_inputs`], so the buckets are read with the counts they were written with,
-/// without estimating the inputs again.
+/// Saves what the minimizer bucketing was planned with and gave: the colors, as the caller
+/// encodes them, and the statistics that chose the buckets. A run resuming past it reads them
+/// back with [`debug_load_inputs`], so the buckets are read with the counts and the colors they
+/// were written with, without reading the inputs again.
 pub fn debug_save_inputs(
     temp_dir: &Path,
     file: &str,
-    color_names: &[String],
+    colors: &impl bincode::Encode,
     stats: &FilesStatsInfo,
 ) -> anyhow::Result<()> {
     std::fs::write(
         temp_dir.join(file),
         bincode::encode_to_vec(
-            (INPUTS_CHECKPOINT_VERSION, color_names, stats),
+            (INPUTS_CHECKPOINT_VERSION, colors, stats),
             DEFAULT_BINCODE_CONFIG,
         )?,
     )?;
     Ok(())
 }
 
-pub fn debug_load_inputs(
+/// The colors and the statistics [`debug_save_inputs`] saved, the colors decoded as `C`.
+pub fn debug_load_inputs<C: bincode::Decode<()>>(
     temp_dir: &Path,
     file: &str,
-) -> anyhow::Result<(Vec<String>, FilesStatsInfo)> {
+) -> anyhow::Result<(C, FilesStatsInfo)> {
     let data = std::fs::read(temp_dir.join(file))?;
-    let ((version, color_names, stats), _): ((u32, Vec<String>, FilesStatsInfo), _) =
-        bincode::decode_from_slice(&data, DEFAULT_BINCODE_CONFIG)?;
+    let (version, _): (u32, _) = bincode::decode_from_slice(&data, DEFAULT_BINCODE_CONFIG)?;
     anyhow::ensure!(
         version == INPUTS_CHECKPOINT_VERSION,
         "Unsupported input checkpoint version {version}"
     );
-    Ok((color_names, stats))
+    let ((_, colors, stats), _): ((u32, C, FilesStatsInfo), _) =
+        bincode::decode_from_slice(&data, DEFAULT_BINCODE_CONFIG)?;
+    Ok((colors, stats))
 }
 
 #[derive(bincode::Encode, bincode::Decode)]
@@ -205,7 +207,8 @@ mod tests {
             target_chunk_size: 64 << 20,
         };
         debug_save_inputs(&directory, "inputs.debug", &names, &stats).unwrap();
-        let (loaded_names, loaded) = debug_load_inputs(&directory, "inputs.debug").unwrap();
+        let (loaded_names, loaded) =
+            debug_load_inputs::<Vec<String>>(&directory, "inputs.debug").unwrap();
         assert_eq!(loaded_names, names);
         assert_eq!(
             (
@@ -223,7 +226,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(directory.join("inputs.debug"), other_version).unwrap();
-        assert!(debug_load_inputs(&directory, "inputs.debug").is_err());
+        assert!(debug_load_inputs::<Vec<String>>(&directory, "inputs.debug").is_err());
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

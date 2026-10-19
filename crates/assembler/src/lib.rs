@@ -11,13 +11,13 @@ use assembler_pipeline::eulertigs::build_eulertigs;
 use assembler_pipeline::extend_unitigs::extend_unitigs;
 use assembler_pipeline::get_final_output_writer;
 use assembler_pipeline::maximal_unitig_links::build_maximal_unitigs_links;
-use colors::color_assigner::ColorAssigner;
+use colors::color_assigner::{ColorAssigner, ColorRemap};
 use colors::colors_manager::ColorsManager;
 use colors::colors_manager::ColorsMergeManager;
 use colors::colors_manager::color_types::PartialUnitigsColorStructure;
 use config::get_compression_level_info;
 use config::{
-    DEFAULT_PER_CPU_BUFFER_SIZE, INTERMEDIATE_COMPRESSION_LEVEL_FAST,
+    ColorIndexType, DEFAULT_PER_CPU_BUFFER_SIZE, INTERMEDIATE_COMPRESSION_LEVEL_FAST,
     INTERMEDIATE_COMPRESSION_LEVEL_SLOW, KEEP_FILES, MAX_COLORMAP_WRITING_THREADS,
     MINIMUM_LOG_DELTA_TIME, SwapPriority, get_memory_mode,
 };
@@ -64,6 +64,11 @@ use std::time::Instant;
 use utils::assembler_phases::AssemblerPhase;
 
 pub use assembler_pipeline::compute_matchtigs::MatchtigMode;
+
+/// The colours the bucketing gave, as the inputs checkpoint keeps them: the names of the
+/// packed colours, and the remap that packs those written in the buckets, as its parts.
+#[derive(bincode::Encode, bincode::Decode)]
+struct SavedColors(Vec<String>, Option<(u32, Vec<ColorIndexType>)>);
 
 #[dynamic_dispatch(MergingHash = [
     #[cfg(all(feature = "hash-forward", feature = "hash-16bit"))] hashes::fw_seqhash::u16::ForwardSeqHashFactory,
@@ -125,8 +130,8 @@ pub fn run_assembler<
     } else {
         None
     };
-    let (resumed_color_names, file_stats, input_sizes) = match resumed {
-        Some((color_names, file_stats)) => (Some(color_names), file_stats, Vec::new()),
+    let (resumed_colors, file_stats, input_sizes) = match resumed {
+        Some((colors, file_stats)) => (Some(colors), file_stats, Vec::new()),
         None => {
             // Estimated once: the sizes pick the buckets and the order the inputs are read in.
             let input_sizes = io::input_size::estimate_blocks(&input_blocks)?;
@@ -200,9 +205,13 @@ pub fn run_assembler<
         buckets.iter().map(|x| x.chunks.len()).sum::<usize>()
     );
 
-    // The colours are all known once the inputs are read, or from the run resumed.
-    let color_names = match resumed_color_names {
-        Some(color_names) => color_names,
+    // The colours are all known once the inputs are read, or from the run resumed: the names of
+    // the packed colours, and the remap that packs those the bucketing wrote.
+    let (color_names, color_remap) = match resumed_colors {
+        Some(SavedColors(color_names, remap)) => (
+            color_names,
+            remap.map(|(shift, offsets)| ColorRemap::from_parts(shift, offsets)),
+        ),
         None => {
             let read = step <= AssemblerPhase::MinimizerBucketing;
             anyhow::ensure!(
@@ -215,16 +224,20 @@ pub fn run_assembler<
                     ggcat_logging::info!("Unmatched archive color mapping: {mapping}");
                 }
             }
-            color_assigner.color_names()
+            let (remap, color_names) = color_assigner.packed_colors();
+            (color_names, remap)
         }
     };
 
     if KEEP_FILES.load(Ordering::Relaxed) || last_step < AssemblerPhase::FinalStep {
         debug_save_buckets(&temp_dir, "minimizer-bucketing.debug", &buckets);
+        let remap = color_remap
+            .as_ref()
+            .map(|remap| (remap.parts().0, remap.parts().1.to_vec()));
         debug_save_inputs(
             &temp_dir,
             "minimizer-inputs.debug",
-            &color_names,
+            &SavedColors(color_names.clone(), remap),
             &file_stats,
         )?;
     }
@@ -266,6 +279,7 @@ pub fn run_assembler<
         AssemblerColorsManager::ColorsMergeManagerType::create_colors_table(
             output_file.with_extension("colors.dat"),
             &color_names,
+            color_remap,
             colormap_threads_count,
             true,
         )?,
