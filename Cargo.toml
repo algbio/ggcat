@@ -13,6 +13,9 @@
 # this branch builds a cdylib instead
 matchtigs = { git = "https://github.com/Guilucand/matchtigs.git", branch = "cdylib-fix" }
 
+# The in-place decoders, until lz-copyback 3.0.0 and its forks are published
+lz-copyback = { path = "libs-crates/lz_copyback" }
+
 [workspace]
 
 resolver = "2"
@@ -75,6 +78,9 @@ members = [
 
 default-members = ["crates/cmdline", "crates/api"]
 
+# A workspace of its own, with its C forks
+exclude = ["libs-crates/lz_copyback"]
+
 [profile.dev]
 debug = true
 opt-level = 2
@@ -88,6 +94,14 @@ strip = true
 lto = "off"
 # The panic hook exits the process, so unwinding is never used
 panic = "abort"
+
+# lz-copyback's decoders are C libraries built from source, at the opt-level of their package
+[profile.release.package.lzcb-lzma-sys]
+opt-level = 3
+[profile.release.package.lzcb-zstd-sys]
+opt-level = 3
+[profile.release.package.lzcb-lz4-sys]
+opt-level = 3
 
 
 [profile.with_debug]

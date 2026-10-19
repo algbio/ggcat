@@ -149,6 +149,28 @@ pub fn estimate(path: &Path) -> anyhow::Result<u64> {
     inspect_file(path, length, format, &mut budget)
 }
 
+/// How many times its size `path` decompresses to, if its metadata records how much: always for
+/// xz, for zstd and lz4 when every frame header has its content size, and for gzip when the
+/// size in its trailer is plausibly the whole file's. None where it could only be estimated.
+pub(crate) fn recorded_ratio(path: &Path) -> Option<f64> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let length = metadata.len();
+    if !metadata.is_file() || length == 0 {
+        return None;
+    }
+    let mut reader = MetadataReader::new(File::open(path).ok()?, length);
+    let decoded = match codec_of(path) {
+        Codec::Gzip => {
+            gzip_trailer_size(&mut reader).and_then(|size| whole_gzip_size(length, size))
+        }
+        Codec::Xz => xz_size(&mut reader),
+        Codec::Lz4 => recorded_framed_size(framed_size(&mut reader, true)?),
+        Codec::Zstd => recorded_framed_size(framed_size(&mut reader, false)?),
+        Codec::Bzip2 | Codec::Plain => None,
+    }?;
+    Some(decoded as f64 / length as f64)
+}
+
 fn inspect_file(
     path: &Path,
     length: u64,
@@ -167,8 +189,8 @@ fn inspect_file(
     let result = match format {
         Codec::Gzip => gzip_size(&mut reader),
         Codec::Xz => xz_size(&mut reader),
-        Codec::Lz4 => framed_size(&mut reader, true),
-        Codec::Zstd => framed_size(&mut reader, false),
+        Codec::Lz4 => framed_size(&mut reader, true).map(|size| size.total),
+        Codec::Zstd => framed_size(&mut reader, false).map(|size| size.total),
         Codec::Bzip2 | Codec::Plain => unreachable!(),
     };
     *budget -= allowance - reader.bytes_left;
@@ -220,6 +242,10 @@ fn le(bytes: &[u8]) -> u64 {
 
 // RFC 1952: ISIZE is the last member's decoded length modulo 2^32.
 fn gzip_size<R: Read + Seek>(reader: &mut MetadataReader<R>) -> Option<u64> {
+    let size = gzip_trailer_size(reader)?;
+    Some(unwrap_gzip_size(reader.length, size))
+}
+fn gzip_trailer_size<R: Read + Seek>(reader: &mut MetadataReader<R>) -> Option<u64> {
     if reader.length < 18 {
         return None;
     }
@@ -227,15 +253,21 @@ fn gzip_size<R: Read + Seek>(reader: &mut MetadataReader<R>) -> Option<u64> {
     if header[..3] != [0x1f, 0x8b, 8] || header[3] & 0xe0 != 0 {
         return None;
     }
-    let size = le(&reader.read(reader.length - 4, 4)?);
-    Some(unwrap_gzip_size(reader.length, size))
+    Some(le(&reader.read(reader.length - 4, 4)?))
 }
-fn unwrap_gzip_size(stored: u64, size: u64) -> u64 {
-    const MODULUS: u64 = 1 << 32;
+const GZIP_SIZE_MODULUS: u64 = 1 << 32;
+/// ISIZE as it is, when it can be the whole decoded size: no wrap, and not the small last member
+/// of several.
+fn whole_gzip_size(stored: u64, size: u64) -> Option<u64> {
     // Permit header/trailer and incompressible DEFLATE overhead without inventing
     // a 4 GiB wrap for small/empty inputs. Invisible wraps cannot be recovered.
     let lower_bound = stored.saturating_sub(32 + stored / 1000);
-    if stored < MODULUS && size >= lower_bound {
+    (stored < GZIP_SIZE_MODULUS && size >= lower_bound).then_some(size)
+}
+fn unwrap_gzip_size(stored: u64, size: u64) -> u64 {
+    const MODULUS: u64 = GZIP_SIZE_MODULUS;
+    let lower_bound = stored.saturating_sub(32 + stored / 1000);
+    if let Some(size) = whole_gzip_size(stored, size) {
         return size;
     }
     // An implausibly small final member may instead indicate concatenated gzip.
@@ -330,11 +362,22 @@ fn vli(bytes: &[u8], pos: &mut usize) -> Option<u64> {
     None
 }
 
+/// The decoded size of LZ4 or Zstandard frames.
+struct FramedSize {
+    total: u64,
+    /// Whether every frame header carried its content size, rather than some being estimated.
+    recorded: bool,
+}
+fn recorded_framed_size(size: FramedSize) -> Option<u64> {
+    size.recorded.then_some(size.total)
+}
+
 // LZ4 and Zstandard frame headers optionally carry full content sizes. Block
 // headers let us seek to following frames even when sizes were not recorded.
-fn framed_size<R: Read + Seek>(reader: &mut MetadataReader<R>, lz4: bool) -> Option<u64> {
+fn framed_size<R: Read + Seek>(reader: &mut MetadataReader<R>, lz4: bool) -> Option<FramedSize> {
     let mut offset = 0;
     let mut total = 0u64;
+    let mut recorded = true;
     while offset < reader.length {
         let magic = le(&reader.take(&mut offset, 4)?);
         if (0x184d2a50..=0x184d2a5f).contains(&magic) {
@@ -342,7 +385,7 @@ fn framed_size<R: Read + Seek>(reader: &mut MetadataReader<R>, lz4: bool) -> Opt
             reader.skip(&mut offset, size)?;
             continue;
         }
-        let size = if lz4 && magic == 0x184d2204 {
+        let (size, frame_recorded) = if lz4 && magic == 0x184d2204 {
             lz4_size(reader, &mut offset)?
         } else if !lz4 && magic == 0xfd2fb528 {
             zstd_size(reader, &mut offset)?
@@ -350,10 +393,15 @@ fn framed_size<R: Read + Seek>(reader: &mut MetadataReader<R>, lz4: bool) -> Opt
             return None;
         };
         total = total.checked_add(size)?;
+        recorded &= frame_recorded;
     }
-    Some(total)
+    Some(FramedSize { total, recorded })
 }
-fn lz4_size<R: Read + Seek>(reader: &mut MetadataReader<R>, offset: &mut u64) -> Option<u64> {
+/// A frame's decoded size, and whether its header records it.
+fn lz4_size<R: Read + Seek>(
+    reader: &mut MetadataReader<R>,
+    offset: &mut u64,
+) -> Option<(u64, bool)> {
     let header = reader.take(offset, 2)?;
     let flags = header[0];
     let block_id = (header[1] >> 4) & 7;
@@ -393,9 +441,13 @@ fn lz4_size<R: Read + Seek>(reader: &mut MetadataReader<R>, offset: &mut u64) ->
     if flags & 4 != 0 {
         reader.skip(offset, 4)?;
     }
-    Some(content.unwrap_or(estimate))
+    Some((content.unwrap_or(estimate), content.is_some()))
 }
-fn zstd_size<R: Read + Seek>(reader: &mut MetadataReader<R>, offset: &mut u64) -> Option<u64> {
+/// A frame's decoded size, and whether its header records it.
+fn zstd_size<R: Read + Seek>(
+    reader: &mut MetadataReader<R>,
+    offset: &mut u64,
+) -> Option<(u64, bool)> {
     let flags = reader.take(offset, 1)?[0];
     if flags & 0x18 != 0 {
         return None;
@@ -438,7 +490,7 @@ fn zstd_size<R: Read + Seek>(reader: &mut MetadataReader<R>, offset: &mut u64) -
     if flags & 4 != 0 {
         reader.skip(offset, 4)?;
     }
-    Some(content.unwrap_or(estimate))
+    Some((content.unwrap_or(estimate), content.is_some()))
 }
 
 #[cfg(test)]
@@ -451,8 +503,8 @@ mod tests {
         match format {
             "xz" => xz_size(&mut reader),
             "gz" => gzip_size(&mut reader),
-            "lz4" => framed_size(&mut reader, true),
-            "zst" => framed_size(&mut reader, false),
+            "lz4" => framed_size(&mut reader, true).map(|size| size.total),
+            "zst" => framed_size(&mut reader, false).map(|size| size.total),
             _ => unreachable!(),
         }
     }
@@ -755,7 +807,8 @@ mod tests {
             regions: vec![(0, header), (1_000_019, vec![0; 4])],
         };
         let mut reader = MetadataReader::new(source, length - 7);
-        assert_eq!(framed_size(&mut reader, true), Some(1 << 34));
+        let size = framed_size(&mut reader, true).unwrap();
+        assert_eq!((size.total, size.recorded), (1 << 34, true));
         assert!(reader.source.bytes_read < 30);
 
         let mut header = 0xfd2fb528u32.to_le_bytes().to_vec();
@@ -771,7 +824,8 @@ mod tests {
             regions: vec![(0, header), (65_548, second)],
         };
         let mut reader = MetadataReader::new(source, length);
-        assert_eq!(framed_size(&mut reader, false), Some(131_072));
+        let size = framed_size(&mut reader, false).unwrap();
+        assert_eq!((size.total, size.recorded), (131_072, true));
         assert_eq!(reader.source.bytes_read, 15);
     }
     #[test]

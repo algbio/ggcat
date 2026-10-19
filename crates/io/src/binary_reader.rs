@@ -1,22 +1,33 @@
 //! Decompressed bytes, straight from a file or a stream.
 //!
-//! A [`BinaryDecoder`] writes its output into a [`DecodedOutput`] one buffer at a time, with
-//! some extra data of its own attached to each buffer. A [`GenericBinaryReader`] hands both out
-//! as [`BinaryEvent`]s, in stream order: the bytes either in the buffers the decoder produced
-//! or, with a buffer size, in chunks of exactly that size, each aligned to it.
+//! A [`GenericBinaryReader`] hands them out as [`BinaryEvent`]s, in stream order. The LZ codecs
+//! (gzip, lz4, xz, zstd) are decoded in place by lz_copyback, and their bytes handed out of the
+//! decoder's own ring, where it decoded them. The others (bzip2, uncompressed bytes) come from a
+//! [`BinaryDecoder`], which writes its output into a [`DecodedOutput`] one buffer at a time.
 //!
 //! A tar archive is read as it is decompressed, never loaded whole: each member file is
 //! decoded on its own, by the codec its name implies, as if it were a file of its own.
+//!
+//! A reader made with [`GenericBinaryReader::with_copybacks`] also hands out the LZ matches
+//! ("copybacks") of the files that compress enough: see [`BinaryEvent::ChunkWithCopybacks`].
 
-use anyhow::{Context, Result, anyhow};
+mod in_place;
+
+use anyhow::{Context, Result};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
+use in_place::{InPlace, Tracking, in_place_decoder};
+use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{BufRead, ErrorKind, Read};
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
-use streaming_libdeflate_rs::{
-    LibdeflateDecompressResult, LibdeflateGzipFileDecompressor, LibdeflateGzipPushDecompressor,
-};
 use tar::EntryType;
+
+pub use in_place::CopybacksSettings;
+pub use lz_copyback::Copyback;
+
+/// With a buffer size, every chunk but the last of an input is a whole number of these bytes:
+/// the blocks the SIMD parser reads.
+pub const CHUNK_BLOCK: usize = 64;
 
 /// Opens an input file, keeping the historical failure message.
 pub(crate) fn open_input(path: &Path) -> File {
@@ -26,13 +37,20 @@ pub(crate) fn open_input(path: &Path) -> File {
 /// The compression a file name implies.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) enum Codec {
-    /// Read through a dedicated path-based decompressor, not as a stream.
     Gzip,
     Lz4,
     Bzip2,
     Xz,
     Zstd,
     Plain,
+}
+
+impl Codec {
+    /// Whether it is an LZ codec, which lz_copyback decodes in place, reporting its matches as
+    /// copybacks.
+    fn is_lz(self) -> bool {
+        matches!(self, Codec::Gzip | Codec::Lz4 | Codec::Xz | Codec::Zstd)
+    }
 }
 
 /// The short names of compressed tar archives: GNU tar's, plus `tb2` and `tlz4`.
@@ -89,100 +107,44 @@ pub fn split_archive_member(path: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
     is_archive(path).then(|| (path.to_owned(), None))
 }
 
-/// `source` decompressed by `codec`, as a reader. Every decoder but lz4's reads on past the end
-/// of a stream into the next one, as concatenated files and parallel compressors have them.
-fn decompressed<'a>(codec: Codec, source: impl Read + 'a) -> Result<Box<dyn Read + 'a>> {
-    Ok(match codec {
-        Codec::Gzip => Box::new(GzipDecoder::new(source)),
-        Codec::Lz4 => Box::new(Lz4Decoder::new(source)?),
-        Codec::Bzip2 => Box::new(bzip2::read::MultiBzDecoder::new(source)),
-        Codec::Xz => Box::new(liblzma::read::XzDecoder::new_multi_decoder(source)),
-        Codec::Zstd => Box::new(zstd::stream::read::Decoder::new(source)?),
-        Codec::Plain => Box::new(source),
-    })
-}
-
-/// lz4's decoder, with an input that ends inside its frame made an error. The decoder itself
-/// just stops returning bytes then, and only tells it when finishing.
-pub struct Lz4Decoder<R: Read>(Option<lz4::Decoder<R>>);
-
-impl<R: Read> Lz4Decoder<R> {
-    pub fn new(source: R) -> std::io::Result<Self> {
-        Ok(Self(Some(lz4::Decoder::new(source)?)))
-    }
-}
-
-impl<R: Read> Read for Lz4Decoder<R> {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        let Some(decoder) = self.0.as_mut().filter(|_| !buffer.is_empty()) else {
-            return Ok(0);
-        };
-        let count = decoder.read(buffer)?;
-        if count == 0 {
-            // Not lz4's own error: it is `Interrupted`, which callers retry, and the retry
-            // would then find the decoder finished and report a clean end.
-            if self.0.take().unwrap().finish().1.is_err() {
-                return Err(std::io::Error::new(
-                    ErrorKind::UnexpectedEof,
-                    "lz4: the input ends inside a frame",
-                ));
-            }
-        }
-        Ok(count)
-    }
-}
-
-/// A decompressor, writing its output into a [`DecodedOutput`] one buffer at a time, with some
-/// extra data attached to each buffer.
+/// A decompressor, writing its output into a [`DecodedOutput`] one buffer at a time.
 pub trait BinaryDecoder {
-    /// The extra data of an output buffer. It can borrow from the decoder, for the length of
-    /// the call that hands it over.
-    type ExtraData<'a>;
-
     /// Decodes the input to its end.
-    fn decode(&mut self, output: &mut impl DecodedOutput<Self>) -> Result<()>;
+    fn decode(&mut self, output: &mut impl DecodedOutput) -> Result<()>;
 }
 
 /// Where a [`BinaryDecoder`] writes. A decoder that can write into a buffer it is given fills
 /// [`Self::free_space`] and calls [`Self::commit`]; one that writes into a buffer of its own
 /// hands its output over with [`Self::push`].
-pub trait DecodedOutput<D: BinaryDecoder + ?Sized> {
+pub trait DecodedOutput {
     /// Where the next bytes can be written. Never empty, so a read into it returning 0 means
     /// the end of the input.
     fn free_space(&mut self) -> &mut [u8];
 
     /// Takes the `count` bytes written at the start of [`Self::free_space`].
-    fn commit(&mut self, count: usize, extra: D::ExtraData<'_>);
+    fn commit(&mut self, count: usize);
 
     /// Takes `data`, the next bytes of the stream.
-    fn push(&mut self, data: &[u8], extra: D::ExtraData<'_>);
+    fn push(&mut self, data: &[u8]);
 }
 
-/// Decodes `reader` straight into the output's free space, with no extra data.
-fn decode_read<D>(
-    reader: &mut (impl Read + ?Sized),
-    output: &mut impl DecodedOutput<D>,
-) -> Result<()>
-where
-    D: for<'a> BinaryDecoder<ExtraData<'a> = ()> + ?Sized,
-{
+/// Decodes `reader` straight into the output's free space.
+fn decode_read(reader: &mut (impl Read + ?Sized), output: &mut impl DecodedOutput) -> Result<()> {
     loop {
         match reader.read(output.free_space()) {
             Ok(0) => return Ok(()),
-            Ok(count) => output.commit(count, ()),
+            Ok(count) => output.commit(count),
             Err(error) if error.kind() == ErrorKind::Interrupted => {}
             Err(error) => return Err(error.into()),
         }
     }
 }
 
-/// The decoders that write into a buffer they are given, with no extra data.
+/// The decoders that write into a buffer they are given.
 macro_rules! read_decoders {
     ($(impl[$($generics:tt)*] for $decoder:ty;)*) => {$(
         impl<$($generics)*> BinaryDecoder for $decoder {
-            type ExtraData<'a> = ();
-
-            fn decode(&mut self, output: &mut impl DecodedOutput<Self>) -> Result<()> {
+            fn decode(&mut self, output: &mut impl DecodedOutput) -> Result<()> {
                 decode_read(self, output)
             }
         }
@@ -192,141 +154,53 @@ macro_rules! read_decoders {
 read_decoders! {
     impl[] for File;
     impl['r] for dyn Read + 'r;
-    impl[R: Read] for Lz4Decoder<R>;
-    impl[R: Read] for bzip2::read::MultiBzDecoder<R>;
-    impl[R: Read] for liblzma::read::XzDecoder<R>;
-    impl[R: BufRead] for zstd::stream::read::Decoder<'_, R>;
 }
 
-/// Gzip's decompressor writes into a buffer of its own, which it also needs as history, so its
-/// output is pushed rather than written in place.
-impl BinaryDecoder for LibdeflateGzipFileDecompressor {
-    type ExtraData<'a> = ();
-
-    fn decode(&mut self, output: &mut impl DecodedOutput<Self>) -> Result<()> {
-        loop {
-            match self.decompress().map_err(|error| anyhow!("{error:?}"))? {
-                LibdeflateDecompressResult::MoreData => {
-                    let pending = self.pending_output();
-                    let count = pending.len();
-                    if count > 0 {
-                        output.push(pending, ());
-                    }
-                    self.consume_output(count);
-                }
-                LibdeflateDecompressResult::NeedInput => {
-                    unreachable!("file decompressors never run out of input")
-                }
-                LibdeflateDecompressResult::EndOfStream => return Ok(()),
-            }
-        }
-    }
-}
-
-/// Gzip from any reader, through the push decompressor: the compressed bytes are read straight
-/// into its input buffer, and its output is handed over from its own buffer.
-pub struct GzipDecoder<R> {
-    source: R,
-    decompressor: LibdeflateGzipPushDecompressor,
-    /// How much of the decompressor's current output buffer [`Read::read`] already handed out.
-    pending_read: usize,
-}
-
-impl<R: Read> GzipDecoder<R> {
-    pub fn new(source: R) -> Self {
-        Self {
-            source,
-            decompressor: LibdeflateGzipPushDecompressor::new(DEFAULT_OUTPUT_BUFFER_SIZE),
-            pending_read: 0,
-        }
-    }
-
-    /// Decodes until there is pending output, returning false at the end of the stream.
-    fn next_output(&mut self) -> std::io::Result<bool> {
-        loop {
-            let result = self.decompressor.decompress().map_err(|error| {
-                std::io::Error::new(ErrorKind::InvalidData, format!("gzip: {error:?}"))
-            })?;
-            match result {
-                LibdeflateDecompressResult::EndOfStream => return Ok(false),
-                _ if !self.decompressor.pending_output().is_empty() => return Ok(true),
-                LibdeflateDecompressResult::NeedInput => self.read_input()?,
-                LibdeflateDecompressResult::MoreData => {}
-            }
-        }
-    }
-
-    /// Reads more compressed bytes into the decompressor, or marks the end of the input.
-    fn read_input(&mut self) -> std::io::Result<()> {
-        let space = self.decompressor.input_space_mut();
-        if space.is_empty() {
-            return Err(std::io::Error::other("gzip: the input buffer is full"));
-        }
-        let count = loop {
-            match self.source.read(space) {
-                Ok(count) => break count,
-                Err(error) if error.kind() == ErrorKind::Interrupted => {}
-                Err(error) => return Err(error),
-            }
-        };
-        if count == 0 {
-            self.decompressor.finish_input();
-        } else {
-            self.decompressor.commit_input(count);
-        }
-        Ok(())
-    }
-}
-
-impl<R: Read> BinaryDecoder for GzipDecoder<R> {
-    type ExtraData<'a> = ();
-
-    fn decode(&mut self, output: &mut impl DecodedOutput<Self>) -> Result<()> {
-        while self.next_output()? {
-            let pending = self.decompressor.pending_output();
-            let count = pending.len();
-            output.push(pending, ());
-            self.decompressor.consume_output(count);
-        }
-        Ok(())
-    }
-}
-
-impl<R: Read> Read for GzipDecoder<R> {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        if self.pending_read == self.decompressor.pending_output().len() {
-            // The decompressor's output buffer is released only once all of it was read:
-            // releasing part of it would make the decompressor move the rest back to the
-            // front of its buffer at every read.
-            self.decompressor.consume_output(self.pending_read);
-            self.pending_read = 0;
-            if !self.next_output()? {
-                return Ok(0);
-            }
-        }
-        let pending = &self.decompressor.pending_output()[self.pending_read..];
-        let count = pending.len().min(buffer.len());
-        buffer[..count].copy_from_slice(&pending[..count]);
-        self.pending_read += count;
-        Ok(count)
-    }
+/// Whether a file's bytes come with copybacks, and which stream their offsets count in.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum OffsetBase {
+    /// No copybacks: the bytes come as [`BinaryEvent::Chunk`]s.
+    None,
+    /// The bytes come as [`BinaryEvent::ChunkWithCopybacks`], from a stream that starts with
+    /// this file: its offsets and copybacks have nothing to do with those of earlier files.
+    New,
+    /// As [`Self::New`], from the stream of the last file before it with copybacks: both are
+    /// members of the same compressed archive, and the copybacks can reach into that file.
+    Continued,
 }
 
 /// What a [`GenericBinaryReader`] hands out, in stream order.
-pub enum BinaryEvent<'a, E> {
-    /// The file the following events come from, sent first and exactly once per input: the
-    /// path as given for a file (converted lossily if it is not UTF-8), `None` for an input
-    /// that is not a file. A member of a tar archive is named after the archive and its path
-    /// inside it, joined by `:`, as `/data/x.tar.gz:dir/a.fa`, with one more for each archive
-    /// inside an archive, as `/data/x.tar:inner.tgz:a.fa`.
-    FilePath(Option<&'a str>),
-    /// Decoded bytes, never empty. With a buffer size, exactly that many and aligned to it,
-    /// except for the last chunk of an input, which can be shorter.
+pub enum BinaryEvent<'a> {
+    /// The file the following events come from, sent first and exactly once per input.
+    FilePath {
+        /// The path as given for a file (converted lossily if it is not UTF-8), `None` for an
+        /// input that is not a file. A member of a tar archive is named after the archive and
+        /// its path inside it, joined by `:`, as `/data/x.tar.gz:dir/a.fa`, with one more for
+        /// each archive inside an archive, as `/data/x.tar:inner.tgz:a.fa`.
+        name: Option<&'a str>,
+        /// Whether the file's bytes come with copybacks, and in which stream.
+        base: OffsetBase,
+    },
+    /// Decoded bytes, never empty. With a buffer size, at most that many and a whole number of
+    /// [`CHUNK_BLOCK`] bytes, except for the last chunk of an input, which can be any shorter
+    /// length (see [`GenericBinaryReader::new`]).
     Chunk(&'a [u8]),
-    /// The extra data the decoder attached to its buffer starting at stream offset `start`.
-    /// It comes after every chunk ending at or before `start`, and before every chunk holding
-    /// bytes of that buffer.
-    Extra { start: u64, extra: E },
+    /// A [`Self::Chunk`] of a file with copybacks.
+    ChunkWithCopybacks {
+        chunk: &'a [u8],
+        /// Where the chunk is in its stream: the decompressed bytes of the compressed file it is
+        /// in, counted from the first as the copybacks count theirs. All the files of a stream,
+        /// as the members of a compressed archive, share it, and its offsets go on across them,
+        /// skipping the bytes between them (tar headers, members without copybacks).
+        offset: u64,
+        /// The copybacks the stream's decoder has found so far, in stream order. The decoder
+        /// has gone at least a window (see [`CopybacksSettings::window`]) past the end of the
+        /// chunk, unless the stream ended earlier, so every copyback whose destination is up
+        /// to there is in. The decoder only pushes to the back: removing the copybacks is up
+        /// to the consumer, those landing in bytes it never gets as copyback chunks included
+        /// (tar headers, members without copybacks, files it skips), else they pile up.
+        copybacks: &'a mut VecDeque<Copyback>,
+    },
 }
 
 /// A zeroed heap buffer whose start is aligned to `align`, carved out of a slightly larger
@@ -353,46 +227,58 @@ impl AlignedBuffer {
     }
 }
 
-/// Hands out the bytes written into a buffer: without a chunk size, everything as soon as it
-/// is written; with one, each chunk of exactly that size as soon as it is complete.
+/// Hands the bytes a decoder writes into a buffer to `on_chunk`: without a chunk size,
+/// everything as soon as it is written; with one, each chunk of exactly that size as soon as it
+/// is complete.
 ///
 /// The buffer is a whole number of chunks and is always filled up to its end before starting
 /// over, so a chunk never wraps around and nothing is ever moved back to the start.
-struct ChunkRing<'a> {
+struct ChunkRing<'a, F> {
     buffer: &'a mut [u8],
     chunk_size: Option<usize>,
     /// Start of the first chunk not handed out yet.
     emitted: usize,
     /// End of the bytes written so far.
     filled: usize,
+    on_chunk: F,
 }
 
-impl<'a> ChunkRing<'a> {
-    fn new(buffer: &'a mut [u8], chunk_size: Option<usize>) -> Self {
+impl<'a, F: FnMut(&[u8])> ChunkRing<'a, F> {
+    fn new(buffer: &'a mut [u8], chunk_size: Option<usize>, on_chunk: F) -> Self {
         Self {
             buffer,
             chunk_size,
             emitted: 0,
             filled: 0,
+            on_chunk,
         }
     }
 
-    /// Where the next bytes go: never empty.
+    /// Hands out the last chunk, shorter than the others.
+    fn finish(&mut self) {
+        if self.filled > self.emitted {
+            (self.on_chunk)(&self.buffer[self.emitted..self.filled]);
+        }
+        self.filled = 0;
+        self.emitted = 0;
+    }
+}
+
+impl<F: FnMut(&[u8])> DecodedOutput for ChunkRing<'_, F> {
     fn free_space(&mut self) -> &mut [u8] {
         &mut self.buffer[self.filled..]
     }
 
-    /// Takes `count` bytes written at the start of [`Self::free_space`].
-    fn commit(&mut self, count: usize, callback: &mut impl FnMut(&[u8])) {
+    fn commit(&mut self, count: usize) {
         self.filled += count;
         match self.chunk_size {
             None => {
-                callback(&self.buffer[..self.filled]);
+                (self.on_chunk)(&self.buffer[..self.filled]);
                 self.filled = 0;
             }
             Some(chunk_size) => {
                 while self.filled - self.emitted >= chunk_size {
-                    callback(&self.buffer[self.emitted..self.emitted + chunk_size]);
+                    (self.on_chunk)(&self.buffer[self.emitted..self.emitted + chunk_size]);
                     self.emitted += chunk_size;
                 }
                 // The buffer is a whole number of chunks: once full, all of it went out.
@@ -404,12 +290,11 @@ impl<'a> ChunkRing<'a> {
         }
     }
 
-    /// Takes `data` from a buffer of the decoder's own: without a chunk size it goes out as it
-    /// is, with one it is copied in.
-    fn push(&mut self, mut data: &[u8], callback: &mut impl FnMut(&[u8])) {
+    /// Without a chunk size, `data` goes out as it is; with one, it is copied in.
+    fn push(&mut self, mut data: &[u8]) {
         if self.chunk_size.is_none() {
             if !data.is_empty() {
-                callback(data);
+                (self.on_chunk)(data);
             }
             return;
         }
@@ -418,84 +303,42 @@ impl<'a> ChunkRing<'a> {
             let count = space.len().min(data.len());
             space[..count].copy_from_slice(&data[..count]);
             data = &data[count..];
-            self.commit(count, callback);
+            self.commit(count);
         }
     }
-
-    /// Hands out the last chunk, shorter than the others.
-    fn finish(&mut self, callback: &mut impl FnMut(&[u8])) {
-        if self.filled > self.emitted {
-            callback(&self.buffer[self.emitted..self.filled]);
-        }
-        self.filled = 0;
-        self.emitted = 0;
-    }
 }
-
-/// Turns a decoder's output into events: the extra data right away, the bytes through a
-/// [`ChunkRing`].
-struct EventSink<'a, F> {
-    ring: ChunkRing<'a>,
-    /// Stream offset of the next byte the decoder hands over.
-    position: u64,
-    callback: F,
-}
-
-impl<D, F> DecodedOutput<D> for EventSink<'_, F>
-where
-    D: BinaryDecoder + ?Sized,
-    F: FnMut(BinaryEvent<'_, D::ExtraData<'_>>),
-{
-    fn free_space(&mut self) -> &mut [u8] {
-        self.ring.free_space()
-    }
-
-    fn commit(&mut self, count: usize, extra: D::ExtraData<'_>) {
-        (self.callback)(BinaryEvent::Extra {
-            start: self.position,
-            extra,
-        });
-        self.position += count as u64;
-        let callback = &mut self.callback;
-        self.ring
-            .commit(count, &mut |chunk| callback(BinaryEvent::Chunk(chunk)));
-    }
-
-    fn push(&mut self, data: &[u8], extra: D::ExtraData<'_>) {
-        (self.callback)(BinaryEvent::Extra {
-            start: self.position,
-            extra,
-        });
-        self.position += data.len() as u64;
-        let callback = &mut self.callback;
-        self.ring
-            .push(data, &mut |chunk| callback(BinaryEvent::Chunk(chunk)));
-    }
-}
-
-/// How much a gzip file's decompressor decodes before handing it over: little enough to still be
-/// in the caches when it is read, even with a reader on every core sharing the last level.
-const GZIP_FILE_OUTPUT_BUFFER_SIZE: usize = 256 * 1024;
 
 pub struct GenericBinaryReader {
+    /// Where the chunks of the inputs that are not decoded in place are cut.
     buffer: AlignedBuffer,
     buffer_size: Option<usize>,
+    /// How the inputs decoded in place are handed out.
+    in_place: InPlace,
+    /// The settings of a reader with copybacks.
+    copybacks: Option<CopybacksSettings>,
 }
 
 impl GenericBinaryReader {
-    /// With `buffer_size`, which must be a power of two, every chunk handed out is exactly
-    /// that many bytes and aligned to it, except the last one of each input, which can be
-    /// shorter. Without it, chunks are the buffers the decoder produces.
+    /// With `buffer_size`, which must be a power of two of at least [`CHUNK_BLOCK`], every
+    /// chunk handed out has at most that many bytes and is a whole number of [`CHUNK_BLOCK`]
+    /// bytes, except the last one of each input, which can be shorter. Without it, chunks are
+    /// the buffers the decoders produce.
     ///
-    /// The chunks are filled in a ring of only two of them, so that it stays in the caches:
-    /// each byte is written there and read back right after, by every reader at once.
+    /// The LZ inputs (gzip, lz4, xz, zstd) are decoded in place by lz_copyback: their chunks
+    /// are handed out of the decoder's own ring, where it decoded them, at any address. A block
+    /// split between two pieces of the ring, where it wraps around, is the only part copied,
+    /// into a chunk of its own. Without a buffer size the chunks are the pieces of the ring.
+    ///
+    /// The other inputs (bzip2, uncompressed) are filled in a ring of only two chunks, so that
+    /// it stays in the caches: each byte is written there and read back right after, by every
+    /// reader at once. Their chunks are exactly `buffer_size` bytes, and aligned to it.
     pub fn new(buffer_size: Option<usize>) -> Self {
         let (capacity, align) = match buffer_size {
             None => (DEFAULT_OUTPUT_BUFFER_SIZE, 1),
             Some(size) => {
                 assert!(
-                    size.is_power_of_two(),
-                    "The buffer size must be a power of two, got {size}"
+                    size.is_power_of_two() && size >= CHUNK_BLOCK,
+                    "The buffer size must be a power of two of at least {CHUNK_BLOCK}, got {size}"
                 );
                 (2 * size, size)
             }
@@ -503,7 +346,33 @@ impl GenericBinaryReader {
         Self {
             buffer: AlignedBuffer::new(capacity, align),
             buffer_size,
+            in_place: InPlace::new(buffer_size, None),
+            copybacks: None,
         }
+    }
+
+    /// As [`Self::new`], with the bytes of the LZ files that compress at least
+    /// `settings.min_compression_ratio` times handed out with their copybacks, as
+    /// [`BinaryEvent::ChunkWithCopybacks`]. Their chunks go out once the decoder has decoded
+    /// `settings.window` bytes past them, so that their copybacks are known up to there;
+    /// without a buffer size, they are at most a window long.
+    ///
+    /// Such a file gets copybacks if its compression ratio is enough: the one its metadata
+    /// records, if it is a file of its own and records how much it decompresses to; otherwise,
+    /// as for the members of an archive, the one of the bytes decoded before its first chunk
+    /// goes out.
+    ///
+    /// The members of a compressed archive with copybacks share its stream: the uncompressed
+    /// ones get its copybacks, at offsets going on across the archive, and the compressed ones,
+    /// whose bytes are not the archive's, none. Only a compressed file read outside any stream
+    /// with copybacks can start one: a file of its own, or a member of an archive without them,
+    /// such as an uncompressed one.
+    pub fn with_copybacks(buffer_size: Option<usize>, settings: CopybacksSettings) -> Self {
+        assert!(settings.window > 0, "The copybacks window cannot be empty");
+        let mut reader = Self::new(buffer_size);
+        reader.in_place = InPlace::new(buffer_size, Some(settings.window));
+        reader.copybacks = Some(settings);
+        reader
     }
 
     /// Runs `decoder` to the end of its input, as an input that is not a file. The bytes
@@ -511,29 +380,24 @@ impl GenericBinaryReader {
     pub fn read_decoder<D: BinaryDecoder + ?Sized>(
         &mut self,
         decoder: &mut D,
-        mut callback: impl FnMut(BinaryEvent<'_, D::ExtraData<'_>>),
+        mut callback: impl FnMut(BinaryEvent<'_>),
     ) -> Result<()> {
-        callback(BinaryEvent::FilePath(None));
-        self.decode(decoder, callback)
+        callback(BinaryEvent::FilePath {
+            name: None,
+            base: OffsetBase::None,
+        });
+        self.decode(decoder, |chunk| callback(BinaryEvent::Chunk(chunk)))
     }
 
+    /// Runs `decoder` to its end, cutting its output into chunks in the ring.
     fn decode<D: BinaryDecoder + ?Sized>(
         &mut self,
         decoder: &mut D,
-        callback: impl FnMut(BinaryEvent<'_, D::ExtraData<'_>>),
+        on_chunk: impl FnMut(&[u8]),
     ) -> Result<()> {
-        let mut sink = EventSink {
-            ring: ChunkRing::new(self.buffer.as_mut_slice(), self.buffer_size),
-            position: 0,
-            callback,
-        };
-        let result = decoder.decode(&mut sink);
-        let EventSink {
-            mut ring,
-            mut callback,
-            ..
-        } = sink;
-        ring.finish(&mut |chunk| callback(BinaryEvent::Chunk(chunk)));
+        let mut ring = ChunkRing::new(self.buffer.as_mut_slice(), self.buffer_size, on_chunk);
+        let result = decoder.decode(&mut ring);
+        ring.finish();
         result
     }
 
@@ -541,7 +405,7 @@ impl GenericBinaryReader {
     pub fn read_stream(
         &mut self,
         stream: &mut dyn Read,
-        callback: impl FnMut(BinaryEvent<'_, ()>),
+        callback: impl FnMut(BinaryEvent<'_>),
     ) -> Result<()> {
         self.read_decoder(stream, callback)
     }
@@ -552,57 +416,101 @@ impl GenericBinaryReader {
     pub fn read_file(
         &mut self,
         path: &Path,
-        mut callback: impl FnMut(BinaryEvent<'_, ()>),
+        mut callback: impl FnMut(BinaryEvent<'_>),
     ) -> Result<()> {
-        let callback = &mut callback;
-        let name = path.to_string_lossy();
-        let result = if codec_of(path) == Codec::Gzip && !is_archive(path) {
-            // A gzip file keeps the decompressor that reads the file by itself.
-            callback(BinaryEvent::FilePath(Some(&name)));
-            let mut decoder =
-                LibdeflateGzipFileDecompressor::try_new(path, GZIP_FILE_OUTPUT_BUFFER_SIZE)
-                    .unwrap_or_else(|_| panic!("Cannot open file {}", path.display()));
-            self.decode(&mut decoder, callback)
-        } else {
-            self.read_input(&name, path, open_input(path), callback)
-        };
-        result.with_context(|| format!("Cannot decompress {}", path.display()))
+        self.read_path(path, &mut callback)
+            .with_context(|| format!("Cannot decompress {}", path.display()))
     }
 
-    /// Reads the input `name`, whose own path is `path`, from `source`: an archive member by
-    /// member, anything else as a single file.
-    fn read_input<F: FnMut(BinaryEvent<'_, ()>)>(
+    fn read_path<F: FnMut(BinaryEvent<'_>)>(
+        &mut self,
+        path: &Path,
+        callback: &mut F,
+    ) -> Result<()> {
+        let name = path.to_string_lossy();
+        let codec = codec_of(path);
+        if !codec.is_lz() {
+            let may_track = self.copybacks.is_some();
+            return self.read_stock(&name, path, open_input(path), may_track, callback);
+        }
+        let tracking = match self.copybacks {
+            None => Tracking::Off,
+            Some(settings) => match crate::input_size::recorded_ratio(path) {
+                Some(ratio) if ratio >= settings.min_compression_ratio => Tracking::On,
+                // It compresses too little, as its metadata tells already.
+                Some(_) => Tracking::Off,
+                None => Tracking::Measured,
+            },
+        };
+        let decoder = in_place_decoder(codec, open_input(path), self.retain(tracking))?;
+        self.read_in_place(&name, path, decoder, tracking, callback)
+    }
+
+    /// Reads the input `name`, whose own path is `path`, from `source`: an LZ input decoded in
+    /// place, with copybacks if it compresses enough, only if `may_track` (it is read outside
+    /// any stream with copybacks, in a reader with them); anything else as
+    /// [`Self::read_stock`] does.
+    fn read_input<F: FnMut(BinaryEvent<'_>)>(
+        &mut self,
+        name: &str,
+        path: &Path,
+        source: impl Read,
+        may_track: bool,
+        callback: &mut F,
+    ) -> Result<()> {
+        let codec = codec_of(path);
+        if !codec.is_lz() {
+            return self.read_stock(name, path, source, may_track, callback);
+        }
+        let tracking = if may_track {
+            Tracking::Measured
+        } else {
+            Tracking::Off
+        };
+        let decoder = in_place_decoder(codec, source, self.retain(tracking))?;
+        self.read_in_place(name, path, decoder, tracking, callback)
+    }
+
+    /// Reads the input `name`, whose own path is `path`, from `source`, bzip2 decoded by its
+    /// stock decoder, or uncompressed: an archive member by member, its members read as by
+    /// [`Self::read_input`] with `may_track`, anything else as a single file.
+    fn read_stock<F: FnMut(BinaryEvent<'_>)>(
         &mut self,
         name: &str,
         path: &Path,
         mut source: impl Read,
+        may_track: bool,
         callback: &mut F,
     ) -> Result<()> {
         let codec = codec_of(path);
+        let mut decoder;
+        let source: &mut dyn Read = match codec {
+            Codec::Bzip2 => {
+                decoder = bzip2::read::MultiBzDecoder::new(source);
+                &mut decoder
+            }
+            Codec::Plain => &mut source,
+            _ => unreachable!("{codec:?} is decoded in place"),
+        };
         if is_archive(path) {
-            return self.read_archive(name, &mut *decompressed(codec, source)?, callback);
+            return self.read_archive(name, source, may_track, callback);
         }
         // Sent before the decoder starts, so that a file failing there still gets one.
-        callback(BinaryEvent::FilePath(Some(name)));
-        match codec {
-            Codec::Gzip => self.decode(&mut GzipDecoder::new(source), callback),
-            Codec::Lz4 => self.decode(&mut Lz4Decoder::new(source)?, callback),
-            Codec::Bzip2 => self.decode(&mut bzip2::read::MultiBzDecoder::new(source), callback),
-            Codec::Xz => self.decode(
-                &mut liblzma::read::XzDecoder::new_multi_decoder(source),
-                callback,
-            ),
-            Codec::Zstd => self.decode(&mut zstd::stream::read::Decoder::new(source)?, callback),
-            Codec::Plain => self.decode(&mut source as &mut dyn Read, callback),
-        }
+        callback(BinaryEvent::FilePath {
+            name: Some(name),
+            base: OffsetBase::None,
+        });
+        self.decode(source, |chunk| callback(BinaryEvent::Chunk(chunk)))
     }
 
     /// Reads the tar archive `name` as it comes out of `source`, decoding each member file on
-    /// its own as `name:path`. Directories, links and other special entries are skipped.
-    fn read_archive<F: FnMut(BinaryEvent<'_, ()>)>(
+    /// its own as `name:path`, as [`Self::read_input`] does with `may_track`. Directories, links
+    /// and other special entries are skipped.
+    fn read_archive<F: FnMut(BinaryEvent<'_>)>(
         &mut self,
         name: &str,
         source: &mut dyn Read,
+        may_track: bool,
         callback: &mut F,
     ) -> Result<()> {
         let mut archive = tar::Archive::new(source);
@@ -618,7 +526,7 @@ impl GenericBinaryReader {
                 ggcat_logging::info!("Skipping {member}: not a regular file");
                 continue;
             }
-            self.read_input(&member, &path, &mut entry, callback)
+            self.read_input(&member, &path, &mut entry, may_track, callback)
                 .with_context(|| format!("Cannot read archive member {member}"))?;
         }
         // The tar end marker is not the end of the stream: reading on to it lets the
@@ -635,7 +543,7 @@ mod tests {
     use std::io::Write;
 
     /// Pseudo-random DNA lines, compressible like real inputs.
-    fn sample(len: usize) -> Vec<u8> {
+    pub(super) fn sample(len: usize) -> Vec<u8> {
         let mut state = 0x2545_f491_4f6c_dd1du64;
         (0..len)
             .map(|index| {
@@ -668,42 +576,59 @@ mod tests {
 
     /// The events a reader handed out.
     #[derive(Default)]
-    struct Recorded {
+    pub(super) struct Recorded {
         events: usize,
         /// Each file path, with the number of events before it.
-        file_paths: Vec<(Option<String>, usize)>,
+        pub(super) file_paths: Vec<(Option<String>, usize)>,
+        /// The offset base of each file path.
+        pub(super) bases: Vec<OffsetBase>,
         /// Each chunk with its address.
-        chunks: Vec<(usize, Vec<u8>)>,
-        chunk_bytes: usize,
-        /// The start of each extra data, its value, and the bytes of the chunks before it.
-        extras: Vec<(u64, u64, usize)>,
+        pub(super) chunks: Vec<(usize, Vec<u8>)>,
+        /// The offset of each chunk, if it came with copybacks.
+        pub(super) offsets: Vec<Option<u64>>,
     }
 
     impl Recorded {
-        fn file_path(&mut self, path: Option<&str>) {
-            self.file_paths.push((path.map(str::to_owned), self.events));
+        pub(super) fn event(&mut self, event: BinaryEvent<'_>) {
+            match event {
+                BinaryEvent::FilePath { name, base } => {
+                    self.file_paths.push((name.map(str::to_owned), self.events));
+                    self.bases.push(base);
+                }
+                BinaryEvent::Chunk(chunk) => self.chunk(chunk, None),
+                BinaryEvent::ChunkWithCopybacks { chunk, offset, .. } => {
+                    self.chunk(chunk, Some(offset))
+                }
+            }
             self.events += 1;
         }
 
-        fn chunk(&mut self, chunk: &[u8]) {
+        fn chunk(&mut self, chunk: &[u8], offset: Option<u64>) {
             self.chunks.push((chunk.as_ptr() as usize, chunk.to_vec()));
-            self.chunk_bytes += chunk.len();
-            self.events += 1;
-        }
-
-        fn extra(&mut self, start: u64, value: u64) {
-            self.extras.push((start, value, self.chunk_bytes));
-            self.events += 1;
+            self.offsets.push(offset);
         }
     }
 
-    /// Records the events of a decoder with no extra data.
-    fn recorder(recorded: &mut Recorded) -> impl FnMut(BinaryEvent<'_, ()>) + '_ {
-        |event| match event {
-            BinaryEvent::FilePath(path) => recorded.file_path(path),
-            BinaryEvent::Chunk(chunk) => recorded.chunk(chunk),
-            BinaryEvent::Extra { start, .. } => recorded.extra(start, 0),
+    fn recorder(recorded: &mut Recorded) -> impl FnMut(BinaryEvent<'_>) + '_ {
+        |event| recorded.event(event)
+    }
+
+    /// Copybacks for every file that can have them, a few small windows at a time.
+    pub(super) fn copybacks_settings() -> CopybacksSettings {
+        CopybacksSettings {
+            window: 16 * 1024,
+            min_len: 16,
+            min_compression_ratio: 0.0,
         }
+    }
+
+    /// A reader without copybacks, and one with them for every LZ-compressed file: both must
+    /// hand out the same bytes.
+    pub(super) fn readers(buffer_size: Option<usize>) -> [GenericBinaryReader; 2] {
+        [
+            GenericBinaryReader::new(buffer_size),
+            GenericBinaryReader::with_copybacks(buffer_size, copybacks_settings()),
+        ]
     }
 
     fn check(
@@ -720,24 +645,53 @@ mod tests {
         let joined: Vec<u8> = chunks.iter().flat_map(|(_, chunk)| chunk.clone()).collect();
         assert!(joined == expected, "the bytes differ from the input");
 
-        for &(start, _, before) in &recorded.extras {
-            let start = start as usize;
-            let chunks_before = match buffer_size {
-                None => start,
-                Some(size) => start - start % size,
-            };
-            assert_eq!(before, chunks_before, "extra data at {start} out of order");
+        // Offsets exactly for a file with copybacks, one chunk right after the other.
+        let mut next_offset = None;
+        for ((_, chunk), &offset) in chunks.iter().zip(&recorded.offsets) {
+            assert_eq!(offset.is_some(), recorded.bases[0] != OffsetBase::None);
+            if let (Some(offset), Some(next_offset)) = (offset, next_offset) {
+                assert_eq!(
+                    offset, next_offset,
+                    "the chunks are not one after the other"
+                );
+            }
+            next_offset = offset.map(|offset| offset + chunk.len() as u64);
         }
 
+        // At most a buffer size, whole blocks but the last: the chunks of the inputs decoded in
+        // place are where the decoder left them, at any address.
         let Some(size) = buffer_size else {
             return;
         };
+        for (index, (_, chunk)) in chunks.iter().enumerate() {
+            assert!(chunk.len() <= size, "chunk {index} is longer than {size}");
+            if index + 1 < chunks.len() {
+                assert_eq!(
+                    chunk.len() % CHUNK_BLOCK,
+                    0,
+                    "chunk {index} is not whole blocks"
+                );
+            }
+        }
+    }
+
+    /// As [`check`], for an input that is not decoded in place: with a buffer size, every chunk
+    /// but the last is exactly that many bytes, and all of them are aligned to it.
+    fn check_exact(
+        recorded: &Recorded,
+        expected: &[u8],
+        buffer_size: Option<usize>,
+        file_path: Option<&str>,
+    ) {
+        check(recorded, expected, buffer_size, file_path);
+        let Some(size) = buffer_size else {
+            return;
+        };
+        let chunks = &recorded.chunks;
         for (index, (address, chunk)) in chunks.iter().enumerate() {
             assert_eq!(address % size, 0, "chunk {index} is not aligned to {size}");
             if index + 1 < chunks.len() {
                 assert_eq!(chunk.len(), size, "chunk {index} is not whole");
-            } else {
-                assert!(chunk.len() <= size);
             }
         }
     }
@@ -763,7 +717,7 @@ mod tests {
                 reader
                     .read_stream(&mut stream, recorder(&mut recorded))
                     .unwrap();
-                check(&recorded, &data, Some(size), None);
+                check_exact(&recorded, &data, Some(size), None);
             }
         }
     }
@@ -780,9 +734,8 @@ mod tests {
             .read_stream(&mut stream, recorder(&mut recorded))
             .unwrap();
         check(&recorded, &data, None, None);
-        // Each read goes out on its own, as it came, after its extra data.
+        // Each read goes out on its own, as it came.
         assert!(recorded.chunks.len() > data.len() / 5003);
-        assert_eq!(recorded.extras.len(), recorded.chunks.len());
     }
 
     #[test]
@@ -792,20 +745,17 @@ mod tests {
     }
 
     /// Hands `data` over in windows of irregular sizes, alternately pushed from its own memory
-    /// and written in place, each with its index borrowed from a table of its own.
+    /// and written in place.
     struct Windows {
         data: Vec<u8>,
         bounds: Vec<(usize, usize)>,
-        indices: Vec<u64>,
     }
 
     impl BinaryDecoder for Windows {
-        type ExtraData<'a> = &'a u64;
-
-        fn decode(&mut self, output: &mut impl DecodedOutput<Self>) -> Result<()> {
-            for (index, &(start, end)) in self.indices.iter().zip(&self.bounds) {
+        fn decode(&mut self, output: &mut impl DecodedOutput) -> Result<()> {
+            for (index, &(start, end)) in self.bounds.iter().enumerate() {
                 if index % 2 == 0 {
-                    output.push(&self.data[start..end], index);
+                    output.push(&self.data[start..end]);
                     continue;
                 }
                 let mut written = start;
@@ -813,7 +763,7 @@ mod tests {
                     let space = output.free_space();
                     let count = space.len().min(end - written);
                     space[..count].copy_from_slice(&self.data[written..written + count]);
-                    output.commit(count, index);
+                    output.commit(count);
                     written += count;
                 }
             }
@@ -822,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn extra_data_comes_in_stream_order() {
+    fn pushed_and_written_output_come_in_stream_order() {
         let data = sample(2 * DEFAULT_OUTPUT_BUFFER_SIZE + 777);
         let mut bounds = Vec::new();
         let (mut start, mut step) = (0, 1);
@@ -833,33 +783,20 @@ mod tests {
             start = end;
         }
         let mut decoder = Windows {
-            indices: (0..bounds.len() as u64).collect(),
             data: data.clone(),
-            bounds: bounds.clone(),
+            bounds,
         };
 
         for buffer_size in [None, Some(64), Some(1 << 16)] {
             let mut recorded = Recorded::default();
             GenericBinaryReader::new(buffer_size)
-                .read_decoder(&mut decoder, |event| match event {
-                    BinaryEvent::FilePath(path) => recorded.file_path(path),
-                    BinaryEvent::Chunk(chunk) => recorded.chunk(chunk),
-                    BinaryEvent::Extra { start, extra } => recorded.extra(start, *extra),
-                })
+                .read_decoder(&mut decoder, recorder(&mut recorded))
                 .unwrap();
-            check(&recorded, &data, buffer_size, None);
-
-            let mut seen = vec![false; bounds.len()];
-            for &(start, index, _) in &recorded.extras {
-                let (begin, end) = bounds[index as usize];
-                assert!(begin as u64 <= start && start < end as u64);
-                seen[index as usize] = true;
-            }
-            assert!(seen.iter().all(|seen| *seen), "a window has no extra data");
+            check_exact(&recorded, &data, buffer_size, None);
         }
     }
 
-    fn compress(data: &[u8], extension: &str) -> Vec<u8> {
+    pub(super) fn compress(data: &[u8], extension: &str) -> Vec<u8> {
         match extension {
             "gz" => {
                 let mut encoder =
@@ -901,11 +838,15 @@ mod tests {
             let path = directory.join(format!("input.{extension}"));
             std::fs::write(&path, compress(&data, extension)).unwrap();
             for buffer_size in [None, Some(4096), Some(DEFAULT_OUTPUT_BUFFER_SIZE)] {
-                let mut recorded = Recorded::default();
-                GenericBinaryReader::new(buffer_size)
-                    .read_file(&path, recorder(&mut recorded))
-                    .unwrap();
-                check(&recorded, &data, buffer_size, path.to_str());
+                for mut reader in readers(buffer_size) {
+                    let mut recorded = Recorded::default();
+                    reader.read_file(&path, recorder(&mut recorded)).unwrap();
+                    if matches!(extension, "bz2" | "fa") {
+                        check_exact(&recorded, &data, buffer_size, path.to_str());
+                    } else {
+                        check(&recorded, &data, buffer_size, path.to_str());
+                    }
+                }
             }
         }
         std::fs::remove_dir_all(directory).unwrap();
@@ -965,35 +906,36 @@ mod tests {
         assert!(prefixes("/d/x.tar").is_empty());
     }
 
+    /// The decoders in place, fed a few bytes per read: two streams back to back, as
+    /// concatenated files are, but for lz4, whose decoder stops after its first frame.
     #[test]
-    fn gzip_decoder_reads_from_small_reads() {
+    fn in_place_decoders_read_from_small_reads() {
         let first = sample(DEFAULT_OUTPUT_BUFFER_SIZE + 999);
         let second = sample(70_000);
-        // Two members, as concatenated gzip files are.
-        let mut compressed = compress(&first, "gz");
-        compressed.extend(compress(&second, "gz"));
-        let expected = [first, second].concat();
-
-        for buffer_size in [None, Some(4096)] {
-            let mut recorded = Recorded::default();
-            let mut decoder = GzipDecoder::new(Trickle {
-                data: &compressed,
-                step: 0,
-            });
-            GenericBinaryReader::new(buffer_size)
-                .read_decoder(&mut decoder, recorder(&mut recorded))
-                .unwrap();
-            check(&recorded, &expected, buffer_size, None);
+        let expected = [first.as_slice(), &second].concat();
+        for extension in ["gz", "lz4", "xz", "zst"] {
+            let compressed = match extension {
+                "lz4" => compress(&expected, extension),
+                _ => [compress(&first, extension), compress(&second, extension)].concat(),
+            };
+            let name = format!("input.fa.{extension}");
+            for buffer_size in [None, Some(4096)] {
+                for mut reader in readers(buffer_size) {
+                    let mut recorded = Recorded::default();
+                    let source = Trickle {
+                        data: &compressed,
+                        step: 0,
+                    };
+                    let may_track = reader.copybacks.is_some();
+                    let mut callback = recorder(&mut recorded);
+                    reader
+                        .read_input(&name, Path::new(&name), source, may_track, &mut callback)
+                        .unwrap();
+                    drop(callback);
+                    check(&recorded, &expected, buffer_size, Some(&name));
+                }
+            }
         }
-
-        let mut decoded = Vec::new();
-        GzipDecoder::new(Trickle {
-            data: &compressed,
-            step: 0,
-        })
-        .read_to_end(&mut decoded)
-        .unwrap();
-        assert!(decoded == expected);
     }
 
     /// `data` split in two and each half compressed on its own, back to back, as concatenating
@@ -1015,24 +957,24 @@ mod tests {
         for extension in ["gz", "bz2", "xz", "zst"] {
             let path = directory.join(format!("input.fa.{extension}"));
             std::fs::write(&path, concatenated(&data, extension)).unwrap();
-            let mut recorded = Recorded::default();
-            GenericBinaryReader::new(None)
-                .read_file(&path, recorder(&mut recorded))
-                .unwrap();
-            check(&recorded, &data, None, path.to_str());
+            for mut reader in readers(None) {
+                let mut recorded = Recorded::default();
+                reader.read_file(&path, recorder(&mut recorded)).unwrap();
+                check(&recorded, &data, None, path.to_str());
+            }
 
             // Both the archive and its member made of two streams.
             let name = format!("a.fa.{extension}");
             let tar = archive(&[(name.clone(), concatenated(&member, extension))]);
             let path = directory.join(format!("input.tar.{extension}"));
             std::fs::write(&path, concatenated(&tar, extension)).unwrap();
-            let mut files = Vec::new();
-            GenericBinaryReader::new(None)
-                .read_file(&path, file_recorder(&mut files))
-                .unwrap();
-            assert_eq!(files.len(), 1, "{extension}");
-            let name = format!("{}:{name}", path.display());
-            check(&files[0], &member, None, Some(&name));
+            for mut reader in readers(None) {
+                let mut files = Vec::new();
+                reader.read_file(&path, file_recorder(&mut files)).unwrap();
+                assert_eq!(files.len(), 1, "{extension}");
+                let name = format!("{}:{name}", path.display());
+                check(&files[0], &member, None, Some(&name));
+            }
         }
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -1055,8 +997,10 @@ mod tests {
             compressed[at] ^= 0xff;
             let path = directory.join(format!("input.tar.{extension}"));
             std::fs::write(&path, compressed).unwrap();
-            let result = GenericBinaryReader::new(None).read_file(&path, |_| {});
-            assert!(result.is_err(), "{extension}: the damage went unnoticed");
+            for mut reader in readers(None) {
+                let result = reader.read_file(&path, |_| {});
+                assert!(result.is_err(), "{extension}: the damage went unnoticed");
+            }
         }
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -1075,18 +1019,22 @@ mod tests {
 
         let path = directory.join("input.fa.lz4");
         std::fs::write(&path, &truncated).unwrap();
-        let result = GenericBinaryReader::new(None).read_file(&path, |_| {});
-        assert!(result.is_err(), "a truncated file went unnoticed");
+        for mut reader in readers(None) {
+            let result = reader.read_file(&path, |_| {});
+            assert!(result.is_err(), "a truncated file went unnoticed");
+        }
 
         let path = directory.join("input.tar");
         std::fs::write(&path, archive(&[("a.fa.lz4".into(), truncated)])).unwrap();
-        let result = GenericBinaryReader::new(None).read_file(&path, |_| {});
-        assert!(result.is_err(), "a truncated member went unnoticed");
+        for mut reader in readers(None) {
+            let result = reader.read_file(&path, |_| {});
+            assert!(result.is_err(), "a truncated member went unnoticed");
+        }
         std::fs::remove_dir_all(directory).unwrap();
     }
 
     /// `data` compressed as the extension of `name` says.
-    fn encoded(name: &str, data: &[u8]) -> Vec<u8> {
+    pub(super) fn encoded(name: &str, data: &[u8]) -> Vec<u8> {
         let extension = match codec_of(Path::new(name)) {
             Codec::Gzip => "gz",
             Codec::Lz4 => "lz4",
@@ -1099,7 +1047,7 @@ mod tests {
     }
 
     /// A tar archive of `members`, with a directory and a symbolic link around them.
-    fn archive(members: &[(String, Vec<u8>)]) -> Vec<u8> {
+    pub(super) fn archive(members: &[(String, Vec<u8>)]) -> Vec<u8> {
         let mut builder = tar::Builder::new(Vec::new());
         let mut directory = tar::Header::new_gnu();
         directory.set_entry_type(EntryType::Directory);
@@ -1125,17 +1073,13 @@ mod tests {
     }
 
     /// Records the events of each file apart, starting a new record at each file path.
-    fn file_recorder(files: &mut Vec<Recorded>) -> impl FnMut(BinaryEvent<'_, ()>) + '_ {
+    pub(super) fn file_recorder(files: &mut Vec<Recorded>) -> impl FnMut(BinaryEvent<'_>) + '_ {
         |event| {
-            if matches!(event, BinaryEvent::FilePath(_)) {
+            if matches!(event, BinaryEvent::FilePath { .. }) {
                 files.push(Recorded::default());
             }
             let recorded = files.last_mut().expect("an event before any file path");
-            match event {
-                BinaryEvent::FilePath(path) => recorded.file_path(path),
-                BinaryEvent::Chunk(chunk) => recorded.chunk(chunk),
-                BinaryEvent::Extra { start, .. } => recorded.extra(start, 0),
-            }
+            recorded.event(event);
         }
     }
 
@@ -1193,14 +1137,14 @@ mod tests {
             let path = directory.join(format!("input.{extension}"));
             std::fs::write(&path, encoded(path.to_str().unwrap(), &tar)).unwrap();
             for buffer_size in [None, Some(4096)] {
-                let mut files = Vec::new();
-                GenericBinaryReader::new(buffer_size)
-                    .read_file(&path, file_recorder(&mut files))
-                    .unwrap();
-                assert_eq!(files.len(), members.len(), "{extension}");
-                for (recorded, (name, data)) in files.iter().zip(&members) {
-                    let name = format!("{}:{name}", path.display());
-                    check(recorded, data, buffer_size, Some(&name));
+                for mut reader in readers(buffer_size) {
+                    let mut files = Vec::new();
+                    reader.read_file(&path, file_recorder(&mut files)).unwrap();
+                    assert_eq!(files.len(), members.len(), "{extension}");
+                    for (recorded, (name, data)) in files.iter().zip(&members) {
+                        let name = format!("{}:{name}", path.display());
+                        check(recorded, data, buffer_size, Some(&name));
+                    }
                 }
             }
         }

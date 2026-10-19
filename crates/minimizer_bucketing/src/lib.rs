@@ -555,7 +555,7 @@ impl<
 
             let do_print_log = context
                 .last_total_count
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
                     if total_bases_count > x + TOTAL_BASES_DIFF_LOG {
                         Some(total_bases_count)
                     } else {

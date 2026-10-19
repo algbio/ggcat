@@ -1,7 +1,7 @@
 //! Sequences read with the SIMD parser of `simd-accel`, from files and archives as
 //! [`SequencesReader`](crate::sequences_reader::SequencesReader) reads them.
 
-use crate::binary_reader::{BinaryEvent, GenericBinaryReader, is_archive};
+use crate::binary_reader::{BinaryEvent, CHUNK_BLOCK, GenericBinaryReader, is_archive};
 use simd_accel::masks::MaskKernel;
 use simd_accel::sequence_parser::BLOCK_SIZE;
 use std::path::Path;
@@ -20,10 +20,12 @@ pub use simd_accel::sequence_parser::{
 /// chunk rather than per block.
 const CHUNK_SIZE: usize = 64 * 1024;
 const _: () = assert!(CHUNK_SIZE.is_multiple_of(BLOCK_SIZE));
+// The reader cuts its chunks at whole blocks of its own, which must be whole parser blocks.
+const _: () = assert!(CHUNK_BLOCK.is_multiple_of(BLOCK_SIZE));
 
 pub struct SimdSequencesReader {
-    /// Hands the input out in chunks of exactly [`CHUNK_SIZE`] bytes, only the last one of each
-    /// file shorter.
+    /// Hands the input out in chunks of at most [`CHUNK_SIZE`] bytes, each a whole number of
+    /// blocks, only the last one of each file shorter.
     reader: GenericBinaryReader,
     /// The kernel every parser runs, chosen once for this CPU.
     kernel: MaskKernel,
@@ -83,7 +85,7 @@ impl SimdSequencesReader {
         let mut parsing = false;
 
         let result = self.reader.read_file(source, |event| match event {
-            BinaryEvent::FilePath(name) => {
+            BinaryEvent::FilePath { name, .. } => {
                 // The previous file is finished before the next one starts.
                 if parsing {
                     parser.finish(&mut func);
@@ -104,12 +106,11 @@ impl SimdSequencesReader {
                     None => panic!("Cannot recognize file type of '{}'", source.display()),
                 };
             }
-            BinaryEvent::Chunk(chunk) => {
+            BinaryEvent::Chunk(chunk) | BinaryEvent::ChunkWithCopybacks { chunk, .. } => {
                 if parsing {
                     parser.parse_data(chunk, &mut func);
                 }
             }
-            BinaryEvent::Extra { .. } => {}
         });
         if parsing {
             parser.finish(&mut func);

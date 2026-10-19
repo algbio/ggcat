@@ -115,7 +115,7 @@ impl LinesReader {
         let mut line_pending = false;
 
         let result = self.reader.read_file(file, |event| match event {
-            BinaryEvent::FilePath(name) => {
+            BinaryEvent::FilePath { name, .. } => {
                 // The previous file is finished before the next one starts.
                 if let Some(state) = &mut current {
                     Self::finish_file(&mut lines, state, &current_name, line_pending);
@@ -125,7 +125,7 @@ impl LinesReader {
                 line_pending = false;
                 current = Some(new_file(name));
             }
-            BinaryEvent::Chunk(chunk) => {
+            BinaryEvent::Chunk(chunk) | BinaryEvent::ChunkWithCopybacks { chunk, .. } => {
                 let state = current.as_mut().expect("chunks come after their file path");
                 line_pending = Self::ends_mid_line(chunk);
                 lines(
@@ -136,7 +136,6 @@ impl LinesReader {
                     },
                 );
             }
-            BinaryEvent::Extra { .. } => {}
         });
         if let Err(error) = result {
             ggcat_logging::error!(
