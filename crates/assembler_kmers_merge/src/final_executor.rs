@@ -28,8 +28,7 @@ use kmers_transform::{KmersTransformExecutorFactory, KmersTransformFinalExecutor
 use parallel_processor::buckets::concurrent::{BucketsThreadBuffer, BucketsThreadDispatcher};
 use parallel_processor::buckets::writers::compressed_binary_writer::CompressedBinaryWriter;
 use parallel_processor::execution_manager::packet::Packet;
-use sequence_output::structured_sequences::StructuredSequenceBackendWrapper;
-use sequence_output::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
+use sequence_output::structured_sequences::concurrent::DynConcurrentBuffer;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::slice::from_raw_parts;
@@ -41,7 +40,6 @@ local_setup_instrumenter!();
 pub struct ParallelKmersMergeFinalExecutor<
     MH: HashFunctionFactory,
     CX: ColorsManager,
-    OM: StructuredSequenceBackendWrapper,
     const COMPUTE_SIMPLITIGS: bool,
 > {
     unitigs_tmp: BucketsThreadDispatcher<
@@ -57,17 +55,13 @@ pub struct ParallelKmersMergeFinalExecutor<
     >,
 
     colors_data: UnitigExtensionColorsData<CX>,
-    _phantom: PhantomData<(MH, OM)>,
+    _phantom: PhantomData<MH>,
 }
 
-impl<
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-    OM: StructuredSequenceBackendWrapper,
-    const COMPUTE_SIMPLITIGS: bool,
-> ParallelKmersMergeFinalExecutor<MH, CX, OM, COMPUTE_SIMPLITIGS>
+impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
+    ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>
 {
-    pub fn new(global_data: &GlobalMergeData<CX, OM>) -> Self {
+    pub fn new(global_data: &GlobalMergeData<CX>) -> Self {
         let unitigs_out_buffer = BucketsThreadBuffer::new(
             DEFAULT_PER_CPU_BUFFER_SIZE,
             &global_data.sequential_partitions_count,
@@ -93,19 +87,13 @@ impl<
 
 // static DEBUG_MAPS_HOLDER: Mutex<Vec<Box<dyn Any + Sync + Send>>> = const_mutex(Vec::new());
 
-impl<
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-    OM: StructuredSequenceBackendWrapper,
-    const COMPUTE_SIMPLITIGS: bool,
-> ParallelKmersMergeFinalExecutor<MH, CX, OM, COMPUTE_SIMPLITIGS>
+impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
+    ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>
 {
     #[inline]
     fn output_sequence<'a, H: HashGenerator<MH>>(
-        lonely_circular_unitigs: Option<
-            &mut FastaWriterConcurrentBuffer<'a, CX, (), OM::Backend<CX, ()>>,
-        >,
-        lonely_unitigs: &mut FastaWriterConcurrentBuffer<'a, CX, (), OM::Backend<CX, ()>>,
+        lonely_circular_unitigs: Option<&mut (dyn DynConcurrentBuffer<CX> + 'a)>,
+        lonely_unitigs: &mut (dyn DynConcurrentBuffer<CX> + 'a),
         unitigs_tmp: &mut BucketsThreadDispatcher<
             CompressedBinaryWriter,
             CompressedReadsBucketDataSerializer<
@@ -134,7 +122,6 @@ impl<
         if is_circular && let Some(lonely_circular_unitigs) = lonely_circular_unitigs {
             lonely_circular_unitigs.add_read(
                 out_seq,
-                None,
                 PartialUnitigExtraData {
                     colors,
                     mode: PartialUnitigMode::Inline,
@@ -142,14 +129,10 @@ impl<
                     counters,
                 },
                 &colors_data.temp_color_buffer,
-                (),
-                &(),
-                None,
             );
         } else if forward_linked.is_none() && backward_linked.is_none() {
             lonely_unitigs.add_read(
                 out_seq,
-                None,
                 PartialUnitigExtraData {
                     colors,
                     mode: PartialUnitigMode::Inline,
@@ -157,9 +140,6 @@ impl<
                     counters,
                 },
                 &colors_data.temp_color_buffer,
-                (),
-                &(),
-                None,
             );
         } else {
             let extra_data = PartialUnitigExtraData {
@@ -264,20 +244,16 @@ pub fn check_problematic_self_complemental_kmer<MH: HashFunctionFactory>(
     }
 }
 
-impl<
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-    OM: StructuredSequenceBackendWrapper,
-    const COMPUTE_SIMPLITIGS: bool,
-> KmersTransformFinalExecutor<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS>>
-    for ParallelKmersMergeFinalExecutor<MH, CX, OM, COMPUTE_SIMPLITIGS>
+impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
+    KmersTransformFinalExecutor<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS>>
+    for ParallelKmersMergeFinalExecutor<MH, CX, COMPUTE_SIMPLITIGS>
 {
-    type MapStruct = ParallelKmersMergeMapPacket<MH, CX, OM>;
+    type MapStruct = ParallelKmersMergeMapPacket<MH, CX>;
 
     #[instrumenter::track(fields(map_capacity = map_struct_packet.rhash_map.capacity(), map_size = map_struct_packet.rhash_map.len()))]
     fn process_map<const EVEN_K: bool>(
         &mut self,
-        global_data: &Arc<<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData>,
+        global_data: &Arc<<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData>,
         mut map_struct_packet: Packet<Self::MapStruct>,
     ) -> Packet<Self::MapStruct> {
         stats!(
@@ -287,8 +263,7 @@ impl<
 
         let map_struct = map_struct_packet.deref_mut();
 
-        let mut tmp_final_unitigs_buffer = FastaWriterConcurrentBuffer::new(
-            &global_data.final_unitigs_file,
+        let mut tmp_final_unitigs_buffer = global_data.final_unitigs_file.new_buffer(
             DEFAULT_OUTPUT_BUFFER_SIZE,
             true,
             global_data.k,
@@ -298,8 +273,7 @@ impl<
             .final_circular_unitigs_file
             .as_ref()
             .map(|final_circular_unitigs_file| {
-                FastaWriterConcurrentBuffer::new(
-                    final_circular_unitigs_file,
+                final_circular_unitigs_file.new_buffer(
                     DEFAULT_OUTPUT_BUFFER_SIZE,
                     true,
                     global_data.k,
@@ -310,9 +284,9 @@ impl<
 
         if !map_struct.is_duplicate && !map_struct.is_outlier {
             let mut process_fn = |minimizer_elements: &mut [DeserializedReadIndependent<<
-                ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>],
+                ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>],
                 superkmers_storage: &[u8],
-                superkmers_extra_buffer: &TempBuffer<<ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>| {
+                superkmers_extra_buffer: &TempBuffer<<ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity>| {
                     if minimizer_elements.len() <= 1
                     {
                         if (minimizer_elements[0].multiplicity as usize) < global_data.min_multiplicity {
@@ -380,7 +354,7 @@ impl<
 
                         Self::output_sequence(
                             None,
-                            &mut tmp_final_unitigs_buffer,
+                            &mut *tmp_final_unitigs_buffer,
                             &mut self.unitigs_tmp,
                             &mut self.colors_data,
                             read.read.as_reference(superkmers_storage),
@@ -422,7 +396,7 @@ impl<
                             );
                             Self::output_sequence(
                                 None,
-                                &mut tmp_final_unitigs_buffer,
+                                &mut *tmp_final_unitigs_buffer,
                                 &mut self.unitigs_tmp,
                                 colors_data,
                                 read,
@@ -450,7 +424,7 @@ impl<
                     };
 
                     memstorage_decode_reads::<
-                        <ParallelKmersMergeFactory<MH, CX, OM, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
+                        <ParallelKmersMergeFactory<MH, CX, false> as KmersTransformExecutorFactory>::AssociatedExtraDataWithMultiplicity,
                         WithMultiplicity,
                         AssemblerMinimizerPosition,
                         false,
@@ -479,8 +453,8 @@ impl<
                         stat_output_kmers_count += 1;
                     );
                     Self::output_sequence(
-                        tmp_circular_final_unitigs_buffer.as_mut(),
-                        &mut tmp_final_unitigs_buffer,
+                        tmp_circular_final_unitigs_buffer.as_deref_mut(),
+                        &mut *tmp_final_unitigs_buffer,
                         &mut self.unitigs_tmp,
                         colors_data,
                         out_seq,
@@ -502,15 +476,15 @@ impl<
         );
 
         stats!(stats.assembler.kmers_merge_stats.push(map_struct_packet.detailed_stats.clone()););
-        tmp_final_unitigs_buffer.finalize(None);
-        tmp_circular_final_unitigs_buffer.map(|b| b.finalize(None));
+        tmp_final_unitigs_buffer.finalize();
+        tmp_circular_final_unitigs_buffer.map(|b| b.finalize());
 
         map_struct_packet
     }
 
     fn finalize(
         self,
-        _global_data: &<ParallelKmersMergeFactory<MH, CX, OM, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
+        _global_data: &<ParallelKmersMergeFactory<MH, CX, COMPUTE_SIMPLITIGS> as KmersTransformExecutorFactory>::GlobalExtraData,
     ) {
         self.unitigs_tmp.finalize();
     }

@@ -50,7 +50,7 @@ use sequence_output::structured_sequences::StructuredSequenceBackendInit;
 use sequence_output::structured_sequences::StructuredSequenceBackendWrapper;
 use sequence_output::structured_sequences::StructuredSequenceWriter;
 use sequence_output::structured_sequences::binary::StructSeqBinaryWriter;
-use sequence_output::structured_sequences::binary::StructSeqBinaryWriterWrapper;
+use sequence_output::structured_sequences::concurrent::DynSequenceWriter;
 use sequence_output::structured_sequences::fasta::FastaWriterWrapper;
 use sequence_output::structured_sequences::gfa::GFAWriterWrapperV1;
 use sequence_output::structured_sequences::gfa::GFAWriterWrapperV2;
@@ -342,10 +342,9 @@ pub fn run_assembler<
                     (
                         MergingHash::dynamic_dispatch_id(),
                         AssemblerColorsManager::dynamic_dispatch_id(),
-                        OutputMode::dynamic_dispatch_id(),
                     ),
                     buckets,
-                    output_file.clone(),
+                    Box::new(output_file.clone() as Arc<dyn DynSequenceWriter<_>>),
                     None,
                     global_colors_table.clone(),
                     buckets_count,
@@ -365,11 +364,12 @@ pub fn run_assembler<
                 (
                     MergingHash::dynamic_dispatch_id(),
                     AssemblerColorsManager::dynamic_dispatch_id(),
-                    StructSeqBinaryWriterWrapper::dynamic_dispatch_id(),
                 ),
                 buckets,
-                flat_unitigs.clone(),
-                circular_unitigs.clone().map(|a| a as _),
+                Box::new(flat_unitigs.clone() as Arc<dyn DynSequenceWriter<_>>),
+                circular_unitigs
+                    .clone()
+                    .map(|a| Box::new(a as Arc<dyn DynSequenceWriter<_>>) as _),
                 global_colors_table.clone(),
                 buckets_count,
                 second_buckets_count,

@@ -152,3 +152,68 @@ impl<
         assert_eq!(self.sequences.len(), 0);
     }
 }
+
+/// A [`StructuredSequenceWriter`] without links, with its backend erased: code that only fills
+/// its buffers is compiled once for all the output formats instead of once per format.
+pub trait DynSequenceWriter<CX: ColorsManager>: Send + Sync {
+    /// A [`FastaWriterConcurrentBuffer`] writing to this writer, see [`FastaWriterConcurrentBuffer::new`]
+    fn new_buffer(
+        &self,
+        max_size: usize,
+        auto_flush: bool,
+        k: usize,
+    ) -> Box<dyn DynConcurrentBuffer<CX> + '_>;
+}
+
+/// The buffer of a [`DynSequenceWriter`], for sequences whose index is assigned when they are written
+pub trait DynConcurrentBuffer<CX: ColorsManager> {
+    fn add_read(
+        &mut self,
+        sequence: CompressedRead,
+        extra_data: PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
+        extra_buffer: &TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
+    );
+
+    fn finalize(self: Box<Self>);
+}
+
+impl<CX: ColorsManager, Backend: StructuredSequenceBackend<CX, ()>> DynSequenceWriter<CX>
+    for StructuredSequenceWriter<CX, (), Backend>
+{
+    fn new_buffer(
+        &self,
+        max_size: usize,
+        auto_flush: bool,
+        k: usize,
+    ) -> Box<dyn DynConcurrentBuffer<CX> + '_> {
+        Box::new(FastaWriterConcurrentBuffer::new(
+            self, max_size, auto_flush, k,
+        ))
+    }
+}
+
+impl<'a, CX: ColorsManager, Backend: StructuredSequenceBackend<CX, ()>> DynConcurrentBuffer<CX>
+    for FastaWriterConcurrentBuffer<'a, CX, (), Backend>
+{
+    fn add_read(
+        &mut self,
+        sequence: CompressedRead,
+        extra_data: PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
+        extra_buffer: &TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
+    ) {
+        FastaWriterConcurrentBuffer::add_read(
+            self,
+            sequence,
+            None,
+            extra_data,
+            extra_buffer,
+            (),
+            &(),
+            None,
+        );
+    }
+
+    fn finalize(self: Box<Self>) {
+        FastaWriterConcurrentBuffer::finalize(*self, None);
+    }
+}

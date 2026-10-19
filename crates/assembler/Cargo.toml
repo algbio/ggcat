@@ -107,6 +107,5 @@ enable-colors = [  # Support colors
 ]
 enable-gfa = [     # Support gfa output
     "assembler_minimizer_bucketing/enable-gfa",
-    "assembler_kmers_merge/enable-gfa",
     "assembler_pipeline/enable-gfa"
 ]

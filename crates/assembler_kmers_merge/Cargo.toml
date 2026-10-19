@@ -61,7 +61,6 @@ full = [
     "hash-rkarp",
     "hash-forward",
     "enable-colors",
-    "enable-gfa",
 ]
 hash-16bit = []    # Support 16bit hashing (optimization for k <= 8)
 hash-32bit = []    # Support 32bit hashing (optimization for k <= 16)
@@ -70,4 +69,3 @@ hash-128bit = []   # Support 128bit hashing (k <= 64)
 hash-rkarp = []    # Support 128bit rabin-karp hashing (k > 64)
 hash-forward = []  # Support non-canonical hashing
 enable-colors = [] # Support colors
-enable-gfa = []    # Support gfa output
