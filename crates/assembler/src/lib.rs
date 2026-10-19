@@ -1,15 +1,16 @@
 #![cfg_attr(not(feature = "full"), allow(unused_imports))]
 
+use ::dynamic_dispatch::DynamicDispatch;
 use ::dynamic_dispatch::dynamic_dispatch;
 use assembler_kmers_merge::structs::RetType;
 use assembler_pipeline::OutputFileMode;
-use assembler_pipeline::build_final_unitigs;
 use assembler_pipeline::compute_matchtigs::MatchtigHelperTrait;
 use assembler_pipeline::compute_matchtigs::MatchtigsStorageBackend;
 use assembler_pipeline::compute_matchtigs::compute_matchtigs_thread;
+use assembler_pipeline::dynamic_dispatch::build_final_unitigs;
 use assembler_pipeline::eulertigs::build_eulertigs;
 use assembler_pipeline::extend_unitigs::extend_unitigs;
-use assembler_pipeline::get_final_output_writer;
+use assembler_pipeline::final_output::dynamic_dispatch::new_final_output_writer;
 use assembler_pipeline::maximal_unitig_links::build_maximal_unitigs_links;
 use colors::color_assigner::{ColorAssigner, ColorRemap};
 use colors::colors_manager::ColorsManager;
@@ -47,15 +48,12 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use sequence_output::structured_sequences::StructuredSequenceBackend;
 use sequence_output::structured_sequences::StructuredSequenceBackendInit;
-use sequence_output::structured_sequences::StructuredSequenceBackendWrapper;
 use sequence_output::structured_sequences::StructuredSequenceWriter;
 use sequence_output::structured_sequences::binary::StructSeqBinaryWriter;
 use sequence_output::structured_sequences::concurrent::DynSequenceWriter;
-use sequence_output::structured_sequences::fasta::FastaWriterWrapper;
-use sequence_output::structured_sequences::gfa::GFAWriterWrapperV1;
-use sequence_output::structured_sequences::gfa::GFAWriterWrapperV2;
 use std::any::Any;
 use std::fs::remove_file;
+use std::marker::PhantomData;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -69,6 +67,14 @@ pub use assembler_pipeline::compute_matchtigs::MatchtigMode;
 /// packed colours, and the remap that packs those written in the buckets, as its parts.
 #[derive(bincode::Encode, bincode::Decode)]
 struct SavedColors(Vec<String>, Option<(u32, Vec<ColorIndexType>)>);
+
+/// A dispatch id is not `Clone`
+fn copy_dispatch_id(id: &DynamicDispatch<()>) -> DynamicDispatch<()> {
+    DynamicDispatch {
+        value: id.value,
+        _phantom: PhantomData,
+    }
+}
 
 #[dynamic_dispatch(MergingHash = [
     #[cfg(all(feature = "hash-forward", feature = "hash-16bit"))] hashes::fw_seqhash::u16::ForwardSeqHashFactory,
@@ -84,16 +90,8 @@ struct SavedColors(Vec<String>, Option<(u32, Vec<ColorIndexType>)>);
 ], AssemblerColorsManager = [
     #[cfg(feature = "enable-colors")] colors::bundles::multifile_building::ColorBundleMultifileBuilding,
     colors::non_colored::NonColoredManager,
-], OutputMode = [
-    FastaWriterWrapper,
-    #[cfg(feature = "enable-gfa")] GFAWriterWrapperV1,
-    #[cfg(feature = "enable-gfa")] GFAWriterWrapperV2
 ])]
-pub fn run_assembler<
-    MergingHash: HashFunctionFactory,
-    AssemblerColorsManager: ColorsManager,
-    OutputMode: StructuredSequenceBackendWrapper,
->(
+pub fn run_assembler<MergingHash: HashFunctionFactory, AssemblerColorsManager: ColorsManager>(
     k: usize,
     m: usize,
     step: AssemblerPhase,
@@ -101,6 +99,8 @@ pub fn run_assembler<
     input_blocks: Vec<GeneralSequenceBlockData>,
     color_names: &[String],
     output_file: PathBuf,
+    // The dispatch id of the final output's StructuredSequenceBackendWrapper
+    output_mode: DynamicDispatch<()>,
     temp_dir: Option<PathBuf>,
     threads_count: usize,
     min_multiplicity: usize,
@@ -287,7 +287,7 @@ pub fn run_assembler<
 
     let buckets_count = BucketsCount::new(buckets_count_log, ExtraBuckets::None);
 
-    let output_file_mode: OutputFileMode<OutputMode, _, ()> = if generate_maximal_unitigs_links
+    let output_file_mode: OutputFileMode<_, ()> = if generate_maximal_unitigs_links
         || compute_tigs_mode.needs_matchtigs_library()
         || compute_tigs_mode == Some(MatchtigMode::FastEulerTigs)
     {
@@ -328,10 +328,16 @@ pub fn run_assembler<
         }
     } else {
         OutputFileMode::Final {
-            output_file: Arc::new(StructuredSequenceWriter::new(
-                get_final_output_writer::<_, _, OutputMode::Backend<_, _>>(&output_file),
+            output_file: *new_final_output_writer(
+                (
+                    AssemblerColorsManager::dynamic_dispatch_id(),
+                    copy_dispatch_id(&output_mode),
+                ),
+                &output_file,
                 k,
-            )),
+            )
+            .downcast()
+            .unwrap(),
         }
     };
 
@@ -344,7 +350,7 @@ pub fn run_assembler<
                         AssemblerColorsManager::dynamic_dispatch_id(),
                     ),
                     buckets,
-                    Box::new(output_file.clone() as Arc<dyn DynSequenceWriter<_>>),
+                    Box::new(output_file.clone()),
                     None,
                     global_colors_table.clone(),
                     buckets_count,
@@ -405,7 +411,12 @@ pub fn run_assembler<
     ggcat_logging::stats::write_stats(&output_file.with_extension("elab.stats.json"));
     drop(global_colors_table);
 
-    build_final_unitigs::<MergingHash, AssemblerColorsManager, OutputMode>(
+    build_final_unitigs(
+        (
+            MergingHash::dynamic_dispatch_id(),
+            AssemblerColorsManager::dynamic_dispatch_id(),
+            output_mode,
+        ),
         k,
         sequences,
         step,

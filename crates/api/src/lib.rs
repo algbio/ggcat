@@ -285,7 +285,7 @@ impl GGCATInstance {
         }
 
         let output_file = assembler::dynamic_dispatch::run_assembler(
-            (merging_hash_dispatch, colors_hash, output_mode),
+            (merging_hash_dispatch, colors_hash),
             kmer_length,
             minimizer_length.unwrap_or(::utils::compute_best_m(kmer_length)),
             first_step,
@@ -293,6 +293,7 @@ impl GGCATInstance {
             input_streams,
             color_names.unwrap_or(&[]),
             output_file,
+            output_mode,
             temp_dir.clone(),
             threads_count,
             min_multiplicity,

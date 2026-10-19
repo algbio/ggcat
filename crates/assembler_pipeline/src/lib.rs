@@ -32,11 +32,13 @@ use sequence_output::structured_sequences::{
     StructuredSequenceBackend, StructuredSequenceBackendInit, StructuredSequenceBackendWrapper,
     StructuredSequenceWriter,
     binary::StructSeqBinaryWriter,
+    concurrent::DynSequenceWriter,
     fasta::FastaWriterWrapper,
     gfa::{GFAWriterWrapperV1, GFAWriterWrapperV2},
 };
 use utils::assembler_phases::AssemblerPhase;
 
+use crate::maximal_unitig_links::maximal_unitig_index::DoubleMaximalUnitigLinks;
 use crate::{compute_matchtigs::MatchtigHelperTrait, eulertigs::build_eulertigs};
 use crate::{
     compute_matchtigs::{MatchtigMode, MatchtigsStorageBackend, compute_matchtigs_thread},
@@ -47,16 +49,12 @@ use crate::{extend_unitigs::extend_unitigs, maximal_unitig_links::build_maximal_
 pub mod compute_matchtigs;
 pub mod eulertigs;
 pub mod extend_unitigs;
+pub mod final_output;
 pub mod maximal_unitig_links;
 
-pub enum OutputFileMode<
-    OutputMode: StructuredSequenceBackendWrapper,
-    CX: ColorsManager,
-    LinksInfo: IdentSequenceWriter + SequenceExtraData,
-> {
+pub enum OutputFileMode<CX: ColorsManager, LinksInfo: IdentSequenceWriter + SequenceExtraData> {
     Final {
-        output_file:
-            Arc<StructuredSequenceWriter<CX, LinksInfo, OutputMode::Backend<CX, LinksInfo>>>,
+        output_file: Arc<dyn DynSequenceWriter<CX, LinksInfo>>,
     },
     Intermediate {
         flat_unitigs: Arc<StructuredSequenceWriter<CX, (), StructSeqBinaryWriter<CX, ()>>>,
@@ -125,16 +123,16 @@ pub fn build_final_unitigs<
     output_file_mode: Box<dyn Any>,
 ) {
     let output_file_mode = *output_file_mode
-        .downcast::<OutputFileMode<OutputMode, AssemblerColorsManager, ()>>()
+        .downcast::<OutputFileMode<AssemblerColorsManager, ()>>()
         .unwrap();
 
     if step <= AssemblerPhase::UnitigsExtension {
         match &output_file_mode {
             OutputFileMode::Final { output_file } => {
-                extend_unitigs::<MergingHash, AssemblerColorsManager, OutputMode::Backend<_, _>>(
+                extend_unitigs::<MergingHash, AssemblerColorsManager>(
                     sequences,
                     &temp_dir,
-                    output_file,
+                    &**output_file,
                     None,
                     k,
                 );
@@ -143,11 +141,13 @@ pub fn build_final_unitigs<
                 flat_unitigs,
                 circular_unitigs,
             } => {
-                extend_unitigs::<MergingHash, AssemblerColorsManager, StructSeqBinaryWriter<_, _>>(
+                extend_unitigs::<MergingHash, AssemblerColorsManager>(
                     sequences,
                     &temp_dir,
-                    flat_unitigs,
-                    circular_unitigs.as_deref(),
+                    &**flat_unitigs,
+                    circular_unitigs
+                        .as_deref()
+                        .map(|c| c as &dyn DynSequenceWriter<_>),
                     k,
                 );
             }
@@ -164,17 +164,14 @@ pub fn build_final_unitigs<
 
         match output_file_mode {
             OutputFileMode::Final { output_file } => {
-                Arc::try_unwrap(output_file)
-                    .map_err(|_| ())
-                    .unwrap()
-                    .finalize();
+                output_file.finalize();
             }
             OutputFileMode::Intermediate {
                 flat_unitigs,
                 circular_unitigs,
             } => {
                 let final_unitigs_file = StructuredSequenceWriter::new(
-                    get_final_output_writer::<_, _, OutputMode::Backend<_, _>>(&output_file),
+                    get_final_output_writer::<_, (), OutputMode::Backend<_, _>>(&output_file),
                     k,
                 );
 
@@ -190,7 +187,7 @@ pub fn build_final_unitigs<
                     let temp_path = compressed_temp_unitigs_file.get_path();
                     compressed_temp_unitigs_file.finalize();
 
-                    build_eulertigs::<MergingHash, AssemblerColorsManager, _, _>(
+                    build_eulertigs::<MergingHash, AssemblerColorsManager, ()>(
                         circular_temp_path,
                         temp_path,
                         &temp_dir,
@@ -215,7 +212,7 @@ pub fn build_final_unitigs<
                         let handle = std::thread::Builder::new()
                             .name("greedy_matchtigs".to_string())
                             .spawn(move || {
-                                compute_matchtigs_thread::<AssemblerColorsManager, _>(
+                                compute_matchtigs_thread::<AssemblerColorsManager>(
                                     k,
                                     threads_count,
                                     matchtigs_receiver,
@@ -226,11 +223,7 @@ pub fn build_final_unitigs<
                             })
                             .unwrap();
 
-                        build_maximal_unitigs_links::<
-                            MergingHash,
-                            AssemblerColorsManager,
-                            MatchtigsStorageBackend<_>,
-                        >(
+                        build_maximal_unitigs_links::<MergingHash, AssemblerColorsManager>(
                             temp_path,
                             &temp_dir,
                             &StructuredSequenceWriter::new(matchtigs_backend, k),
@@ -243,17 +236,15 @@ pub fn build_final_unitigs<
                         final_unitigs_file.finalize();
 
                         let final_unitigs_file = StructuredSequenceWriter::new(
-                            get_final_output_writer::<_, _, OutputMode::Backend<_, _>>(
-                                &output_file,
-                            ),
+                            get_final_output_writer::<
+                                _,
+                                DoubleMaximalUnitigLinks,
+                                OutputMode::Backend<_, _>,
+                            >(&output_file),
                             k,
                         );
 
-                        build_maximal_unitigs_links::<
-                            MergingHash,
-                            AssemblerColorsManager,
-                            OutputMode::Backend<_, _>,
-                        >(
+                        build_maximal_unitigs_links::<MergingHash, AssemblerColorsManager>(
                             temp_path,
                             &temp_dir,
                             &final_unitigs_file,

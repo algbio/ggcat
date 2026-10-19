@@ -43,22 +43,17 @@ use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use rayon::prelude::*;
 use sequence_output::structured_sequences::binary::SequenceDataWithLinks;
-use sequence_output::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
-use sequence_output::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
+use sequence_output::structured_sequences::concurrent::DynSequenceWriter;
 use std::cmp::max;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use utils::vec_slice::VecSlice;
 
-pub fn build_maximal_unitigs_links<
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-    BK: StructuredSequenceBackend<CX, DoubleMaximalUnitigLinks>,
->(
+pub fn build_maximal_unitigs_links<MH: HashFunctionFactory, CX: ColorsManager>(
     in_file: PathBuf,
     temp_dir: &Path,
-    out_file: &StructuredSequenceWriter<CX, DoubleMaximalUnitigLinks, BK>,
+    out_file: &dyn DynSequenceWriter<CX, DoubleMaximalUnitigLinks>,
     k: usize,
     indirect_file: &ConcurrentFileWriter,
 ) {
@@ -360,12 +355,8 @@ pub fn build_maximal_unitigs_links<
             (0..rayon::current_num_threads())
                 .into_par_iter()
                 .for_each(|thread_index| {
-                    let mut tmp_final_unitigs_buffer = FastaWriterConcurrentBuffer::new(
-                        out_file,
-                        DEFAULT_OUTPUT_BUFFER_SIZE,
-                        true,
-                        k,
-                    );
+                    let mut tmp_final_unitigs_buffer =
+                        out_file.new_buffer(DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
 
                     let mut current_mapping = Arc::new(MaximalUnitigLinksMapping::empty());
 

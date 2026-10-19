@@ -27,8 +27,7 @@ use sequence_output::indirect_reads_extractor::{
 };
 use sequence_output::sequences_joiner::{AlignedDynamicCompressedRead, IndirectSequencesJoiner};
 use sequence_output::structured_sequences::binary::SequenceDataWithLinks;
-use sequence_output::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
-use sequence_output::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
+use sequence_output::structured_sequences::concurrent::DynSequenceWriter;
 use std::cmp::Reverse;
 use std::mem::swap;
 use std::path::{Path, PathBuf};
@@ -405,12 +404,11 @@ pub fn build_eulertigs<
     MH: HashFunctionFactory,
     CX: ColorsManager,
     L: IdentSequenceWriter + Default,
-    BK: StructuredSequenceBackend<CX, L>,
 >(
     circ_in_file: PathBuf,
     flat_in_file: PathBuf,
     _temp_dir: &Path,
-    out_file: &StructuredSequenceWriter<CX, L, BK>,
+    out_file: &dyn DynSequenceWriter<CX, L>,
     k: usize,
     indirect_file: &ConcurrentFileWriter,
 ) {
@@ -638,8 +636,7 @@ pub fn build_eulertigs<
             .for_each(|_thread_index| {
                 let mut output_unitigs_buffer =
                     IndirectSequencesJoiner::<CX>::new(k, indirect_file.clone());
-                let mut writer =
-                    FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
+                let mut writer = out_file.new_buffer(DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
                 let mut indirect_readdata = ReadExtractWorkData::<CX>::new();
 
                 TypedStreamReader::get_items_parallel::<
@@ -856,8 +853,7 @@ pub fn build_eulertigs<
             });
     });
 
-    let mut writer =
-        FastaWriterConcurrentBuffer::new(out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
+    let mut writer = out_file.new_buffer(DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
 
     // Write all not used circular kmers
     let mut seq_buffer = AlignedDynamicCompressedRead::new();

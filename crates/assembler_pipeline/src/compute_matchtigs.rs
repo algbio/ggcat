@@ -22,8 +22,8 @@ use libmatchtigs::{GreedytigAlgorithm, GreedytigAlgorithmConfiguration, TigAlgor
 use parallel_processor::phase_times_monitor::PHASES_TIMES_MONITOR;
 use sequence_output::indirect_reads_extractor::ReadExtractWorkData;
 use sequence_output::sequences_joiner::IndirectSequencesJoiner;
-use sequence_output::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
-use sequence_output::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
+use sequence_output::structured_sequences::StructuredSequenceBackend;
+use sequence_output::structured_sequences::concurrent::DynSequenceWriter;
 use std::fmt::Debug;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -342,11 +342,11 @@ impl MatchtigHelperTrait for Option<MatchtigMode> {
     }
 }
 
-pub fn compute_matchtigs_thread<CX: ColorsManager, BK: StructuredSequenceBackend<CX, ()>>(
+pub fn compute_matchtigs_thread<CX: ColorsManager>(
     k: usize,
     threads_count: usize,
     input_data: Receiver<Arc<StructuredUnitigsStorage<CX>>>,
-    out_file: &StructuredSequenceWriter<CX, (), BK>,
+    out_file: &dyn DynSequenceWriter<CX>,
     mode: MatchtigMode,
     indirect_file: &ConcurrentFileWriter,
 ) {
@@ -435,8 +435,7 @@ pub fn compute_matchtigs_thread<CX: ColorsManager, BK: StructuredSequenceBackend
         .write()
         .start_phase(format!("phase: {} building [step2]", phase_name));
 
-    let mut output_buffer =
-        FastaWriterConcurrentBuffer::new(&out_file, DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
+    let mut output_buffer = out_file.new_buffer(DEFAULT_OUTPUT_BUFFER_SIZE, true, k);
 
     let mut sequence_buffer = IndirectSequencesJoiner::<CX>::new(k, indirect_file.clone());
 

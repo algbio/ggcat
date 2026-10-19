@@ -122,6 +122,7 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         if is_circular && let Some(lonely_circular_unitigs) = lonely_circular_unitigs {
             lonely_circular_unitigs.add_read(
                 out_seq,
+                None,
                 PartialUnitigExtraData {
                     colors,
                     mode: PartialUnitigMode::Inline,
@@ -129,10 +130,14 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                     counters,
                 },
                 &colors_data.temp_color_buffer,
+                (),
+                &(),
+                None,
             );
         } else if forward_linked.is_none() && backward_linked.is_none() {
             lonely_unitigs.add_read(
                 out_seq,
+                None,
                 PartialUnitigExtraData {
                     colors,
                     mode: PartialUnitigMode::Inline,
@@ -140,6 +145,9 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
                     counters,
                 },
                 &colors_data.temp_color_buffer,
+                (),
+                &(),
+                None,
             );
         } else {
             let extra_data = PartialUnitigExtraData {
@@ -476,8 +484,8 @@ impl<MH: HashFunctionFactory, CX: ColorsManager, const COMPUTE_SIMPLITIGS: bool>
         );
 
         stats!(stats.assembler.kmers_merge_stats.push(map_struct_packet.detailed_stats.clone()););
-        tmp_final_unitigs_buffer.finalize();
-        tmp_circular_final_unitigs_buffer.map(|b| b.finalize());
+        tmp_final_unitigs_buffer.finalize(None);
+        tmp_circular_final_unitigs_buffer.map(|b| b.finalize(None));
 
         map_struct_packet
     }

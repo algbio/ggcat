@@ -49,8 +49,7 @@ use parallel_processor::utils::scoped_thread_local::ScopedThreadLocal;
 use parking_lot::Mutex;
 use rayon::{current_num_threads, prelude::*};
 use sequence_output::sequences_joiner::IndirectSequencesJoiner;
-use sequence_output::structured_sequences::concurrent::FastaWriterConcurrentBuffer;
-use sequence_output::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
+use sequence_output::structured_sequences::concurrent::DynSequenceWriter;
 use std::cmp::Reverse;
 use std::fs::File;
 use std::io::Write;
@@ -379,15 +378,11 @@ fn finalize_single_parallel<B: LockFreeBucket + Send>(
 }
 
 
-pub fn extend_unitigs<
-    MH: HashFunctionFactory,
-    CX: ColorsManager,
-    BK: StructuredSequenceBackend<CX, ()>,
->(
+pub fn extend_unitigs<MH: HashFunctionFactory, CX: ColorsManager>(
     read_buckets_files: Vec<SingleBucket>,
     temp_path: &Path,
-    out_file: &StructuredSequenceWriter<CX, (), BK>,
-    circular_out_file: Option<&StructuredSequenceWriter<CX, (), BK>>,
+    out_file: &dyn DynSequenceWriter<CX>,
+    circular_out_file: Option<&dyn DynSequenceWriter<CX>>,
     k: usize,
 ) {
     PHASES_TIMES_MONITOR
@@ -675,8 +670,7 @@ pub fn extend_unitigs<
                     let mut reads_vec = reads_vec.get();
                     let mut extra_buffer = extra_buffer.get();
 
-                    let mut tmp_final_unitigs_buffer = FastaWriterConcurrentBuffer::new(
-                        out_file,
+                    let mut tmp_final_unitigs_buffer = out_file.new_buffer(
                         DEFAULT_OUTPUT_BUFFER_SIZE,
                         true,
                         k,
@@ -684,8 +678,7 @@ pub fn extend_unitigs<
 
                     let mut tmp_final_circular_unitigs_buffer =
                         circular_out_file.map(|circular_out_file| {
-                            FastaWriterConcurrentBuffer::new(
-                                circular_out_file,
+                            circular_out_file.new_buffer(
                                 DEFAULT_OUTPUT_BUFFER_SIZE,
                                 true,
                                 k,

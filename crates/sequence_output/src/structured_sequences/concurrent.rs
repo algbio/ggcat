@@ -10,6 +10,7 @@ use io::{
 };
 
 use crate::structured_sequences::{StructuredSequenceBackend, StructuredSequenceWriter};
+use std::sync::Arc;
 
 pub struct FastaWriterConcurrentBuffer<
     'a,
@@ -153,67 +154,91 @@ impl<
     }
 }
 
-/// A [`StructuredSequenceWriter`] without links, with its backend erased: code that only fills
-/// its buffers is compiled once for all the output formats instead of once per format.
-pub trait DynSequenceWriter<CX: ColorsManager>: Send + Sync {
+/// A [`StructuredSequenceWriter`] with its backend erased: code that only fills its buffers is
+/// compiled once for all the output formats instead of once per format.
+pub trait DynSequenceWriter<CX: ColorsManager, LinksInfo: IdentSequenceWriter = ()>:
+    Send + Sync
+{
     /// A [`FastaWriterConcurrentBuffer`] writing to this writer, see [`FastaWriterConcurrentBuffer::new`]
     fn new_buffer(
         &self,
         max_size: usize,
         auto_flush: bool,
         k: usize,
-    ) -> Box<dyn DynConcurrentBuffer<CX> + '_>;
+    ) -> Box<dyn DynConcurrentBuffer<CX, LinksInfo> + '_>;
+
+    /// See [`StructuredSequenceWriter::finalize`]; `self` must be the last reference to the writer
+    fn finalize(self: Arc<Self>);
 }
 
-/// The buffer of a [`DynSequenceWriter`], for sequences whose index is assigned when they are written
-pub trait DynConcurrentBuffer<CX: ColorsManager> {
+/// The buffer of a [`DynSequenceWriter`], with the methods of [`FastaWriterConcurrentBuffer`]
+pub trait DynConcurrentBuffer<CX: ColorsManager, LinksInfo: IdentSequenceWriter = ()> {
     fn add_read(
         &mut self,
         sequence: CompressedRead,
+        sequence_index: Option<u64>,
         extra_data: PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
         extra_buffer: &TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
-    );
+        links: LinksInfo,
+        links_extra_buffer: &LinksInfo::TempBuffer,
+        indirect_file: Option<&ConcurrentFileWriter>,
+    ) -> Option<u64>;
 
-    fn finalize(self: Box<Self>);
+    fn finalize(self: Box<Self>, indirect_file: Option<&ConcurrentFileWriter>) -> u64;
 }
 
-impl<CX: ColorsManager, Backend: StructuredSequenceBackend<CX, ()>> DynSequenceWriter<CX>
-    for StructuredSequenceWriter<CX, (), Backend>
+impl<
+    CX: ColorsManager,
+    LinksInfo: IdentSequenceWriter,
+    Backend: StructuredSequenceBackend<CX, LinksInfo>,
+> DynSequenceWriter<CX, LinksInfo> for StructuredSequenceWriter<CX, LinksInfo, Backend>
 {
     fn new_buffer(
         &self,
         max_size: usize,
         auto_flush: bool,
         k: usize,
-    ) -> Box<dyn DynConcurrentBuffer<CX> + '_> {
+    ) -> Box<dyn DynConcurrentBuffer<CX, LinksInfo> + '_> {
         Box::new(FastaWriterConcurrentBuffer::new(
             self, max_size, auto_flush, k,
         ))
     }
+
+    fn finalize(self: Arc<Self>) {
+        Arc::try_unwrap(self).map_err(|_| ()).unwrap().finalize();
+    }
 }
 
-impl<'a, CX: ColorsManager, Backend: StructuredSequenceBackend<CX, ()>> DynConcurrentBuffer<CX>
-    for FastaWriterConcurrentBuffer<'a, CX, (), Backend>
+impl<
+    'a,
+    CX: ColorsManager,
+    LinksInfo: IdentSequenceWriter,
+    Backend: StructuredSequenceBackend<CX, LinksInfo>,
+> DynConcurrentBuffer<CX, LinksInfo> for FastaWriterConcurrentBuffer<'a, CX, LinksInfo, Backend>
 {
     fn add_read(
         &mut self,
         sequence: CompressedRead,
+        sequence_index: Option<u64>,
         extra_data: PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>,
         extra_buffer: &TempBuffer<PartialUnitigExtraData<PartialUnitigsColorStructure<CX>>>,
-    ) {
+        links: LinksInfo,
+        links_extra_buffer: &LinksInfo::TempBuffer,
+        indirect_file: Option<&ConcurrentFileWriter>,
+    ) -> Option<u64> {
         FastaWriterConcurrentBuffer::add_read(
             self,
             sequence,
-            None,
+            sequence_index,
             extra_data,
             extra_buffer,
-            (),
-            &(),
-            None,
-        );
+            links,
+            links_extra_buffer,
+            indirect_file,
+        )
     }
 
-    fn finalize(self: Box<Self>) {
-        FastaWriterConcurrentBuffer::finalize(*self, None);
+    fn finalize(self: Box<Self>, indirect_file: Option<&ConcurrentFileWriter>) -> u64 {
+        FastaWriterConcurrentBuffer::finalize(*self, indirect_file)
     }
 }
