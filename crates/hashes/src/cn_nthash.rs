@@ -154,48 +154,68 @@ impl HashFunctionFactory for CanonicalNtHashIteratorFactory {
         hash as u128 == value
     }
 
+    // A k-mer's forward hash is the xor of h(base j) rotated left by k - 1 - j, its reverse one
+    // that of rc(base j) rotated left by j: as the iterator rolls them. Bases are their codes.
+
+    /// The hash of the k-mer one base on: `out_base` its first, `in_base` the next after its last.
     #[inline(always)]
     fn manual_roll_forward(
-        _hash: Self::HashTypeExtendable,
-        _k: usize,
-        _out_base: u8,
-        _in_base: u8,
+        hash: Self::HashTypeExtendable,
+        k: usize,
+        out_base: u8,
+        in_base: u8,
     ) -> Self::HashTypeExtendable {
-        unimplemented!()
-        // cnc_nt_manual_roll(hash, k, out_base, in_base)
+        let ExtCanonicalNtHash(forward, reverse) = hash;
+        let k = k as u32;
+        ExtCanonicalNtHash(
+            (forward ^ h(out_base, true).rotate_left(k - 1)).rotate_left(1) ^ h(in_base, true),
+            (reverse ^ rc(out_base, true)).rotate_right(1) ^ rc(in_base, true).rotate_left(k - 1),
+        )
     }
 
+    /// The hash of the k-mer one base back: `out_base` its last, `in_base` the one before its
+    /// first.
     #[inline(always)]
     fn manual_roll_reverse(
-        _hash: Self::HashTypeExtendable,
-        _k: usize,
-        _out_base: u8,
-        _in_base: u8,
+        hash: Self::HashTypeExtendable,
+        k: usize,
+        out_base: u8,
+        in_base: u8,
     ) -> Self::HashTypeExtendable {
-        unimplemented!()
-        // cnc_nt_manual_roll_rev(hash, k, out_base, in_base)
+        let ExtCanonicalNtHash(forward, reverse) = hash;
+        let k = k as u32;
+        ExtCanonicalNtHash(
+            (forward ^ h(out_base, true)).rotate_right(1) ^ h(in_base, true).rotate_left(k - 1),
+            (reverse ^ rc(out_base, true).rotate_left(k - 1)).rotate_left(1) ^ rc(in_base, true),
+        )
     }
 
+    /// The hash of the (k - 1)-mer left without the first base, `out_base`.
     #[inline(always)]
     fn manual_remove_only_forward(
-        _hash: Self::HashTypeExtendable,
-        _k: usize,
-        _out_base: u8,
+        hash: Self::HashTypeExtendable,
+        k: usize,
+        out_base: u8,
     ) -> Self::HashTypeExtendable {
-        unimplemented!()
-        // let ExtCanonicalNtHash(fw, rc) = cnc_nt_manual_roll(hash, k, out_base, Self::NULL_BASE);
-        // ExtCanonicalNtHash(fw.rotate_right(1), rc)
+        let ExtCanonicalNtHash(forward, reverse) = hash;
+        ExtCanonicalNtHash(
+            forward ^ h(out_base, true).rotate_left(k as u32 - 1),
+            (reverse ^ rc(out_base, true)).rotate_right(1),
+        )
     }
 
+    /// The hash of the (k - 1)-mer left without the last base, `out_base`.
     #[inline(always)]
     fn manual_remove_only_reverse(
-        _hash: Self::HashTypeExtendable,
-        _k: usize,
-        _out_base: u8,
+        hash: Self::HashTypeExtendable,
+        k: usize,
+        out_base: u8,
     ) -> Self::HashTypeExtendable {
-        unimplemented!()
-        // let ExtCanonicalNtHash(fw, rc) = cnc_nt_manual_roll_rev(hash, k, out_base, Self::NULL_BASE);
-        // ExtCanonicalNtHash(fw, rc.rotate_right(1))
+        let ExtCanonicalNtHash(forward, reverse) = hash;
+        ExtCanonicalNtHash(
+            (forward ^ h(out_base, true)).rotate_right(1),
+            reverse ^ rc(out_base, true).rotate_left(k as u32 - 1),
+        )
     }
 
     const INVERTIBLE: bool = false;

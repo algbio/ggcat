@@ -47,7 +47,10 @@ struct SplitsBuffers {
     extras: Batches,
 }
 
-const _: () = assert!(SIMD_LANES <= 8, "a window's changed lanes are kept in a byte");
+const _: () = assert!(
+    SIMD_LANES <= 8,
+    "a window's changed lanes are kept in a byte"
+);
 
 /// A batch's values or extras, a vector per position.
 type Batches = Vec<[u32; SIMD_LANES]>;
@@ -249,7 +252,10 @@ impl<F: FnMut(usize, usize, (u32, u32), bool), const DUPLICATES: bool> WindowsOu
         };
         self.splitting = LANES_MASK;
         let slot = self.kept;
-        debug_assert!(slot < self.buffers.values.len(), "more windows than a batch");
+        debug_assert!(
+            slot < self.buffers.values.len(),
+            "more windows than a batch"
+        );
         // SAFETY: a batch has fewer windows than the buffers' slots, and `kept` restarts at
         // each batch.
         unsafe {
@@ -537,7 +543,10 @@ impl<V: HashVector<SIMD_LANES>, O: WindowsOutput, const DUPLICATES: bool>
     #[inline(always)]
     unsafe fn consume(&mut self, index: usize, forward: V, reverse: V) {
         unsafe {
-            debug_assert_eq!(self.index_extra.to_array(), [(index as u32) << 1; SIMD_LANES]);
+            debug_assert_eq!(
+                self.index_extra.to_array(),
+                [(index as u32) << 1; SIMD_LANES]
+            );
             let value = V::canonical(forward, reverse);
             let base = self.index_extra;
             let extra = V::select(forward.less(reverse), base.xor(V::splat(1)), base);

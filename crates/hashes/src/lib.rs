@@ -218,21 +218,42 @@ pub mod tests {
         res
     }
 
+    /// Bases already compressed to their codes, one a byte: a plain slice of bytes is read as
+    /// ASCII letters.
+    #[derive(Clone, Copy)]
+    struct CompressedBases<'a>(&'a [u8]);
+
+    impl HashableSequence for CompressedBases<'_> {
+        const IS_COMPRESSED: bool = true;
+
+        fn subslice(&self, start: usize, end: usize) -> Self {
+            Self(&self.0[start..end])
+        }
+
+        unsafe fn get_unchecked_cbase(&self, index: usize) -> u8 {
+            unsafe { *self.0.get_unchecked(index) }
+        }
+
+        fn bases_count(&self) -> usize {
+            self.0.len()
+        }
+    }
+
+    /// The hashes of the k-mers of `bases`, ASCII letters, given to the hash compressed if
+    /// `compress`, else as they are.
     fn compute_hashes<FACTORY: HashFunctionFactory>(
         bases: &[u8],
         k: usize,
         compress: bool,
     ) -> Vec<FACTORY::HashTypeExtendable> {
-        let bases_vec;
-
-        let bases = if compress {
-            bases_vec = to_compressed(bases);
-            bases_vec.as_slice()
+        if compress {
+            let compressed = to_compressed(bases);
+            FACTORY::new(CompressedBases(&compressed), k)
+                .iter()
+                .collect()
         } else {
-            bases
-        };
-
-        FACTORY::new(bases, k).iter().collect()
+            FACTORY::new(bases, k).iter().collect()
+        }
     }
 
     fn generate_bases(len: usize, seed: u64) -> Vec<u8> {

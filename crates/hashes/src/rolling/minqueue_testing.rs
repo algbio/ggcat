@@ -299,10 +299,10 @@ mod tests {
         //     .sum::<Wrapping<u64>>();
 
         let mut last = 0;
-        let mut res = 0;
+        let mut res = 0u64;
         queue_old.make_iter(items.iter().copied()).for_each(|v| {
             if v != last {
-                res += v;
+                res = res.wrapping_add(v);
                 last = v;
             }
         });
