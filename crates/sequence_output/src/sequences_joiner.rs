@@ -239,19 +239,23 @@ impl<CX: ColorsManager> IndirectSequencesJoiner<CX> {
         let is_indirect = self.extra_buffer.1.len() > 0;
         let indirection_threshold = (self.k * 4).max(MAX_INLINE_UNITIG_SIZE);
 
-        let right_size = self.sequence.bases_count - self.indirection_start;
+        // In eulertigs part 3 the first part of an indirect unitig can leave the sequence shorter than k (its last
+        // k - 1 bases are carried over to the next part): nothing to splice then.
+        let right_size = self
+            .sequence
+            .bases_count
+            .saturating_sub(self.indirection_start);
         let splice_start = if is_indirect {
             self.indirection_start
         } else {
             self.k
         };
 
-        let splice_end_colors_offset =
-            (joined_sequence_bases_count - self.k) - if is_indirect { self.k - 1 } else { 0 };
-
         // INDIRECTION:
         // right is inline: join and check if threshold reached, in case make the unitig indirect
         if right_size > indirection_threshold {
+            let splice_end_colors_offset =
+                (joined_sequence_bases_count - self.k) - if is_indirect { self.k - 1 } else { 0 };
             // Add another indirection
             let indirect_reference = splice_join_operation::<CX>(
                 &self.oversize_unitigs_file,
