@@ -1,5 +1,4 @@
 use crate::binary_reader::{BinaryEvent, GenericBinaryReader};
-use bstr::ByteSlice;
 use std::path::Path;
 
 pub struct LinesReader {
@@ -11,11 +10,16 @@ pub struct LinesReader {
 pub struct ChunkLines<'a> {
     chunk: &'a [u8],
     end_of_file: bool,
+    /// Whether the previous chunk of the file ended with a `\r`: a `\n` that starts this one is
+    /// the rest of that line end, and skipped.
+    after_carriage_return: bool,
 }
 
 impl<'a> ChunkLines<'a> {
     /// Calls `callback` with each line, as `(line, partial, finished)`: `partial` when the line
-    /// continues in the next chunk, `finished` on the single empty line that ends a file.
+    /// continues in the next chunk, `finished` on the single empty line that ends a file. A line
+    /// ends at a `\r`, and at a `\n` not right after one, as the SIMD parser reads them: the `\n`
+    /// of a `\r\n` belongs to no line, so no line holds a `\r` or a `\n`.
     #[inline(always)]
     pub fn for_each(self, mut callback: impl FnMut(&'a [u8], bool, bool)) {
         if self.end_of_file {
@@ -23,6 +27,9 @@ impl<'a> ChunkLines<'a> {
             return;
         }
         let mut buffer = self.chunk;
+        if self.after_carriage_return && buffer.first() == Some(&b'\n') {
+            buffer = &buffer[1..];
+        }
         loop {
             let (full, line) = LinesReader::split_line(&mut buffer);
 
@@ -41,43 +48,35 @@ impl<'a> ChunkLines<'a> {
 impl LinesReader {
     pub fn new() -> Self {
         Self {
-            reader: GenericBinaryReader::new(None),
+            reader: GenericBinaryReader::new(None, None),
         }
     }
 
+    /// Takes the first line out of `buffer`: returns whether a line end ends it, rather than
+    /// the end of `buffer`, and the line, without its line end. A line ends at a `\r`, and at a
+    /// `\n` not right after one: the `\n` of a `\r\n` is taken out with it.
     #[inline]
     fn split_line<'a, 'b>(buffer: &'b mut &'a [u8]) -> (bool, &'a [u8]) {
-        match buffer.find_byte(b'\n') {
+        match memchr::memchr2(b'\r', b'\n', buffer) {
             None => {
-                // No newline
-                let buf_len = if buffer.len() > 0 && buffer[buffer.len() - 1] == b'\r' {
-                    buffer.len() - 1
-                } else {
-                    buffer.len()
-                };
-
-                let out_buffer = &buffer[..buf_len];
-
+                let line = *buffer;
                 *buffer = &[];
-                (false, out_buffer)
+                (false, line)
             }
             Some(pos) => {
-                let mut bpos = pos;
-                if bpos != 0 && buffer[bpos - 1] == b'\r' {
-                    bpos -= 1;
-                }
-                let out_buffer = &buffer[..bpos];
-
-                *buffer = &buffer[pos + 1..];
-                (true, out_buffer)
+                let line = &buffer[..pos];
+                let crlf = buffer[pos] == b'\r' && buffer.get(pos + 1) == Some(&b'\n');
+                *buffer = &buffer[pos + 1 + crlf as usize..];
+                (true, line)
             }
         }
     }
 
-    /// Whether `chunk` ends in the middle of a line.
+    /// Whether `chunk` ends in the middle of a line: unless its last byte is a line end.
     fn ends_mid_line(chunk: &[u8]) -> bool {
-        let mut last = &chunk[chunk.rfind_byte(b'\n').map_or(0, |pos| pos + 1)..];
-        LinesReader::split_line(&mut last).1.len() > 0
+        chunk
+            .last()
+            .is_some_and(|byte| !matches!(byte, b'\r' | b'\n'))
     }
 
     /// Ends the file `name` with its finished line.
@@ -95,6 +94,7 @@ impl LinesReader {
             ChunkLines {
                 chunk: &[],
                 end_of_file: true,
+                after_carriage_return: false,
             },
         );
     }
@@ -113,6 +113,8 @@ impl LinesReader {
         let mut current: Option<T> = None;
         let mut current_name = String::new();
         let mut line_pending = false;
+        // Whether the last chunk of the current file ended with a `\r`.
+        let mut after_carriage_return = false;
 
         let result = self.reader.read_file(file, |event| match event {
             BinaryEvent::FilePath { name, .. } => {
@@ -123,6 +125,7 @@ impl LinesReader {
                 current_name.clear();
                 current_name.push_str(name.unwrap_or_default());
                 line_pending = false;
+                after_carriage_return = false;
                 current = Some(new_file(name));
             }
             BinaryEvent::Chunk(chunk) | BinaryEvent::ChunkWithCopybacks { chunk, .. } => {
@@ -133,8 +136,12 @@ impl LinesReader {
                     ChunkLines {
                         chunk,
                         end_of_file: false,
+                        after_carriage_return,
                     },
                 );
+                if let Some(&last) = chunk.last() {
+                    after_carriage_return = last == b'\r';
+                }
             }
         });
         if let Err(error) = result {
@@ -157,6 +164,78 @@ impl LinesReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The lines of a file of `chunks`, as `process_lines` hands its chunks over: each line
+    /// joined across the chunks it was split between.
+    fn lines(chunks: &[&[u8]]) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut line = Vec::new();
+        let mut after_carriage_return = false;
+        for &chunk in chunks {
+            let chunk_lines = ChunkLines {
+                chunk,
+                end_of_file: false,
+                after_carriage_return,
+            };
+            chunk_lines.for_each(|part, partial, _| {
+                line.extend_from_slice(part);
+                if !partial {
+                    lines.push(String::from_utf8(std::mem::take(&mut line)).unwrap());
+                }
+            });
+            after_carriage_return = chunk.last() == Some(&b'\r');
+        }
+        if !line.is_empty() {
+            lines.push(String::from_utf8(line).unwrap());
+        }
+        lines
+    }
+
+    /// A line ends at a `\r`, and at a `\n` not right after one: `\n\r`, `\r\r\n` and `\r\n\n`
+    /// are two line ends, an empty line between them.
+    #[test]
+    fn carriage_returns_and_line_feeds_end_lines() {
+        let cases: [(&[u8], &[&str]); 7] = [
+            (b"a\rb\n", &["a", "b"]),
+            (b"a\r\nb\n", &["a", "b"]),
+            (b"a\n\rb\n", &["a", "", "b"]),
+            (b"a\r\r\nb\n", &["a", "", "b"]),
+            (b"a\r\n\nb\n", &["a", "", "b"]),
+            (b"a\rb", &["a", "b"]),
+            (b"\r\r", &["", ""]),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(lines(&[input]), expected, "{}", input.escape_ascii());
+        }
+    }
+
+    /// A `\r` that ends a chunk ends its line, which is not partial: a `\n` that starts the next
+    /// chunk is the rest of a `\r\n` split between them, and adds no line.
+    #[test]
+    fn a_carriage_return_ending_a_chunk_ends_its_line() {
+        let mut parts = Vec::new();
+        ChunkLines {
+            chunk: b"ab\r",
+            end_of_file: false,
+            after_carriage_return: false,
+        }
+        .for_each(|line, partial, _| parts.push((line.to_vec(), partial)));
+        assert_eq!(parts, [(b"ab".to_vec(), false)]);
+        assert!(!LinesReader::ends_mid_line(b"ab\r"));
+        assert!(!LinesReader::ends_mid_line(b"ab\n"));
+        assert!(LinesReader::ends_mid_line(b"a\rb"));
+        let cases: [(&[&[u8]], &[&str]); 6] = [
+            (&[b"a\r", b"b\n"], &["a", "b"]),
+            (&[b"a\r", b"\nb\n"], &["a", "b"]),
+            (&[b"a\r", b"\n\nb\n"], &["a", "", "b"]),
+            (&[b"a\r", b"\rb\n"], &["a", "", "b"]),
+            (&[b"a", b"\r", b"\n", b"b\n"], &["a", "b"]),
+            (&[b"a\n", b"\nb\n"], &["a", "", "b"]),
+        ];
+        for (chunks, expected) in cases {
+            assert_eq!(lines(chunks), expected, "{chunks:?}");
+        }
+    }
 
     #[test]
     fn every_file_is_finished_before_the_next_starts() {

@@ -1799,7 +1799,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lz-copyback"
-version = "3.0.1"
+version = "3.2.0"
 dependencies = [
  "crc32fast",
  "lzcb-lz4-sys",
@@ -1829,7 +1829,7 @@ dependencies = [
 
 [[package]]
 name = "lzcb-lz4-sys"
-version = "0.1.1+lz4-1.10.0"
+version = "0.1.2+lz4-1.10.0"
 dependencies = [
  "cc",
  "libc",
@@ -1837,7 +1837,7 @@ dependencies = [
 
 [[package]]
 name = "lzcb-lzma-sys"
-version = "0.3.0+xz.5.8.4"
+version = "0.3.1+xz.5.8.4"
 dependencies = [
  "cc",
  "libc",
@@ -1845,7 +1845,7 @@ dependencies = [
 
 [[package]]
 name = "lzcb-zstd-sys"
-version = "0.3.0+zstd.1.5.7"
+version = "0.3.1+zstd.1.5.7"
 dependencies = [
  "cc",
 ]

@@ -6,36 +6,44 @@ use utils::dna_sequence::DnaSequence;
 
 const INPUT: &[u8] = b">seq1 description\nACGTacgtNNRY\nGGCCAATT\n>seq2\nacgt\r\n";
 
-/// The masks of `block` computed a byte at a time, zero padding included.
-fn reference(block: &[u8]) -> BlockMasks {
+/// The masks of `block` computed a byte at a time, zero padding included, after a block that
+/// ended with a `\r` if `carry`.
+fn reference(block: &[u8], carry: bool) -> BlockMasks {
     let mut masks = BlockMasks {
-        line_feeds: 0,
+        line_ends: 0,
+        skipped_line_feeds: 0,
         non_acgt: 0,
         two_bits: 0,
     };
     let padded = block.iter().chain(std::iter::repeat(&0)).take(BLOCK_SIZE);
+    let mut after_carriage_return = carry;
     for (index, &byte) in padded.enumerate() {
-        masks.line_feeds |= ((byte == b'\n') as u64) << index;
+        let skipped = byte == b'\n' && after_carriage_return;
+        let line_end = byte == b'\r' || (byte == b'\n' && !skipped);
+        masks.line_ends |= (line_end as u64) << index;
+        masks.skipped_line_feeds |= (skipped as u64) << index;
         masks.non_acgt |=
             (!matches!(byte & 0b1101_1111, b'A' | b'C' | b'G' | b'T') as u64) << index;
         masks.two_bits |= (((byte >> 1) & 3) as u128) << (2 * index);
+        after_carriage_return = byte == b'\r';
     }
     masks
 }
 
-/// The masks of `block` by `kernel`, which this CPU supports.
-fn masks_with(kernel: MaskKernel, block: &[u8]) -> BlockMasks {
+/// The masks of `block` by `kernel`, which this CPU supports, after a block that ended with a
+/// `\r` if `carry`.
+fn masks_with(kernel: MaskKernel, block: &[u8], carry: bool) -> BlockMasks {
     assert!(kernel.is_supported());
     // SAFETY: just checked.
     unsafe {
         match kernel {
             #[cfg(target_arch = "x86_64")]
-            MaskKernel::Avx2 => BlockMasks::of::<Avx2>(block),
+            MaskKernel::Avx2 => BlockMasks::of::<Avx2>(block, carry),
             #[cfg(target_arch = "x86_64")]
-            MaskKernel::Ssse3 => BlockMasks::of::<Ssse3>(block),
+            MaskKernel::Ssse3 => BlockMasks::of::<Ssse3>(block, carry),
             #[cfg(target_arch = "aarch64")]
-            MaskKernel::Neon => BlockMasks::of::<Neon>(block),
-            MaskKernel::Portable => BlockMasks::of::<Portable>(block),
+            MaskKernel::Neon => BlockMasks::of::<Neon>(block, carry),
+            MaskKernel::Portable => BlockMasks::of::<Portable>(block, carry),
         }
     }
 }
@@ -130,13 +138,19 @@ fn collect(records: &mut Vec<Record>) -> impl FnMut(SequenceBuffer) -> SequenceB
 fn blocks_of_every_length_are_classified() {
     let input = INPUT.repeat(3);
     for kernel in supported_kernels() {
-        for len in 1..=BLOCK_SIZE {
-            let block = &input[..len];
-            assert_eq!(
-                masks_with(kernel, block),
-                reference(block),
-                "{kernel:?}, length {len}"
-            );
+        // From the input's start, and from the `\n` of its last `\r\n`, which the `\r` before
+        // the block makes skipped.
+        for start in [0, INPUT.len() - 1] {
+            for carry in [false, true] {
+                for len in 1..=BLOCK_SIZE {
+                    let block = &input[start..start + len];
+                    assert_eq!(
+                        masks_with(kernel, block, carry),
+                        reference(block, carry),
+                        "{kernel:?}, from {start}, carry {carry}, length {len}"
+                    );
+                }
+            }
         }
     }
 }
@@ -186,13 +200,13 @@ fn reset_forgets_the_buffer_and_the_record() {
 }
 
 #[test]
-fn a_header_is_kept_up_to_its_line_feed_without_its_carriage_return() {
+fn a_header_is_kept_up_to_its_line_end_without_its_carriage_return() {
     let block = b">seq1 description\r\nACGT\n";
     for kernel in supported_kernels() {
         let mut parser = fastq_parser(kernel, true);
-        let masks = masks_with(kernel, block);
+        let masks = masks_with(kernel, block, false);
         let end = parser.parse_header(block, &masks, 0, ParserState::FastaSequence);
-        assert_eq!(end, 19, "{kernel:?}: past the line feed");
+        assert_eq!(end, 19, "{kernel:?}: past the line end");
         assert_eq!(ident_of(&parser), b">seq1 description", "{kernel:?}");
         assert_eq!(parser.state, ParserState::FastaSequence, "{kernel:?}");
     }
@@ -203,7 +217,7 @@ fn a_header_not_kept_is_skipped_from_where_it_starts() {
     let block = b"ACGT\n@read1\nACGT\n+\nIIII\n";
     for kernel in supported_kernels() {
         let mut parser = fastq_parser(kernel, false);
-        let masks = masks_with(kernel, block);
+        let masks = masks_with(kernel, block, false);
         let end = parser.parse_header(block, &masks, 5, ParserState::FastqSequence);
         assert_eq!(end, 12, "{kernel:?}: past the line feed");
         assert!(ident_of(&parser).is_empty(), "{kernel:?}");
@@ -212,24 +226,24 @@ fn a_header_not_kept_is_skipped_from_where_it_starts() {
 }
 
 #[test]
-fn a_header_spans_blocks_and_loses_a_carriage_return_that_ended_one() {
-    // `@`, 62 bytes and a `\r` fill the first block; the line feed starts the second.
+fn a_header_ends_at_a_carriage_return_that_ends_a_block() {
+    // `@`, 62 bytes and a `\r` fill the first block; the `\n` of the `\r\n` starts the second.
     let mut first = vec![b'@'];
     first.extend(std::iter::repeat_n(b'x', BLOCK_SIZE - 2));
     first.push(b'\r');
-    let second = b"\nACGT\n";
+    let header = &first[..BLOCK_SIZE - 1];
+    let second = b"\nACGT\n+\nIIII\n";
     for kernel in supported_kernels() {
         let mut parser = fastq_parser(kernel, true);
-        // A whole block with no line feed: the loop takes it all, in the header.
+        // The `\r` ends the header, which keeps none of it.
         parser.parse_data(&first, |_| panic!("no sequence yet"));
-        assert_eq!(ident_of(&parser), first, "{kernel:?}");
-        assert_eq!(parser.state, ParserState::FastqHeader, "{kernel:?}");
-
-        let masks = masks_with(kernel, second);
-        let end = parser.parse_header(second, &masks, 0, ParserState::FastqSequence);
-        assert_eq!(end, 1, "{kernel:?}: past the line feed");
-        assert_eq!(ident_of(&parser), &first[..BLOCK_SIZE - 1], "{kernel:?}");
+        assert_eq!(ident_of(&parser), header, "{kernel:?}");
         assert_eq!(parser.state, ParserState::FastqSequence, "{kernel:?}");
+        // The `\n` is skipped, rather than ending an empty sequence line.
+        let mut records = Vec::new();
+        parser.parse_data(second, collect(&mut records));
+        parser.finish(collect(&mut records));
+        assert_eq!(records, [Record::expected(header, b"ACGT")], "{kernel:?}");
     }
 }
 
@@ -927,11 +941,12 @@ fn a_copyback_has_to_fit_twice_in_the_buffer() {
 }
 
 #[test]
-fn a_carriage_return_ending_a_block_ends_a_line_only_before_a_line_feed() {
+fn a_carriage_return_ending_a_block_ends_its_line_whatever_follows() {
     // The `\r` is the last byte of the first block: in a FASTQ sequence; in the first line of
     // a FASTA record, copied a block at a time; in a later one, appended shifted; first in
-    // its line. The line then goes on, split there as at any byte that is not ACGT, or ends
-    // with a line feed, the FASTA record going on in the next line.
+    // its line. It ends the line there, and a `\n` right after it adds no line: in FASTQ,
+    // where an empty line would take the place of the separator, the record after it would be
+    // read as another one.
     let starts = [
         (
             DnaSequencesFileType::FASTQ,
@@ -943,7 +958,7 @@ fn a_carriage_return_ending_a_block_ends_a_line_only_before_a_line_feed() {
         ),
         (
             DnaSequencesFileType::FASTA,
-            [&b">r\nAA\n"[..], &[b'C'; 57]].concat(),
+            [&b">r\n"[..], b"AA\n", &[b'C'; 57]].concat(),
         ),
         (
             DnaSequencesFileType::FASTA,
@@ -952,10 +967,15 @@ fn a_carriage_return_ending_a_block_ends_a_line_only_before_a_line_feed() {
     ];
     for (case, (format, start)) in starts.into_iter().enumerate() {
         assert_eq!(start.len(), BLOCK_SIZE - 1);
-        // The runs each makes: the `\r` splits off the bases before it, if any.
+        // The runs each makes: the line after the `\r` is a FASTQ separator, or goes on with the
+        // FASTA record; the `@s` record follows in FASTQ. After the FASTA header the `\r` ends an
+        // empty line, and the C run is not there.
+        let two = if case == 3 { 1 } else { 2 };
         for (end, runs) in [
-            (&b"\rGGTT\n+\nII\n"[..], if case == 3 { 1 } else { 2 }),
+            (&b"\rGGTT\n+\nII\n"[..], 1),
             (b"\r\nGGTT\n+\nII\n", 1),
+            (b"\r+\nIIII\n@s\nGGTT\n+\nIIII\n", two),
+            (b"\r\n+\nIIII\n@s\nGGTT\n+\nIIII\n", two),
         ] {
             let input = [&start[..], end].concat();
             let (expected, _) = reference_sequences(&input, format, true, 0, None);
@@ -974,6 +994,66 @@ fn a_carriage_return_ending_a_block_ends_a_line_only_before_a_line_feed() {
                 }
                 parser.finish(collect(&mut records));
                 assert_eq!(records, expected, "{kernel:?}, {}", input.escape_ascii());
+            }
+        }
+    }
+}
+
+/// A line ends at every `\r`, and at every `\n` not right after one: `\r\r\n`, `\r\n\n` and
+/// `\n\r` are two line ends, an empty line between them, and `\r>` starts a header. At bits 62,
+/// 63 and 0 of a block, so that the `\r\n` of each is split between two blocks or not.
+#[test]
+fn carriage_returns_and_line_feeds_are_newlines() {
+    let rest_fasta = b"CC\n>s\nGG\n";
+    let rest_fastq = b"+\nIIII\n@s\nGG\n+\nII\n";
+    for at in [62, 63, 64] {
+        let bases = vec![b'A'; at - 3];
+        for (ending, two_lines) in [
+            (&b"\r"[..], false),
+            (b"\r\n", false),
+            (b"\n", false),
+            (b"\r\r\n", true),
+            (b"\r\n\n", true),
+            (b"\n\r", true),
+            (b"\r>", false),
+        ] {
+            // FASTA: the record goes on past the line end, unless a header starts there.
+            let input = [&b">r\n"[..], &bases, ending, rest_fasta].concat();
+            let (expected, records) =
+                reference_sequences(&input, DnaSequencesFileType::FASTA, true, 0, None);
+            let first = match ending {
+                b"\r>" => Record::expected(b">r", &bases),
+                _ => Record::expected(b">r", &[&bases[..], b"CC"].concat()),
+            };
+            assert_eq!(expected, [first, Record::expected(b">s", b"GG")]);
+            assert_eq!(records, 2 + (ending == b"\r>") as u64);
+            for kernel in supported_kernels() {
+                for slice in [BLOCK_SIZE, 2 * BLOCK_SIZE] {
+                    assert_eq!(
+                        parse_fasta(kernel, &input, slice),
+                        expected,
+                        "{kernel:?}, {}",
+                        input.escape_ascii()
+                    );
+                }
+            }
+            // FASTQ: an empty line shifts the lines of the record, so that `@s` is a sequence.
+            let input = [&b"@r\n"[..], &bases, ending, rest_fastq].concat();
+            let (expected, _) =
+                reference_sequences(&input, DnaSequencesFileType::FASTQ, true, 0, None);
+            let mut records = vec![Record::expected(b"@r", &bases)];
+            if !two_lines {
+                records.push(Record::expected(b"@s", b"GG"));
+            }
+            assert_eq!(expected, records, "{}", input.escape_ascii());
+            for kernel in supported_kernels() {
+                let mut parser = fastq_parser(kernel, true);
+                let mut parsed = Vec::new();
+                for block in input.chunks(BLOCK_SIZE) {
+                    parser.parse_data(block, collect(&mut parsed));
+                }
+                parser.finish(collect(&mut parsed));
+                assert_eq!(parsed, expected, "{kernel:?}, {}", input.escape_ascii());
             }
         }
     }
@@ -1098,6 +1178,32 @@ fn a_record_pushed_whole_is_read_as_a_fasta_record_on_one_line() {
     }
 }
 
+/// A `\r` in the bases of a record pushed whole ends a line, as a `\n` does: the record goes on
+/// in the next line, unless a header starts there.
+#[test]
+fn a_carriage_return_in_a_record_pushed_whole_ends_a_line() {
+    for kernel in supported_kernels() {
+        for (bases, expected) in [
+            (&b"AC\rGT"[..], vec![Record::expected(b">r", b"ACGT")]),
+            (b"AC\r\nGT", vec![Record::expected(b">r", b"ACGT")]),
+            (
+                b"AC\r>s\rGT",
+                vec![
+                    Record::expected(b">r", b"AC"),
+                    Record::expected(b">s", b"GT"),
+                ],
+            ),
+        ] {
+            let mut parser = SequenceParser::with_kernel(kernel, true, None, 0, 1 << 10, 1 << 10);
+            parser.reset_for_records(DnaSequencesFileType::FASTA);
+            let mut records = Vec::new();
+            parser.push_record(b">r", bases, collect(&mut records));
+            parser.finish(collect(&mut records));
+            assert_eq!(records, expected, "{kernel:?}, {}", bases.escape_ascii());
+        }
+    }
+}
+
 /// Xorshift, for the fuzz tests: the same seed makes the same cases.
 struct Random(u64);
 
@@ -1146,11 +1252,12 @@ fn random_blocks_are_classified() {
                 }
             })
             .collect();
+        let carry = random.chance(500);
         for kernel in supported_kernels() {
             assert_eq!(
-                masks_with(kernel, &block),
-                reference(&block),
-                "{kernel:?}, {}",
+                masks_with(kernel, &block, carry),
+                reference(&block, carry),
+                "{kernel:?}, carry {carry}, {}",
                 block.escape_ascii()
             );
         }
@@ -1158,8 +1265,8 @@ fn random_blocks_are_classified() {
 }
 
 /// The bytes of a fuzzed sequence that are not ACGT, mostly: N and the IUPAC codes, in either
-/// case, and bytes no sequence should hold, such as a `\r` that ends no line or those that
-/// start lines.
+/// case, and bytes no sequence should hold, such as a lone `\r`, which ends the line there, or
+/// those that start lines.
 const OTHER_BYTES: &[u8] =
     b"NnNnRYKMSWBDHVrykmswbdhvUuX-*. \t\r\r>;@+\x00\x01\x80\xc1\xc3\xc7\xd4\xe1\xff";
 
@@ -1262,7 +1369,7 @@ fn sequence_length(random: &mut Random) -> usize {
 }
 
 /// The bytes of a fuzzed header or comment past its first: mostly a few, sometimes over
-/// blocks; the bytes that start lines, and a `\r` that ends none, among them.
+/// blocks; the bytes that start lines, and a lone `\r`, which ends the line there, among them.
 fn text(random: &mut Random) -> Vec<u8> {
     let length = if random.chance(100) {
         50 + random.below(200)
@@ -1326,13 +1433,14 @@ fn fuzzed_fastq(random: &mut Random) -> Vec<u8> {
 }
 
 /// The sequences of `input` read a line at a time, as the line reader reads it: a line ends
-/// at a line feed or at the end of the input, less one `\r` before it; a `>` line starts a
-/// FASTA record, a `;` line is skipped, any other adds its bytes to the record, lines before
-/// any header making one without; a FASTQ record is four lines, its second the sequence, and
-/// one cut before that has none. Each record is split at the bytes that are not ACGT.
+/// at a `\r`, at a `\n` not right after one, or at the end of the input, and the `\n` of a
+/// `\r\n` belongs to no line; a `>` line starts a FASTA record, a `;` line is skipped, any other
+/// adds its bytes to the record, lines before any header making one without; a FASTQ record is
+/// four lines, its second the sequence, and one cut before that has none. Each record is split
+/// at the bytes that are not ACGT.
 ///
 /// Also how many records there are, as [`SequenceParser::records`] counts them: those whose
-/// header line ends with a line feed, and the lines before any FASTA header if they have bytes.
+/// header line ends with a line end, and the lines before any FASTA header if they have bytes.
 /// With `first_record`, the sequences have the indices of their records, counted from it.
 fn reference_sequences(
     input: &[u8],
@@ -1341,16 +1449,18 @@ fn reference_sequences(
     min_length: usize,
     first_record: Option<u64>,
 ) -> (Vec<Record>, u64) {
-    // Each line, and whether a line feed ends it.
+    // Each line, and whether a line end ends it.
     let mut lines: Vec<(&[u8], bool)> = Vec::new();
     let mut rest = input;
     while !rest.is_empty() {
-        let (line, ended) = match rest.iter().position(|&byte| byte == b'\n') {
-            Some(end) => (&rest[..end], true),
-            None => (rest, false),
+        let line_end = rest.iter().position(|&byte| matches!(byte, b'\r' | b'\n'));
+        let (line, next) = match line_end {
+            Some(end) if rest[end..].starts_with(b"\r\n") => (&rest[..end], end + 2),
+            Some(end) => (&rest[..end], end + 1),
+            None => (rest, rest.len()),
         };
-        rest = &rest[(line.len() + ended as usize)..];
-        lines.push((line.strip_suffix(b"\r").unwrap_or(line), ended));
+        lines.push((line, line_end.is_some()));
+        rest = &rest[next..];
     }
     let ident = |line: &[u8]| {
         if keep_ident {
@@ -1669,6 +1779,9 @@ fn check_input(
         record_indices: config.record_indices,
         bases_capacity: config.bases_capacity,
         ident_capacity: config.ident_capacity,
+        lz_mode: LzMode::Off,
+        copybacks_min_len: 0,
+        copy_margin: 0,
     }
     .parser(kernel);
     if random.chance(250) {
@@ -1804,5 +1917,23 @@ fn parsing_matches_a_parse_a_line_at_a_time() {
                 short_error.err()
             );
         }
+    }
+}
+
+/// Only an uncoloured run without k-mer counters, with a cutoff of 1, uses the LZ copies.
+#[test]
+fn only_uncoloured_runs_without_counters_and_with_cutoff_1_skip_copies() {
+    assert_eq!(LzMode::for_assembler(false, false, 1), LzMode::SkipOnly);
+    for (colored, counters, cutoff) in [
+        (true, false, 1),
+        (false, true, 1),
+        (false, false, 2),
+        (true, true, 3),
+    ] {
+        assert_eq!(
+            LzMode::for_assembler(colored, counters, cutoff),
+            LzMode::Off,
+            "coloured {colored}, counters {counters}, cutoff {cutoff}"
+        );
     }
 }

@@ -22,6 +22,7 @@ impl GenericSequencesStream for FileSequencesStream {
 
     fn new() -> Self {
         Self {
+            // The LZ mode comes with each block's parser settings.
             sequences_reader: SimdSequencesReader::new(),
         }
     }
@@ -50,7 +51,7 @@ impl GenericSequencesStream for FileSequencesStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simd::{DEFAULT_BASES_CAPACITY, DEFAULT_IDENT_CAPACITY};
+    use crate::simd::{DEFAULT_BASES_CAPACITY, DEFAULT_IDENT_CAPACITY, LzMode};
 
     /// A tar archive of `files`, each a name and its content.
     fn archive(files: &[(&str, &str)]) -> Vec<u8> {
@@ -75,6 +76,9 @@ mod tests {
             record_indices: false,
             bases_capacity: DEFAULT_BASES_CAPACITY,
             ident_capacity: DEFAULT_IDENT_CAPACITY,
+            lz_mode: LzMode::Off,
+            copybacks_min_len: 0,
+            copy_margin: 0,
         };
         let (mut files, mut buffers) = (Vec::new(), Vec::new());
         FileSequencesStream::new().read_block(

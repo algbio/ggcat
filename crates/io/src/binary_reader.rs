@@ -8,14 +8,14 @@
 //! A tar archive is read as it is decompressed, never loaded whole: each member file is
 //! decoded on its own, by the codec its name implies, as if it were a file of its own.
 //!
-//! A reader made with [`GenericBinaryReader::with_copybacks`] also hands out the LZ matches
-//! ("copybacks") of the files that compress enough: see [`BinaryEvent::ChunkWithCopybacks`].
+//! A reader made with [`CopybacksSettings`] also hands out the LZ matches ("copybacks") of the
+//! files that compress enough: see [`BinaryEvent::ChunkWithCopybacks`].
 
 mod in_place;
 
 use anyhow::{Context, Result};
 use config::DEFAULT_OUTPUT_BUFFER_SIZE;
-use in_place::{InPlace, Tracking, in_place_decoder};
+use in_place::{InPlace, Tracking};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{ErrorKind, Read};
@@ -193,12 +193,17 @@ pub enum BinaryEvent<'a> {
         /// as the members of a compressed archive, share it, and its offsets go on across them,
         /// skipping the bytes between them (tar headers, members without copybacks).
         offset: u64,
-        /// The copybacks the stream's decoder has found so far, in stream order. The decoder
-        /// has gone at least a window (see [`CopybacksSettings::window`]) past the end of the
-        /// chunk, unless the stream ended earlier, so every copyback whose destination is up
-        /// to there is in. The decoder only pushes to the back: removing the copybacks is up
-        /// to the consumer, those landing in bytes it never gets as copyback chunks included
-        /// (tar headers, members without copybacks, files it skips), else they pile up.
+        /// The copybacks the stream's decoder has found and the consumer has not taken out yet,
+        /// in stream order. The decoder has gone its window (the farthest its matches reach
+        /// back, the xz dictionary or the zstd window) past the end of the chunk, unless the
+        /// stream ended earlier: every copyback whose source is in the chunk, or before it, has
+        /// been in. The decoder pushes to the back, or extends the last one with a match
+        /// continuing it while it is there (see lz_copyback's `peek_copybacks`): once the
+        /// consumer took it out, the match comes as a copyback of its own. The reader drops
+        /// from the front those landing in bytes it hands out with no copybacks (tar headers,
+        /// compressed members, members that get none) as it passes them, but for the last one.
+        /// Taking out the others, those of the files it gets with copybacks, is up to the
+        /// consumer, else they pile up.
         copybacks: &'a mut VecDeque<Copyback>,
     },
 }
@@ -332,7 +337,24 @@ impl GenericBinaryReader {
     /// The other inputs (bzip2, uncompressed) are filled in a ring of only two chunks, so that
     /// it stays in the caches: each byte is written there and read back right after, by every
     /// reader at once. Their chunks are exactly `buffer_size` bytes, and aligned to it.
-    pub fn new(buffer_size: Option<usize>) -> Self {
+    ///
+    /// With `copybacks`, the bytes of the LZ files that compress at least `min_compression_ratio`
+    /// times are handed out with their copybacks, as [`BinaryEvent::ChunkWithCopybacks`]. Their
+    /// chunks go out once the decoder has decoded its window past them, as far as its matches reach
+    /// back (see [`lz_copyback::InPlaceDecoder::window_size`]), so that every copyback copying them
+    /// is known along with them; the decoder keeps that window readable on top of the chunk.
+    ///
+    /// Such a file gets copybacks if its compression ratio is enough: the one its metadata
+    /// records, if it is a file of its own and records how much it decompresses to; otherwise,
+    /// as for the members of an archive, the one of the bytes decoded before its first chunk
+    /// goes out.
+    ///
+    /// The members of a compressed archive with copybacks share its stream: the uncompressed
+    /// ones get its copybacks, at offsets going on across the archive, and the compressed ones,
+    /// whose bytes are not the archive's, none. Only a compressed file read outside any stream
+    /// with copybacks can start one: a file of its own, or a member of an archive without them,
+    /// such as an uncompressed one.
+    pub fn new(buffer_size: Option<usize>, copybacks: Option<CopybacksSettings>) -> Self {
         let (capacity, align) = match buffer_size {
             None => (DEFAULT_OUTPUT_BUFFER_SIZE, 1),
             Some(size) => {
@@ -346,33 +368,21 @@ impl GenericBinaryReader {
         Self {
             buffer: AlignedBuffer::new(capacity, align),
             buffer_size,
-            in_place: InPlace::new(buffer_size, None),
-            copybacks: None,
+            in_place: InPlace::new(buffer_size),
+            copybacks,
         }
     }
 
-    /// As [`Self::new`], with the bytes of the LZ files that compress at least
-    /// `settings.min_compression_ratio` times handed out with their copybacks, as
-    /// [`BinaryEvent::ChunkWithCopybacks`]. Their chunks go out once the decoder has decoded
-    /// `settings.window` bytes past them, so that their copybacks are known up to there;
-    /// without a buffer size, they are at most a window long.
-    ///
-    /// Such a file gets copybacks if its compression ratio is enough: the one its metadata
-    /// records, if it is a file of its own and records how much it decompresses to; otherwise,
-    /// as for the members of an archive, the one of the bytes decoded before its first chunk
-    /// goes out.
-    ///
-    /// The members of a compressed archive with copybacks share its stream: the uncompressed
-    /// ones get its copybacks, at offsets going on across the archive, and the compressed ones,
-    /// whose bytes are not the archive's, none. Only a compressed file read outside any stream
-    /// with copybacks can start one: a file of its own, or a member of an archive without them,
-    /// such as an uncompressed one.
-    pub fn with_copybacks(buffer_size: Option<usize>, settings: CopybacksSettings) -> Self {
-        assert!(settings.window > 0, "The copybacks window cannot be empty");
-        let mut reader = Self::new(buffer_size);
-        reader.in_place = InPlace::new(buffer_size, Some(settings.window));
-        reader.copybacks = Some(settings);
-        reader
+    /// Turns copybacks on, with `copybacks`, or off, for the inputs read from now on: see
+    /// [`Self::new`].
+    pub fn set_copybacks(&mut self, copybacks: Option<CopybacksSettings>) {
+        self.copybacks = copybacks;
+    }
+
+    /// The copybacks settings, if the file at `path` (a member's inside its archive) can get
+    /// copybacks, as [`CopybacksSettings::accepts_file`] says; an archive is not asked.
+    fn copybacks_for(&self, path: &Path) -> Option<CopybacksSettings> {
+        (self.copybacks).filter(|settings| is_archive(path) || (settings.accepts_file)(path))
     }
 
     /// Runs `decoder` to the end of its input, as an input that is not a file. The bytes
@@ -433,7 +443,7 @@ impl GenericBinaryReader {
             let may_track = self.copybacks.is_some();
             return self.read_stock(&name, path, open_input(path), may_track, callback);
         }
-        let tracking = match self.copybacks {
+        let tracking = match self.copybacks_for(path) {
             None => Tracking::Off,
             Some(settings) => match crate::input_size::recorded_ratio(path) {
                 Some(ratio) if ratio >= settings.min_compression_ratio => Tracking::On,
@@ -442,7 +452,7 @@ impl GenericBinaryReader {
                 None => Tracking::Measured,
             },
         };
-        let decoder = in_place_decoder(codec, open_input(path), self.retain(tracking))?;
+        let decoder = self.new_decoder(codec, open_input(path), tracking)?;
         self.read_in_place(&name, path, decoder, tracking, callback)
     }
 
@@ -462,12 +472,12 @@ impl GenericBinaryReader {
         if !codec.is_lz() {
             return self.read_stock(name, path, source, may_track, callback);
         }
-        let tracking = if may_track {
+        let tracking = if may_track && self.copybacks_for(path).is_some() {
             Tracking::Measured
         } else {
             Tracking::Off
         };
-        let decoder = in_place_decoder(codec, source, self.retain(tracking))?;
+        let decoder = self.new_decoder(codec, source, tracking)?;
         self.read_in_place(name, path, decoder, tracking, callback)
     }
 
@@ -613,12 +623,13 @@ mod tests {
         |event| recorded.event(event)
     }
 
-    /// Copybacks for every file that can have them, a few small windows at a time.
+    /// Copybacks for every file that can have them.
     pub(super) fn copybacks_settings() -> CopybacksSettings {
         CopybacksSettings {
-            window: 16 * 1024,
             min_len: 16,
+            hard_min_len: 8,
             min_compression_ratio: 0.0,
+            accepts_file: |_| true,
         }
     }
 
@@ -626,8 +637,8 @@ mod tests {
     /// hand out the same bytes.
     pub(super) fn readers(buffer_size: Option<usize>) -> [GenericBinaryReader; 2] {
         [
-            GenericBinaryReader::new(buffer_size),
-            GenericBinaryReader::with_copybacks(buffer_size, copybacks_settings()),
+            GenericBinaryReader::new(buffer_size, None),
+            GenericBinaryReader::new(buffer_size, Some(copybacks_settings())),
         ]
     }
 
@@ -699,7 +710,7 @@ mod tests {
     #[test]
     fn streams_split_into_exact_aligned_chunks() {
         for size in [64, 4096, 1 << 20, 2 * DEFAULT_OUTPUT_BUFFER_SIZE] {
-            let mut reader = GenericBinaryReader::new(Some(size));
+            let mut reader = GenericBinaryReader::new(Some(size), None);
             for len in [
                 0,
                 1,
@@ -730,7 +741,7 @@ mod tests {
             data: &data,
             step: 0,
         };
-        GenericBinaryReader::new(None)
+        GenericBinaryReader::new(None, None)
             .read_stream(&mut stream, recorder(&mut recorded))
             .unwrap();
         check(&recorded, &data, None, None);
@@ -741,7 +752,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "power of two")]
     fn buffer_size_must_be_a_power_of_two() {
-        GenericBinaryReader::new(Some(3000));
+        GenericBinaryReader::new(Some(3000), None);
     }
 
     /// Hands `data` over in windows of irregular sizes, alternately pushed from its own memory
@@ -789,7 +800,7 @@ mod tests {
 
         for buffer_size in [None, Some(64), Some(1 << 16)] {
             let mut recorded = Recorded::default();
-            GenericBinaryReader::new(buffer_size)
+            GenericBinaryReader::new(buffer_size, None)
                 .read_decoder(&mut decoder, recorder(&mut recorded))
                 .unwrap();
             check_exact(&recorded, &data, buffer_size, None);
@@ -883,13 +894,22 @@ mod tests {
         let member = |archive: &str, member: &str| {
             Some((PathBuf::from(archive), Some(PathBuf::from(member))))
         };
-        assert_eq!(split("/d/x.tar.gz:dir/a.fa"), member("/d/x.tar.gz", "dir/a.fa"));
+        assert_eq!(
+            split("/d/x.tar.gz:dir/a.fa"),
+            member("/d/x.tar.gz", "dir/a.fa")
+        );
         // The colons of the directories before it are not splits.
         assert_eq!(split("/d/a:b/x.tgz:a.fa"), member("/d/a:b/x.tgz", "a.fa"));
         // Those of nested archives stay in the member, as the reader names it.
-        assert_eq!(split("x.tar:in.tar.xz:a.fa"), member("x.tar", "in.tar.xz:a.fa"));
+        assert_eq!(
+            split("x.tar:in.tar.xz:a.fa"),
+            member("x.tar", "in.tar.xz:a.fa")
+        );
         assert_eq!(split("x.tar:"), member("x.tar", ""));
-        assert_eq!(split("/d/x.tar.zst"), Some((PathBuf::from("/d/x.tar.zst"), None)));
+        assert_eq!(
+            split("/d/x.tar.zst"),
+            Some((PathBuf::from("/d/x.tar.zst"), None))
+        );
         assert_eq!(split("/d/x.fa"), None);
         assert_eq!(split("/d/a:b/x.fa.gz"), None);
     }
@@ -899,7 +919,11 @@ mod tests {
         let prefixes = |name| archive_prefixes(name).collect::<Vec<_>>();
         assert_eq!(
             prefixes("/d/x.tar:dir/in.tgz:a:b/deep.tar.xz:c.fa"),
-            ["/d/x.tar", "/d/x.tar:dir/in.tgz", "/d/x.tar:dir/in.tgz:a:b/deep.tar.xz"]
+            [
+                "/d/x.tar",
+                "/d/x.tar:dir/in.tgz",
+                "/d/x.tar:dir/in.tgz:a:b/deep.tar.xz"
+            ]
         );
         assert_eq!(prefixes("in.tgz:a.fa"), ["in.tgz"]);
         assert!(prefixes("/d/a:b/x.fa").is_empty());

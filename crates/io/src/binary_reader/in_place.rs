@@ -13,16 +13,20 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use tar::EntryType;
 
-/// How a reader made with [`GenericBinaryReader::with_copybacks`] gets copybacks.
+/// How a reader made with copybacks (see [`GenericBinaryReader::new`]) gets them.
 #[derive(Clone, Copy, Debug)]
 pub struct CopybacksSettings {
-    /// How far the decoder has gone past the end of a chunk when the chunk is handed out: the
-    /// copybacks with a destination up to that far after it are known along with it.
-    pub window: usize,
-    /// The shortest match recorded.
+    /// The shortest copyback recorded, the matches continuing one another merged up to its
+    /// offset: lz_copyback's soft threshold. Each copyback has `min_len <= len <= offset`.
     pub min_len: u32,
+    /// The shortest match the decoder hands over at all, but for one that continues the last
+    /// one: lz_copyback's hard threshold, checked in the decoders' own code.
+    pub hard_min_len: u32,
     /// The compression ratio, decoded over compressed bytes, a file needs to get copybacks.
     pub min_compression_ratio: f64,
+    /// Whether a file can get copybacks, by its path (a member's inside its archive): a stream
+    /// of its own that cannot records none. An archive is not asked, but each of its members.
+    pub accepts_file: fn(&Path) -> bool,
 }
 
 /// How much a stream decoded in place hands out at once without a buffer size: little enough to
@@ -43,7 +47,7 @@ pub(super) enum Tracking {
 /// block split between two pieces of a decoder's ring, the only bytes copied.
 pub(super) struct InPlace {
     /// The most bytes handed out at once.
-    chunk: usize,
+    pub(super) chunk: usize,
     /// Whether every chunk but the last of a file is a whole number of blocks: with a buffer
     /// size.
     blocks: bool,
@@ -57,11 +61,10 @@ pub(super) struct InPlace {
 
 impl InPlace {
     /// Chunks of at most `buffer_size` bytes, as whole blocks. Without it, the pieces of the
-    /// ring, at most `window` long in a reader with copybacks, at most [`IN_PLACE_CHUNK_SIZE`]
-    /// otherwise.
-    pub(super) fn new(buffer_size: Option<usize>, window: Option<usize>) -> Self {
+    /// ring, at most [`IN_PLACE_CHUNK_SIZE`] long.
+    pub(super) fn new(buffer_size: Option<usize>) -> Self {
         Self {
-            chunk: buffer_size.or(window).unwrap_or(IN_PLACE_CHUNK_SIZE),
+            chunk: buffer_size.unwrap_or(IN_PLACE_CHUNK_SIZE),
             blocks: buffer_size.is_some(),
             side: [0; CHUNK_BLOCK],
             #[cfg(test)]
@@ -72,23 +75,35 @@ impl InPlace {
     }
 }
 
-/// `source` decoded in place by lz_copyback's decoder for `codec`, keeping `retain` bytes. All
-/// of them but lz4's read on past the end of a stream into the next one, as concatenated files
-/// and parallel compressors have them. The source is boxed, so that each decoder is compiled
-/// once, whatever it reads from.
+/// `source` decoded in place by lz_copyback's decoder for `codec`, keeping `retain` bytes, and
+/// the window on top of them if `tracking` may record copybacks: the stream is then decoded a
+/// window past the bytes it hands out (see [`InPlaceStream`]). `hard_min_len` is the decoder's
+/// hard threshold. All of them but lz4's read on past the end of a stream into the next one, as
+/// concatenated files and parallel compressors have them. The source is boxed, so that each
+/// decoder is compiled once, whatever it reads from.
 pub(super) fn in_place_decoder<'a>(
     codec: Codec,
     source: impl Read + 'a,
     retain: usize,
+    tracking: Tracking,
+    hard_min_len: u32,
 ) -> io::Result<Box<dyn InPlaceDecoder + 'a>> {
     let source: Box<dyn Read + 'a> = Box::new(source);
-    Ok(match codec {
-        Codec::Gzip => Box::new(gzip::GzipInPlaceDecoder::new(source, retain)),
-        Codec::Lz4 => Box::new(lz4::Lz4InPlaceDecoder::new(source, retain)?),
-        Codec::Xz => Box::new(xz::XzInPlaceDecoder::new_multi_decoder(source, retain)),
-        Codec::Zstd => Box::new(zstd::ZstdInPlaceDecoder::new(source, retain)?),
+    let mut decoder: Box<dyn InPlaceDecoder + 'a> = match codec {
+        Codec::Gzip => Box::new(gzip::GzipInPlaceDecoder::new(source, retain, hard_min_len)),
+        Codec::Lz4 => Box::new(lz4::Lz4InPlaceDecoder::new(source, retain, hard_min_len)?),
+        Codec::Xz => Box::new(xz::XzInPlaceDecoder::new_multi_decoder(
+            source,
+            retain,
+            hard_min_len,
+        )),
+        Codec::Zstd => Box::new(zstd::ZstdInPlaceDecoder::new(source, retain, hard_min_len)?),
         Codec::Bzip2 | Codec::Plain => unreachable!("{codec:?} is not an LZ codec"),
-    })
+    };
+    if tracking != Tracking::Off {
+        decoder.retain_window();
+    }
+    Ok(decoder)
 }
 
 /// Hands out the bytes of `pieces`, from stream offset `offset` on, to `emit` in whole
@@ -140,9 +155,11 @@ fn emit_blocks<'a>(
 struct InPlaceStream<'a> {
     decoder: Box<dyn InPlaceDecoder + 'a>,
     position: u64,
-    /// How far past the bytes it hands out the stream is decoded: a window with copybacks, so
-    /// that they are known up to there, none otherwise.
-    window: u64,
+    /// Whether the stream is decoded its window past the bytes it hands out, so that the
+    /// copybacks copying them are known: with copybacks. `admission_lag` bytes more, as a
+    /// copyback enters the queue once its first `min_len` bytes are decoded.
+    look_ahead: bool,
+    admission_lag: u64,
     chunk: usize,
     /// Whether a file was read from the stream already, see [`Self::declare_file`].
     declared: bool,
@@ -151,14 +168,28 @@ struct InPlaceStream<'a> {
 }
 
 impl InPlaceStream<'_> {
-    /// Decodes the next `len` bytes (at most a chunk) and a window past them; returns how many
+    /// How far past the bytes it hands out the stream is decoded.
+    fn decode_ahead(&self) -> u64 {
+        if self.look_ahead {
+            self.decoder.window_size() + self.admission_lag
+        } else {
+            0
+        }
+    }
+
+    /// Decodes the next `len` bytes (at most a chunk) and the window past them; returns how many
     /// of them there are, fewer only at the end of the stream, or before an error, which is
     /// returned once they are all handed out.
     fn fill(&mut self, len: usize) -> io::Result<usize> {
-        if self.error.is_none() {
-            let target = self.position + len as u64 + self.window;
+        while self.error.is_none() {
+            let window = self.decode_ahead();
+            let target = self.position + len as u64 + window;
             if let Err(error) = self.decoder.decode_to(target) {
                 self.error = Some(error);
+            }
+            // A header decoded on the way can declare a larger window: then on to it.
+            if self.decode_ahead() <= window || self.decoder.is_finished() {
+                break;
             }
         }
         let decoded = self.decoder.decoded_len();
@@ -181,6 +212,21 @@ impl InPlaceStream<'_> {
         }
     }
 
+    /// Drops the copybacks whose destination is before the position, from the front of the
+    /// queue: those landing in bytes handed out with none (tar headers, compressed members and
+    /// the members that get none), which no consumer takes out. The last one stays, as the next
+    /// match can extend it.
+    fn drop_copybacks_behind(&mut self) {
+        let queue = self.decoder.peek_copybacks();
+        while queue.len() > 1
+            && queue
+                .front()
+                .is_some_and(|copyback| copyback.destination < self.position)
+        {
+            queue.pop_front();
+        }
+    }
+
     /// Moves on to `position`, past bytes that are not read.
     fn skip_to(&mut self, position: u64) {
         debug_assert!(position >= self.position);
@@ -197,9 +243,9 @@ impl InPlaceStream<'_> {
     /// The offset base of the next file read from the stream: a new one for the first.
     fn declare_file(&mut self) -> OffsetBase {
         if std::mem::replace(&mut self.declared, true) {
-            OffsetBase::New
-        } else {
             OffsetBase::Continued
+        } else {
+            OffsetBase::New
         }
     }
 }
@@ -216,6 +262,7 @@ impl Read for InPlaceStream<'_> {
             filled += piece.len();
         }
         self.position += len as u64;
+        self.drop_copybacks_behind();
         Ok(len)
     }
 }
@@ -238,19 +285,40 @@ fn pax_fields(records: &[u8]) -> Result<(Option<Vec<u8>>, Option<u64>)> {
 }
 
 impl GenericBinaryReader {
-    /// How far past the bytes it hands out a stream decoded in place is decoded: a window if it
-    /// can record copybacks, none otherwise.
-    fn window(&self, tracking: Tracking) -> usize {
+    /// How many bytes past the window a stream that can record copybacks is decoded: those
+    /// that admit a copyback to the queue, its first `min_len`.
+    fn admission_lag(&self, tracking: Tracking) -> u64 {
         match (tracking, self.copybacks) {
             (Tracking::Off, _) | (_, None) => 0,
-            (_, Some(settings)) => settings.window,
+            (_, Some(settings)) => settings.min_len as u64,
         }
     }
 
     /// How many bytes a decoder in place keeps readable behind the end of what it was asked to
-    /// decode: a chunk and the window past it.
-    pub(super) fn retain(&self, tracking: Tracking) -> usize {
-        self.in_place.chunk + self.window(tracking)
+    /// decode, besides its window: a chunk, and the bytes that admit a copyback.
+    pub(super) fn retained_len(&self, tracking: Tracking) -> usize {
+        self.in_place.chunk + self.admission_lag(tracking) as usize
+    }
+
+    /// A decoder in place of `codec` for `source`, as [`in_place_decoder`] makes it, with the
+    /// reader's hard threshold.
+    pub(super) fn new_decoder<'a>(
+        &self,
+        codec: Codec,
+        source: impl Read + 'a,
+        tracking: Tracking,
+    ) -> io::Result<Box<dyn InPlaceDecoder + 'a>> {
+        // Without copybacks no match is reported: the threshold does not matter.
+        let hard_min_len = self
+            .copybacks
+            .map_or(u32::MAX, |settings| settings.hard_min_len);
+        in_place_decoder(
+            codec,
+            source,
+            self.retained_len(tracking),
+            tracking,
+            hard_min_len,
+        )
     }
 
     /// Reads `name`, whose own path is `path`, decoded in place by `decoder`, with copybacks as
@@ -268,7 +336,8 @@ impl GenericBinaryReader {
         let mut stream = InPlaceStream {
             decoder,
             position: 0,
-            window: self.window(tracking) as u64,
+            look_ahead: tracking != Tracking::Off,
+            admission_lag: self.admission_lag(tracking),
             chunk: self.in_place.chunk,
             declared: false,
             error: None,
@@ -297,7 +366,7 @@ impl GenericBinaryReader {
                 if !tracked {
                     stream.decoder.set_copybacks_tracking(false);
                     *stream.decoder.peek_copybacks() = VecDeque::new();
-                    stream.window = 0;
+                    stream.look_ahead = false;
                 }
                 tracked
             }
@@ -383,6 +452,10 @@ impl GenericBinaryReader {
                 in_place.served += len;
             }
             stream.position += len as u64;
+            // A file of a stream with copybacks that gets none.
+            if !tracked {
+                stream.drop_copybacks_behind();
+            }
         }
     }
 
@@ -498,6 +571,9 @@ impl GenericBinaryReader {
         if is_archive(path) {
             return self.walk_archive(name, stream, Some(end), tracked, may_track, callback);
         }
+        // In a stream with copybacks, a file that cannot get them is handed out with none,
+        // the copybacks landing in it dropped as it goes.
+        let tracked = tracked && self.copybacks_for(path).is_some();
         let base = if tracked {
             stream.declare_file()
         } else {
@@ -626,8 +702,16 @@ mod tests {
         let compressed = encoded(name, data);
         let codec = codec_of(Path::new(name));
         let chunk = 1 << 16;
-        let mut decoder = in_place_decoder(codec, compressed.as_slice(), chunk).unwrap();
-        decoder.set_copybacks_min_len(copybacks_settings().min_len);
+        let settings = copybacks_settings();
+        let mut decoder = in_place_decoder(
+            codec,
+            compressed.as_slice(),
+            chunk,
+            Tracking::On,
+            settings.hard_min_len,
+        )
+        .unwrap();
+        decoder.set_copybacks_min_len(settings.min_len);
         let mut decoded = Vec::new();
         loop {
             let position = decoded.len() as u64;
@@ -641,23 +725,64 @@ mod tests {
         (decoded, decoder.peek_copybacks().drain(..).collect())
     }
 
+    /// The chains of `copybacks`, in stream order: maximal runs with the same offset, each
+    /// starting where the one before ends, as one copyback each, which can be longer than its
+    /// offset. The queue holds the matches of one repeat in pieces of at most `offset` bytes.
+    fn chains(copybacks: &[Copyback]) -> Vec<Copyback> {
+        let mut chains: Vec<Copyback> = Vec::new();
+        for &copyback in copybacks {
+            match chains.last_mut() {
+                Some(last)
+                    if last.offset == copyback.offset
+                        && last.destination + last.len as u64 == copyback.destination =>
+                {
+                    last.len += copyback.len
+                }
+                _ => chains.push(copyback),
+            }
+        }
+        chains
+    }
+
     /// Reads `path` with `reader`, checking each chunk with copybacks against `streams`, the
-    /// streams with copybacks it holds, in the order of their first files: the chunk is the
-    /// bytes at its offset, and the copybacks, never removed, are those the stream has up to
-    /// at least `window` bytes past the chunk. Returns each file's name, base and bytes.
+    /// streams with copybacks it holds, in the order of their first files, each with its
+    /// copybacks as a queue taken out only at the end holds them: the chunk is the bytes at its
+    /// offset, and the copybacks, taken out of the queue at each chunk as a consumer does and
+    /// merged with the matches that continue them, up to their offset, are pieces of the chains
+    /// of the stream's, `min_len <= len <= offset`; one can run past the end of its chain by
+    /// less than `min_len`, where the stream's lost a tail that never reached `min_len`. Once a
+    /// chunk is handed out, every copyback landing in it or after it has come, as far as its
+    /// source is in the chunk or before it, but for a tail shorter than `min_len` at the end of
+    /// its chain, which the rest of a copyback taken out never reached. Returns each file's name,
+    /// base and bytes.
     fn read_checked(
         reader: &mut GenericBinaryReader,
         path: &Path,
-        window: usize,
         streams: &[(Vec<u8>, Vec<Copyback>)],
     ) -> Vec<(String, OffsetBase, Vec<u8>)> {
+        let min_len = reader.copybacks.map_or(1, |settings| settings.min_len) as u64;
+        // The farthest a copyback of each stream reaches back, and its chains.
+        let windows: Vec<u64> = (streams.iter())
+            .map(|(_, all)| {
+                all.iter()
+                    .map(|copyback| copyback.offset as u64)
+                    .max()
+                    .unwrap_or(0)
+            })
+            .collect();
+        let stream_chains: Vec<Vec<Copyback>> =
+            streams.iter().map(|(_, all)| chains(all)).collect();
+        let end_of = |copyback: &Copyback| copyback.destination + copyback.len as u64;
         let mut files: Vec<(String, OffsetBase, Vec<u8>)> = Vec::new();
         let mut current = None;
+        // The copybacks of the stream taken out so far, merged.
+        let mut taken: Vec<Copyback> = Vec::new();
         reader
             .read_file(path, |event| match event {
                 BinaryEvent::FilePath { name, base } => {
                     if base == OffsetBase::New {
                         current = Some(current.map_or(0, |index| index + 1));
+                        taken.clear();
                     }
                     files.push((name.unwrap().to_owned(), base, Vec::new()));
                 }
@@ -667,22 +792,76 @@ mod tests {
                     offset,
                     copybacks,
                 } => {
-                    let (bytes, all) = &streams[current.expect("a chunk with copybacks first")];
+                    let stream = current.expect("a chunk with copybacks first");
+                    let (bytes, all) = &streams[stream];
+                    let chains = &stream_chains[stream];
                     let start = offset as usize;
                     assert!(
                         &bytes[start..start + chunk.len()] == chunk,
                         "not at {offset}"
                     );
-                    let found = all
-                        .get(..copybacks.len())
-                        .expect("more copybacks than found");
-                    assert!(copybacks.iter().eq(found), "not the copybacks found");
-                    let end = (start + chunk.len() + window).min(bytes.len()) as u64;
-                    let needed = all.partition_point(|copyback| copyback.destination < end);
-                    assert!(
-                        needed <= copybacks.len(),
-                        "less than a window ahead at {offset}"
-                    );
+                    // The last one taken can grow.
+                    let new = taken.len().saturating_sub(1);
+                    for copyback in copybacks.drain(..) {
+                        match taken.last_mut() {
+                            Some(last)
+                                if last.offset == copyback.offset
+                                    && end_of(last) == copyback.destination
+                                    && last.len + copyback.len <= copyback.offset =>
+                            {
+                                last.len += copyback.len;
+                            }
+                            _ => taken.push(copyback),
+                        }
+                    }
+                    // The chain holding the destination at `position`, if any.
+                    let chain_at = |position: u64| {
+                        let at = chains.partition_point(|chain| end_of(chain) <= position);
+                        chains.get(at).filter(|chain| chain.destination <= position)
+                    };
+                    for copyback in &taken[new..] {
+                        assert!(
+                            min_len <= copyback.len as u64 && copyback.len <= copyback.offset,
+                            "{copyback:?} is not between {min_len} bytes and its offset"
+                        );
+                        assert!(
+                            chain_at(copyback.destination).is_some_and(|chain| {
+                                chain.offset == copyback.offset
+                                    && end_of(copyback) < end_of(chain) + min_len
+                            }),
+                            "{copyback:?} is not a piece of a chain found"
+                        );
+                    }
+                    let end = offset + chunk.len() as u64;
+                    let first = all.partition_point(|found| found.destination < offset);
+                    let ahead = (all[first..].iter())
+                        .take_while(|found| found.destination < end + windows[stream]);
+                    for found in ahead.filter(|found| found.source() < end) {
+                        // The destinations of its source bytes in the chunk, covered from the
+                        // first on by the copybacks taken.
+                        let shift = found.offset as u64;
+                        let from = found.source().max(offset) + shift;
+                        let to = (found.source() + found.len as u64).min(end) + shift;
+                        let mut covered = from;
+                        while covered < to {
+                            let at = taken.partition_point(|copyback| end_of(copyback) <= covered);
+                            match taken.get(at) {
+                                Some(copyback)
+                                    if copyback.destination <= covered
+                                        && copyback.offset == found.offset =>
+                                {
+                                    covered = end_of(copyback)
+                                }
+                                _ => break,
+                            }
+                        }
+                        let chain = chain_at(found.destination).unwrap();
+                        assert!(
+                            covered >= to || end_of(chain) - covered < min_len,
+                            "{found:?}, copying bytes of the chunk at {offset}, is not known \
+                             past {covered}"
+                        );
+                    }
                     files.last_mut().unwrap().2.extend_from_slice(chunk);
                 }
             })
@@ -700,17 +879,16 @@ mod tests {
     }
 
     #[test]
-    fn chunks_come_with_every_copyback_up_to_a_window_past_them() {
+    fn chunks_come_with_every_copyback_copying_them() {
         let directory = directory("files");
         let data = repetitive(600_000);
         for buffer_size in [None, Some(4096)] {
             // One reader for all the files: each gets the windows back from the one before.
-            let mut reader = GenericBinaryReader::with_copybacks(buffer_size, copybacks_settings());
+            let mut reader = GenericBinaryReader::new(buffer_size, Some(copybacks_settings()));
             for name in ["a.fa.gz", "a.fa.lz4", "a.fa.xz", "a.fa.zst"] {
                 let path = directory.join(name);
                 std::fs::write(&path, encoded(name, &data)).unwrap();
-                let window = copybacks_settings().window;
-                let files = read_checked(&mut reader, &path, window, &[stream(name, &data)]);
+                let files = read_checked(&mut reader, &path, &[stream(name, &data)]);
                 let path = path.to_str().unwrap().to_owned();
                 assert!(files == [(path, OffsetBase::New, data.clone())], "{name}");
 
@@ -750,10 +928,8 @@ mod tests {
             let path = directory.join(&name);
             std::fs::write(&path, encoded(&name, &tar)).unwrap();
             for buffer_size in [None, Some(4096)] {
-                let mut reader =
-                    GenericBinaryReader::with_copybacks(buffer_size, copybacks_settings());
-                let window = copybacks_settings().window;
-                let files = read_checked(&mut reader, &path, window, &[stream(&name, &tar)]);
+                let mut reader = GenericBinaryReader::new(buffer_size, Some(copybacks_settings()));
+                let files = read_checked(&mut reader, &path, &[stream(&name, &tar)]);
                 let member = |member: &str, base, data: &Vec<u8>| {
                     (format!("{}:{member}", path.display()), base, data.clone())
                 };
@@ -826,9 +1002,8 @@ mod tests {
             member("other.tar.bz2:t.fa", OffsetBase::None, 9),
         ];
         for buffer_size in [None, Some(4096)] {
-            let mut reader = GenericBinaryReader::with_copybacks(buffer_size, copybacks_settings());
-            let window = copybacks_settings().window;
-            let files = read_checked(&mut reader, &path, window, &streams);
+            let mut reader = GenericBinaryReader::new(buffer_size, Some(copybacks_settings()));
+            let files = read_checked(&mut reader, &path, &streams);
             assert!(files == expected);
         }
         std::fs::remove_dir_all(directory).unwrap();
@@ -862,6 +1037,48 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
 
+    /// A file that the settings rule out gets no copybacks: a stream of its own records none,
+    /// and a member of a stream with them comes with none, the copybacks landing in it dropped
+    /// by the reader as it passes them, while the next members' go on.
+    #[test]
+    fn files_ruled_out_get_no_copybacks() {
+        let directory = directory("ruled-out");
+        let (a, b, c) = (repetitive(60_000), repetitive(40_000), repetitive(50_000));
+        let settings = CopybacksSettings {
+            accepts_file: |path| !path.to_string_lossy().contains(".fq"),
+            ..copybacks_settings()
+        };
+
+        let path = directory.join("b.fq.gz");
+        std::fs::write(&path, encoded("b.fq.gz", &b)).unwrap();
+        let mut reader = GenericBinaryReader::new(Some(4096), Some(settings));
+        let files = read_checked(&mut reader, &path, &[]);
+        let name = path.to_str().unwrap().to_owned();
+        assert!(files == [(name, OffsetBase::None, b.clone())]);
+
+        let tar = archive(&[
+            ("a.fa".into(), a.clone()),
+            ("b.fq".into(), b.clone()),
+            ("c.fa".into(), c.clone()),
+        ]);
+        let path = directory.join("input.tar.xz");
+        std::fs::write(&path, encoded("input.tar.xz", &tar)).unwrap();
+        for buffer_size in [None, Some(4096)] {
+            let mut reader = GenericBinaryReader::new(buffer_size, Some(settings));
+            let files = read_checked(&mut reader, &path, &[stream("input.tar.xz", &tar)]);
+            let member = |member: &str, base, data: &Vec<u8>| {
+                (format!("{}:{member}", path.display()), base, data.clone())
+            };
+            let expected = [
+                member("a.fa", OffsetBase::New, &a),
+                member("b.fq", OffsetBase::None, &b),
+                member("c.fa", OffsetBase::Continued, &c),
+            ];
+            assert!(files == expected);
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     /// The ratio comes from the metadata of a file of its own where it records the decoded size
     /// (xz always, gzip here), and is measured on the bytes decoded before the first chunk
     /// otherwise (zstd and lz4 without content sizes, the members of an archive).
@@ -872,9 +1089,8 @@ mod tests {
         // A short period, which even the fastest gzip finds.
         let compressible = b"GATTACA\n".repeat(75_000);
         let settings = CopybacksSettings {
-            window: 64 * 1024,
-            min_len: 16,
             min_compression_ratio: 3.0,
+            ..copybacks_settings()
         };
         let mut members = Vec::new();
         let mut expected = Vec::new();
@@ -886,9 +1102,9 @@ mod tests {
                 let name = format!("{kind}.fa.{extension}");
                 let path = directory.join(&name);
                 std::fs::write(&path, encoded(&name, data)).unwrap();
-                let mut reader = GenericBinaryReader::with_copybacks(Some(4096), settings.clone());
+                let mut reader = GenericBinaryReader::new(Some(4096), Some(settings));
                 let streams = [stream(&name, data)];
-                let files = read_checked(&mut reader, &path, settings.window, &streams);
+                let files = read_checked(&mut reader, &path, &streams);
                 let path = path.to_str().unwrap().to_owned();
                 assert!(files == [(path, base, data.clone())], "{name}");
 
@@ -903,8 +1119,8 @@ mod tests {
             .filter(|(_, base, _)| *base == OffsetBase::New)
             .map(|(name, _, data)| stream(name, data))
             .collect();
-        let mut reader = GenericBinaryReader::with_copybacks(Some(4096), settings.clone());
-        let files = read_checked(&mut reader, &path, settings.window, &streams);
+        let mut reader = GenericBinaryReader::new(Some(4096), Some(settings));
+        let files = read_checked(&mut reader, &path, &streams);
         for (name, _, _) in &mut expected {
             *name = format!("{}:{name}", path.display());
         }

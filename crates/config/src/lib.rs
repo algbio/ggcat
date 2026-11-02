@@ -51,6 +51,17 @@ pub const MIN_SUBPARTITIONS_COUNT: u64 = 8;
 pub const MAX_EXTREMITIES_HASHMAP_SIZE: usize = 524288;
 
 pub const DEFAULT_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024 * 4;
+
+/// The shortest LZ copy of a FASTA input that the SIMD reader follows, the matches that
+/// continue one another merged, in k-mer lengths: this many times `k` bytes, newlines included.
+/// It scales with `k`, as the copies lose `k − 1` bases at each end.
+pub const COPYBACKS_MIN_LEN_PER_K: u32 = 4;
+/// The shortest LZ match the decoders hand over at all, but for those that continue the last
+/// one handed over: the shorter ones never leave their C code.
+pub const COPYBACKS_HARD_MIN_LEN: u32 = 128;
+/// How many times a compressed input must decompress for the SIMD reader to follow its LZ
+/// copies: those of inputs compressing less, as single genomes in gzip do, are too short to use.
+pub const COPYBACKS_MIN_COMPRESSION_RATIO: f64 = 8.0;
 pub const DEFAULT_PER_CPU_BUFFER_SIZE: MemoryDataSize = MemoryDataSize::from_kibioctets(4);
 
 pub const MINIMUM_GLOBAL_MEMORY: MemoryDataSize = MemoryDataSize::from_gibioctets(2);

@@ -34,6 +34,7 @@ use io::debug_save_inputs;
 use io::debug_save_single_buckets;
 use io::ident_writer::IdentSequenceWriter;
 use io::sequences_stream::general::GeneralSequenceBlockData;
+use io::simd::LzMode;
 use io::{DUPLICATES_BUCKET_EXTRA, compute_stats_from_input_sizes};
 use parallel_processor::buckets::ExtraBucketData;
 use parallel_processor::buckets::concurrent::BucketsThreadBuffer;
@@ -174,6 +175,14 @@ pub fn run_assembler<MergingHash: HashFunctionFactory, AssemblerColorsManager: C
 
     let second_buckets_count = BucketsCount::new(second_buckets_count_log, ExtraBuckets::None);
 
+    // The LZ copies of the inputs are used only in the configurations that support them.
+    let lz_mode = LzMode::for_assembler(
+        AssemblerColorsManager::COLORS_ENABLED,
+        cfg!(feature = "support_kmer_counters"),
+        min_multiplicity,
+    );
+    ggcat_logging::info!("LZ mode: {lz_mode:?}");
+
     let buckets = if step <= AssemblerPhase::MinimizerBucketing {
         assembler_minimizer_bucketing::dynamic_dispatch::minimizer_bucketing(
             (AssemblerColorsManager::dynamic_dispatch_id(),),
@@ -189,6 +198,7 @@ pub fn run_assembler<MergingHash: HashFunctionFactory, AssemblerColorsManager: C
             Some(file_stats.bucket_size_compaction_threshold),
             file_stats.target_chunk_size,
             forward_only,
+            lz_mode,
         )
     } else {
         debug_load_buckets(&temp_dir, "minimizer-bucketing.debug").unwrap()

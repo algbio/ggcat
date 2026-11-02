@@ -1,0 +1,8 @@
+# Identical code folding: the linker keeps a single copy of functions that compile to the same
+# code, as many of the pipeline's generic instantiations do. Rust gives no guarantee that distinct
+# functions have distinct addresses, so this does not change the program's behaviour; profilers
+# and backtraces can show one name for all the folded copies.
+# `--icf` is an LLD option, the default linker of this target since Rust 1.90. A RUSTFLAGS
+# environment variable replaces these flags: add `-C link-arg=-Wl,--icf=all` to it to keep them.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-Wl,--icf=all"]

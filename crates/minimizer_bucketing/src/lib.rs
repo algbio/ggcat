@@ -27,7 +27,7 @@ use io::concurrent::temp_reads::extra_data::{
     SequenceExtraDataCombiner, SequenceExtraDataConsecutiveCompression, TempBuffer,
 };
 use io::sequences_stream::{GenericSequencesStream, SequenceInfo};
-use io::simd::{DEFAULT_IDENT_CAPACITY, ParserSettings, SequenceBuffer};
+use io::simd::{DEFAULT_IDENT_CAPACITY, LzMode, ParserSettings, SequenceBuffer};
 use parallel_processor::buckets::writers::compressed_binary_writer::{
     CompressedBinaryWriter, CompressionLevelInfo, EncoderMemoryUsage,
 };
@@ -760,6 +760,7 @@ impl GenericMinimizerBucketing {
         global_data: Executor::GlobalData,
         partial_read_copyback: Option<usize>,
         copy_ident: bool,
+        lz_mode: LzMode,
         chunking_size_threshold: Option<u64>,
         target_chunk_size: u64,
         forward_only: bool,
@@ -867,6 +868,9 @@ impl GenericMinimizerBucketing {
                 record_indices: Executor::RECORD_INDICES,
                 bases_capacity: READ_INTERMEDIATE_CHUNKS_SIZE / 4,
                 ident_capacity: DEFAULT_IDENT_CAPACITY,
+                lz_mode,
+                copybacks_min_len: config::COPYBACKS_MIN_LEN_PER_K * k as u32,
+                copy_margin: lz_mode.copy_margin(k, m),
             },
             read_threads_count,
             forward_only,

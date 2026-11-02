@@ -11,7 +11,7 @@ use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::{SequenceExtraDataTempBufferManagement, TempBuffer};
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::file::FileSequencesStream;
-use io::simd::SequenceBuffer;
+use io::simd::{LzMode, SequenceBuffer};
 use minimizer_bucketing::buffer_minimizers::BufferMinimizers;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
@@ -381,6 +381,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
             },
             None,
             CX::COLORS_ENABLED,
+            LzMode::Off,
             chunking_size_threshold,
             target_chunk_size,
             false,

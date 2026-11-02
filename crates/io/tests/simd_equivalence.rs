@@ -14,7 +14,7 @@ use ggcat_io::binary_reader::{BinaryEvent, GenericBinaryReader};
 use ggcat_io::compressed_read::CompressedRead;
 use ggcat_io::sequences_reader::SequencesReader;
 use ggcat_io::simd::{
-    DEFAULT_BASES_CAPACITY, DEFAULT_IDENT_CAPACITY, ParserSettings, SimdSequencesReader,
+    DEFAULT_BASES_CAPACITY, DEFAULT_IDENT_CAPACITY, LzMode, ParserSettings, SimdSequencesReader,
 };
 use std::hash::Hasher;
 use std::hint::black_box;
@@ -100,6 +100,9 @@ const SETTINGS: ParserSettings = ParserSettings {
     record_indices: false,
     bases_capacity: DEFAULT_BASES_CAPACITY,
     ident_capacity: DEFAULT_IDENT_CAPACITY,
+    lz_mode: LzMode::Off,
+    copybacks_min_len: 0,
+    copy_margin: 0,
 };
 
 /// The runs of the SIMD reader, which hands them out as they are.
@@ -138,7 +141,7 @@ struct Pass {
 fn decode(path: &Path) -> Pass {
     let start = Instant::now();
     let mut bytes = 0;
-    GenericBinaryReader::new(None)
+    GenericBinaryReader::new(None, None)
         .read_file(path, |event| {
             if let BinaryEvent::Chunk(chunk) = black_box(event) {
                 bytes += chunk.len() as u64;
@@ -360,9 +363,8 @@ struct Synthetic {
     other: u64,
     /// Per mille of the line endings that are `\r\n`.
     crlf: u64,
-    /// Whether a `\r` can be a byte of a line, not only end one. The line reader splits a line
-    /// in two where its chunks end, and drops a `\r` ending the first part as a line ending:
-    /// only in a plain file of one chunk is such a `\r` a byte of the line wherever it is.
+    /// Whether a lone `\r` can be among the bytes of a sequence or a header, where it ends the
+    /// line, as both readers read it: wherever it falls, a chunk's end of either reader included.
     lone_carriage_returns: bool,
     /// Bytes to write at least.
     size: usize,
@@ -536,7 +538,7 @@ fn simd_reader_matches_the_line_reader_on_synthetic_inputs() {
         let mut synthetic = Synthetic {
             other: random.pick(&[0, 0, 1, 10, 100, 700]),
             crlf: random.pick(&[0, 0, 1000, 1000, 500]),
-            lone_carriage_returns: kind == 0,
+            lone_carriage_returns: random.chance(250),
             size: random.pick(&[1, 1000, 30_000, 70_000, 200_000, 300_000]),
         };
         let fastq = random.chance(500);

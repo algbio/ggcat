@@ -27,6 +27,7 @@
 //! SOFTWARE.
 
 pub mod compressed_read;
+pub mod copyback_tracker;
 pub mod masks;
 pub mod sequence_buffer;
 pub mod sequence_parser;

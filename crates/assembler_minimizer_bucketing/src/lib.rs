@@ -18,7 +18,7 @@ use io::compressed_read::CompressedRead;
 use io::concurrent::temp_reads::extra_data::TempBuffer;
 use io::sequences_stream::SequenceInfo;
 use io::sequences_stream::general::{GeneralSequenceBlockData, GeneralSequencesStream};
-use io::simd::SequenceBuffer;
+use io::simd::{LzMode, SequenceBuffer};
 use minimizer_bucketing::buffer_minimizers::BufferMinimizers;
 use minimizer_bucketing::{
     GenericMinimizerBucketing, MinimizerBucketingCommonData, MinimizerBucketingExecutor,
@@ -432,8 +432,9 @@ impl<CD: MinimizerBucketingSeqColorData>
 }
 
 /// Splits the sequences of `input_blocks`, of the estimated `input_sizes`, into the buckets
-/// of their minimizers. For a coloured graph, `colors` gives the colours of the inputs' files,
-/// archives' members each as it starts: the inputs are those it gives, in its order.
+/// of their minimizers, the inputs read in LZ mode `lz_mode`. For a coloured graph, `colors`
+/// gives the colours of the inputs' files, archives' members each as it starts: the inputs are
+/// those it gives, in its order.
 #[dynamic_dispatch(H = [
     hashes::cn_nthash::CanonicalNtHashIteratorFactory,
 ], CX = [
@@ -453,6 +454,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
     chunking_size_threshold: Option<u64>,
     target_chunk_size: u64,
     forward_only: bool,
+    lz_mode: LzMode,
 ) -> Vec<MultiChunkBucket> {
     MNHFactory::initialize(k);
 
@@ -501,6 +503,7 @@ pub fn minimizer_bucketing<CX: ColorsManager>(
         (),
         Some(k - 1),
         false,
+        lz_mode,
         chunking_size_threshold,
         target_chunk_size,
         forward_only,
