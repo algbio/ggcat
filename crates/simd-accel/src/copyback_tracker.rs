@@ -399,7 +399,8 @@ impl CopybackTracker {
     #[inline(always)]
     fn remember_bases(&mut self, offset: u64, bases: u64) {
         if bases != 0 {
-            (self.recent_base_blocks).push_back((offset, self.base_index, bases));
+            self.recent_base_blocks
+                .push_back((offset, self.base_index, bases));
         }
         let oldest_needed = self.base_index.saturating_sub(self.margin + 1);
         while self.recent_base_blocks.len() >= 2 && self.recent_base_blocks[1].1 <= oldest_needed {
