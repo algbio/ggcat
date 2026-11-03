@@ -205,10 +205,14 @@ fn a_header_is_kept_up_to_its_line_end_without_its_carriage_return() {
     for kernel in supported_kernels() {
         let mut parser = fastq_parser(kernel, true);
         let masks = masks_with(kernel, block, false);
-        let end = parser.parse_header(block, &masks, 0, ParserState::FastaSequence);
-        assert_eq!(end, 19, "{kernel:?}: past the line end");
+        let line_end = parser.parse_header(block, &masks, 0);
+        assert_eq!(line_end, Some(17), "{kernel:?}: at the carriage return");
+        assert_eq!(
+            masks.next_line_start(17),
+            19,
+            "{kernel:?}: past the line end"
+        );
         assert_eq!(ident_of(&parser), b">seq1 description", "{kernel:?}");
-        assert_eq!(parser.state, ParserState::FastaSequence, "{kernel:?}");
     }
 }
 
@@ -218,10 +222,14 @@ fn a_header_not_kept_is_skipped_from_where_it_starts() {
     for kernel in supported_kernels() {
         let mut parser = fastq_parser(kernel, false);
         let masks = masks_with(kernel, block, false);
-        let end = parser.parse_header(block, &masks, 5, ParserState::FastqSequence);
-        assert_eq!(end, 12, "{kernel:?}: past the line feed");
+        let line_end = parser.parse_header(block, &masks, 5);
+        assert_eq!(line_end, Some(11), "{kernel:?}: at the line feed");
+        assert_eq!(
+            masks.next_line_start(11),
+            12,
+            "{kernel:?}: past the line feed"
+        );
         assert!(ident_of(&parser).is_empty(), "{kernel:?}");
-        assert_eq!(parser.state, ParserState::FastqSequence, "{kernel:?}");
     }
 }
 

@@ -390,6 +390,7 @@ impl GenericBinaryReader {
             } else {
                 OffsetBase::None
             },
+            end_offset: None,
         });
         self.serve(&mut stream, None, tracked, callback)
     }
@@ -582,6 +583,7 @@ impl GenericBinaryReader {
         callback(BinaryEvent::FilePath {
             name: Some(name),
             base,
+            end_offset: Some(end),
         });
         self.serve(stream, Some(end), tracked, callback)
     }
@@ -779,7 +781,7 @@ mod tests {
         let mut taken: Vec<Copyback> = Vec::new();
         reader
             .read_file(path, |event| match event {
-                BinaryEvent::FilePath { name, base } => {
+                BinaryEvent::FilePath { name, base, .. } => {
                     if base == OffsetBase::New {
                         current = Some(current.map_or(0, |index| index + 1));
                         taken.clear();

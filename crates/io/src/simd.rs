@@ -4,6 +4,8 @@
 use crate::binary_reader::{
     BinaryEvent, CHUNK_BLOCK, CopybacksSettings, GenericBinaryReader, OffsetBase, is_archive,
 };
+#[cfg(debug_assertions)]
+use simd_accel::copyback_tracker::TrackedCopy;
 use simd_accel::copyback_tracker::{CopybackTracker, LzCopy, TrackerStats};
 use simd_accel::masks::MaskKernel;
 use simd_accel::sequence_parser::BLOCK_SIZE;
@@ -42,6 +44,9 @@ pub struct SimdSequencesReader {
     copybacks_settings: CopybacksSettings,
     /// The sources of the LZ copies of the stream being read, with copybacks.
     tracker: CopybackTracker,
+    /// The copies [`DebugFollowingCheck`] compared, across inputs.
+    #[cfg(debug_assertions)]
+    debug_compared_copies: u64,
 }
 
 /// The copybacks the pipeline reads its inputs with, when its [`LzMode`] uses them: those of
@@ -55,6 +60,13 @@ pub fn pipeline_copybacks_settings() -> CopybacksSettings {
         min_compression_ratio: config::COPYBACKS_MIN_COMPRESSION_RATIO,
         accepts_file: is_fasta,
     }
+}
+
+/// Whether the parser of `settings` tells the copyback tracker where each header line is, so
+/// that the skips keep the headers and record indices exact: when it keeps either, or counts
+/// k-mers. Otherwise nothing reads them, and the skips spare that work.
+fn needs_header_marks(settings: &ParserSettings) -> bool {
+    settings.keep_ident || settings.record_indices || settings.lz_mode == LzMode::SkipAndCount
 }
 
 impl SimdSequencesReader {
@@ -79,6 +91,8 @@ impl SimdSequencesReader {
                 ..copybacks
             },
             tracker: CopybackTracker::new(),
+            #[cfg(debug_assertions)]
+            debug_compared_copies: 0,
         }
     }
 
@@ -92,6 +106,13 @@ impl SimdSequencesReader {
         self.tracker.stats()
     }
 
+    /// How many copies the debug check of the skips compared, across the inputs read: see
+    /// [`DebugFollowingCheck`].
+    #[cfg(debug_assertions)]
+    pub fn debug_compared_copies(&self) -> u64 {
+        self.debug_compared_copies
+    }
+
     /// As [`SequencesReader::process_file_extended`], with the bases packed and handed to
     /// `func` a [`SequenceBuffer`] at a time, by value: `func` gives back a buffer for the
     /// parser to fill later, a new one or one it is done with. The source gets a parser of
@@ -102,6 +123,13 @@ impl SimdSequencesReader {
     /// `min_seqlen` are left out. Returns how many records the source held, as
     /// [`SequenceParser::records`] counts them: the record indices, if asked for, go on across
     /// the members of an archive.
+    ///
+    /// With [`LzMode::SkipOnly`], the parser skips the copies of the FASTA files it can. If
+    /// `settings` keep the headers or the record indices, the skips keep them exact, header
+    /// marks telling the parser the header lines it skips (see [`needs_header_marks`]): each
+    /// sequence after a skip has the header and index of its record, and the count of records
+    /// is exact. Otherwise the sequences after a skip have no header, and the count of records
+    /// is not exact.
     ///
     /// [`SequencesReader::process_file_extended`]: crate::sequences_reader::SequencesReader::process_file_extended
     pub fn process_file_extended<F: FnMut(SequenceBuffer) -> SequenceBuffer>(
@@ -142,25 +170,51 @@ impl SimdSequencesReader {
         // Whether it is a FASTA file with copybacks, whose copies are followed.
         let mut tracking = false;
         let tracker = &mut self.tracker;
-        tracker.start_stream(settings.copy_margin);
+        let header_marks = needs_header_marks(settings);
+        tracker.start_stream(settings.copy_margin, header_marks);
+        #[cfg(debug_assertions)]
+        let mut check = (settings.lz_mode == LzMode::SkipOnly)
+            .then(|| DebugFollowingCheck::new(settings, self.kernel, tracker));
 
         let result = self.reader.read_file(source, |event| match event {
-            BinaryEvent::FilePath { name, base } => {
+            BinaryEvent::FilePath {
+                name,
+                base,
+                end_offset,
+            } => {
                 // The previous file is finished before the next one starts.
                 if parsing {
                     parser.finish(&mut func);
                 }
                 if tracking {
                     tracker.end_file();
+                    #[cfg(debug_assertions)]
+                    if let Some(check) = &mut check {
+                        check.end_file();
+                    }
                 }
                 if base == OffsetBase::New {
-                    tracker.start_stream(settings.copy_margin);
+                    tracker.start_stream(settings.copy_margin, header_marks);
+                    #[cfg(debug_assertions)]
+                    if let Some(check) = &mut check {
+                        check
+                            .tracker
+                            .start_stream(settings.copy_margin, header_marks);
+                    }
                 }
                 let name = name.unwrap_or_default();
                 let format = DnaSequencesFileType::from_name(name);
                 // Only FASTA files get copybacks, see `with_copybacks`.
                 tracking = base != OffsetBase::None;
                 debug_assert!(!tracking || format == Some(DnaSequencesFileType::FASTA));
+                if tracking {
+                    tracker.start_file(end_offset);
+                    #[cfg(debug_assertions)]
+                    if let Some(check) = &mut check {
+                        check.parser.reset(DnaSequencesFileType::FASTA);
+                        check.tracker.start_file(end_offset);
+                    }
+                }
                 parsing = match format {
                     Some(format @ (DnaSequencesFileType::FASTA | DnaSequencesFileType::FASTQ)) => {
                         parser.reset(format);
@@ -191,14 +245,23 @@ impl SimdSequencesReader {
                 for copyback in copybacks.drain(..) {
                     debug_assert!(copyback.len <= copyback.offset);
                     debug_assert!(copyback.len >= settings.copybacks_min_len);
-                    tracker.add_copy(LzCopy {
+                    let copy = LzCopy {
                         destination: copyback.destination,
                         offset: copyback.offset,
                         len: copyback.len,
-                    });
+                    };
+                    tracker.add_copy(copy);
+                    #[cfg(debug_assertions)]
+                    if let Some(check) = &mut check {
+                        check.tracker.add_copy(copy);
+                    }
                 }
                 debug_assert!(tracking);
                 parser.parse_data_tracked(chunk, offset, tracker, &mut func);
+                #[cfg(debug_assertions)]
+                if let Some(check) = &mut check {
+                    check.chunk(chunk, offset, tracker);
+                }
                 tracker.retire_before(offset + chunk.len() as u64);
             }
         });
@@ -207,6 +270,16 @@ impl SimdSequencesReader {
         }
         if tracking {
             tracker.end_file();
+            #[cfg(debug_assertions)]
+            if let Some(check) = &mut check {
+                check.end_file();
+            }
+        }
+        #[cfg(debug_assertions)]
+        if let Some(mut check) = check {
+            check.assert_same_progress(tracker);
+            check.assert_same_records_before(tracker, u64::MAX);
+            self.debug_compared_copies += check.compared;
         }
         // The copies landing past the last file, in the end of an archive, go with the stream.
         tracker.retire_before(u64::MAX);
@@ -224,14 +297,103 @@ impl SimdSequencesReader {
     }
 }
 
+/// With debug assertions, the check of the skips of [`SimdSequencesReader`]: a parser of its
+/// own and a tracker that only follows the copies, fed the same files, copies and chunks as the
+/// reader's, which skips them. Skipping must change none of the tracker's records: after each
+/// chunk, the two base indices and the following side of the stats are the same, and so are
+/// the copies about to be retired, their cuts and base indices. Debug builds parse twice.
+#[cfg(debug_assertions)]
+struct DebugFollowingCheck {
+    parser: SequenceParser,
+    tracker: CopybackTracker,
+    /// The stats of the reader's tracker when the input started: they run on across inputs.
+    stats_before: TrackerStats,
+    /// How many copies were compared.
+    compared: u64,
+}
+
+#[cfg(debug_assertions)]
+impl DebugFollowingCheck {
+    fn new(settings: &ParserSettings, kernel: MaskKernel, skipping: &CopybackTracker) -> Self {
+        let mut tracker = CopybackTracker::following_only();
+        tracker.start_stream(settings.copy_margin, needs_header_marks(settings));
+        Self {
+            parser: settings.parser(kernel),
+            tracker,
+            stats_before: skipping.stats(),
+            compared: 0,
+        }
+    }
+
+    fn end_file(&mut self) {
+        self.parser.finish(|buffer| buffer);
+        self.tracker.end_file();
+    }
+
+    /// Parses the chunk at stream offset `offset` the reader's parser just parsed, and compares
+    /// the trackers, then retires the copies passed, as the reader does.
+    fn chunk(&mut self, chunk: &[u8], offset: u64, skipping: &CopybackTracker) {
+        (self.parser).parse_data_tracked(chunk, offset, &mut self.tracker, |buffer| buffer);
+        let end = offset + chunk.len() as u64;
+        self.assert_same_progress(skipping);
+        self.assert_same_records_before(skipping, end);
+        self.tracker.retire_before(end);
+    }
+
+    /// Compares the base indices, and the stats skipping must not change.
+    fn assert_same_progress(&self, skipping: &CopybackTracker) {
+        debug_assert_eq!(skipping.base_index(), self.tracker.base_index());
+        let (a, before, b) = (skipping.stats(), self.stats_before, self.tracker.stats());
+        debug_assert_eq!(
+            [
+                a.received - before.received,
+                a.opened - before.opened,
+                a.closed - before.closed,
+                a.dropped_too_short - before.dropped_too_short,
+                a.dropped_late - before.dropped_late,
+                a.skippable_bases - before.skippable_bases,
+            ],
+            [
+                b.received,
+                b.opened,
+                b.closed,
+                b.dropped_too_short,
+                b.dropped_late,
+                b.skippable_bases,
+            ],
+            "the stats of the copies followed differ from those of the copies skipped"
+        );
+    }
+
+    /// Compares the copies of both trackers whose destination starts before `position`, those
+    /// retired next.
+    fn assert_same_records_before(&mut self, skipping: &CopybackTracker, position: u64) {
+        let passed = |tracked: &&TrackedCopy| tracked.copy.destination < position;
+        let mut ours = self.tracker.copies().take_while(passed);
+        let mut theirs = skipping.copies().take_while(passed);
+        loop {
+            match (ours.next(), theirs.next()) {
+                (None, None) => break,
+                (followed, skipped) => {
+                    debug_assert_eq!(skipped, followed, "a copy differs once skipped");
+                    self.compared += 1;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::{HashMap, HashSet};
     use std::io::Write;
 
+    /// The settings of the reader with k-mers of 31 bases, which keep no headers, so no header
+    /// marks.
     fn settings(lz_mode: LzMode) -> ParserSettings {
         ParserSettings {
-            keep_ident: true,
+            keep_ident: false,
             copyback_size: None,
             min_seqlen: 1,
             record_indices: false,
@@ -239,7 +401,7 @@ mod tests {
             ident_capacity: DEFAULT_IDENT_CAPACITY,
             lz_mode,
             copybacks_min_len: 16,
-            copy_margin: 0,
+            copy_margin: lz_mode.copy_margin(31, 15),
         }
     }
 
@@ -372,6 +534,24 @@ mod tests {
         buffers
     }
 
+    /// The k-mers of `k` bases of the sequences of `buffers`, each as its bases' codes.
+    fn kmers(
+        buffers: &[(Vec<SequenceDescription>, Vec<u8>, Vec<u8>)],
+        k: usize,
+    ) -> HashSet<Vec<u8>> {
+        let mut kmers = HashSet::new();
+        for (descriptions, _, bases) in buffers {
+            for description in descriptions {
+                let start = description.bases_start;
+                let codes: Vec<u8> = (start..start + description.bases_len)
+                    .map(|base| (bases[base / 4] >> (2 * (base % 4))) & 3)
+                    .collect();
+                kmers.extend(codes.windows(k).map(<[u8]>::to_vec));
+            }
+        }
+        kmers
+    }
+
     fn directory(test: &str) -> std::path::PathBuf {
         let directory = std::env::temp_dir().join(format!(
             "ggcat-simd-copybacks-{test}-{}",
@@ -381,9 +561,11 @@ mod tests {
         directory
     }
 
-    /// With copybacks the sequences are the same, the sources of the FASTA copies are followed
-    /// to their end, never late, those of the FASTQ files not at all, and no copyback is left in
-    /// the queue at the end; the base index runs on across the FASTA members of one stream.
+    /// With copybacks the 31-mers are the same, the copies of the FASTA files are followed and
+    /// skipped, never late, those of the FASTQ files not at all, and no copyback is left in the
+    /// queue at the end; the base index runs on across the FASTA members of one stream, the
+    /// bases skipped counted. With debug assertions, the reader's check compares the copies
+    /// skipped with the copies followed.
     #[test]
     fn copies_are_followed_in_fasta_only_and_the_queue_is_emptied() {
         let directory = directory("follow");
@@ -413,29 +595,157 @@ mod tests {
                 "{name}: copybacks with LZ off"
             );
             let mut reader = SimdSequencesReader::with_copybacks(copybacks());
+            let skipped = buffers(&mut reader, &path, LzMode::SkipOnly);
             assert!(
-                buffers(&mut reader, &path, LzMode::SkipOnly) == plain,
-                "{name}: the sequences differ"
+                kmers(&skipped, 31) == kmers(&plain, 31),
+                "{name}: the 31-mers differ"
             );
             let stats = reader.tracker_stats();
             // A FASTQ file of its own records none.
             assert_eq!(stats.received > 0, has_fasta, "{name}: {stats:?}");
             assert_eq!(stats.dropped_late, 0, "{name}");
-            // Every open copy closes, the margin being 0; every copy received ends closed or
-            // dropped.
-            assert_eq!(stats.opened, stats.closed, "{name}");
+            // Every copy received ends closed or dropped.
             assert_eq!(
                 stats.received,
                 stats.closed + stats.dropped_too_short + stats.dropped_late,
                 "{name}: {stats:?}"
             );
             assert_eq!(stats.opened > 0, has_fasta, "{name}: {stats:?}");
+            assert_eq!(stats.skips > 0, has_fasta, "{name}: {stats:?}");
+            #[cfg(debug_assertions)]
+            assert_eq!(
+                reader.debug_compared_copies() > 0,
+                has_fasta,
+                "{name}: the copies compared"
+            );
             assert_eq!(reader.tracker.live_copies(), 0, "{name}: copybacks left");
             assert_eq!(
                 reader.tracker.base_index(),
                 bases,
                 "{name}: the bases counted"
             );
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Records of one line each, two of them repeated in turn, with a base changed here and
+    /// there: the LZ copies run across their headers, and break inside their sequences.
+    fn repeated_records(seed: u64, count: usize, len: usize) -> Vec<u8> {
+        let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        let mut next = move |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        let bases: Vec<Vec<u8>> = (0..2)
+            .map(|_| (0..len).map(|_| b"ACGT"[next(4) as usize]).collect())
+            .collect();
+        let mut fasta = Vec::new();
+        for record in 0..count {
+            fasta.extend_from_slice(format!(">kind_{}\n", record % 2).as_bytes());
+            let mut sequence = bases[record % 2].clone();
+            if next(3) == 0 {
+                sequence[next(len as u64) as usize] = b'N';
+            }
+            fasta.extend_from_slice(&sequence);
+            fasta.push(b'\n');
+        }
+        fasta
+    }
+
+    /// A sequence as the reader hands it over: its header, its record's index, and its bases'
+    /// codes.
+    type Sequence = (Vec<u8>, u64, Vec<u8>);
+
+    /// Every sequence `reader` hands out for `path` in LZ mode `lz_mode`, with the headers and
+    /// record indices kept, and the records counted.
+    fn records(
+        reader: &mut SimdSequencesReader,
+        path: &Path,
+        lz_mode: LzMode,
+    ) -> (Vec<Sequence>, u64) {
+        let settings = ParserSettings {
+            keep_ident: true,
+            record_indices: true,
+            ..settings(lz_mode)
+        };
+        let mut sequences = Vec::new();
+        let count = reader.process_file_extended(
+            path,
+            &settings,
+            |buffer| {
+                let (ident, bases) = (buffer.ident(), buffer.bases());
+                for (description, &record) in
+                    buffer.descriptions().iter().zip(buffer.record_indices())
+                {
+                    let start = description.bases_start;
+                    let codes = (start..start + description.bases_len)
+                        .map(|base| (bases[base / 4] >> (2 * (base % 4))) & 3)
+                        .collect();
+                    let header = &ident[description.ident_start..][..description.ident_len];
+                    sequences.push((header.to_vec(), record, codes));
+                }
+                buffer
+            },
+            false,
+        );
+        (sequences, count)
+    }
+
+    /// With the headers and record indices kept, the skips keep them exact: every sequence of a
+    /// skipping read has the header and the index of its record in a full read, and its
+    /// 31-mers are that record's; the records counted are the same. The copies of repeated
+    /// records run across their headers, which the skips pass.
+    #[test]
+    fn skips_keep_headers_and_record_indices() {
+        let directory = directory("headers");
+        let (a, c) = (genomes(1, 6, 20_000), genomes(2, 4, 30_000));
+        let e = repeated_records(5, 60, 3_000);
+        let inputs = [
+            ("a.fa.xz", xz(&a), false),
+            ("e.fa.xz", xz(&e), true),
+            (
+                "ace.tar.xz",
+                xz(&tar(&[("a.fa", &a), ("c.fa", &c), ("e.fa", &e)])),
+                false,
+            ),
+        ];
+        // Whether the input holds records on one line only, where a skip holding more bytes
+        // than bases passed a header.
+        for (name, encoded, one_line) in inputs {
+            let path = directory.join(name);
+            std::fs::write(&path, encoded).unwrap();
+            let (full, full_records) = records(&mut SimdSequencesReader::new(), &path, LzMode::Off);
+            let mut reader = SimdSequencesReader::with_copybacks(copybacks());
+            let (skipped, skipped_records) = records(&mut reader, &path, LzMode::SkipOnly);
+            assert_eq!(skipped_records, full_records, "{name}: the records counted");
+            // Each record of the full read: its header, and its 31-mers.
+            let mut by_record: HashMap<u64, (Vec<u8>, HashSet<Vec<u8>>)> = HashMap::new();
+            for (header, record, codes) in &full {
+                let entry =
+                    (by_record.entry(*record)).or_insert_with(|| (header.clone(), HashSet::new()));
+                assert_eq!(&entry.0, header, "{name}: record {record} has two headers");
+                entry.1.extend(codes.windows(31).map(<[u8]>::to_vec));
+            }
+            for (index, (header, record, codes)) in skipped.iter().enumerate() {
+                let at = format!("{name}: sequence {index}, record {record}");
+                let (full_header, kmers) = (by_record.get(record))
+                    .unwrap_or_else(|| panic!("{at}: no such record in the full read"));
+                assert_eq!(header, full_header, "{at}: the header");
+                assert!(
+                    codes.windows(31).all(|kmer| kmers.contains(kmer)),
+                    "{at}: a 31-mer of another record"
+                );
+            }
+            let stats = reader.tracker_stats();
+            assert!(stats.skips > 0, "{name}: {stats:?}");
+            if one_line {
+                assert!(
+                    stats.skipped_bytes > stats.skipped_bases,
+                    "{name}: {stats:?}"
+                );
+            }
         }
         std::fs::remove_dir_all(directory).unwrap();
     }

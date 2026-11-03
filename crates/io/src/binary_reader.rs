@@ -180,6 +180,9 @@ pub enum BinaryEvent<'a> {
         name: Option<&'a str>,
         /// Whether the file's bytes come with copybacks, and in which stream.
         base: OffsetBase,
+        /// The stream offset past the file's last byte, for a member of an archive decoded in
+        /// place, whose stream goes on past it; `None` for a file that is its own stream.
+        end_offset: Option<u64>,
     },
     /// Decoded bytes, never empty. With a buffer size, at most that many and a whole number of
     /// [`CHUNK_BLOCK`] bytes, except for the last chunk of an input, which can be any shorter
@@ -395,6 +398,7 @@ impl GenericBinaryReader {
         callback(BinaryEvent::FilePath {
             name: None,
             base: OffsetBase::None,
+            end_offset: None,
         });
         self.decode(decoder, |chunk| callback(BinaryEvent::Chunk(chunk)))
     }
@@ -509,6 +513,7 @@ impl GenericBinaryReader {
         callback(BinaryEvent::FilePath {
             name: Some(name),
             base: OffsetBase::None,
+            end_offset: None,
         });
         self.decode(source, |chunk| callback(BinaryEvent::Chunk(chunk)))
     }
@@ -601,7 +606,7 @@ mod tests {
     impl Recorded {
         pub(super) fn event(&mut self, event: BinaryEvent<'_>) {
             match event {
-                BinaryEvent::FilePath { name, base } => {
+                BinaryEvent::FilePath { name, base, .. } => {
                     self.file_paths.push((name.map(str::to_owned), self.events));
                     self.bases.push(base);
                 }

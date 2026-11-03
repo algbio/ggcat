@@ -1,7 +1,9 @@
 //! Parsing FASTA or FASTQ input a block of 64 bytes at a time, from the masks of
 //! [`crate::masks`].
 
-use crate::copyback_tracker::CopybackTracker;
+use crate::copyback_tracker::{
+    CopybackTracker, ParserLineState, ReplayedHeaderMarks, SkipDecision,
+};
 #[cfg(target_arch = "aarch64")]
 use crate::masks::Neon;
 #[cfg(target_arch = "x86_64")]
@@ -80,6 +82,16 @@ impl BlockMasks {
     fn next_line_start(&self, line_end: usize) -> usize {
         // Shifted twice, as `line_end` can be the last bit.
         line_end + 1 + ((self.skipped_line_feeds >> line_end >> 1) & 1) as usize
+    }
+
+    /// The masks of the block cut at byte `limit`, where a skip starts, below [`BLOCK_SIZE`]:
+    /// no line end from there on.
+    #[inline(always)]
+    fn cut_at(&self, limit: usize) -> Self {
+        Self {
+            line_ends: self.line_ends & !(u64::MAX << limit),
+            ..*self
+        }
     }
 }
 
@@ -217,9 +229,13 @@ pub struct SequenceParser {
     /// `records` at the last [`Self::reset`]: while it has not grown, the current input has not
     /// counted a record yet.
     input_records: u64,
-    /// For [`Self::parse_data_tracked`]: the bits of the bytes of the block being parsed that
-    /// are bases, in sequence lines.
-    block_bases: u64,
+    /// With header marks, for [`Self::parse_data_tracked`]: where the header line the parser is
+    /// in starts in the stream; the header of the record a skip starts in; that of the last
+    /// header line a skip passed, gathered across chunks; and whether it passed one.
+    header_line_start: u64,
+    ident_before_skip: Vec<u8>,
+    ident_of_last_skipped_header: Vec<u8>,
+    skip_passed_a_header: bool,
 }
 
 /// How the LZ copies of the inputs are used, in the whole pipeline: chosen once for a run, from
@@ -365,7 +381,10 @@ impl SequenceParser {
             record_indices: false,
             records: 0,
             input_records: 0,
-            block_bases: 0,
+            header_line_start: 0,
+            ident_before_skip: Vec::new(),
+            ident_of_last_skipped_header: Vec::new(),
+            skip_passed_a_header: false,
         };
         parser.reset(format);
         parser
@@ -467,9 +486,10 @@ impl SequenceParser {
 
     /// As [`Self::parse_data`], for the FASTA bytes of a stream with LZ copies: `data` starts
     /// at stream offset `offset`, and `tracker` follows the sources of the copies through the
-    /// blocks as they are parsed, which it is told of with their bases, see
-    /// [`CopybackTracker`]. Each block costs a few operations more, and one that holds a key of
-    /// a copy (the start or the end of its source, or its start cut) a few queue operations.
+    /// blocks as they are parsed, told where each sequence line starts and ends, see
+    /// [`CopybackTracker`]. Each block costs a compare more, each sequence line two calls, and
+    /// a block that holds a key of a copy (the start or the end of its source, or its start
+    /// cut) a few queue operations.
     pub fn parse_data_tracked(
         &mut self,
         data: &[u8],
@@ -555,11 +575,18 @@ impl SequenceParser {
     /// The block loop, compiled into each of the functions above for its kernel, with
     /// `TRACK_COPIES` also telling `tracker` of each block, at stream offset `offset` on.
     ///
-    /// Each block is parsed by the state the parser is in, from `processed_index`, where the
-    /// previous state stopped, up to where its own part ends, which sets the next state: a block
-    /// can hold several, such as the end of a header and the start of its sequence. The loop
-    /// ends at the end of the block, [`BLOCK_SIZE`] bytes but for the input's last one. Each
-    /// state returns where it stopped: past its line end, or the end of the block.
+    /// Each block is parsed by [`Self::parse_block_range`], from where the previous block left
+    /// the line it ends in. Untracked, that is the whole loop.
+    ///
+    /// Tracked, the parser also stops at [`CopybackTracker::next_skip_start`], before the piece
+    /// holding it, or the first piece past it when it lies in bytes not parsed, and asks
+    /// [`CopybackTracker::decide_skip_at`]. A block that holds no stop costs one compare. To
+    /// parse on, it looks at the same piece again, against the next stop, then parses it
+    /// whole; to skip, it parses the piece up to the stop, ends the record there, and goes on
+    /// where the skip ends, in a new sequence: later in the block, in a later block of the
+    /// chunk, or in the next chunk, by [`CopybackTracker::continue_active_skip`], which ends
+    /// the skip by the same rules. A block left by a skip is not told to the tracker, whose
+    /// replay took the bytes skipped.
     ///
     /// # Safety
     ///
@@ -569,144 +596,398 @@ impl SequenceParser {
         &mut self,
         data: &[u8],
         offset: u64,
-        mut tracker: Option<&mut CopybackTracker>,
+        tracker: Option<&mut CopybackTracker>,
         mut callback: impl FnMut(SequenceBuffer) -> SequenceBuffer,
     ) {
         let mut carry = self.last_block_ended_with_cr;
-        for (index, block) in data.chunks(BLOCK_SIZE).enumerate() {
+        if !TRACK_COPIES {
+            for block in data.chunks(BLOCK_SIZE) {
+                // SAFETY: the caller's.
+                let masks = unsafe { BlockMasks::of::<K>(block, carry) };
+                carry = block.last() == Some(&b'\r');
+                // Past a `\n` right after the `\r` that ended the previous block: that `\r`
+                // ended the line, and set the next state already.
+                let processed_index = (masks.skipped_line_feeds & 1) as usize;
+                self.parse_block_range::<false>(
+                    block,
+                    &masks,
+                    processed_index,
+                    None,
+                    0,
+                    None,
+                    &mut callback,
+                );
+            }
+            self.last_block_ended_with_cr = carry;
+            return;
+        }
+        let tracker = tracker.expect("a tracker to tell of the blocks");
+        let header_marks = tracker.keeps_header_marks();
+        let chunk_end = offset + data.len() as u64;
+        // The block to parse next, and where it starts when a skip ends in it.
+        let (mut block_index, mut resume_index) = (0, None);
+        if let Some(progress) = tracker.continue_active_skip(offset, chunk_end) {
+            self.account_skipped_headers(progress.replayed_headers, data, offset);
+            let Some(resume_offset) = progress.resume_offset else {
+                // The whole chunk skipped.
+                self.last_block_ended_with_cr = false;
+                return;
+            };
+            self.resume_after_skip(header_marks);
+            if resume_offset == chunk_end {
+                self.last_block_ended_with_cr = false;
+                return;
+            }
+            // Right after a base, not a `\r`.
+            carry = false;
+            let resume = (resume_offset - offset) as usize;
+            (block_index, resume_index) = (resume / BLOCK_SIZE, Some(resume % BLOCK_SIZE));
+        }
+        'blocks: while block_index * BLOCK_SIZE < data.len() {
+            let block_start = block_index * BLOCK_SIZE;
+            let block = &data[block_start..data.len().min(block_start + BLOCK_SIZE)];
+            let block_offset = offset + block_start as u64;
+            let block_end = block_offset + block.len() as u64;
             // SAFETY: the caller's.
             let masks = unsafe { BlockMasks::of::<K>(block, carry) };
             carry = block.last() == Some(&b'\r');
-            if TRACK_COPIES {
-                self.block_bases = 0;
+            let mut processed_index = match resume_index.take() {
+                Some(index) => index,
+                None => (masks.skipped_line_feeds & 1) as usize,
+            };
+            loop {
+                let next_stop = tracker.next_skip_start();
+                // A stop behind the block, in bytes not parsed, is taken at its first piece.
+                let stop = (next_stop < block_end)
+                    .then(|| next_stop.saturating_sub(block_offset) as usize);
+                processed_index = self.parse_block_range::<true>(
+                    block,
+                    &masks,
+                    processed_index,
+                    stop,
+                    block_offset,
+                    Some(&mut *tracker),
+                    &mut callback,
+                );
+                if processed_index >= block.len() {
+                    break;
+                }
+                // The piece at `processed_index` holds the stop, or starts past it.
+                let position = next_stop.max(block_offset + processed_index as u64);
+                tracker.on_parsed_up_to(position);
+                let progress = match tracker.decide_skip_at(position, self.line_state(), chunk_end)
+                {
+                    SkipDecision::ParseOn => continue,
+                    SkipDecision::Skip(progress) => progress,
+                };
+                let limit = (position - block_offset) as usize;
+                if processed_index < limit {
+                    self.parse_piece_up_to(block, &masks, processed_index, limit, &mut callback);
+                }
+                self.begin_skip(header_marks, &mut callback);
+                self.account_skipped_headers(progress.replayed_headers, data, offset);
+                let Some(resume_offset) = progress.resume_offset else {
+                    // The skip goes on in the next chunk.
+                    self.last_block_ended_with_cr = false;
+                    return;
+                };
+                self.resume_after_skip(header_marks);
+                if resume_offset < block_end {
+                    processed_index = (resume_offset - block_offset) as usize;
+                    continue;
+                }
+                if resume_offset == chunk_end {
+                    self.last_block_ended_with_cr = false;
+                    return;
+                }
+                // Right after a base, not a `\r`.
+                carry = false;
+                let resume = (resume_offset - offset) as usize;
+                (block_index, resume_index) = (resume / BLOCK_SIZE, Some(resume % BLOCK_SIZE));
+                continue 'blocks;
             }
-            // Past a `\n` right after the `\r` that ended the previous block: that `\r` ended
-            // the line, and set the next state already.
-            let mut processed_index = (masks.skipped_line_feeds & 1) as usize;
-            while processed_index < block.len() {
-                match self.state {
-                    ParserState::FastaHeader => {
-                        processed_index = self.parse_header(
-                            block,
-                            &masks,
-                            processed_index,
-                            ParserState::FastaLineStart { wrapped: false },
-                        );
-                    }
-                    ParserState::FastaLineStart { wrapped } => {
-                        self.parse_fasta_line_start(block, processed_index, wrapped, &mut callback);
-                    }
-                    ParserState::FastaComment { wrapped } => {
-                        processed_index = match masks.line_end_from(processed_index) {
-                            Some(line_end) => {
-                                self.state = ParserState::FastaLineStart { wrapped };
-                                masks.next_line_start(line_end)
+            tracker.on_parsed_up_to(block_end);
+            block_index += 1;
+        }
+        self.last_block_ended_with_cr = carry;
+    }
+
+    /// Parses `block`, at stream offset `block_offset`, from `processed_index` to its end, a
+    /// piece at a time: by the state the parser is in, up to where its own part ends, which
+    /// sets the next state. A block can hold several pieces, such as the end of a header, the
+    /// pick of the next line's state at its first byte, a piece of no bytes, and the start of
+    /// its sequence. Each state returns where it stopped: past its line end, or the end of the
+    /// block. With `TRACK_COPIES`, `tracker` is told where each FASTA sequence line starts and
+    /// ends, and where each comment line starts. With a `stop`, a byte of the block, it returns
+    /// before the first piece that holds it or starts past it, unparsed, for a skip decision.
+    /// Returns where it stopped.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn parse_block_range<const TRACK_COPIES: bool>(
+        &mut self,
+        block: &[u8],
+        masks: &BlockMasks,
+        mut processed_index: usize,
+        stop: Option<usize>,
+        block_offset: u64,
+        mut tracker: Option<&mut CopybackTracker>,
+        callback: &mut impl FnMut(SequenceBuffer) -> SequenceBuffer,
+    ) -> usize {
+        while processed_index < block.len() {
+            if let Some(stop) = stop
+                && self.piece_reaches(stop, processed_index, masks)
+            {
+                return processed_index;
+            }
+            match self.state {
+                ParserState::FastaHeader => {
+                    processed_index = match self.parse_header(block, masks, processed_index) {
+                        Some(line_end) => {
+                            if TRACK_COPIES
+                                && let Some(tracker) = tracker.as_deref_mut()
+                                && tracker.keeps_header_marks()
+                            {
+                                let end = block_offset + line_end as u64;
+                                tracker.on_header_line(self.header_line_start, end);
                             }
-                            None => block.len(),
-                        };
+                            self.state = ParserState::FastaLineStart { wrapped: false };
+                            masks.next_line_start(line_end)
+                        }
+                        None => block.len(),
+                    };
+                }
+                ParserState::FastaLineStart { wrapped } => {
+                    self.parse_fasta_line_start(block, processed_index, wrapped, callback);
+                    if TRACK_COPIES && let Some(tracker) = tracker.as_deref_mut() {
+                        let line_start = block_offset + processed_index as u64;
+                        match self.state {
+                            ParserState::FastaSequence | ParserState::FastaWrapped => {
+                                tracker.on_sequence_line_start(line_start)
+                            }
+                            ParserState::FastaComment { .. } => tracker.on_comment_line(line_start),
+                            ParserState::FastaHeader if tracker.keeps_header_marks() => {
+                                self.header_line_start = line_start
+                            }
+                            _ => {}
+                        }
                     }
-                    ParserState::FastaSequence => {
-                        processed_index = match self.copy_line_blocks::<TRACK_COPIES>(
-                            block,
-                            &masks,
-                            processed_index,
-                            &mut callback,
-                        ) {
+                }
+                ParserState::FastaComment { wrapped } => {
+                    processed_index = match masks.line_end_from(processed_index) {
+                        Some(line_end) => {
+                            self.state = ParserState::FastaLineStart { wrapped };
+                            masks.next_line_start(line_end)
+                        }
+                        None => block.len(),
+                    };
+                }
+                ParserState::FastaSequence => {
+                    processed_index =
+                        match self.copy_line_blocks(block, masks, processed_index, callback) {
                             Some(line_end) => {
+                                if TRACK_COPIES && let Some(tracker) = tracker.as_deref_mut() {
+                                    tracker.on_sequence_line_end(block_offset + line_end as u64);
+                                }
                                 self.state = ParserState::FastaLineStart { wrapped: false };
                                 masks.next_line_start(line_end)
                             }
                             None => block.len(),
                         };
-                    }
-                    ParserState::FastaWrapped => {
-                        processed_index = self.parse_fasta_wrapped::<TRACK_COPIES>(
-                            block,
-                            &masks,
-                            processed_index,
-                            &mut callback,
-                        );
-                    }
-                    ParserState::FastqHeader => {
-                        processed_index = self.parse_header(
-                            block,
-                            &masks,
-                            processed_index,
-                            ParserState::FastqSequence,
-                        );
-                    }
-                    ParserState::FastqSequence => {
-                        processed_index = match self.copy_line_blocks::<TRACK_COPIES>(
-                            block,
-                            &masks,
-                            processed_index,
-                            &mut callback,
-                        ) {
+                }
+                ParserState::FastaWrapped => {
+                    processed_index =
+                        match self.parse_fasta_wrapped(block, masks, processed_index, callback) {
+                            Some(line_end) => {
+                                if TRACK_COPIES && let Some(tracker) = tracker.as_deref_mut() {
+                                    tracker.on_sequence_line_end(block_offset + line_end as u64);
+                                }
+                                self.state = ParserState::FastaLineStart { wrapped: true };
+                                masks.next_line_start(line_end)
+                            }
+                            None => block.len(),
+                        };
+                }
+                ParserState::FastqHeader => {
+                    processed_index = match self.parse_header(block, masks, processed_index) {
+                        Some(line_end) => {
+                            self.state = ParserState::FastqSequence;
+                            masks.next_line_start(line_end)
+                        }
+                        None => block.len(),
+                    };
+                }
+                ParserState::FastqSequence => {
+                    processed_index =
+                        match self.copy_line_blocks(block, masks, processed_index, callback) {
                             // The line end ends what is kept of the record.
                             Some(line_end) => {
-                                self.end_record(&mut callback);
+                                self.end_record(callback);
                                 self.state = ParserState::FastqPlus;
                                 masks.next_line_start(line_end)
                             }
                             None => block.len(),
                         };
-                    }
-                    ParserState::FastqPlus => {
-                        processed_index = match masks.line_end_from(processed_index) {
-                            Some(line_end) => {
-                                self.state = ParserState::FastqQuality;
-                                masks.next_line_start(line_end)
-                            }
-                            None => block.len(),
-                        };
-                    }
-                    ParserState::FastqQuality => {
-                        processed_index = self.parse_fastq_quality(block, &masks, processed_index);
-                    }
+                }
+                ParserState::FastqPlus => {
+                    processed_index = match masks.line_end_from(processed_index) {
+                        Some(line_end) => {
+                            self.state = ParserState::FastqQuality;
+                            masks.next_line_start(line_end)
+                        }
+                        None => block.len(),
+                    };
+                }
+                ParserState::FastqQuality => {
+                    processed_index = self.parse_fastq_quality(block, masks, processed_index);
                 }
             }
-            if TRACK_COPIES && let Some(tracker) = tracker.as_deref_mut() {
-                let block_offset = offset + (index * BLOCK_SIZE) as u64;
-                tracker.on_block_parsed(block_offset, block.len(), self.block_bases);
-            }
         }
-        self.last_block_ended_with_cr = carry;
+        processed_index
     }
 
-    /// The bits of bytes `from..to` of a block, `from < to`.
+    /// Whether the piece the parser takes next, from `processed_index`, holds byte `stop` of
+    /// the block, or starts past it: a line start picked there or past it, or a line running
+    /// past it. Every line before the stop is told to the tracker by then, and a piece's line
+    /// does not change inside it, so the decision can be taken before it.
     #[inline(always)]
-    fn bit_range(from: usize, to: usize) -> u64 {
-        (u64::MAX >> (BLOCK_SIZE - (to - from))) << from
+    fn piece_reaches(&self, stop: usize, processed_index: usize, masks: &BlockMasks) -> bool {
+        processed_index >= stop
+            || (!matches!(self.state, ParserState::FastaLineStart { .. })
+                && (masks.line_end_from(processed_index)).is_none_or(|line_end| line_end > stop))
+    }
+
+    /// Where the parser is, for a skip decision.
+    #[inline(always)]
+    fn line_state(&self) -> ParserLineState {
+        match self.state {
+            ParserState::FastaSequence | ParserState::FastaWrapped => {
+                ParserLineState::InSequenceLine
+            }
+            ParserState::FastaLineStart { .. } => ParserLineState::AtLineStart,
+            ParserState::FastaHeader => ParserLineState::InHeaderLine,
+            ParserState::FastaComment { .. } => ParserLineState::InCommentLine,
+            state => unreachable!("{state:?}: only FASTA is tracked"),
+        }
+    }
+
+    /// Parses the piece of the sequence line the parser is in from `processed_index` up to byte
+    /// `limit` of the block, where a skip starts: by its handler, unchanged, on the block and
+    /// masks cut there, where it finds no line end, as the line runs past `limit`. A full
+    /// buffer can split the record there as anywhere: the record ends at `limit` right after.
+    #[inline(always)]
+    fn parse_piece_up_to(
+        &mut self,
+        block: &[u8],
+        masks: &BlockMasks,
+        processed_index: usize,
+        limit: usize,
+        callback: &mut impl FnMut(SequenceBuffer) -> SequenceBuffer,
+    ) {
+        debug_assert!(processed_index < limit);
+        let (block, masks) = (&block[..limit], masks.cut_at(limit));
+        let line_end = match self.state {
+            ParserState::FastaSequence => {
+                self.copy_line_blocks(block, &masks, processed_index, callback)
+            }
+            ParserState::FastaWrapped => {
+                self.parse_fasta_wrapped(block, &masks, processed_index, callback)
+            }
+            state => unreachable!("a skip in {state:?}"),
+        };
+        debug_assert!(line_end.is_none(), "a line end before a skip start");
+    }
+
+    /// Ends the record where a skip starts: the sequence ends there, as at a byte that is not
+    /// ACGT, and the block-wise copy of [`ParserState::FastaSequence`] starts afresh after it.
+    /// With `header_marks`, keeps the record's header for the sequence after the skip, and
+    /// counts the record if the input has none yet, as its first base would have.
+    #[inline(always)]
+    fn begin_skip(
+        &mut self,
+        header_marks: bool,
+        callback: &mut impl FnMut(SequenceBuffer) -> SequenceBuffer,
+    ) {
+        if header_marks {
+            self.ident_before_skip.clear();
+            (self.ident_before_skip)
+                .extend_from_slice(&self.buffer.ident[self.record_ident_start..]);
+            self.ident_of_last_skipped_header.clear();
+            self.skip_passed_a_header = false;
+            if self.records == self.input_records {
+                self.records += 1;
+            }
+        }
+        self.end_record(callback);
+    }
+
+    /// Counts the records whose header lines a skip passed in the chunk `data`, at stream
+    /// offset `data_offset`, and gathers the bytes of the last one there, whose start can be in
+    /// an earlier chunk. Nothing without header marks.
+    #[inline(always)]
+    fn account_skipped_headers(
+        &mut self,
+        headers: ReplayedHeaderMarks,
+        data: &[u8],
+        data_offset: u64,
+    ) {
+        self.records += headers.count;
+        let Some(header) = headers.last else {
+            return;
+        };
+        if header.start_offset >= data_offset {
+            // A header after the one gathered so far.
+            self.ident_of_last_skipped_header.clear();
+        }
+        self.skip_passed_a_header = true;
+        if self.keep_ident {
+            let chunk_end = data_offset + data.len() as u64;
+            let from = header.start_offset.max(data_offset) - data_offset;
+            let to = header.end_offset.min(chunk_end) - data_offset;
+            (self.ident_of_last_skipped_header)
+                .extend_from_slice(&data[from as usize..to as usize]);
+        }
+    }
+
+    /// Goes on where a skip ends, in a FASTA sequence line right after a base: in a record of
+    /// its own, with no bases yet. With `header_marks`, it has the header of the last header
+    /// line the skip passed, or else that of the record the skip started in; without, none.
+    #[inline(always)]
+    fn resume_after_skip(&mut self, header_marks: bool) {
+        if header_marks && self.keep_ident {
+            let ident = if self.skip_passed_a_header {
+                &self.ident_of_last_skipped_header
+            } else {
+                &self.ident_before_skip
+            };
+            self.buffer.ident.extend_from_slice(ident);
+        }
+        self.state = ParserState::FastaSequence;
     }
 
     /// Parses the header line the parser is in, from `processed_index` to its line end or, if
     /// the block has none past it, to the end of the block; writes that part to the buffer's
-    /// `ident` if asked. Returns where it stopped.
+    /// `ident` if asked. Returns the line end, if the block has it.
     ///
-    /// At the line end the header is done, with no `\r` in it, as a `\r` ends it: the parser
-    /// moves past the line end to `sequence`, the state of its format that follows.
+    /// At the line end the header is done, with no `\r` in it, as a `\r` ends it, and the
+    /// record is counted: the parser moves past the line end to the state of its format that
+    /// follows.
     #[inline(always)]
     fn parse_header(
         &mut self,
         block: &[u8],
         masks: &BlockMasks,
         processed_index: usize,
-        sequence: ParserState,
-    ) -> usize {
+    ) -> Option<usize> {
         debug_assert!(processed_index < block.len());
         let line_end = masks.line_end_from(processed_index);
         if self.keep_ident {
             let end = line_end.unwrap_or(block.len());
             (self.buffer.ident).extend_from_slice(&block[processed_index..end]);
         }
-        match line_end {
-            Some(line_end) => {
-                self.records += 1;
-                self.state = sequence;
-                masks.next_line_start(line_end)
-            }
-            None => block.len(),
+        if line_end.is_some() {
+            self.records += 1;
         }
+        line_end
     }
 
     /// Copies the sequence line the parser is in, from `processed_index` to its line end or, if
@@ -718,7 +999,7 @@ impl SequenceParser {
     /// With no line end the line goes on in the next block: a buffer full then, with a
     /// `copyback_size`, splits the record.
     #[inline(always)]
-    fn copy_line_blocks<const TRACK_COPIES: bool>(
+    fn copy_line_blocks(
         &mut self,
         block: &[u8],
         masks: &BlockMasks,
@@ -743,9 +1024,6 @@ impl SequenceParser {
                 .extend_from_slice(&masks.two_bits.to_le_bytes());
             self.record_bases += end - processed_index;
             self.split_at_non_acgt(masks.non_acgt, processed_index, end, first_base);
-            if TRACK_COPIES {
-                self.block_bases |= Self::bit_range(processed_index, end);
-            }
         }
         if line_end.is_none()
             && let Some(copyback) = self.copyback_size
@@ -784,17 +1062,17 @@ impl SequenceParser {
 
     /// Appends the piece of the later FASTA sequence line the parser is in, from
     /// `processed_index` to its line end or, if the block has none past it, to the end of the
-    /// block, shifted after the bases before. Returns where it stopped; past the line end, the
-    /// parser moves to the start of the next line. A buffer full, with a `copyback_size`,
-    /// splits the record.
+    /// block, shifted after the bases before. Returns the line end, if the block has it; past
+    /// it, the parser moves to the start of the next line. A buffer full, with a
+    /// `copyback_size`, splits the record.
     #[inline(always)]
-    fn parse_fasta_wrapped<const TRACK_COPIES: bool>(
+    fn parse_fasta_wrapped(
         &mut self,
         block: &[u8],
         masks: &BlockMasks,
         processed_index: usize,
         callback: &mut impl FnMut(SequenceBuffer) -> SequenceBuffer,
-    ) -> usize {
+    ) -> Option<usize> {
         debug_assert!(processed_index < block.len());
         let line_end = masks.line_end_from(processed_index);
         let end = line_end.unwrap_or(block.len());
@@ -802,22 +1080,13 @@ impl SequenceParser {
         if end > processed_index {
             self.push_bases(masks.two_bits, processed_index, end);
             self.split_at_non_acgt(masks.non_acgt, processed_index, end, first_base);
-            if TRACK_COPIES {
-                self.block_bases |= Self::bit_range(processed_index, end);
-            }
         }
         if let Some(copyback) = self.copyback_size
             && self.buffer.bases.len() >= self.bases_capacity
         {
             self.split_record(copyback, true, callback);
         }
-        match line_end {
-            Some(line_end) => {
-                self.state = ParserState::FastaLineStart { wrapped: true };
-                masks.next_line_start(line_end)
-            }
-            None => block.len(),
-        }
+        line_end
     }
 
     /// Goes over from copying the record a block at a time to appending it shifted, at its
