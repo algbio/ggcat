@@ -734,6 +734,9 @@ impl<'a> CompressedRead<'a> {
         required_offset: usize,
         rc: bool,
     ) {
+        if self.size == 0 {
+            return;
+        }
         if required_offset == 0 {
             if rc {
                 self.copy_to_buffer_rc(buffer);
